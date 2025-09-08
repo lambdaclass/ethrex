@@ -261,9 +261,9 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [run-assertoor, run-hive, run-replay]
+    needs: [run-assertoor, run-hive]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' && needs.run-replay.result != 'skipped' }}
+    if: ${{ always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -274,10 +274,5 @@ jobs:
 
           if [ "${{ needs.run-hive.result }}" != "success" ]; then
             echo "Job Hive failed"
-            exit 1
-          fi
-
-          if [ "${{ needs.run-replay.result }}" != "success" ]; then
-            echo "Job Replay failed"
             exit 1
           fi

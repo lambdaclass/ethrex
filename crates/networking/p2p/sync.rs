@@ -43,9 +43,13 @@ use tracing::{debug, error, info, warn};
 const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
+/// Amount of seconds between blocks
+const SECONDS_PER_BLOCK: u64 = 12;
 
 /// Bytecodes to downloader per batch
 const BYTECODE_CHUNK_SIZE: usize = 50_000;
+
+const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -822,7 +826,13 @@ impl Syncer {
             .ok_or(SyncError::CorruptDB)?;
 
         while block_is_stale(&pivot_header) {
-            pivot_header = update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                &self.peers,
+                block_sync_state,
+            )
+            .await?;
         }
         debug!(
             "Selected block {} as pivot for snap sync",
@@ -926,8 +936,13 @@ impl Syncer {
             let mut state_leafs_healed = 0_u64;
             loop {
                 while block_is_stale(&pivot_header) {
-                    pivot_header =
-                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                    pivot_header = update_pivot(
+                        pivot_header.number,
+                        pivot_header.timestamp,
+                        &self.peers,
+                        block_sync_state,
+                    )
+                    .await?;
                 }
                 // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
                 // We just need to update the pivot and start again
@@ -1046,8 +1061,13 @@ impl Syncer {
         while !healing_done {
             // This if is an edge case for the skip snap sync scenario
             if block_is_stale(&pivot_header) {
-                pivot_header =
-                    update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                pivot_header = update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    &self.peers,
+                    block_sync_state,
+                )
+                .await?;
             }
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
@@ -1182,12 +1202,18 @@ fn compute_storage_roots(
 
 pub async fn update_pivot(
     block_number: u64,
+    block_timestamp: u64,
     peers: &PeerHandler,
     block_sync_state: &mut BlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
-    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
-    // latest one, or a slot was missed
-    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
+    // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
+    let new_pivot_block_number = block_number
+        + ((current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) as f64
+            * MISSING_SLOTS_PERCENTAGE) as u64;
+    debug!(
+        "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
+        block_number, block_timestamp, new_pivot_block_number
+    );
     loop {
         let mut scores = peers.peer_scores.lock().await;
 

@@ -51,6 +51,10 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
 pub const MAX_HEADER_CHUNK: u64 = 500_000;
 
+// How much we store in memory of request_account_range and request_storage_ranges
+// before we dump it into the file. This tunes how much memory ethrex uses during
+// the first steps of snap sync
+pub const RANGE_FILE_CHUNK_SIZE: u64 = 1024 * 1024 * 512; // 512MB
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -902,11 +906,12 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores = self.peer_scores.lock().await;
         let mut chunk_file = 0;
 
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>() >= 1024 * 1024 * 1024 * 8 {
+            if all_accounts_state.len() * size_of::<AccountState>()
+                >= RANGE_FILE_CHUNK_SIZE as usize
+            {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -956,6 +961,7 @@ impl PeerHandler {
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
+                let mut scores = self.peer_scores.lock().await;
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true;
                 });
@@ -1043,6 +1049,7 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
+                let scores = self.peer_scores.lock().await;
                 let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
@@ -1082,9 +1089,14 @@ impl PeerHandler {
 
             if block_is_stale(pivot_header) {
                 info!("request_account_range became stale, updating pivot");
-                *pivot_header = update_pivot(pivot_header.number, self, block_sync_state)
-                    .await
-                    .expect("Should be able to update pivot")
+                *pivot_header = update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    self,
+                    block_sync_state,
+                )
+                .await
+                .expect("Should be able to update pivot")
             }
 
             tokio::spawn(PeerHandler::request_account_range_worker(
@@ -1576,7 +1588,7 @@ impl PeerHandler {
 
         loop {
             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
-                > 1024 * 1024 * 1024 * 8
+                > RANGE_FILE_CHUNK_SIZE as usize
             {
                 let current_account_storages = std::mem::take(&mut all_account_storages);
                 all_account_storages =
