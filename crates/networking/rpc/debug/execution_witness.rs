@@ -4,11 +4,10 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, serde_utils,
     types::{
-        BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitness, GuestProgramState, GuestProgramStateError},
+        ChainConfig,
+        block_execution_witness::{ExecutionWitness, GuestProgramStateError},
     },
 };
-use ethrex_rlp::encode::RLPEncode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
