@@ -100,3 +100,27 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
         serde_json::to_value(&rpc_batch).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
+
+pub struct BatchNumberRequest {}
+
+impl RpcHandler for BatchNumberRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        if params.as_ref().is_some_and(|params| params.len() != 0) {
+            return Err(ethrex_rpc::RpcErr::BadParams(
+                "Expected 0 params".to_owned(),
+            ))?;
+        };
+
+        Ok(BatchNumberRequest {})
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Requested last batch number");
+        let Some(batch_number) = context.rollup_store.get_batch_number().await? else {
+            return Ok(Value::Null);
+        };
+
+        serde_json::to_value(format!("{batch_number:#x}"))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
