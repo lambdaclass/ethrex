@@ -97,8 +97,11 @@ impl VmDatabase for ExecutionWitnessWrapper {
 
     fn get_account_info_batch(
         &self,
-        _addresses: &[Address],
+        addresses: &[Address],
     ) -> Result<std::collections::BTreeMap<Address, AccountInfo>, EvmError> {
-        unimplemented!()
+        self.lock_mutex()
+            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+            .get_account_info_by_hash_batch(addresses)
+            .map_err(|_| EvmError::DB("Failed to get account infos".to_string()))
     }
 }

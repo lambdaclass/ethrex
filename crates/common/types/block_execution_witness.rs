@@ -303,6 +303,46 @@ impl ExecutionWitnessResult {
         }))
     }
 
+    pub fn get_account_info_by_hash_batch(
+        &mut self,
+        addresses: &[Address],
+    ) -> Result<BTreeMap<Address, AccountInfo>, ExecutionWitnessError> {
+        let state_trie = self
+            .state_trie
+            .as_ref()
+            .ok_or(ExecutionWitnessError::Database(
+                "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
+            ))?;
+
+        let mut map = BTreeMap::new();
+        for address in addresses {
+            let hashed_address = self
+                .account_hashes_by_address
+                .entry(*address)
+                .or_insert_with(|| hash_address(address));
+
+            let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
+                continue;
+            };
+            let account_state = AccountState::decode(&encoded_state).map_err(|_| {
+                ExecutionWitnessError::Database(
+                    "Failed to get decode account from trie".to_string(),
+                )
+            })?;
+
+            map.insert(
+                *address,
+                AccountInfo {
+                    code_hash: account_state.code_hash,
+                    balance: account_state.balance,
+                    nonce: account_state.nonce,
+                },
+            );
+        }
+
+        Ok(map)
+    }
+
     /// Fetches the block hash for a specific block number.
     /// Looks up `self.block_headers` and computes the hash if it is not already computed.
     pub fn get_block_hash(&self, block_number: u64) -> Result<H256, ExecutionWitnessError> {
