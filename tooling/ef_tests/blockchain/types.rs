@@ -545,5 +545,5 @@ pub enum BlockExpectedException {
     IncorrectBlockFormat,
     InvalidRequest,
     SystemContractCallFailed,
-    Other, //TODO: Implement exceptions
+    Other,
 }
