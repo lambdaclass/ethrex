@@ -2,14 +2,14 @@ use crate::kademlia;
 use crate::kademlia::PeerChannels;
 use crate::rlpx::p2p::Capability;
 use ethrex_common::H256;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
 
 #[derive(Debug, Clone, Default)]
 pub struct PeerScores {
-    scores: HashMap<H256, PeerScore>,
+    scores: BTreeMap<H256, PeerScore>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -24,7 +24,7 @@ pub struct PeerScore {
 impl PeerScores {
     pub fn new() -> Self {
         Self {
-            scores: HashMap::default(),
+            scores: BTreeMap::default(),
         }
     }
 
