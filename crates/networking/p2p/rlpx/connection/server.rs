@@ -781,6 +781,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             }
         }
         Message::BlockRangeUpdate(update) => {
+            // We will only validate the incoming update, we may decide to store and use this information in the future
             update.validate()?;
             log_peer_debug(
                 &state.node,
