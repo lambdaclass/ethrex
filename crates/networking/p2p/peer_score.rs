@@ -66,6 +66,9 @@ impl PeerScores {
         peer_score.active = false;
     }
 
+    // TODO #4352: the usage of this method is required for scoring to be useful, but
+    // it shouldn't be used always for performance reasons. This is error prone, so eventually
+    // the scoring data should be embedded in the kademlia table's PeerData
     pub async fn update_peers(&mut self, kademlia_table: &kademlia::Kademlia) {
         let peer_table = kademlia_table.peers.lock().await;
         for (peer_id, _) in peer_table.iter() {
