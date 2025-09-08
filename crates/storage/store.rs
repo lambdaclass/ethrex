@@ -229,6 +229,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
+        // FIXME (#4353)
         let latest = self
             .latest_block_header
             .read()
@@ -578,12 +579,17 @@ impl Store {
         self.engine.add_receipts(block_hash, receipts).await
     }
 
+    /// Obtain receipt for a canonical block represented by the block number.
     pub async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        self.engine.get_receipt(block_number, index).await
+        // FIXME (#4353)
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+            return Ok(None);
+        };
+        self.engine.get_receipt(block_hash, index).await
     }
 
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
