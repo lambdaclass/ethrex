@@ -43,18 +43,12 @@ impl PeerScores {
 
     pub fn record_success(&mut self, peer_id: H256) {
         let peer_score = self.scores.entry(peer_id).or_default();
-        peer_score.score = peer_score.score.saturating_add(1);
-        if peer_score.score > MAX_SCORE {
-            peer_score.score = MAX_SCORE;
-        }
+        peer_score.score = (peer_score.score + 1).min(MAX_SCORE);
     }
 
     pub fn record_failure(&mut self, peer_id: H256) {
         let peer_score = self.scores.entry(peer_id).or_default();
-        peer_score.score = peer_score.score.saturating_sub(1);
-        if peer_score.score < MIN_SCORE {
-            peer_score.score = MIN_SCORE;
-        }
+        peer_score.score = (peer_score.score - 1).max(MIN_SCORE);
     }
 
     pub fn record_critical_failure(&mut self, peer_id: H256) {
