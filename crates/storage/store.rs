@@ -219,6 +219,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
+        // FIXME (#4353)
         let latest = self
             .latest_block_header
             .read()
@@ -409,7 +410,7 @@ impl Store {
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(hashed_address)?;
+                state_trie.remove(&hashed_address)?;
                 continue;
             }
             // Add or update AccountState in the trie
@@ -436,7 +437,7 @@ impl Store {
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
-                        storage_trie.remove(hashed_key)?;
+                        storage_trie.remove(&hashed_key)?;
                     } else {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
@@ -470,7 +471,7 @@ impl Store {
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(hashed_address)?;
+                state_trie.remove(&hashed_address)?;
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
@@ -503,7 +504,7 @@ impl Store {
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {
-                            storage_trie.remove(hashed_key)?;
+                            storage_trie.remove(&hashed_key)?;
                         } else {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
@@ -568,12 +569,17 @@ impl Store {
         self.engine.add_receipts(block_hash, receipts).await
     }
 
+    /// Obtain receipt for a canonical block represented by the block number.
     pub async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        self.engine.get_receipt(block_number, index).await
+        // FIXME (#4353)
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+            return Ok(None);
+        };
+        self.engine.get_receipt(block_hash, index).await
     }
 
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {

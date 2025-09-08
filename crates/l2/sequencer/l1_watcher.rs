@@ -167,13 +167,7 @@ impl L1Watcher {
                 self.address,
                 vec![topic],
             )
-            .await
-            .inspect_err(|error| {
-                // We may get an error if the RPC doesn't has the logs for the requested
-                // block interval. For example, Light Nodes.
-                warn!("Error when getting logs from L1: {}", error);
-            })
-            .unwrap_or_default();
+            .await?;
 
         debug!("Logs: {:#?}", logs);
 
