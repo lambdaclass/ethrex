@@ -20,71 +20,74 @@ use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha3::{Digest, Keccak256};
 
-/// In-memory execution witness database for single batch execution data.
-///
-/// This is mainly used to store the relevant state data for executing a single batch and then
-/// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
-#[serde(rename_all = "camelCase")]
+/// State produced by the guest program execution inside the zkVM. It is
+/// essentially built from the `ExecutionWitness`.
+/// This state is used during the stateless validation of the zkVM execution.
+/// Some data is prepared before the stateless validation, and some data is
+/// built on-demand during the stateless validation.
+/// This struct must be instantiated, filled, and consumed inside the zkVM.
 pub struct GuestProgramState {
-    // Used evm bytecodes
-    // Indexed by code hash
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
-    pub codes_hashed: BTreeMap<H256, Vec<u8>>,
-    // Pruned state MPT
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
-    pub state_trie: Option<Trie>,
-    // Storage tries accessed by account address
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
-    pub storage_tries: BTreeMap<Address, Trie>,
-    // Block headers needed for BLOCKHASH opcode
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
-    pub block_headers: BTreeMap<u64, BlockHeader>,
-    // Parent block header to get the initial state root
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
-    pub parent_block_header: BlockHeader,
-    /// The block number of the first block
-    pub first_block_number: u64,
-    // Chain config
-    pub chain_config: ChainConfig,
-    /// This maps node hashes to their corresponding RLP-encoded nodes.
+    /// Map of node hash to RLP-encoded node.
+    /// This is computed during guest program execution inside the zkVM,
+    /// before the stateless validation.
     /// It is used to rebuild the state trie and storage tries.
-    /// This is computed during ExecutionWitness construction to avoid
-    /// issues of trust assumptions.
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
     pub nodes_hashed: BTreeMap<H256, NodeRLP>,
-    /// This is a convenience map to track which accounts and storage slots were touched during execution.
-    /// It maps an account address to a vector of all storage slots that were accessed for that account.
+    /// Map of code hashes to their corresponding bytecode.
+    /// This is computed during guest program execution inside the zkVM,
+    /// before the stateless validation.
+    pub codes_hashed: BTreeMap<H256, Vec<u8>>,
+    /// Map of block numbers to their corresponding block headers.
+    /// The block headers are pushed to the zkVM RLP-encoded, and then
+    /// decoded and stored in this map during guest program execution,
+    /// inside the zkVM.
+    pub block_headers: BTreeMap<u64, BlockHeader>,
+    /// The accounts state trie containing the necessary state for the guest
+    /// program execution.
+    /// The trie is built during guest program execution inside the zkVM,
+    /// before the stateless validation.
+    pub state_trie: Option<Trie>,
+    /// The parent block header of the first block in the batch.
+    pub parent_block_header: BlockHeader,
+    /// The block number of the first block in the batch.
+    pub first_block_number: u64,
+    /// The chain configuration.
+    pub chain_config: ChainConfig,
+    /// This is a convenience map to track which accounts and storage slots were
+    /// touched during execution.
+    /// It maps an account address to a vector of all storage slots that were
+    /// accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
     pub touched_account_storage_slots: BTreeMap<Address, Vec<H256>>,
-    #[serde(skip)]
-    #[rkyv(with = rkyv::with::Skip)]
+    /// Map of account addresses to their corresponding storage tries.
+    /// This struct is initialized empty inside the zkVM and storage tries are
+    /// built on-demand and cached here during guest program execution.
+    pub storage_tries: BTreeMap<Address, Trie>,
+    /// Map of account addresses to their corresponding hashed addresses.
+    /// This is a convenience map to avoid recomputing the hashed address
+    /// multiple times during guest program execution.
+    /// It is built on-demand during guest program execution, inside the zkVM.
     pub account_hashes_by_address: BTreeMap<Address, Vec<u8>>,
 }
 
+/// Witness data produced by the client and consumed by the guest program
+/// inside the zkVM.
+///
+/// It is essentially an `RpcExecutionWitness` but it also contains `ChainConfig`,
+/// and `first_block_number`.
 #[derive(Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitness {
-    // Used evm bytecodes
+    // Contract bytecodes needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub codes: Vec<Vec<u8>>,
-    // Block headers as raw bytes
+    /// RLP-encoded block headers needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub block_headers_bytes: Vec<Vec<u8>>,
     /// The block number of the first block
     pub first_block_number: u64,
-    // Chain config
+    // The chain config.
     pub chain_config: ChainConfig,
-    /// These are the RLP-encoded nodes for the state trie.
-    /// They are later encoded and moved to the state_node
+    /// RLP-encoded trie nodes needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub nodes: Vec<Vec<u8>>,
 }
