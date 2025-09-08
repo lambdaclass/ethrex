@@ -8,7 +8,6 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info};
-use bytes::Bytes;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -306,7 +305,7 @@ impl Blockchain {
                     .ok_or(ChainError::WitnessGeneration(
                         "Failed to get account code".to_string(),
                     ))?;
-                codes.push(code);
+                codes.push(code.to_vec());
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
@@ -365,15 +364,12 @@ impl Blockchain {
             let header = self.storage.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration("Failed to get block header".to_string()),
             )?;
-            block_headers_bytes.push(header.encode_to_vec().into());
+            block_headers_bytes.push(header.encode_to_vec());
         }
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
-        let nodes = used_trie_nodes
-            .into_iter()
-            .map(Bytes::from)
-            .collect::<Vec<_>>();
+        let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
 
         Ok(ExecutionWitnessResult {
             codes_hashed: BTreeMap::new(), // This must be filled during stateless execution

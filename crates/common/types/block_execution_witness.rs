@@ -30,10 +30,10 @@ pub struct ExecutionWitnessResult {
     // Indexed by code hash
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
-    pub codes_hashed: BTreeMap<H256, Bytes>,
+    pub codes_hashed: BTreeMap<H256, Vec<u8>>,
     // Used evm bytecodes
-    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
-    pub codes: Vec<Bytes>,
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub codes: Vec<Vec<u8>>,
     // Pruned state MPT
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
@@ -47,8 +47,8 @@ pub struct ExecutionWitnessResult {
     #[rkyv(with = rkyv::with::Skip)]
     pub block_headers: BTreeMap<u64, BlockHeader>,
     // Block headers as raw bytes
-    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
-    pub block_headers_bytes: Vec<Bytes>,
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub block_headers_bytes: Vec<Vec<u8>>,
     // Parent block header to get the initial state root
     #[serde(skip)]
     #[rkyv(with = rkyv::with::Skip)]
@@ -66,8 +66,8 @@ pub struct ExecutionWitnessResult {
     pub nodes_hashed: BTreeMap<H256, NodeRLP>,
     /// These are the RLP-encoded nodes for the state trie.
     /// They are later encoded and moved to the state_node
-    #[rkyv(with = crate::rkyv_utils::BytesVecWrapper)]
-    pub nodes: Vec<Bytes>,
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub nodes: Vec<Vec<u8>>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.
@@ -182,7 +182,7 @@ impl ExecutionWitnessResult {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.codes_hashed.insert(info.code_hash, code.clone());
+                        self.codes_hashed.insert(info.code_hash, code.to_vec());
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -387,7 +387,7 @@ impl ExecutionWitnessResult {
             return Ok(Bytes::new());
         }
         match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
+            Some(code) => Ok(Bytes::copy_from_slice(code)),
             None => {
                 // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
                 // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.

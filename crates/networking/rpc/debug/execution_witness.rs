@@ -60,7 +60,11 @@ impl From<ExecutionWitnessResult> for RpcExecutionWitness {
                 .map(Into::into)
                 .collect(),
             keys,
-            codes: value.codes_hashed.values().cloned().collect(),
+            codes: value
+                .codes_hashed
+                .values()
+                .map(|code| Bytes::copy_from_slice(code))
+                .collect(),
             headers: value
                 .block_headers
                 .values()
@@ -77,6 +81,14 @@ pub fn execution_witness_from_rpc_chain_config(
     chain_config: ChainConfig,
     first_block_number: u64,
 ) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
+    let nodes = rpc_witness.state.into_iter().map(|b| b.to_vec()).collect();
+    let codes = rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect();
+    let block_headers_bytes = rpc_witness
+        .headers
+        .into_iter()
+        .map(|b| b.to_vec())
+        .collect();
+
     let mut touched_account_storage_slots = BTreeMap::new();
     let mut address = Address::default();
     for bytes in rpc_witness.keys {
@@ -93,7 +105,7 @@ pub fn execution_witness_from_rpc_chain_config(
     }
 
     let witness = ExecutionWitnessResult {
-        codes: rpc_witness.codes,
+        codes,
         codes_hashed: BTreeMap::new(), // This must be filled during stateless execution
         state_trie: None,              // `None` because we'll rebuild the tries afterwards
         storage_tries: BTreeMap::new(), // empty map because we'll rebuild the tries afterwards
@@ -101,9 +113,9 @@ pub fn execution_witness_from_rpc_chain_config(
         chain_config,
         parent_block_header: Default::default(), // Default because we'll rebuild it in the stateless execution
         first_block_number,
-        block_headers_bytes: rpc_witness.headers,
+        block_headers_bytes,
         nodes_hashed: BTreeMap::new(), // empty map because this must be filled during stateless execution
-        nodes: rpc_witness.state,
+        nodes,
         touched_account_storage_slots,
         account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };

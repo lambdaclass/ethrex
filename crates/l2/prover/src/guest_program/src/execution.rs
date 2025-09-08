@@ -1,6 +1,5 @@
 use crate::input::ProgramInput;
 use crate::output::ProgramOutput;
-use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
@@ -248,7 +247,7 @@ struct StatelessResult {
     #[cfg(feature = "l2")]
     nodes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
-    codes_hashed: BTreeMap<H256, Bytes>,
+    codes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
     parent_block_header: BlockHeader,
 }
