@@ -33,6 +33,7 @@ members = [
   "tooling/archive_sync",
   "tooling/replayer",
   "crates/common/config",
+  "cmd/zkethrex",
 ]
 resolver = "2"
 
