@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage: notify_workflow_failure.sh <slack_webhook_url>
 # Expects the following env vars (provided by the caller workflow):
-#   REPO, WORKFLOW_NAME, CONCLUSION, RUN_HTML_URL, RUN_ID, HEAD_SHA, ACTOR
+#   REPO, WORKFLOW_NAME, CONCLUSION, RUN_HTML_URL, RUN_ID, HEAD_SHA
 
 SLACK_WEBHOOK_URL=${1:-}
 if [[ -z "${SLACK_WEBHOOK_URL}" ]]; then
@@ -17,7 +17,6 @@ CONCLUSION=${CONCLUSION:-}
 RUN_HTML_URL=${RUN_HTML_URL:-}
 RUN_ID=${RUN_ID:-}
 HEAD_SHA=${HEAD_SHA:-}
-ACTOR=${ACTOR:-}
 
 RUN_URL="$RUN_HTML_URL"
 if [[ -z "$RUN_URL" ]]; then

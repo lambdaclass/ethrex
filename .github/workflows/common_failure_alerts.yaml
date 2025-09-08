@@ -49,6 +49,5 @@ jobs:
           RUN_HTML_URL: ${{ github.event.workflow_run.html_url }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          ACTOR: ${{ github.event.workflow_run.actor.login }}
         run: |
           bash .github/scripts/notify_workflow_failure.sh "${{ steps.select_webhook.outputs.webhook }}"
