@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757354210202,
+  "lastUpdate": 1757354914614,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12805,6 +12805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 172315732727,
             "range": "± 328610850",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5e527c38f73159ff1015167d5e587a67f01f26a9",
+          "message": "fix(l2): avoid updating last_block_fetched when getLogs fails (#4355)\n\n**Motivation**\n\nWe are encountering the following error in our L2 integration tests:\n\n```\n2025-08-29T19:17:04.573865Z  WARN ethrex_l2::sequencer::l1_watcher: Error when getting logs from L1: eth_getLogs request error: Internal Error: Could not get receipt\n```\n\nAlthough this error is being addressed in #4346, our `l1_watcher`\nshouldn't simply log the error and update `last_block_fetched` as if it\nwere already reviewed. We should retry since we might be missing some\n`privilegedTransactions`.\n\n**Description**\n\n- If `getLogs()` fails, return without updating `last_block_fetched`.\n\n\nCloses None",
+          "timestamp": "2025-09-08T17:16:14Z",
+          "tree_id": "a9a7859119b9180b85893c9502c835907d4cb62c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5e527c38f73159ff1015167d5e587a67f01f26a9"
+        },
+        "date": 1757354894541,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166700414629,
+            "range": "± 437825586",
             "unit": "ns/iter"
           }
         ]
