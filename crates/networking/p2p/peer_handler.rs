@@ -374,7 +374,7 @@ impl PeerHandler {
                 .peer_scores
                 .lock()
                 .await
-                .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
+                .get_peer_channel_with_highest_score(&self.peer_table, &SUPPORTED_ETH_CAPABILITIES)
                 .await
             else {
                 trace!("We didn't get a peer from the table");
