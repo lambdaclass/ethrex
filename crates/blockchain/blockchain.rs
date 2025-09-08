@@ -153,7 +153,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         block: &Block,
         chain_config: &ChainConfig,
-        vm: &mut Evm,
+        vm: &mut impl Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
@@ -205,8 +205,8 @@ impl Blockchain {
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.r#type {
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
+                BlockchainType::L1 => <dyn Evm>::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L2 => <dyn Evm>::new_from_db_for_l2(logger.clone()),
             };
 
             // Re-execute block with logger
@@ -875,10 +875,10 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-        let evm = match self.r#type {
-            BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
+    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Box<dyn Evm>, EvmError> {
+        let evm: Box<dyn Evm> = match self.r#type {
+            BlockchainType::L1 => <dyn Evm>::new_for_l1(vm_db),
+            BlockchainType::L2 => <dyn Evm>::new_for_l2(vm_db)?,
         };
         Ok(evm)
     }

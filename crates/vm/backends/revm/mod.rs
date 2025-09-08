@@ -41,8 +41,9 @@ use revm_primitives::{
 };
 use std::cmp::min;
 
-#[derive(Debug)]
-pub struct REVM;
+pub struct REVM {
+    pub state: EvmState,
+}
 
 /// The struct implements the following functions:
 /// [REVM::execute_block]
