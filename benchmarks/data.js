@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757368789684,
+  "lastUpdate": 1757372749818,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12955,6 +12955,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164116311535,
             "range": "± 695527632",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8ce1f272241106f4bdbfc5028c0526f75189e1e",
+          "message": "build(l2): bump the cargo group across 1 directory with 1 update (#4278)\n\nBumps the cargo group with 1 update in the /crates/l2/tee/quote-gen\ndirectory: [slab](https://github.com/tokio-rs/slab).\n\nUpdates `slab` from 0.4.10 to 0.4.11\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/tokio-rs/slab/releases\">slab's\nreleases</a>.</em></p>\n<blockquote>\n<h2>v0.4.11</h2>\n<ul>\n<li>Fix <code>Slab::get_disjoint_mut</code> out of bounds (<a\nhref=\"https://redirect.github.com/tokio-rs/slab/issues/152\">#152</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/tokio-rs/slab/blob/master/CHANGELOG.md\">slab's\nchangelog</a>.</em></p>\n<blockquote>\n<h1>0.4.11 (August 8, 2025)</h1>\n<ul>\n<li>Fix <code>Slab::get_disjoint_mut</code> out of bounds (<a\nhref=\"https://redirect.github.com/tokio-rs/slab/issues/152\">#152</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/tokio-rs/slab/commit/2e5779f8eb318827c78cad38007445a93ec04503\"><code>2e5779f</code></a>\nRelease v0.4.11 (<a\nhref=\"https://redirect.github.com/tokio-rs/slab/issues/153\">#153</a>)</li>\n<li><a\nhref=\"https://github.com/tokio-rs/slab/commit/2d65c514bc964b192bab212ddf3c1fcea4ae96b8\"><code>2d65c51</code></a>\nFix get_disjoint_mut error condition (<a\nhref=\"https://redirect.github.com/tokio-rs/slab/issues/152\">#152</a>)</li>\n<li>See full diff in <a\nhref=\"https://github.com/tokio-rs/slab/compare/v0.4.10...v0.4.11\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\nUpdates `slab` from 0.4.10 to 0.4.11\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/tokio-rs/slab/releases\">slab's\nreleases</a>.</em></p>\n<blockquote>\n<h2>v0.4.11</h2>\n<ul>\n<li>Fix <code>Slab::get_disjoint_mut</code> out of bounds (<a\nhref=\"https://redirect.github.com/tokio-rs/slab/issues/152\">#152</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/tokio-rs/slab/blob/master/CHANGELOG.md\">slab's\nchangelog</a>.</em></p>\n<blockquote>\n<h1>0.4.11 (August 8, 2025)</h1>\n<ul>\n<li>Fix <code>Slab::get_disjoint_mut</code> out of bounds (<a\nhref=\"https://redirect.github.com/tokio-rs/slab/issues/152\">#152</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/tokio-rs/slab/commit/2e5779f8eb318827c78cad38007445a93ec04503\"><code>2e5779f</code></a>\nRelease v0.4.11 (<a\nhref=\"https://redirect.github.com/tokio-rs/slab/issues/153\">#153</a>)</li>\n<li><a\nhref=\"https://github.com/tokio-rs/slab/commit/2d65c514bc964b192bab212ddf3c1fcea4ae96b8\"><code>2d65c51</code></a>\nFix get_disjoint_mut error condition (<a\nhref=\"https://redirect.github.com/tokio-rs/slab/issues/152\">#152</a>)</li>\n<li>See full diff in <a\nhref=\"https://github.com/tokio-rs/slab/compare/v0.4.10...v0.4.11\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n\nDependabot will resolve any conflicts with this PR as long as you don't\nalter it yourself. You can also trigger a rebase manually by commenting\n`@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits\nthat have been made to it\n- `@dependabot merge` will merge this PR after your CI passes on it\n- `@dependabot squash and merge` will squash and merge this PR after\nyour CI passes on it\n- `@dependabot cancel merge` will cancel a previously requested merge\nand block automerging\n- `@dependabot reopen` will reopen this PR if it is closed\n- `@dependabot close` will close this PR and stop Dependabot recreating\nit. You can achieve the same result by closing it manually\n- `@dependabot show <dependency name> ignore conditions` will show all\nof the ignore conditions of the specified dependency\n- `@dependabot ignore <dependency name> major version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's major version (unless you unignore this specific\ndependency's major version or upgrade to it yourself)\n- `@dependabot ignore <dependency name> minor version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's minor version (unless you unignore this specific\ndependency's minor version or upgrade to it yourself)\n- `@dependabot ignore <dependency name>` will close this group update PR\nand stop Dependabot creating any more for the specific dependency\n(unless you unignore this specific dependency or upgrade to it yourself)\n- `@dependabot unignore <dependency name>` will remove all of the ignore\nconditions of the specified dependency\n- `@dependabot unignore <dependency name> <ignore condition>` will\nremove the ignore condition of the specified dependency and ignore\nconditions\nYou can disable automated security fix PRs for this repo from the\n[Security Alerts\npage](https://github.com/lambdaclass/ethrex/network/alerts).\n\n</details>\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2025-09-08T22:12:44Z",
+          "tree_id": "b0c3e01fe1fcb4cdcf4ad3c47c10966b1c0d727c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c8ce1f272241106f4bdbfc5028c0526f75189e1e"
+        },
+        "date": 1757372731781,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169279859191,
+            "range": "± 558310195",
             "unit": "ns/iter"
           }
         ]
