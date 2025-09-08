@@ -69,6 +69,7 @@ async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
         }).await?;
 
         computed_state_root = current_state_root?;
+        break;
     }
     Ok(())
 }
