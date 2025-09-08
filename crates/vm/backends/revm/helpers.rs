@@ -1,5 +1,3 @@
-#![cfg(feature = "revm")]
-
 use ethrex_common::types::{ChainConfig, Fork};
 use ethrex_common::{
     Address, H256,

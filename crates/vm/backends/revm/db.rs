@@ -1,5 +1,3 @@
-#![cfg(feature = "revm")]
-
 use ethrex_common::types::ChainConfig;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use revm::primitives::{

@@ -1,5 +1,3 @@
-#![cfg(feature = "revm")]
-
 use std::collections::HashSet;
 
 use ethrex_common::tracing::{CallLog, CallTrace, CallTraceFrame, CallType};
