@@ -3,7 +3,6 @@ use crate::kademlia::PeerChannels;
 use crate::rlpx::p2p::Capability;
 use ethrex_common::H256;
 use std::collections::HashMap;
-use std::i64;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;

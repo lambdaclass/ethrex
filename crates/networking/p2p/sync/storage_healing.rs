@@ -237,7 +237,7 @@ pub async fn heal_storage_trie(
             &mut state.download_queue,
             &mut state.requests,
             &mut requests_task_joinset,
-            &peers,
+            peers,
             state.state_root,
             &task_sender,
         )
