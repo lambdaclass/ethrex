@@ -9,15 +9,14 @@ edition = "2024"
 openvm = { git = "https://github.com/openvm-org/openvm.git", features = [
     "std",
 ], tag = "v1.4.0" }
+openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.0" }
 rkyv = "0.8.10"
 
 zkvm_interface = { path = "../" }
 
-openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git" }
-
 [patch.crates-io]
-#secp256k1 = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.0", package = "k256" }
-secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
+secp256k1 = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.0", package = "k256" }
+#secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
 
 [features]
 l2 = ["zkvm_interface/l2"]
