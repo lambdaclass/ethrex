@@ -393,6 +393,7 @@ pub mod test_utils {
             SyncManager::dummy(),
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
+            None,
         )
         .await
         .unwrap();
@@ -414,6 +415,7 @@ pub mod test_utils {
                 client_version: "ethrex/test".to_string(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
+            log_filter_handler: None,
         }
     }
 }
