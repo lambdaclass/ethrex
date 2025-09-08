@@ -117,7 +117,13 @@ where
                         BlockExpectedException::SystemContractCallFailed,
                     )
                 }
-                _ => BlockChainExpectedException::Other,
+                other => {
+                    if other.starts_with("BlockException.") {
+                        BlockChainExpectedException::BlockException(BlockExpectedException::Other)
+                    } else {
+                        BlockChainExpectedException::Other
+                    }
+                }
             })
             .collect();
 
