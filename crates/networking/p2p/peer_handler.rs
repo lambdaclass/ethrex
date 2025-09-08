@@ -86,12 +86,26 @@ pub struct PeerHandler {
     pending_tasks: VecDeque<Task>,
     started_tasks: HashMap<H256, (Task, Instant)>,
     sync_state: SyncState,
+    // TODO: ADD
+    // pivot_header
 }
 
 #[derive(Clone, Debug)]
 enum Task {
-    Headers { start_block: u64, chunk_limit: u64 },
-    AccountRanges { chunk_start: H256, chunk_end: H256 },
+    Headers {
+        start_block: u64,
+        chunk_limit: u64,
+    },
+    AccountRanges {
+        chunk_start: H256,
+        chunk_end: H256,
+    },
+    StorageRanges {
+        start_index: usize,
+        end_index: usize,
+        start_hash: H256,
+        end_hash: Option<H256>,
+    },
 }
 
 #[derive(Clone)]
@@ -106,14 +120,24 @@ pub enum SyncState {
     RetrievingAccountRanges {
         account_state_snapshots_dir: String,
         chunk_file_index: u64,
-        pivot_header: BlockHeader,
+        pivot_header: BlockHeader, // TODO: REPLACE FOR THE GENERAL ONE
         block_sync_state: BlockSyncState,
         completed_tasks: u64,
         all_account_hashes: Vec<H256>,
         all_accounts_state: Vec<AccountState>,
     },
     FinishedAccountRanges,
-    RetrievingStorageRanges {},
+    RetrievingStorageRanges {
+        account_storages_snapshots_dir: String,
+        chunk_file_index: u64,
+        account_storage_roots: AccountStorageRoots,
+        all_account_storages: Vec<Vec<(H256, U256)>>,
+        accounts_done: Vec<H256>,
+        current_account_hashes: Vec<H256>,
+        task_count: u64,
+        completed_tasks: u64,
+        pivot_header: BlockHeader, // TODO: REPLACE FOR THE GENERAL ONE
+    },
     FinishedStorageRanges(u64, AccountStorageRoots),
 }
 
@@ -142,7 +166,7 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StorageTaskResult {
     pub start_index: usize,
     pub account_storages: Vec<Vec<(H256, U256)>>,
@@ -233,6 +257,7 @@ impl PeerHandler {
     /// Helper function that frees peers after being busy
     /// for more than the tolerated time
     pub async fn reset_timed_out_busy_peers(&self) {
+        info!("Peer status: {:?}", self.peers_info.lock().await);
         for (_, peer) in self.peers_info.lock().await.iter_mut() {
             if peer
                 .request_time
@@ -1705,6 +1730,7 @@ pub enum PeerHandlerCastMessage {
 pub enum DownloaderResponse {
     Headers(Vec<BlockHeader>),
     AccountRange(Vec<AccountRangeUnit>, Option<(H256, H256)>),
+    StorageRange(StorageTaskResult),
 }
 
 #[derive(Clone)]
@@ -1741,14 +1767,12 @@ impl GenServer for PeerHandler {
     type Error = ();
 
     async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        // TODO: keep handle for shutdown
         let _peer_updater = send_interval(
             Duration::from_secs(5),
             handle.clone(),
             PeerHandlerCastMessage::UpdatePeers,
         );
 
-        // TODO: keep handle for shutdown
         let _task_assigner = send_interval(
             Duration::from_millis(100),
             handle.clone(),
@@ -1776,7 +1800,8 @@ impl GenServer for PeerHandler {
 
                 let capabilities = match self.sync_state {
                     SyncState::RetrievingHeaders { .. } => &SUPPORTED_ETH_CAPABILITIES,
-                    SyncState::RetrievingAccountRanges { .. } => &SUPPORTED_SNAP_CAPABILITIES,
+                    SyncState::RetrievingAccountRanges { .. }
+                    | SyncState::RetrievingStorageRanges { .. } => &SUPPORTED_SNAP_CAPABILITIES,
                     // Idle or finished states, should not get here
                     _ => &SUPPORTED_SNAP_CAPABILITIES,
                 };
@@ -1785,7 +1810,8 @@ impl GenServer for PeerHandler {
                     SyncState::RetrievingHeaders { .. } => {
                         self.get_random_downloader(capabilities).await
                     }
-                    SyncState::RetrievingAccountRanges { .. } => {
+                    SyncState::RetrievingAccountRanges { .. }
+                    | SyncState::RetrievingStorageRanges { .. } => {
                         self.get_best_downloader(capabilities).await
                     }
                     // Idle or finished states, should not get here
@@ -1803,6 +1829,14 @@ impl GenServer for PeerHandler {
                             start_block,
                             chunk_limit,
                         } => {
+                            if !matches!(self.sync_state, SyncState::RetrievingHeaders { .. }) {
+                                // TODO: I don't know in which case this can happen
+                                error!(
+                                    "There's headers task, but the peer handler is not in the correct state"
+                                );
+                                return CastResponse::NoReply;
+                            }
+
                             let response_handle = handle.clone();
                             downloader_handle
                                 .cast(DownloaderCastRequest::HeadersNew {
@@ -1853,6 +1887,59 @@ impl GenServer for PeerHandler {
                                 .await
                                 .unwrap(); // TODO: handle unwrap
                         }
+                        Task::StorageRanges {
+                            start_index,
+                            end_index,
+                            start_hash,
+                            end_hash,
+                        } => {
+                            let SyncState::RetrievingStorageRanges {
+                                account_storages_snapshots_dir: _,
+                                chunk_file_index: _,
+                                account_storage_roots,
+                                all_account_storages: _,
+                                accounts_done,
+                                current_account_hashes,
+                                task_count: _,
+                                completed_tasks: _,
+                                pivot_header,
+                            } = &mut self.sync_state
+                            else {
+                                // TODO: I don't know in which case this can happen
+                                error!(
+                                    "There's an storage ranges task, but the peer handler is not in the correct state"
+                                );
+                                return CastResponse::NoReply;
+                            };
+
+                            if block_is_stale(pivot_header) {
+                                info!("request_storage_ranges became stale, breaking");
+                                break;
+                            }
+
+                            let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
+                                account_storage_roots
+                                    .accounts_with_storage_root
+                                    .iter()
+                                    .skip(start_index)
+                                    .take(end_index - start_index)
+                                    .map(|(hash, root)| (*hash, *root))
+                                    .unzip();
+
+                            downloader_handle
+                                .cast(DownloaderCastRequest::StorageRangeNew {
+                                    response_handle: handle.clone(),
+                                    start_index,
+                                    end_index,
+                                    start_hash,
+                                    end_hash,
+                                    state_root: pivot_header.state_root,
+                                    chunk_account_hashes,
+                                    chunk_storage_roots,
+                                })
+                                .await
+                                .unwrap();
+                        }
                     }
                     debug!("Sent Downloader actor {peer_id} new request");
                     self.mark_peer_as_busy(peer_id).await;
@@ -1861,7 +1948,6 @@ impl GenServer for PeerHandler {
                 }
             }
             PeerHandlerCastMessage::TaskFinished { peer_id, response } => {
-                debug!("Peer handler received a task finalization message from {peer_id}");
                 self.mark_peer_as_free(peer_id).await;
                 let Some((_, (requested_task, _))) = self.started_tasks.remove_entry(&peer_id)
                 else {
@@ -2030,6 +2116,26 @@ impl GenServer for PeerHandler {
 
                             if *completed_tasks >= CHUNK_COUNT {
                                 info!("Finished downloading all account ranges");
+
+                                // TODO: This is repeated code, consider refactoring
+                                {
+                                    let current_account_hashes = std::mem::take(all_account_hashes);
+                                    let current_account_states = std::mem::take(all_accounts_state);
+
+                                    let account_state_chunk = current_account_hashes
+                                        .into_iter()
+                                        .zip(current_account_states)
+                                        .collect::<Vec<(H256, AccountState)>>()
+                                        .encode_to_vec();
+
+                                    let dir_cloned = account_state_snapshots_dir.clone();
+                                    let path = get_account_state_snapshot_file(
+                                        dir_cloned,
+                                        *chunk_file_index,
+                                    );
+                                    std::fs::write(path, account_state_chunk).unwrap()
+                                }
+
                                 handle
                                     .clone()
                                     .cast(PeerHandlerCastMessage::UpdateState(
@@ -2037,6 +2143,257 @@ impl GenServer for PeerHandler {
                                     ))
                                     .await
                                     .unwrap();
+                            }
+                        }
+                    }
+                    DownloaderResponse::StorageRange(storage_task_result) => {
+                        if let SyncState::RetrievingStorageRanges {
+                            account_storages_snapshots_dir,
+                            chunk_file_index,
+                            account_storage_roots,
+                            all_account_storages,
+                            accounts_done,
+                            current_account_hashes,
+                            task_count,
+                            completed_tasks,
+                            pivot_header: _,
+                        } = &mut self.sync_state
+                        {
+                            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
+                                > 1024 * 1024 * 1024 * 8
+                            {
+                                let current_account_storages = std::mem::take(all_account_storages);
+                                *all_account_storages =
+                                    vec![
+                                        vec![];
+                                        account_storage_roots.accounts_with_storage_root.len()
+                                    ];
+
+                                let snapshot = current_account_hashes
+                                    .clone()
+                                    .into_iter()
+                                    .zip(current_account_storages)
+                                    .collect::<Vec<_>>()
+                                    .encode_to_vec();
+
+                                let account_storages_snapshots_dir_cloned =
+                                    account_storages_snapshots_dir.clone();
+                                let chunk_index = *chunk_file_index;
+
+                                // TODO: extremely flaky, we are not waitng for other dumps to finish
+                                tokio::spawn(async move {
+                                    let path = get_account_storages_snapshot_file(
+                                        account_storages_snapshots_dir_cloned,
+                                        chunk_index,
+                                    );
+                                    dump_to_file(path, snapshot)
+                                });
+                                *chunk_file_index += 1;
+                            }
+
+                            let StorageTaskResult {
+                                start_index,
+                                mut account_storages,
+                                peer_id,
+                                remaining_start,
+                                remaining_end,
+                                remaining_hash_range: (hash_start, hash_end),
+                            } = storage_task_result;
+                            *completed_tasks += 1;
+
+                            self.peers_info
+                                .lock()
+                                .await
+                                .entry(peer_id)
+                                .and_modify(|info| info.request_time = None);
+
+                            for account in &current_account_hashes[start_index..remaining_start] {
+                                accounts_done.push(*account);
+                            }
+
+                            if remaining_start < remaining_end {
+                                trace!("Failed to download chunk from peer {peer_id}");
+                                if hash_start.is_zero() {
+                                    // Task is common storage range request
+                                    self.pending_tasks.push_back(Task::StorageRanges {
+                                        start_index: remaining_start,
+                                        end_index: remaining_end,
+                                        start_hash: H256::zero(),
+                                        end_hash: None,
+                                    });
+                                    *task_count += 1;
+                                } else if let Some(hash_end) = hash_end {
+                                    // Task was a big storage account result
+                                    if hash_start <= hash_end {
+                                        self.pending_tasks.push_back(Task::StorageRanges {
+                                            start_index: remaining_start,
+                                            end_index: remaining_end,
+                                            start_hash: hash_start,
+                                            end_hash: Some(hash_end),
+                                        });
+                                        *task_count += 1;
+                                        accounts_done.push(current_account_hashes[remaining_start]);
+                                        account_storage_roots
+                                            .healed_accounts
+                                            .insert(current_account_hashes[start_index]);
+                                    }
+                                } else {
+                                    if remaining_start + 1 < remaining_end {
+                                        self.pending_tasks.push_back(Task::StorageRanges {
+                                            start_index: remaining_start,
+                                            end_index: remaining_start + 1,
+                                            start_hash: hash_start,
+                                            end_hash: None,
+                                        });
+                                        *task_count += 1;
+                                    }
+                                    // Task found a big storage account, so we split the chunk into multiple chunks
+                                    let start_hash_u256 = U256::from_big_endian(&hash_start.0);
+                                    let missing_storage_range = U256::MAX - start_hash_u256;
+
+                                    let slot_count = account_storages
+                                        .last()
+                                        .map(|v| v.len())
+                                        .unwrap() // TODO: Handle unwrap
+                                        .max(1);
+                                    let storage_density = start_hash_u256 / slot_count;
+
+                                    let slots_per_chunk = U256::from(10000);
+                                    let chunk_size = storage_density
+                                        .checked_mul(slots_per_chunk)
+                                        .unwrap_or(U256::MAX);
+
+                                    let chunk_count =
+                                        (missing_storage_range / chunk_size).as_usize().max(1);
+
+                                    for i in 0..chunk_count {
+                                        let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                        let start_hash = H256::from_uint(&start_hash_u256);
+                                        let end_hash = if i == chunk_count - 1 {
+                                            H256::repeat_byte(0xff)
+                                        } else {
+                                            let end_hash_u256 = start_hash_u256
+                                                .checked_add(chunk_size)
+                                                .unwrap_or(U256::MAX);
+                                            H256::from_uint(&end_hash_u256)
+                                        };
+
+                                        self.pending_tasks.push_back(Task::StorageRanges {
+                                            start_index: remaining_start,
+                                            end_index: remaining_start + 1,
+                                            start_hash,
+                                            end_hash: Some(end_hash),
+                                        });
+                                    }
+                                    debug!("Split big storage account into {chunk_count} chunks.");
+                                }
+                            }
+
+                            if account_storages.is_empty() {
+                                self.peers_info.lock().await.entry(peer_id).and_modify(
+                                    |peer_info| {
+                                        peer_info.score -= 1;
+                                    },
+                                );
+                                return CastResponse::NoReply;
+                            }
+                            if let Some(hash_end) = hash_end {
+                                // This is a big storage account, and the range might be empty
+                                if account_storages[0].len() == 1
+                                    && account_storages[0][0].0 > hash_end
+                                {
+                                    return CastResponse::NoReply;
+                                }
+                            }
+
+                            if let Some(peer_info) = self.peers_info.lock().await.get_mut(&peer_id)
+                            {
+                                if peer_info.score < 10 {
+                                    peer_info.score += 1;
+                                }
+                            }
+
+                            let n_storages = account_storages.len();
+                            let n_slots = account_storages
+                                .iter()
+                                .map(|storage| storage.len())
+                                .sum::<usize>();
+
+                            debug!(
+                                "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id}"
+                            );
+                            debug!(
+                                "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
+                                self.pending_tasks.len()
+                            );
+                            if account_storages.len() == 1 {
+                                // We downloaded a big storage account
+                                let acc = account_storages.remove(0);
+                                all_account_storages[start_index].extend(acc);
+                            } else {
+                                for (i, storage) in account_storages.into_iter().enumerate() {
+                                    all_account_storages[start_index + i] = storage;
+                                }
+                            }
+
+                            // We finished downloading storage for all accounts
+                            if completed_tasks >= task_count {
+                                // TODO: move somewhere else
+                                {
+                                    let current_account_hashes = account_storage_roots
+                                        .accounts_with_storage_root
+                                        .iter()
+                                        .map(|a| *a.0)
+                                        .collect::<Vec<_>>();
+                                    let current_account_storages =
+                                        std::mem::take(all_account_storages);
+
+                                    let snapshot = current_account_hashes
+                                        .into_iter()
+                                        .zip(current_account_storages)
+                                        .collect::<Vec<_>>()
+                                        .encode_to_vec();
+
+                                    let account_storages_snapshots_dir_cloned =
+                                        account_storages_snapshots_dir.clone();
+                                    let path = get_account_storages_snapshot_file(
+                                        account_storages_snapshots_dir_cloned,
+                                        *chunk_file_index,
+                                    );
+                                    std::fs::write(path, snapshot).unwrap();
+                                }
+
+                                // TODO: RE-ENABLE
+                                // disk_joinset
+                                //     .join_all()
+                                //     .await
+                                //     .into_iter()
+                                //     .map(|result| {
+                                //         result
+                                //             .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
+                                //     })
+                                //     .collect::<Result<Vec<()>, DumpError>>()
+                                //     .map_err(PeerHandlerError::DumpError)?;
+
+                                for account_done in accounts_done {
+                                    account_storage_roots
+                                        .accounts_with_storage_root
+                                        .remove(&account_done);
+                                }
+
+                                let chunk_index = 0; // TODO: this has to be part of PeerHandler
+                                handle
+                                    .clone()
+                                    .cast(PeerHandlerCastMessage::UpdateState(
+                                        SyncState::FinishedStorageRanges(
+                                            chunk_index + 1,
+                                            account_storage_roots.clone(),
+                                        ), // TODO: clonning of account storages migh be costly on memory
+                                    ))
+                                    .await
+                                    .unwrap();
+
+                                info!("Finished downloading all storage ranges");
                             }
                         }
                     }
@@ -2111,28 +2468,20 @@ impl GenServer for PeerHandler {
                 *METRICS.headers_to_download.lock().await = sync_head_number + 1;
                 *METRICS.sync_head_hash.lock().await = sync_head;
 
-                // Create tasks
-                let block_count = sync_head_number + 1 - start;
-                let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
-
-                // partition the amount of headers in `K` tasks
-                let chunk_limit = block_count / chunk_count;
-
+                let max_chunk_size = 800;
                 let mut pending_tasks = VecDeque::new();
 
-                for i in 0..chunk_count {
-                    pending_tasks.push_back(Task::Headers {
-                        start_block: i * chunk_limit + start,
-                        chunk_limit,
-                    });
-                }
+                let mut current_start = start;
+                while current_start <= sync_head_number {
+                    let remaining = sync_head_number + 1 - current_start;
+                    let size = remaining.min(max_chunk_size);
 
-                // Push the remainder
-                if block_count % chunk_count != 0 {
                     pending_tasks.push_back(Task::Headers {
-                        start_block: chunk_count * chunk_limit + start,
-                        chunk_limit: block_count % chunk_count,
+                        start_block: current_start,
+                        chunk_limit: size,
                     });
+
+                    current_start += size;
                 }
 
                 debug!(
@@ -2153,7 +2502,7 @@ impl GenServer for PeerHandler {
                 start,
                 limit,
                 account_state_snapshots_dir,
-                pivot_header,
+                pivot_header, // TODO! calculate pivot header internally
                 block_sync_state,
             } => {
                 // Create used directory if it doesn't exist
@@ -2213,13 +2562,62 @@ impl GenServer for PeerHandler {
             }
             PeerHandlerCallMessage::DownloadStorageRanges {
                 storage_accounts,
-                account_storages_snapshot_dir,
+                account_storages_snapshot_dir: account_storages_snapshots_dir,
                 chunk_index,
-                pivot_header,
+                pivot_header, // TODO! calculate pivot header internally
             } => {
-                self.pending_tasks = vec![].into();
+                if !std::fs::exists(&account_storages_snapshots_dir).unwrap() {
+                    std::fs::create_dir_all(&account_storages_snapshots_dir).unwrap();
+                }
+
+                // 1) split the range in chunks of same length
+                let chunk_size = 300;
+                let chunk_count =
+                    (storage_accounts.accounts_with_storage_root.len() / chunk_size) + 1;
+
+                // list of tasks to be executed
+                // Types are (start_index, end_index, starting_hash)
+                // NOTE: end_index is NOT inclusive
+                let mut pending_tasks = VecDeque::new();
+                for i in 0..chunk_count {
+                    let chunk_start = chunk_size * i;
+                    let chunk_end = (chunk_start + chunk_size)
+                        .min(storage_accounts.accounts_with_storage_root.len());
+                    pending_tasks.push_back(Task::StorageRanges {
+                        start_index: chunk_start,
+                        end_index: chunk_end,
+                        start_hash: H256::zero(),
+                        end_hash: None,
+                    });
+                }
+
+                let all_account_storages =
+                    vec![vec![]; storage_accounts.accounts_with_storage_root.len()];
+
+                let task_count = pending_tasks.len() as u64;
+                let completed_tasks = 0;
+
+                // TODO: in a refactor, delete this replace with a structure that can handle removes
+                let accounts_done: Vec<H256> = Vec::new();
+                let current_account_hashes = storage_accounts
+                    .accounts_with_storage_root
+                    .iter()
+                    .map(|a| *a.0)
+                    .collect::<Vec<_>>();
+
+                self.pending_tasks = pending_tasks;
                 self.started_tasks = HashMap::new();
-                self.sync_state = SyncState::RetrievingStorageRanges {};
+                self.sync_state = SyncState::RetrievingStorageRanges {
+                    account_storages_snapshots_dir,
+                    chunk_file_index: chunk_index,
+                    account_storage_roots: storage_accounts,
+                    all_account_storages,
+                    accounts_done,
+                    current_account_hashes,
+                    task_count,
+                    completed_tasks,
+                    pivot_header,
+                };
                 CallResponse::Reply(PeerHandlerCallResponse::InProgress)
             }
         }

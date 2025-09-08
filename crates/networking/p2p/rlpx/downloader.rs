@@ -117,6 +117,17 @@ pub enum DownloaderCastRequest {
         starting_hash: H256,
         limit_hash: H256,
     },
+    StorageRangeNew {
+        response_handle: GenServerHandle<PeerHandler>,
+        start_index: usize,
+        end_index: usize,
+        start_hash: H256,
+        // end_hash is None if the task is for the first big storage request
+        end_hash: Option<H256>,
+        state_root: H256,
+        chunk_account_hashes: Vec<H256>,
+        chunk_storage_roots: Vec<H256>,
+    },
     //
     // OLD METHODS, REMOVE EVENTUALLY
     //
@@ -664,6 +675,248 @@ impl GenServer for Downloader {
                 }
                 CastResponse::Stop
             }
+            DownloaderCastRequest::StorageRangeNew {
+                mut response_handle,
+                start_index,
+                end_index,
+                start_hash,
+                end_hash,
+                state_root,
+                chunk_account_hashes,
+                chunk_storage_roots,
+            } => {
+                let empty_task_result = StorageTaskResult {
+                    start_index,
+                    account_storages: Vec::new(),
+                    peer_id: self.peer_id,
+                    remaining_start: start_index,
+                    remaining_end: end_index,
+                    remaining_hash_range: (start_hash, end_hash),
+                };
+                let request_id = rand::random();
+                let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
+                    id: request_id,
+                    root_hash: state_root,
+                    account_hashes: chunk_account_hashes,
+                    starting_hash: start_hash,
+                    limit_hash: end_hash.unwrap_or(HASH_MAX),
+                    response_bytes: MAX_RESPONSE_BYTES,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = (self.peer_channels.connection)
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    error!("Failed to send message to peer: {err:?}");
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::StorageRange(empty_task_result),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                    return CastResponse::Stop;
+                }
+                let request_result =
+                    tokio::time::timeout(STORAGE_RANGE_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::StorageRanges(StorageRanges {
+                                    id,
+                                    slots,
+                                    proof,
+                                })) if id == request_id => return Some((slots, proof)),
+                                Some(_) => continue,
+                                None => return None,
+                            }
+                        }
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                let Some((slots, proof)) = request_result else {
+                    tracing::debug!("Failed to get storage range");
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::StorageRange(empty_task_result),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                    return CastResponse::Stop;
+                };
+                if slots.is_empty() && proof.is_empty() {
+                    tracing::debug!("Received empty account range");
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::StorageRange(empty_task_result),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                    return CastResponse::Stop;
+                }
+                // Check we got some data and no more than the requested amount
+                if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::StorageRange(empty_task_result),
+                        })
+                        .await
+                        .unwrap(); // TODO: Handle unwrap
+                    return CastResponse::Stop;
+                }
+                // Unzip & validate response
+                let proof = encodable_to_proof(&proof);
+                let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
+                let mut should_continue = false;
+                // Validate each storage range
+                let mut storage_roots = chunk_storage_roots.into_iter();
+                let last_slot_index = slots.len() - 1;
+                for (i, next_account_slots) in slots.into_iter().enumerate() {
+                    // We won't accept empty storage ranges
+                    if next_account_slots.is_empty() {
+                        // This shouldn't happen
+                        error!("Received empty storage range, skipping");
+                        response_handle
+                            .cast(PeerHandlerCastMessage::TaskFinished {
+                                peer_id: self.peer_id(),
+                                response: DownloaderResponse::StorageRange(empty_task_result),
+                            })
+                            .await
+                            .unwrap(); // TODO: Handle unwrap
+                        return CastResponse::Stop;
+                    }
+                    let encoded_values = next_account_slots
+                        .iter()
+                        .map(|slot| slot.data.encode_to_vec())
+                        .collect::<Vec<_>>();
+                    let hashed_keys: Vec<_> =
+                        next_account_slots.iter().map(|slot| slot.hash).collect();
+
+                    let storage_root = match storage_roots.next() {
+                        Some(root) => root,
+                        None => {
+                            error!("No storage root for account {i}");
+                            response_handle
+                                .cast(PeerHandlerCastMessage::TaskFinished {
+                                    peer_id: self.peer_id(),
+                                    response: DownloaderResponse::StorageRange(empty_task_result),
+                                })
+                                .await
+                                .unwrap(); // TODO: Handle unwrap
+                            return CastResponse::Stop;
+                        }
+                    };
+
+                    // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+                    if i == last_slot_index && !proof.is_empty() {
+                        let Ok(sc) = verify_range(
+                            storage_root,
+                            &start_hash,
+                            &hashed_keys,
+                            &encoded_values,
+                            &proof,
+                        ) else {
+                            response_handle
+                                .cast(PeerHandlerCastMessage::TaskFinished {
+                                    peer_id: self.peer_id(),
+                                    response: DownloaderResponse::StorageRange(empty_task_result),
+                                })
+                                .await
+                                .unwrap(); // TODO: Handle unwrap
+                            return CastResponse::Stop;
+                        };
+                        should_continue = sc;
+                    } else if verify_range(
+                        storage_root,
+                        &start_hash,
+                        &hashed_keys,
+                        &encoded_values,
+                        &[],
+                    )
+                    .is_err()
+                    {
+                        response_handle
+                            .cast(PeerHandlerCastMessage::TaskFinished {
+                                peer_id: self.peer_id(),
+                                response: DownloaderResponse::StorageRange(empty_task_result),
+                            })
+                            .await
+                            .unwrap(); // TODO: Handle unwrap
+                        return CastResponse::Stop;
+                    }
+
+                    account_storages.push(
+                        next_account_slots
+                            .iter()
+                            .map(|slot| (slot.hash, slot.data))
+                            .collect(),
+                    );
+                }
+                let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
+                    let last_account_storage = match account_storages.last() {
+                        Some(storage) => storage,
+                        None => {
+                            response_handle
+                                .cast(PeerHandlerCastMessage::TaskFinished {
+                                    peer_id: self.peer_id(),
+                                    response: DownloaderResponse::StorageRange(empty_task_result),
+                                })
+                                .await
+                                .unwrap(); // TODO: Handle unwrap
+                            error!("No account storage found, this shouldn't happen");
+                            return CastResponse::Stop;
+                        }
+                    };
+                    let (last_hash, _) = match last_account_storage.last() {
+                        Some(last_hash) => last_hash,
+                        None => {
+                            response_handle
+                                .cast(PeerHandlerCastMessage::TaskFinished {
+                                    peer_id: self.peer_id(),
+                                    response: DownloaderResponse::StorageRange(empty_task_result),
+                                })
+                                .await
+                                .unwrap(); // TODO: Handle unwrap
+                            error!("No last hash found, this shouldn't happen");
+                            return CastResponse::Stop;
+                        }
+                    };
+                    let next_hash_u256 =
+                        U256::from_big_endian(&last_hash.0).saturating_add(1.into());
+                    let next_hash = H256::from_uint(&next_hash_u256);
+                    (
+                        start_index + account_storages.len() - 1,
+                        end_index,
+                        next_hash,
+                    )
+                } else {
+                    (
+                        start_index + account_storages.len(),
+                        end_index,
+                        H256::zero(),
+                    )
+                };
+                let task_result = StorageTaskResult {
+                    start_index,
+                    account_storages,
+                    peer_id: self.peer_id,
+                    remaining_start,
+                    remaining_end,
+                    remaining_hash_range: (remaining_start_hash, end_hash),
+                };
+                response_handle
+                    .cast(PeerHandlerCastMessage::TaskFinished {
+                        peer_id: self.peer_id(),
+                        response: DownloaderResponse::StorageRange(task_result),
+                    })
+                    .await
+                    .unwrap(); // TODO: Handle unwrap
+
+                CastResponse::Stop
+            }
             //
             // OLD METHODS, REMOVE EVENTUALLY
             //
@@ -1110,7 +1363,7 @@ impl GenServer for Downloader {
                 self.send_through_response_channel(task_sender, task_result)
                     .await;
 
-                CastResponse::NoReply
+                CastResponse::Stop
             }
         }
     }
