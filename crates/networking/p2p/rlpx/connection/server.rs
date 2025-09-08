@@ -485,7 +485,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), RLPxErro
         if eth.version >= 69 {
             log_peer_debug(&state.node, "Sending BlockRangeUpdate");
             let update = BlockRangeUpdate::new(&state.storage).await?;
-            let lastet_block = update.lastest_block;
+            let lastet_block = update.latest_block;
             send(state, Message::BlockRangeUpdate(update)).await?;
             state.last_block_range_update_block = lastet_block - (lastet_block % 32);
         }
@@ -781,13 +781,14 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             }
         }
         Message::BlockRangeUpdate(update) => {
+            dbg!(&update);
             // We will only validate the incoming update, we may decide to store and use this information in the future
             update.validate()?;
             log_peer_debug(
                 &state.node,
                 &format!(
                     "Block range update: {} to {}",
-                    update.earliest_block, update.lastest_block
+                    update.earliest_block, update.latest_block
                 ),
             );
         }
