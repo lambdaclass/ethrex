@@ -37,7 +37,7 @@ const DB_SCHEMA: [&str; 9] = [
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE precommit_privileged (start INT, end INT)",
     "CREATE TABLE operation_count (transactions INT, privileged_transactions INT, messages INT)",
-    "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
+    "INSERT INTO operation_count VALUES (0, 0, 0)",
 ];
 
 impl SQLStore {
@@ -732,7 +732,6 @@ mod tests {
                 ("blob_bundles", "blob_bundle") => "BLOB",
                 ("account_updates", "block_number") => "INT",
                 ("account_updates", "updates") => "BLOB",
-                ("operation_count", "_id") => "INT",
                 ("operation_count", "transactions") => "INT",
                 ("operation_count", "privileged_transactions") => "INT",
                 ("operation_count", "messages") => "INT",
