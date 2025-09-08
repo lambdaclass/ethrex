@@ -46,7 +46,7 @@ impl MetricsGatherer {
             l2_eth_client,
             rollup_store,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
-            check_interval: Duration::from_millis(1000),
+            check_interval: Duration::from_millis(5000),
         })
     }
 
