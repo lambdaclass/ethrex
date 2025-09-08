@@ -25,14 +25,15 @@ if [[ -z "$RUN_URL" ]]; then
 fi
 
 SHORT_SHA="${HEAD_SHA:0:8}"
+COMMIT_URL="https://github.com/${REPO}/commit/${HEAD_SHA}"
 
 # Construct the Slack payload using jq for safe JSON escaping
 PAYLOAD=$(jq -n \
   --arg repo "$REPO" \
   --arg workflow "$WORKFLOW_NAME" \
   --arg conclusion "$CONCLUSION" \
-  --arg actor "$ACTOR" \
   --arg sha "$SHORT_SHA" \
+  --arg commit_url "$COMMIT_URL" \
   --arg url "$RUN_URL" \
   '{
     blocks: [
@@ -46,11 +47,9 @@ PAYLOAD=$(jq -n \
       {
         type: "section",
         fields: [
-          { type: "mrkdwn", text: "*Repo*\n\($repo)" },
           { type: "mrkdwn", text: "*Workflow*\n\($workflow)" },
           { type: "mrkdwn", text: "*Conclusion*\n\($conclusion)" },
-          { type: "mrkdwn", text: "*Actor*\n\($actor)" },
-          { type: "mrkdwn", text: "*Commit*\n\($sha)" },
+          { type: "mrkdwn", text: "*Commit*\n<\($commit_url)|\($sha)>" },
           { type: "mrkdwn", text: "*Run*\n<\($url)|Open in GitHub>" }
         ]
       }
@@ -60,4 +59,3 @@ curl -sS --fail -X POST \
   -H 'Content-type: application/json' \
   --data "$PAYLOAD" \
   "$SLACK_WEBHOOK_URL" || echo "Failed to send Slack notification" >&2
-

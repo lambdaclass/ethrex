@@ -28,12 +28,21 @@ jobs:
       ${{ github.event.workflow_run.conclusion != 'success' &&
           github.event.workflow_run.event == 'push' }}
     steps:
+      - name: Select Slack webhook
+        id: select_webhook
+        run: |
+          WF_NAME="${{ github.event.workflow_run.name }}"
+          if echo "$WF_NAME" | grep -Eiq 'L2|Replay'; then
+            echo "webhook=${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "webhook=${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout sources
         uses: actions/checkout@v4
 
       - name: Post failure to Slack
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
@@ -42,4 +51,4 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           ACTOR: ${{ github.event.workflow_run.actor.login }}
         run: |
-          bash .github/scripts/notify_workflow_failure.sh "$SLACK_WEBHOOK_URL"
+          bash .github/scripts/notify_workflow_failure.sh "${{ steps.select_webhook.outputs.webhook }}"
