@@ -86,8 +86,7 @@ pub struct PeerHandler {
     pending_tasks: VecDeque<Task>,
     started_tasks: HashMap<H256, (Task, Instant)>,
     sync_state: SyncState,
-    // TODO: ADD
-    // pivot_header
+    pivot_header: BlockHeader,
 }
 
 #[derive(Clone, Debug)]
@@ -120,7 +119,6 @@ pub enum SyncState {
     RetrievingAccountRanges {
         account_state_snapshots_dir: String,
         chunk_file_index: u64,
-        pivot_header: BlockHeader, // TODO: REPLACE FOR THE GENERAL ONE
         block_sync_state: BlockSyncState,
         completed_tasks: u64,
         all_account_hashes: Vec<H256>,
@@ -136,7 +134,6 @@ pub enum SyncState {
         current_account_hashes: Vec<H256>,
         task_count: u64,
         completed_tasks: u64,
-        pivot_header: BlockHeader, // TODO: REPLACE FOR THE GENERAL ONE
     },
     FinishedStorageRanges(u64, AccountStorageRoots),
 }
@@ -201,6 +198,7 @@ impl PeerHandler {
             pending_tasks: vec![].into(),
             started_tasks: Default::default(),
             sync_state: SyncState::Idle,
+            pivot_header: BlockHeader::default(),
         }
     }
 
@@ -421,6 +419,37 @@ impl PeerHandler {
         };
 
         Some(Downloader::new(free_peer_id, free_downloader_channels))
+    }
+
+    async fn update_pivot_header(&mut self) {
+        let new_pivot_block_number = self.pivot_header.number + SNAP_LIMIT as u64 - 11;
+
+        // TODO: possible permanent loop?
+        loop {
+            let peers_table = self
+                .peer_table
+                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                .await;
+
+            for (peer_id, peer_channels) in peers_table {
+                let mut downloader = Downloader::new(peer_id, peer_channels).start();
+                match downloader
+                    .call(DownloaderCallRequest::BlockHeader {
+                        block_number: new_pivot_block_number,
+                    })
+                    .await
+                {
+                    Ok(DownloaderCallResponse::BlockHeader(header)) => {
+                        debug!("Updated pivot header to block number {}", header.number);
+                        self.pivot_header = header;
+                        return;
+                    }
+                    _ => {
+                        debug!("Sync Log 14: Failed to update pivot block from peer {peer_id}");
+                    }
+                }
+            }
+        }
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -1735,25 +1764,25 @@ pub enum DownloaderResponse {
 
 #[derive(Clone)]
 pub enum PeerHandlerCallMessage {
+    PivotHeader,
     CurrentState,
     DownloadHeaders(u64, H256),
     DownloadAccountRanges {
         start: H256,
         limit: H256,
         account_state_snapshots_dir: String,
-        pivot_header: BlockHeader,
         block_sync_state: BlockSyncState,
     },
     DownloadStorageRanges {
         storage_accounts: AccountStorageRoots,
         account_storages_snapshot_dir: String,
         chunk_index: u64,
-        pivot_header: BlockHeader,
     },
 }
 
 #[derive(Clone)]
 pub enum PeerHandlerCallResponse {
+    PivotHeader(BlockHeader),
     CurrentState(SyncState), // TODO: REWORK THIS, RETURNING A MID-STATE MIGHT BE COSTLY
     InProgress,
     // Possible errors
@@ -1854,33 +1883,29 @@ impl GenServer for PeerHandler {
                             let SyncState::RetrievingAccountRanges {
                                 account_state_snapshots_dir: _,
                                 chunk_file_index: _,
-                                pivot_header,
                                 block_sync_state: _,
                                 completed_tasks: _,
                                 all_account_hashes: _,
                                 all_accounts_state: _,
                             } = &mut self.sync_state
                             else {
-                                // TODO: I don't know in which case this can happen
-                                error!(
+                                // TODO: This is a common occurrence when we finish downloading account ranges
+                                debug!(
                                     "There's an account ranges task, but the peer handler is not in the correct state"
                                 );
                                 return CastResponse::NoReply;
                             };
 
-                            if block_is_stale(&pivot_header) {
+                            if block_is_stale(&self.pivot_header) {
                                 warn!("request_account_range became stale, updating pivot");
-                                // TODO: update pivot
-                                // *pivot_header = update_pivot(pivot_header.number, self, &mut block_sync_state)
-                                //     .await
-                                //     .expect("Should be able to update pivot")
+                                self.update_pivot_header().await;
                             }
 
                             let response_handle = handle.clone();
                             downloader_handle
                                 .cast(DownloaderCastRequest::AccountRangeNew {
                                     response_handle,
-                                    root_hash: pivot_header.state_root,
+                                    root_hash: self.pivot_header.state_root,
                                     starting_hash: chunk_start,
                                     limit_hash: chunk_end,
                                 })
@@ -1902,7 +1927,6 @@ impl GenServer for PeerHandler {
                                 current_account_hashes,
                                 task_count: _,
                                 completed_tasks: _,
-                                pivot_header,
                             } = &mut self.sync_state
                             else {
                                 // TODO: I don't know in which case this can happen
@@ -1912,7 +1936,7 @@ impl GenServer for PeerHandler {
                                 return CastResponse::NoReply;
                             };
 
-                            if block_is_stale(pivot_header) {
+                            if block_is_stale(&self.pivot_header) {
                                 info!("request_storage_ranges became stale, breaking");
                                 break;
                             }
@@ -1933,7 +1957,7 @@ impl GenServer for PeerHandler {
                                     end_index,
                                     start_hash,
                                     end_hash,
-                                    state_root: pivot_header.state_root,
+                                    state_root: self.pivot_header.state_root,
                                     chunk_account_hashes,
                                     chunk_storage_roots,
                                 })
@@ -1946,6 +1970,11 @@ impl GenServer for PeerHandler {
                     self.started_tasks
                         .insert(peer_id, (next_task, Instant::now()));
                 }
+
+                info!(
+                    "pending tasks after assigning downloaders: {}",
+                    self.pending_tasks.len()
+                );
             }
             PeerHandlerCastMessage::TaskFinished { peer_id, response } => {
                 self.mark_peer_as_free(peer_id).await;
@@ -2043,7 +2072,6 @@ impl GenServer for PeerHandler {
                         if let SyncState::RetrievingAccountRanges {
                             account_state_snapshots_dir,
                             chunk_file_index,
-                            pivot_header: _,
                             block_sync_state: _,
                             completed_tasks,
                             all_account_hashes,
@@ -2156,7 +2184,6 @@ impl GenServer for PeerHandler {
                             current_account_hashes,
                             task_count,
                             completed_tasks,
-                            pivot_header: _,
                         } = &mut self.sync_state
                         {
                             if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
@@ -2413,15 +2440,24 @@ impl GenServer for PeerHandler {
         _handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
         match message {
+            PeerHandlerCallMessage::PivotHeader => {
+                if block_is_stale(&self.pivot_header) {
+                    warn!("request_account_range became stale, updating pivot");
+                    self.update_pivot_header().await;
+                }
+                CallResponse::Reply(PeerHandlerCallResponse::PivotHeader(
+                    self.pivot_header.clone(),
+                ))
+            }
             PeerHandlerCallMessage::CurrentState => CallResponse::Reply(
                 PeerHandlerCallResponse::CurrentState(self.sync_state.clone()), // TODO: CLONING STATE HERE IS COSTLY WITHOUT A GOOD REASON
             ),
             PeerHandlerCallMessage::DownloadHeaders(start, sync_head) => {
                 // Retrieve sync head number
-                let mut sync_head_number = 0_u64;
                 let sync_head_number_retrieval_start = SystemTime::now();
                 info!("Retrieving sync head block number from peers");
 
+                let mut sync_head_number = 0_u64;
                 let mut retries = 1;
                 while sync_head_number == 0 {
                     if retries > 10 {
@@ -2461,6 +2497,45 @@ impl GenServer for PeerHandler {
                     .unwrap_or_default();
 
                 info!("Sync head block number retrieved");
+
+                // Set pivot header to match sync head
+                let mut retries = 1;
+                self.pivot_header = loop {
+                    if retries > 10 {
+                        return CallResponse::Reply(PeerHandlerCallResponse::SyncHeadNotFound);
+                    }
+
+                    let peers_table = self
+                        .peer_table
+                        .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                        .await;
+
+                    // Try all peers until one returns a header
+                    if let Some(header) = futures::future::join_all(
+                        peers_table.into_iter().map(|(peer_id, peer_channels)| async move {
+                            let mut downloader = Downloader::new(peer_id, peer_channels).start();
+                            match downloader
+                                .call(DownloaderCallRequest::BlockHeader { block_number: sync_head_number })
+                                .await
+                            {
+                                Ok(DownloaderCallResponse::BlockHeader(header)) => Some(header),
+                                _ => {
+                                    debug!("Sync Log 14: Failed to retrieve pivot header from peer {peer_id}");
+                                    None
+                                }
+                            }
+                        }),
+                    )
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    {
+                        break header;
+                    }
+
+                    retries += 1;
+                };
 
                 *METRICS.time_to_retrieve_sync_head_block.lock().await =
                     Some(sync_head_number_retrieval_elapsed);
@@ -2502,7 +2577,6 @@ impl GenServer for PeerHandler {
                 start,
                 limit,
                 account_state_snapshots_dir,
-                pivot_header, // TODO! calculate pivot header internally
                 block_sync_state,
             } => {
                 // Create used directory if it doesn't exist
@@ -2552,7 +2626,6 @@ impl GenServer for PeerHandler {
                 self.sync_state = SyncState::RetrievingAccountRanges {
                     account_state_snapshots_dir,
                     chunk_file_index: 0,
-                    pivot_header,
                     block_sync_state,
                     completed_tasks: 0,
                     all_account_hashes: vec![],
@@ -2564,7 +2637,6 @@ impl GenServer for PeerHandler {
                 storage_accounts,
                 account_storages_snapshot_dir: account_storages_snapshots_dir,
                 chunk_index,
-                pivot_header, // TODO! calculate pivot header internally
             } => {
                 if !std::fs::exists(&account_storages_snapshots_dir).unwrap() {
                     std::fs::create_dir_all(&account_storages_snapshots_dir).unwrap();
@@ -2616,7 +2688,6 @@ impl GenServer for PeerHandler {
                     current_account_hashes,
                     task_count,
                     completed_tasks,
-                    pivot_header,
                 };
                 CallResponse::Reply(PeerHandlerCallResponse::InProgress)
             }

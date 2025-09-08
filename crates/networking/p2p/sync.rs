@@ -798,6 +798,13 @@ impl SnapBlockSyncState {
 }
 
 impl Syncer {
+    async fn get_pivot_header(&mut self) -> BlockHeader {
+        match self.peers.call(PeerHandlerCallMessage::PivotHeader).await {
+            Ok(PeerHandlerCallResponse::PivotHeader(block_header)) => block_header,
+            _ => todo!("handle this"),
+        }
+    }
+
     async fn snap_sync(
         &mut self,
         store: Store,
@@ -810,14 +817,15 @@ impl Syncer {
         // - Execute blocks after the pivot (like in full-sync)
         let all_block_hashes = block_sync_state.to_snap_block_hashes();
         let pivot_idx = all_block_hashes.len().saturating_sub(1);
+
+        // TODO: PIVOT HEADER IS TO BE REFRESHED BY CALLING THE PEER HANDLER
         let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
-        // TODO: REENABLE
-        // while block_is_stale(&pivot_header) {
-        //     pivot_header = update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
-        // }
+        while block_is_stale(&pivot_header) {
+            pivot_header = self.get_pivot_header().await;
+        }
         debug!(
             "Selected block {} as pivot for snap sync",
             pivot_header.number
@@ -838,7 +846,6 @@ impl Syncer {
                     start: H256::zero(),
                     limit: H256::repeat_byte(0xff),
                     account_state_snapshots_dir: account_state_snapshots_dir.clone(),
-                    pivot_header: pivot_header.clone(),
                     block_sync_state: block_sync_state.clone(),
                 })
                 .await
@@ -933,9 +940,8 @@ impl Syncer {
             let mut state_leafs_healed = 0_u64;
             loop {
                 while block_is_stale(&pivot_header) {
-                    warn!("Stale block, update!")
-                    // pivot_header =
-                    //     update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                    warn!("Stale block, update!");
+                    pivot_header = self.get_pivot_header().await;
                 }
                 // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
                 // We just need to update the pivot and start again
@@ -958,7 +964,6 @@ impl Syncer {
                         storage_accounts,
                         account_storages_snapshot_dir: account_storages_snapshots_dir.clone(),
                         chunk_index,
-                        pivot_header: pivot_header.clone(),
                     })
                     .await
                 {
@@ -1091,8 +1096,8 @@ impl Syncer {
         //     .await;
         // }
 
-        // debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-        // debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
         // let mut bytecode_iter = store
