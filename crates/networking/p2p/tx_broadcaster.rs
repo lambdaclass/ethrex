@@ -28,6 +28,15 @@ use crate::{
 // Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
 const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
+// Amount of seconds after which we prune old entries from broadcasted_txs_per_peer (We should fine tune this)
+const PRUNE_WAIT_TIME_SECS: u64 = 300; // 5 minutes
+
+// Amount of seconds between each prune
+const PRUNE_INTERVAL_SECS: u64 = 300; // 5 minutes
+
+// Amount of seconds between each broadcast
+const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
+
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
     kademlia: Kademlia,
@@ -39,6 +48,7 @@ pub struct TxBroadcaster {
 pub enum InMessage {
     BroadcastTxs,
     AddTxs(Vec<H256>, H256), // (tx_hashes, peer_id)
+    PruneTxs,
 }
 
 #[derive(Debug, Clone)]
@@ -62,9 +72,15 @@ impl TxBroadcaster {
         let server = state.clone().start();
 
         send_interval(
-            Duration::from_secs(1),
+            Duration::from_secs(BROADCAST_INTERVAL_SECS),
             server.clone(),
             InMessage::BroadcastTxs,
+        );
+
+        send_interval(
+            Duration::from_secs(PRUNE_INTERVAL_SECS),
+            server.clone(),
+            InMessage::PruneTxs,
         );
 
         Ok(server)
@@ -230,6 +246,14 @@ impl GenServer for TxBroadcaster {
             Self::CastMsg::AddTxs(txs, peer_id) => {
                 debug!(received = "AddTxs", tx_count = txs.len());
                 self.add_txs(txs, peer_id);
+                CastResponse::NoReply
+            }
+            Self::CastMsg::PruneTxs => {
+                debug!(received = "PruneTxs");
+                let now = Instant::now();
+                self.broadcasted_txs_per_peer.retain(|_, &mut timestamp| {
+                    now.duration_since(timestamp) < Duration::from_secs(PRUNE_WAIT_TIME_SECS)
+                });
                 CastResponse::NoReply
             }
         }
