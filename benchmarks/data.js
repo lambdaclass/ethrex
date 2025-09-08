@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757366741139,
+  "lastUpdate": 1757368070039,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12925,6 +12925,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167106207560,
             "range": "± 1176294415",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "FredrikaPhililip@proton.me",
+            "name": "Suuuuuuperrrrr fred",
+            "username": "FredPhilipy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cffdc8a4824d9fa282053abd7cf189c408fce459",
+          "message": "deps(l1): replace abandoned tempdir with tempfile (#4180)\n\nFIx #4162\n\nReplace abandoned tempdir with actively maintained tempfile\n\n- Update dependencies in 3 Cargo.toml files: tempdir 0.3.7 → tempfile\n3.8\n- Update API usage in test and benchmark code:\n  - tempdir::TempDir::new(\"name\") → tempfile::TempDir::new()\n  - into_path() → path()\n- Affects only test and benchmark code, no production impact\n- All tests pass (105 trie tests + storage tests)\n\n---------\n\nSigned-off-by: Fredrika <FredrikaPhililip@proton.me>",
+          "timestamp": "2025-09-08T20:51:29Z",
+          "tree_id": "967b1de547c9be27fa2d16de20b05307e8ef6b9a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cffdc8a4824d9fa282053abd7cf189c408fce459"
+        },
+        "date": 1757368051795,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164116311535,
+            "range": "± 695527632",
             "unit": "ns/iter"
           }
         ]
