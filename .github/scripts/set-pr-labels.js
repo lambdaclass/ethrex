@@ -6,19 +6,18 @@ module.exports = async ({ github, context }) => {
   const desired = new Set(); // lowercase names
   const managed = new Set(["l1", "l2", "levm", "performance"]);
 
-  // Add performance for perf type
-  if (/^\s*perf\b/.test(titleLc)) {
-    desired.add("performance");
-  }
-
-  // Extract scopes inside the first parentheses after type
-  // Conventional format: type(scope[, scope2, ...]): subject
-  const match = titleLc.match(/^[a-z]+\(([^)]+)\):/i);
+  // Extract type and scopes: type(scope[, scope2, ...]): subject
+  const match = titleLc.match(/^([a-z]+)\(([^)]+)\):/);
   if (match) {
-    const scopes = match[1]
+    const type = match[1];
+    const scopes = match[2]
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
+
+    if (type === 'perf') {
+      desired.add('performance');
+    }
 
     for (const s of scopes) {
       if (s === 'l1') desired.add('l1');
@@ -68,4 +67,3 @@ module.exports = async ({ github, context }) => {
     });
   }
 };
-
