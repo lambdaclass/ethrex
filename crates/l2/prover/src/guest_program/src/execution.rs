@@ -188,7 +188,7 @@ pub fn stateless_validation_l2(
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
-        let mut execution_witness = GuestProgramState {
+        let mut guest_program_state = GuestProgramState {
             codes_hashed,
             parent_block_header,
             first_block_number: initial_db.first_block_number,
@@ -201,11 +201,11 @@ pub fn stateless_validation_l2(
             account_hashes_by_address: BTreeMap::new(),
         };
 
-        execution_witness
+        guest_program_state
             .rebuild_state_trie()
             .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
 
-        let wrapped_db = GuestProgramStateWrapper::new(execution_witness);
+        let wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
         let state_diff = prepare_state_diff(
             last_block_header,
