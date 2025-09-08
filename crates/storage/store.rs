@@ -219,6 +219,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
+        // FIXME (#4353)
         let latest = self
             .latest_block_header
             .read()
@@ -574,6 +575,7 @@ impl Store {
         block_number: BlockNumber,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
+        // FIXME (#4353)
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
