@@ -781,14 +781,11 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             }
         }
         Message::BlockRangeUpdate(update) => {
-            if update.earliest_block > update.lastest_block {
-                return Err(RLPxError::InvalidBlockRange);
-            }
-            //TODO implement the logic
+            update.validate()?;
             log_peer_debug(
                 &state.node,
                 &format!(
-                    "Range block update: {} to {}",
+                    "Block range update: {} to {}",
                     update.earliest_block, update.lastest_block
                 ),
             );
