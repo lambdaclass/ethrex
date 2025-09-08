@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757343214454,
+  "lastUpdate": 1757345596110,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12715,6 +12715,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170449741650,
             "range": "± 794165098",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5dc0b2bd5a3ae52804cf3416da2c56fab13ad394",
+          "message": "fix(levm): neon blake2f fix (#4336)\n\n**Description**\n\n- Re-adds the blake2f NEON implementation by reverting the revert.\n- Applies the patch by @azteca1998 (fix in the number of bits rotated,\nand diagonalization corrections)\n\nAfter this, the local state EF tests pass all tests again.\n\nCloses #4308",
+          "timestamp": "2025-09-08T14:41:33Z",
+          "tree_id": "6003cbd1305480002eb81c587e9f3f5eacdf050f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5dc0b2bd5a3ae52804cf3416da2c56fab13ad394"
+        },
+        "date": 1757345577104,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167521717228,
+            "range": "± 721455458",
             "unit": "ns/iter"
           }
         ]
