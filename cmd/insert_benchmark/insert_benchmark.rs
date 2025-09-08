@@ -54,14 +54,10 @@ fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
             RLPDecode::decode(&snapshot_contents)
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-        let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-            account_states_snapshot.iter().cloned().unzip();
-
         info!("Inserting accounts into the state trie");
 
-        let store_clone = store.clone();
         let current_state_root: Result<H256, SyncError> = {
-            let mut trie = store_clone.open_state_trie(computed_state_root)?;
+            let mut trie = store.open_state_trie(computed_state_root)?;
 
             for (account_hash, account) in account_states_snapshot {
                 trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
