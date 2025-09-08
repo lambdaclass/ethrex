@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757352676516,
+  "lastUpdate": 1757354210202,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12775,6 +12775,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167242441493,
             "range": "± 308874089",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9e28e58078f1d21af81d1d2ddd53bdb141e7080a",
+          "message": "fix(l1): prevent race conditions on getReceipts calls (#4346)\n\n**Motivation**\n\nWe are encountering the following error in our L2 integration tests:\n```\n2025-08-29T19:17:04.573865Z  WARN ethrex_l2::sequencer::l1_watcher: Error when getting logs from L1: eth_getLogs request error: Internal Error: Could not get receipt\n```\n\nAfter debugging, it turned out to be a race condition that can occur if\na new block has just been marked as canonical in the store cache, but\nhas not yet been updated in the db. If a `getReceipt` call arrives in\nthis window, the node won't be able to find the receipts by block\nnumber.\n\n**Description**\n\n- Updates the engine API to identify blocks by hash instead of block\nnumber.\n- Resolves the block hash by calling `get_canonical_block_hash` in the\nstore.\n\n\nCloses None",
+          "timestamp": "2025-09-08T17:02:46Z",
+          "tree_id": "4bda26b8afc5d20f746a64156c7e4299a23f280b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9e28e58078f1d21af81d1d2ddd53bdb141e7080a"
+        },
+        "date": 1757354189546,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 172315732727,
+            "range": "± 328610850",
             "unit": "ns/iter"
           }
         ]
