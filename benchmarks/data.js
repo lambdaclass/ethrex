@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757366174170,
+  "lastUpdate": 1757366741139,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12895,6 +12895,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169023980580,
             "range": "± 863950973",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9445a758ae1892cf118d15ec106dd6a9184a0a71",
+          "message": "ci(l1,l2): improve PR auto labelling. (#4354)\n\n**Motivation**\nIf a pr had multiple scopes, only l2 label was added\n\n**Description**\n- Fix labeling per scope. If a pr has multiple scopes, potentially add\nmultiple labels.\n- Move the script to a separate file",
+          "timestamp": "2025-09-08T20:27:51Z",
+          "tree_id": "7030dc4cc2354ed9557605fa3e80993bf673aae4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9445a758ae1892cf118d15ec106dd6a9184a0a71"
+        },
+        "date": 1757366723617,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167106207560,
+            "range": "± 1176294415",
             "unit": "ns/iter"
           }
         ]
