@@ -54,7 +54,7 @@ fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
 
 fn main() {
     println!("{:?}", SystemTime::now());
-    let store: Store = open_store("home/admin/.local/share/ethrex/");
+    let store: Store = open_store("home/admin/.local/share/benchmarks/");
     let _ = insert_accounts_into_db(store).inspect_err(|err| println!("We had the error {err:?}"));
     println!("{:?}", SystemTime::now());
 }
