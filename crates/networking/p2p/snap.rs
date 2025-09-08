@@ -1,12 +1,11 @@
 use bytes::Bytes;
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 
 use crate::rlpx::{
     error::RLPxError,
     snap::{
-        AccountRange, AccountRangeUnit, AccountStateSlim, ByteCodes, GetAccountRange, GetByteCodes,
-        GetStorageRanges, GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
+        AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
+        StorageRanges, TrieNodes,
     },
 };
 
@@ -14,8 +13,15 @@ use crate::rlpx::{
 
 pub fn process_account_range_request(
     request: GetAccountRange,
-    store: Store,
+    _store: Store,
 ) -> Result<AccountRange, StoreError> {
+    Ok(AccountRange {
+        id: request.id,
+        accounts: vec![],
+        proof: vec![],
+    })
+    /*
+    TODO: find efficient implementation
     let mut accounts = vec![];
     let mut bytes_used = 0;
     for (hash, account) in store.iter_accounts(request.root_hash)? {
@@ -38,12 +44,19 @@ pub fn process_account_range_request(
         accounts,
         proof,
     })
+    */
 }
 
 pub fn process_storage_ranges_request(
     request: GetStorageRanges,
-    store: Store,
+    _store: Store,
 ) -> Result<StorageRanges, StoreError> {
+    Ok(StorageRanges {
+        id: request.id,
+        slots: vec![],
+        proof: vec![],
+    })
+    /*
     let mut slots = vec![];
     let mut proof = vec![];
     let mut bytes_used = 0;
@@ -95,6 +108,7 @@ pub fn process_storage_ranges_request(
         slots,
         proof,
     })
+    */
 }
 
 pub fn process_byte_codes_request(
@@ -149,11 +163,13 @@ pub fn process_trie_nodes_request(
     })
 }
 
+/*
 // Helper method to convert proof to RLP-encodable format
 #[inline]
 pub(crate) fn proof_to_encodable(proof: Vec<Vec<u8>>) -> Vec<Bytes> {
     proof.into_iter().map(Bytes::from).collect()
 }
+*/
 
 // Helper method to obtain proof from RLP-encodable format
 #[inline]
