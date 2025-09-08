@@ -100,3 +100,7 @@ ethrex-common.workspace = true
 serde_json.workspace = true
 genesis-tool = { path = "../../tooling/genesis" }
 thiserror.workspace = true
+
+[profile.release-with-debug]
+inherits = "release"
+debug = 2
