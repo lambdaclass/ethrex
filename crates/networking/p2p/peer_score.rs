@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
+/// Score assigned to peers who are acting maliciously (ej: returning a node with wrong hash)
+const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 
 #[derive(Debug, Clone, Default)]
 pub struct PeerScores {
@@ -57,7 +59,7 @@ impl PeerScores {
 
     pub fn record_critical_failure(&mut self, peer_id: H256) {
         let peer_score = self.scores.entry(peer_id).or_default();
-        peer_score.score = i64::MIN;
+        peer_score.score = MIN_SCORE_CRITICAL;
     }
 
     pub fn mark_in_use(&mut self, peer_id: H256) {
