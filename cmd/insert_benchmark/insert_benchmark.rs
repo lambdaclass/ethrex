@@ -1,14 +1,37 @@
-use std::{alloc::System, time::SystemTime};
-
-use ethrex::initializers::{init_store, open_store};
+use ethrex::cli::Options;
+use ethrex::initializers::init_tracing;
 use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{AccountState, Genesis},
 };
 use ethrex_p2p::sync::SyncError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use keccak_hash::H256;
+use std::path::PathBuf;
+use std::{alloc::System, time::SystemTime};
+use tracing::{error, info};
+
+/// Opens a pre-existing Store or creates a new one
+pub fn open_store(data_dir: &str) -> Store {
+    let path = PathBuf::from(data_dir);
+    if path.ends_with("memory") {
+        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+    } else {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "rocksdb")] {
+                let engine_type = EngineType::RocksDB;
+            } else if #[cfg(feature = "libmdbx")] {
+                let engine_type = EngineType::Libmdbx;
+            } else {
+                error!("No database specified. The feature flag `rocksdb` or `libmdbx` should've been set while building.");
+                panic!("Specify the desired database engine.");
+            }
+        };
+        Store::new(data_dir, engine_type).expect("Failed to create Store")
+    }
+}
 
 fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
@@ -23,7 +46,7 @@ fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
                 err,
             )
         })?;
-        println!("Reading account file from entry {entry:?}");
+        info!("Reading account file from entry {entry:?}");
         let snapshot_path = entry.path();
         let snapshot_contents = std::fs::read(&snapshot_path)
             .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
@@ -34,7 +57,7 @@ fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
         let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
             account_states_snapshot.iter().cloned().unzip();
 
-        println!("Inserting accounts into the state trie");
+        info!("Inserting accounts into the state trie");
 
         let store_clone = store.clone();
         let current_state_root: Result<H256, SyncError> = {
@@ -54,8 +77,11 @@ fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
 }
 
 fn main() {
-    println!("{:?}", SystemTime::now());
-    let store: Store = open_store("home/admin/.local/share/benchmarks/");
-    let _ = insert_accounts_into_db(store).inspect_err(|err| println!("We had the error {err:?}"));
-    println!("{:?}", SystemTime::now());
+    let mut opts = Options::default();
+    //opts.log_level = tracing::Level::INFO;
+    init_tracing(&opts);
+    info!("Starting");
+    let store: Store = open_store("/home/admin/.local/share/benchmarks/");
+    let _ = insert_accounts_into_db(store).inspect_err(|err| error!("We had the error {err:?}"));
+    info!("finishing");
 }
