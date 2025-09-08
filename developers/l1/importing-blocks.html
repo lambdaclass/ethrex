@@ -320,7 +320,7 @@ for block in parse(rlp_file) {
 <pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-let mut vm = Evm::new(self.evm_engine, vm_db);
+let mut vm = Evm::new(vm_db);
 let execution_result = vm.execute_block(block)?;
 let account_updates = vm.get_state_transitions()?;
 <span class="boring">}</span></code></pre></pre>

@@ -2736,7 +2736,6 @@ Save the addresses of the deployed proxy contracts, as you will need them to run
 	--network &lt;L2_GENESIS_FILE_PATH&gt; \
 	--http.port &lt;L2_PORT&gt; \
 	--http.addr &lt;L2_RPC_ADDRESS&gt; \
-	--evm levm \
 	--datadir &lt;ethrex_L2_DEV_DB&gt; \
 	--l1.bridge-address &lt;BRIDGE_ADDRESS&gt; \
 	--l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; \
@@ -2872,7 +2871,7 @@ cargo run deposit-to-batcher \
 <li>Start our l2 node:</li>
 </ol>
 <pre><code>cd ethrex/crates/l2
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
@@ -4836,12 +4835,11 @@ address _leader = sequencers[_id % sequencers.length];
 </code></pre>
 <p>the following feature can be enable with <code>--features &lt;features&gt;</code></p>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
-<tr><td><strong>default</strong></td><td>Enables "libmdbx", "c-kzg", "blst", "rollup_storage_sql", "dev", "metrics" features</td></tr>
+<tr><td><strong>default</strong></td><td>Enables "libmdbx", "c-kzg", "rollup_storage_sql", "dev", "metrics" features</td></tr>
 <tr><td>debug</td><td>Enables <a href="developers/../vm/levm/debug.html">debug mode</a> for LEVM</td></tr>
 <tr><td><strong>dev</strong></td><td>Makes the <a href="developers/./l1/dev-mode.html">--dev</a> flag available</td></tr>
 <tr><td><strong>metrics</strong></td><td>Enables metrics gathering for use with a monitoring stack</td></tr>
 <tr><td><strong>c-kzg</strong></td><td>Enables the c-kzg crate instead of kzg-rs</td></tr>
-<tr><td><strong>blst</strong></td><td>Enables the blst crate</td></tr>
 <tr><td><strong>libmdbx</strong></td><td>Enables libmdbx as the database for the ethereum state</td></tr>
 <tr><td><strong>rollup_storage_sql</strong></td><td>Enables sql as the database for the L2 batch data</td></tr>
 <tr><td>sp1</td><td>Enables the sp1 backend for the L2 prover</td></tr>
@@ -5167,7 +5165,7 @@ for block in parse(rlp_file) {
 <pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-let mut vm = Evm::new(self.evm_engine, vm_db);
+let mut vm = Evm::new(vm_db);
 let execution_result = vm.execute_block(block)?;
 let account_updates = vm.get_state_transitions()?;
 <span class="boring">}</span></code></pre></pre>
@@ -6734,12 +6732,6 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm &lt;EVM_BACKEND&gt;
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level &lt;LOG_LEVEL&gt;
           Possible values: info, debug, trace, warn, error
 
@@ -6848,12 +6840,6 @@ Node options:
 
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
-
-      --evm &lt;EVM_BACKEND&gt;
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
 
       --log.level &lt;LOG_LEVEL&gt;
           Possible values: info, debug, trace, warn, error
