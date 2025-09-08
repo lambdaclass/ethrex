@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{self, Duration, Instant},
+};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{MempoolTransaction, Transaction};
@@ -28,6 +32,7 @@ const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 pub struct TxBroadcaster {
     kademlia: Kademlia,
     blockchain: Arc<Blockchain>,
+    broadcasted_txs_per_peer: HashMap<(H256, H256), Instant>, // (peer_id,tx_hash) -> timestamp
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +55,7 @@ impl TxBroadcaster {
         let state = TxBroadcaster {
             kademlia,
             blockchain,
+            broadcasted_txs_per_peer: HashMap::new(),
         };
 
         let server = state.clone().start();
@@ -63,7 +69,7 @@ impl TxBroadcaster {
         Ok(())
     }
 
-    async fn broadcast_txs(&self) -> Result<(), TxBroadcasterError> {
+    async fn broadcast_txs(&mut self) -> Result<(), TxBroadcasterError> {
         let txs_to_broadcast = self
             .blockchain
             .mempool
@@ -89,10 +95,6 @@ impl TxBroadcaster {
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
 
-        let txs_message = Message::Transactions(Transactions {
-            transactions: full_txs.clone(),
-        });
-
         let mut shuffled_peers = peers.clone();
         shuffled_peers.shuffle(&mut thread_rng());
 
@@ -100,7 +102,25 @@ impl TxBroadcaster {
             shuffled_peers.split_at(peer_sqrt.ceil() as usize);
 
         for (peer_id, mut peer_channels, capabilities) in peers_to_send_full_txs.iter().cloned() {
+            let txs_to_send = full_txs
+                .iter()
+                .filter(|tx| {
+                    !self
+                        .broadcasted_txs_per_peer
+                        .contains_key(&(peer_id, tx.hash()))
+                })
+                .cloned()
+                .collect::<Vec<Transaction>>();
+            let now = Instant::now();
+            for tx in txs_to_send.iter() {
+                self.broadcasted_txs_per_peer
+                    .entry((peer_id, tx.hash()))
+                    .insert_entry(now);
+            }
             // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
+            let txs_message = Message::Transactions(Transactions {
+                transactions: txs_to_send.clone(),
+            });
             peer_channels.connection.cast(CastMessage::BackendMessage(
                 txs_message.clone(),
             )).await.unwrap_or_else(|err| {
@@ -124,13 +144,35 @@ impl TxBroadcaster {
     }
 
     async fn send_tx_hashes(
-        &self,
+        &mut self,
         txs: Vec<MempoolTransaction>,
         capabilities: Vec<Capability>,
         peer_channels: &mut PeerChannels,
         peer_id: H256,
     ) -> Result<(), TxBroadcasterError> {
-        send_tx_hashes(txs, capabilities, peer_channels, peer_id, &self.blockchain).await
+        let txs_to_send = txs
+            .iter()
+            .filter(|tx| {
+                !self
+                    .broadcasted_txs_per_peer
+                    .contains_key(&(peer_id, tx.hash()))
+            })
+            .cloned()
+            .collect::<Vec<MempoolTransaction>>();
+        let now = Instant::now();
+        for tx in txs_to_send.iter() {
+            self.broadcasted_txs_per_peer
+                .entry((peer_id, tx.hash()))
+                .insert_entry(now);
+        }
+        send_tx_hashes(
+            txs_to_send,
+            capabilities,
+            peer_channels,
+            peer_id,
+            &self.blockchain,
+        )
+        .await
     }
 }
 
