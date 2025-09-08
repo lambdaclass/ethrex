@@ -1,5 +1,6 @@
 use crate::input::ProgramInput;
 use crate::output::ProgramOutput;
+use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
@@ -18,7 +19,7 @@ use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ExecutionWitnessWrapper, ProverDBError, VmDatabase};
 use keccak_hash::keccak;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
 use ethrex_common::{
@@ -186,7 +187,14 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
+        nodes_hashed,
+        codes_hashed,
+        parent_block_header,
     } = execute_stateless(blocks, db, elasticity_multiplier)?;
+
+    initial_db.nodes_hashed = nodes_hashed;
+    initial_db.codes_hashed = codes_hashed;
+    initial_db.parent_block_header = parent_block_header;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -237,6 +245,12 @@ struct StatelessResult {
     last_block_header: BlockHeader,
     last_block_hash: H256,
     non_privileged_count: U256,
+    #[cfg(feature = "l2")]
+    nodes_hashed: BTreeMap<H256, Vec<u8>>,
+    #[cfg(feature = "l2")]
+    codes_hashed: BTreeMap<H256, Bytes>,
+    #[cfg(feature = "l2")]
+    parent_block_header: BlockHeader,
 }
 
 fn execute_stateless(
@@ -285,6 +299,13 @@ fn execute_stateless(
 
     db.rebuild_state_trie()
         .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+
+    #[cfg(feature = "l2")]
+    let nodes_hashed = db.nodes_hashed.clone();
+    #[cfg(feature = "l2")]
+    let codes_hashed = db.codes_hashed.clone();
+    #[cfg(feature = "l2")]
+    let parent_block_header_clone = db.parent_block_header.clone();
 
     let mut wrapped_db = ExecutionWitnessWrapper::new(db);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
@@ -399,6 +420,12 @@ fn execute_stateless(
         last_block_header: last_block.header.clone(),
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
+        #[cfg(feature = "l2")]
+        nodes_hashed,
+        #[cfg(feature = "l2")]
+        codes_hashed,
+        #[cfg(feature = "l2")]
+        parent_block_header: parent_block_header_clone,
     })
 }
 
