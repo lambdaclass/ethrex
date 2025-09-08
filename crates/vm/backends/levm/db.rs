@@ -46,6 +46,27 @@ impl LevmDatabase for DatabaseLogger {
         Ok(info)
     }
 
+    fn get_account_info_batch(
+        &self,
+        addresses: &[CoreAddress],
+    ) -> Result<std::collections::BTreeMap<CoreAddress, AccountInfo>, DatabaseError> {
+        {
+            let mut state = self
+                .state_accessed
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
+            for addr in addresses {
+                state.entry(*addr).or_default();
+            }
+        }
+        let info = self
+            .store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .get_account_info_batch(addresses)?;
+        Ok(info)
+    }
+
     fn get_storage_value(
         &self,
         address: CoreAddress,
@@ -107,6 +128,16 @@ impl LevmDatabase for DynVmDatabase {
             .unwrap_or_default();
 
         Ok(acc_info)
+    }
+
+    fn get_account_info_batch(
+        &self,
+        addresses: &[CoreAddress],
+    ) -> Result<std::collections::BTreeMap<CoreAddress, AccountInfo>, DatabaseError> {
+        let accounts = <dyn VmDatabase>::get_account_info_batch(self.as_ref(), addresses)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+
+        Ok(accounts)
     }
 
     fn get_storage_value(

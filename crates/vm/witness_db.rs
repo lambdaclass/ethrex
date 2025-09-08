@@ -94,4 +94,11 @@ impl VmDatabase for ExecutionWitnessWrapper {
             .get_storage_slot(address, key)
             .map_err(|_| EvmError::DB("Failed get storage slot".to_string()))
     }
+
+    fn get_account_info_batch(
+        &self,
+        _addresses: &[Address],
+    ) -> Result<std::collections::BTreeMap<Address, AccountInfo>, EvmError> {
+        unimplemented!()
+    }
 }

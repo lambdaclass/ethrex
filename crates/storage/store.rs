@@ -140,6 +140,35 @@ impl Store {
         }))
     }
 
+    pub fn get_account_info_by_hash_batch(
+        &self,
+        block_hash: BlockHash,
+        addresses: &[Address],
+    ) -> Result<BTreeMap<Address, AccountInfo>, StoreError> {
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(BTreeMap::new());
+        };
+
+        let mut map = BTreeMap::new();
+        for address in addresses {
+            let hashed_address = hash_address(address);
+            let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+                continue;
+            };
+            let account_state = AccountState::decode(&encoded_state)?;
+            map.insert(
+                *address,
+                AccountInfo {
+                    code_hash: account_state.code_hash,
+                    balance: account_state.balance,
+                    nonce: account_state.nonce,
+                },
+            );
+        }
+
+        Ok(map)
+    }
+
     pub fn get_account_state_by_acc_hash(
         &self,
         block_hash: BlockHash,

@@ -49,6 +49,16 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
+    #[instrument(level = "trace", name = "Account read batch", skip_all)]
+    fn get_account_info_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<std::collections::BTreeMap<Address, AccountInfo>, EvmError> {
+        self.store
+            .get_account_info_by_hash_batch(self.block_hash, addresses)
+            .map_err(|e| EvmError::DB(e.to_string()))
+    }
+
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store

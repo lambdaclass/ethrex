@@ -6,6 +6,7 @@ use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
+use ethrex_common::types::AccountInfo;
 use keccak_hash::H256;
 use keccak_hash::keccak;
 
@@ -27,6 +28,7 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
+    pub preloaded_account_state: BTreeMap<Address, AccountInfo>,
     pub codes: BTreeMap<H256, Bytes>,
     pub tx_backup: Option<CallFrameBackup>,
     /// For keeping track of all destroyed accounts during block execution.
@@ -41,6 +43,7 @@ impl GeneralizedDatabase {
             store,
             current_accounts_state: CacheDB::new(),
             initial_accounts_state: CacheDB::new(),
+            preloaded_account_state: Default::default(),
             tx_backup: None,
             destroyed_accounts: HashSet::new(),
             codes: BTreeMap::new(),
@@ -63,7 +66,8 @@ impl GeneralizedDatabase {
         Self {
             store,
             current_accounts_state: levm_accounts.clone(),
-            initial_accounts_state: levm_accounts,
+            initial_accounts_state: levm_accounts.clone(),
+            preloaded_account_state: Default::default(),
             tx_backup: None,
             destroyed_accounts: HashSet::new(),
             codes,
@@ -77,7 +81,11 @@ impl GeneralizedDatabase {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let info = self.store.get_account_info(address)?;
+                let info = if let Some(info) = self.preloaded_account_state.get(&address) {
+                    info.clone()
+                } else {
+                    self.store.get_account_info(address)?
+                };
                 let account = LevmAccount::from(info);
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
@@ -88,6 +96,17 @@ impl GeneralizedDatabase {
     /// Gets reference of an account
     pub fn get_account(&mut self, address: Address) -> Result<&LevmAccount, InternalError> {
         Ok(self.load_account(address)?)
+    }
+
+    /// Preloads the given account addresses.
+    ///
+    /// This is used to preload accounts that are known that will be used, such as transaction senders.
+    ///
+    /// The preloaded accounts are cached internally.
+    pub fn preload_accounts(&mut self, addresses: &[Address]) -> Result<(), InternalError> {
+        let accounts = self.store.get_account_info_batch(addresses)?;
+        self.preloaded_account_state.extend(accounts);
+        Ok(())
     }
 
     /// Gets mutable reference of an account
