@@ -374,13 +374,20 @@ impl ExecutionWitnessResult {
         }
         match self.codes.get(&code_hash) {
             Some(code) => Ok(code.clone()),
-            None => Err(ExecutionWitnessError::Database(format!(
-                "Could not find code for hash {code_hash}"
-            ))),
+            None => {
+                // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
+                // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
+                // Sidenote: logger doesn't work inside SP1, that's why we use println!
+                println!(
+                    "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
+                    hex::encode(code_hash)
+                );
+                Ok(Bytes::new())
+            }
         }
     }
 
-    /// Hashes all block headers, initializing their inner `hash` field
+    /// Hashes headers in witness and in blocks only once if they are repeated to avoid double hashing.
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
@@ -389,15 +396,7 @@ impl ExecutionWitnessResult {
             let hash = self
                 .block_headers
                 .get(&block.header.number)
-                .map(|header| header.hash())
-                .ok_or(ExecutionWitnessError::Custom(
-                    format!(
-                        "execution witness does not contain the block header of a block to execute ({}), but contains headers {:?} to {:?}",
-                        block.header.number,
-                        self.block_headers.keys().min(),
-                        self.block_headers.keys().max()
-                    )
-                ))?;
+                .map_or_else(|| block.header.hash(), |header| header.hash());
             // this returns err if it's already set, so we drop the Result as we don't
             // care if it was already initialized.
             let _ = block.header.hash.set(hash);
