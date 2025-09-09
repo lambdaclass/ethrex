@@ -494,9 +494,10 @@ impl StoreEngineRollup for SQLStore {
         let serialized_proof = bincode::serialize(&proof)?;
         let prover_type: u32 = prover_type.into();
         self.execute(
-            "INSERT OR REPLACE INTO batch_proofs (batch, prover_type, proof) VALUES (?1, ?2, ?3) WHERE batch = ?1 AND prover_type = ?2",
-            (batch_number, prover_type, serialized_proof).into_params()?
-        ).await
+            "INSERT OR REPLACE INTO batch_proofs (batch, prover_type, proof) VALUES (?1, ?2, ?3)",
+            (batch_number, prover_type, serialized_proof).into_params()?,
+        )
+        .await
     }
 
     async fn get_proof_by_batch_and_type(
