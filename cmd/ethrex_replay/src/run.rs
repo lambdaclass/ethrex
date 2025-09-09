@@ -72,9 +72,9 @@ pub async fn run_tx(
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
         let mut vm = if l2 {
-            Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?
+            Evm::new_for_l2(wrapped_db.clone())?
         } else {
-            Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone())
+            Evm::new_for_l1(wrapped_db.clone())
         };
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
