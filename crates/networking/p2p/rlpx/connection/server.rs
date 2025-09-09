@@ -41,7 +41,7 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts, Receipts68, Receipts69},
+            receipts::{GetReceipts, Receipts68, Receipts69},
             status::StatusMessage,
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
@@ -796,15 +796,15 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     receipts.push(state.storage.get_receipts_for_block(hash)?);
                 }
                 let response = match eth.version {
-                    68 => Receipts::Receipts68(Receipts68::new(id, receipts)),
-                    69 => Receipts::Receipts69(Receipts69::new(id, receipts)),
+                    68 => Message::Receipts68(Receipts68::new(id, receipts)),
+                    69 => Message::Receipts69(Receipts69::new(id, receipts)),
                     ver => {
                         return Err(RLPxError::InternalError(format!(
                             "Invalid eth version {ver}"
                         )));
                     }
                 };
-                send(state, Message::Receipts(response)).await?;
+                send(state, response).await?;
             }
         }
         Message::BlockRangeUpdate(update) => {
@@ -882,7 +882,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         | message @ Message::TrieNodes(_)
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
-        | message @ Message::Receipts(_) => {
+        | message @ Message::Receipts68(_)
+        | message @ Message::Receipts69(_) => {
             state
                 .backend_channel
                 .as_mut()

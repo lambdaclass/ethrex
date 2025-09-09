@@ -51,31 +51,6 @@ impl RLPxMessage for GetReceipts {
     }
 }
 
-// https://github.com/ethereum/devp2p/blob/master/caps/eth.md#receipts-0x10
-#[derive(Debug, Clone)]
-pub enum Receipts {
-    Receipts68(Receipts68),
-    Receipts69(Receipts69),
-}
-
-impl Receipts {
-    pub const CODE: u8 = 0x10;
-
-    pub fn get_id(&self) -> u64 {
-        match self {
-            Receipts::Receipts68(receipts68) => receipts68.get_id(),
-            Receipts::Receipts69(receipts69) => receipts69.get_id(),
-        }
-    }
-
-    pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
-        match self {
-            Receipts::Receipts68(receipts68) => receipts68.get_receipts(),
-            Receipts::Receipts69(receipts69) => receipts69.receipts.clone(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

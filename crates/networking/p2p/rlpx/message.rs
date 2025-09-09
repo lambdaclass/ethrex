@@ -8,7 +8,7 @@ use crate::rlpx::snap::{
 };
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
-use super::eth::receipts::{GetReceipts, Receipts, Receipts68, Receipts69};
+use super::eth::receipts::{GetReceipts, Receipts68, Receipts69};
 use super::eth::status::StatusMessage;
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
@@ -78,7 +78,8 @@ pub enum Message {
     GetPooledTransactions(GetPooledTransactions),
     PooledTransactions(PooledTransactions),
     GetReceipts(GetReceipts),
-    Receipts(Receipts),
+    Receipts68(Receipts68),
+    Receipts69(Receipts69),
     BlockRangeUpdate(BlockRangeUpdate),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
@@ -123,7 +124,8 @@ impl Message {
                 eth_version.eth_capability_offset() + PooledTransactions::CODE
             }
             Message::GetReceipts(_) => eth_version.eth_capability_offset() + GetReceipts::CODE,
-            Message::Receipts(_) => eth_version.eth_capability_offset() + Receipts::CODE,
+            Message::Receipts68(_) => eth_version.eth_capability_offset() + Receipts68::CODE,
+            Message::Receipts69(_) => eth_version.eth_capability_offset() + Receipts68::CODE,
             Message::BlockRangeUpdate(_) => {
                 eth_version.eth_capability_offset() + BlockRangeUpdate::CODE
             }
@@ -188,10 +190,12 @@ impl Message {
                     PooledTransactions::decode(data)?,
                 )),
                 GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                Receipts::CODE => Ok(Message::Receipts(match eth_version {
-                    EthCapVersion::V68 => Receipts::Receipts68(Receipts68::decode(data)?),
-                    EthCapVersion::V69 => Receipts::Receipts69(Receipts69::decode(data)?),
-                })),
+                Receipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                    Ok(Message::Receipts68(Receipts68::decode(data)?))
+                }
+                Receipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                    Ok(Message::Receipts69(Receipts69::decode(data)?))
+                }
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
@@ -253,10 +257,8 @@ impl Message {
             Message::GetPooledTransactions(msg) => msg.encode(buf),
             Message::PooledTransactions(msg) => msg.encode(buf),
             Message::GetReceipts(msg) => msg.encode(buf),
-            Message::Receipts(msg) => match msg {
-                Receipts::Receipts68(receipts68) => receipts68.encode(buf),
-                Receipts::Receipts69(receipts69) => receipts69.encode(buf),
-            },
+            Message::Receipts68(msg) => msg.encode(buf),
+            Message::Receipts69(msg) => msg.encode(buf),
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
@@ -291,7 +293,8 @@ impl Display for Message {
             Message::Transactions(_) => "eth:TransactionsMessage".fmt(f),
             Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
             Message::GetReceipts(_) => "eth:GetReceipts".fmt(f),
-            Message::Receipts(_) => "eth:Receipts".fmt(f),
+            Message::Receipts68(_) => "eth:Receipts(68)".fmt(f),
+            Message::Receipts69(_) => "eth:Receipts(69)".fmt(f),
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
