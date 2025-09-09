@@ -16,7 +16,7 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
-use ethrex_vm::{Evm, EvmEngine, EvmError, GuestProgramStateWrapper, ProverDBError, VmDatabase};
+use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
