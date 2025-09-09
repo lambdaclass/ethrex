@@ -584,15 +584,6 @@ impl FullBlockSyncState {
     ) -> Result<bool, SyncError> {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
-        // If we have the sync_head as a pending block form a new_payload request and its parent_hash matches the hash of the latest received header
-        // we set the sync_head as found. Then later, after requesting all blocks, we'll add the pending block in current_blocks for execution.
-        if let Some(block) = self.store.get_pending_block(sync_head).await? {
-            if let Some(last_header) = self.current_headers.last() {
-                if block.header.parent_hash == last_header.hash() {
-                    sync_head_found = true;
-                }
-            }
-        }
 
         let finished = self.current_headers.len() <= MAX_BLOCK_BODIES_TO_REQUEST;
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
@@ -618,11 +609,14 @@ impl FullBlockSyncState {
             .map(|(header, body)| Block { header, body });
         self.current_blocks.extend(blocks);
         // }
-        // Since there's a pending block that's the descendant of the last requested hash we include it in current_blocks to execute all of them.
+
+        // If we have the sync_head as a pending block from a new_payload request and its parent_hash matches the hash of the latest received header
+        // we set the sync_head as found. Then we add it in current_blocks for execution.
         if let Some(block) = self.store.get_pending_block(sync_head).await? {
             if let Some(last_block) = self.current_blocks.last() {
-                if sync_head_found && last_block.hash() == block.header.parent_hash {
+                if last_block.hash() == block.header.parent_hash {
                     self.current_blocks.push(block);
+                    sync_head_found = true;
                 }
             }
         }
@@ -663,6 +657,12 @@ impl FullBlockSyncState {
             .first()
             .cloned()
             .ok_or(SyncError::InvalidRangeReceived)?;
+
+        let block_batch_hashes = block_batch
+            .iter()
+            .map(|block| block.hash())
+            .collect::<Vec<_>>();
+
         // Run the batch
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
@@ -681,24 +681,22 @@ impl FullBlockSyncState {
                     | ChainError::EvmError(EvmError::Transaction(_))
                     | ChainError::EvmError(EvmError::Header(_))
                     | ChainError::EvmError(EvmError::InvalidDepositRequest) => {
-                        let mut blocks_with_invalid_ancestor: Vec<Block> = vec![];
-                        if let Some(index) = block_batch
+                        let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
+                        if let Some(index) = block_batch_hashes
                             .iter()
-                            .position(|x| x.hash() == batch_failure.failed_block_hash)
+                            .position(|x| x == &batch_failure.failed_block_hash)
                         {
-                            blocks_with_invalid_ancestor = block_batch.drain(index..).collect();
+                            block_hashes_with_invalid_ancestor =
+                                block_batch_hashes[index..].to_vec();
                         }
 
-                        for block in blocks_with_invalid_ancestor {
+                        for hash in block_hashes_with_invalid_ancestor {
                             self.store
-                                .set_latest_valid_ancestor(
-                                    block.hash(),
-                                    batch_failure.last_valid_hash,
-                                )
+                                .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
                                 .await?;
                         }
                         // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
-                        for header in self.current_headers.clone() {
+                        for header in &self.current_headers {
                             self.store
                                 .set_latest_valid_ancestor(
                                     header.hash(),
