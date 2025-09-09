@@ -1109,12 +1109,13 @@ impl GenServer for PeerHandler {
                                     let pending = *sync_head_number + 1 - acc_headers.len() as u64;
                                     if pending == 0 {
                                         info!("Finished downloading all block headers");
+
                                         handle
                                             .clone()
                                             .cast(PeerHandlerCastMessage::UpdateState(
-                                                InternalSyncState::FinishedHeaders(
-                                                    acc_headers.clone(),
-                                                ), // TODO: clonning of headers migh be costly on memory
+                                                InternalSyncState::FinishedHeaders(std::mem::take(
+                                                    acc_headers,
+                                                )),
                                             ))
                                             .await
                                             .unwrap();
@@ -1472,14 +1473,13 @@ impl GenServer for PeerHandler {
                                         .remove(&account_done);
                                 }
 
-                                let chunk_index = 0; // TODO: this has to be part of PeerHandler
                                 handle
                                     .clone()
                                     .cast(PeerHandlerCastMessage::UpdateState(
                                         InternalSyncState::FinishedStorageRanges(
-                                            chunk_index + 1,
-                                            account_storage_roots.clone(),
-                                        ), // TODO: clonning of account storages migh be costly on memory
+                                            *chunk_file_index + 1,
+                                            std::mem::take(account_storage_roots),
+                                        ),
                                     ))
                                     .await
                                     .unwrap();
@@ -1539,7 +1539,9 @@ impl GenServer for PeerHandler {
                                 handle
                                     .clone()
                                     .cast(PeerHandlerCastMessage::UpdateState(
-                                        InternalSyncState::FinishedBytecode(all_bytecodes.clone()),
+                                        InternalSyncState::FinishedBytecode(std::mem::take(
+                                            all_bytecodes,
+                                        )),
                                     ))
                                     .await
                                     .unwrap(); // TODO: handle unwrap
