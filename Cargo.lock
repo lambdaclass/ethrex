@@ -4418,6 +4418,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "libmdbx",
+ "rayon",
  "serde",
  "serde_json",
  "sha3",

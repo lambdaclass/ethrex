@@ -17,6 +17,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use sha3::{Digest as _, Keccak256};
 use std::sync::Arc;
 use std::{collections::BTreeSet, fmt::Debug};
@@ -147,24 +148,29 @@ impl Store {
     ) -> Result<BTreeMap<Address, AccountInfo>, StoreError> {
         let state_trie = self.open_locked_state_trie(block_hash)?;
 
-        let mut map = BTreeMap::new();
-        for address in addresses {
-            let hashed_address = hash_address(address);
-            let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-                continue;
-            };
-            let account_state = AccountState::decode(&encoded_state)?;
-            map.insert(
-                *address,
-                AccountInfo {
-                    code_hash: account_state.code_hash,
-                    balance: account_state.balance,
-                    nonce: account_state.nonce,
-                },
-            );
-        }
+        let accounts: BTreeMap<Address, AccountInfo> = addresses
+            .par_iter()
+            .filter_map(|address| {
+                let hashed_address = hash_address(address);
+                let Ok(Some(encoded_state)) = state_trie.get(&hashed_address) else {
+                    return None;
+                };
+                let Ok(account_state) = AccountState::decode(&encoded_state) else {
+                    return None;
+                };
 
-        Ok(map)
+                Some((
+                    *address,
+                    AccountInfo {
+                        code_hash: account_state.code_hash,
+                        balance: account_state.balance,
+                        nonce: account_state.nonce,
+                    },
+                ))
+            })
+            .collect();
+
+        Ok(accounts)
     }
 
     pub fn get_account_state_by_acc_hash(
