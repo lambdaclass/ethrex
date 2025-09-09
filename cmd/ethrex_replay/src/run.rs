@@ -1,12 +1,15 @@
 use crate::cache::Cache;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
+    types::{
+        AccountUpdate, ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
+    },
 };
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backend::Backend;
 use ethrex_vm::{
-    DynVmDatabase, Evm, ExecutionWitnessWrapper, backends::levm::LEVM, prover_db::PreExecutionState,
+    DynVmDatabase, Evm, GuestProgramStateWrapper, backends::levm::LEVM,
+    prover_db::PreExecutionState,
 };
 use eyre::Ok;
 use guest_program::input::ProgramInput;
@@ -49,13 +52,14 @@ pub async fn run_tx(
         .blocks
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
+
     let mut remaining_gas = block.header.gas_limit;
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
     match cache.pre_execution_state {
-        PreExecutionState::Witness(mut witness) => {
-            witness.rebuild_state_trie()?;
-            let mut wrapped_db = ExecutionWitnessWrapper::new(*witness);
-
+        PreExecutionState::Witness(execution_witness) => {
+            let guest_program_state =
+                GuestProgramState::try_from(*execution_witness).map_err(eyre::Error::msg)?;
+            let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
             let changes = {
                 let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
                 let mut db = GeneralizedDatabase::new(store.clone());

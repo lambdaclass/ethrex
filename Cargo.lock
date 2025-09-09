@@ -4250,6 +4250,7 @@ name = "ethrex-p2p"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "async-trait",
  "bytes",
  "concat-kdf",
  "ctr",
@@ -5251,6 +5252,7 @@ dependencies = [
 name = "guest_program"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
@@ -5259,6 +5261,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "keccak-hash",
  "risc0-build",
  "risc0-zkvm",
  "rkyv",

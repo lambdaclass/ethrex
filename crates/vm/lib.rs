@@ -13,4 +13,4 @@ pub use db::{DynVmDatabase, VmDatabase};
 pub use errors::{EvmError, ProverDBError};
 pub use execution_result::ExecutionResult;
 pub use prover_db::ProverDB;
-pub use witness_db::ExecutionWitnessWrapper;
+pub use witness_db::GuestProgramStateWrapper;

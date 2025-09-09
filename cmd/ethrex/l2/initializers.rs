@@ -176,7 +176,7 @@ pub async fn init_l2(
         &signer,
     )));
 
-    let peer_table = peer_table();
+    let peer_handler = PeerHandler::new(peer_table());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -187,7 +187,7 @@ pub async fn init_l2(
     init_rpc_api(
         &opts.node_opts,
         &opts,
-        peer_table.clone(),
+        peer_handler.peer_table.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
         store.clone(),
@@ -221,7 +221,7 @@ pub async fn init_l2(
             local_p2p_node,
             local_node_record.clone(),
             signer,
-            peer_table.clone(),
+            peer_handler.clone(),
             store.clone(),
             tracker,
             blockchain.clone(),
@@ -274,7 +274,11 @@ pub async fn init_l2(
     let node_config_path = PathBuf::from(data_dir + "/node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+    let node_config = NodeConfigFile::new(
+        peer_handler.peer_table,
+        local_node_record.lock().await.clone(),
+    )
+    .await;
     store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");

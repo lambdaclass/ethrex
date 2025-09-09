@@ -17,12 +17,12 @@ use crate::{EvmError, VmDatabase};
 use ethrex_common::rkyv_utils::{
     AccountInfoWrapper, BytesWrapper, EncodedTrieWrapper, H160Wrapper, H256Wrapper, U256Wrapper,
 };
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 
-#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
 pub enum PreExecutionState {
     DB(Box<ProverDB>),
-    Witness(Box<ExecutionWitnessResult>),
+    Witness(Box<ExecutionWitness>),
 }
 
 impl PreExecutionState {
