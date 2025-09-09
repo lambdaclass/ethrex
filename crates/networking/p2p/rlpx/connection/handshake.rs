@@ -345,9 +345,15 @@ fn decrypt_message(
 ) -> Result<Vec<u8>, RLPxError> {
     // Split the message into its components. General layout is:
     // public-key (65) || iv (16) || ciphertext || mac (32)
-    let (pk, rest) = msg.split_at(65);
-    let (iv, rest) = rest.split_at(16);
-    let (c, d) = rest.split_at(rest.len() - 32);
+    let (pk, rest) = msg
+        .split_at_checked(65)
+        .ok_or(RLPxError::InvalidMessageLength())?;
+    let (iv, rest) = rest
+        .split_at_checked(16)
+        .ok_or(RLPxError::InvalidMessageLength())?;
+    let (c, d) = rest
+        .split_at_checked(rest.len() - 32)
+        .ok_or(RLPxError::InvalidMessageLength())?;
 
     // Derive the message shared secret.
     let shared_secret = ecdh_xchng(static_key, &PublicKey::from_slice(pk)?).map_err(|error| {
