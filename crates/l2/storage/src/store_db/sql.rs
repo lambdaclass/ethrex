@@ -28,7 +28,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 9] = [
+const DB_SCHEMA: [&str; 10] = [
     "CREATE TABLE batches (number INT PRIMARY KEY, first_block INT NOT NULL, last_block INT NOT NULL, privileged_transactions_hash BLOB, state_root BLOB NOT NULL, commit_tx BLOB, verify_tx BLOB, signature BLOB)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
@@ -38,6 +38,7 @@ const DB_SCHEMA: [&str; 9] = [
     "CREATE TABLE precommit_privileged (start INT, end INT)",
     "CREATE TABLE operation_count (transactions INT, privileged_transactions INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0)",
+    "CREATE TABLE migrations (version INT PRIMARY KEY)",
 ];
 
 impl SQLStore {
@@ -746,6 +747,7 @@ mod tests {
                 ("block_signatures", "signature") => "BLOB",
                 ("precommit_privileged", "start") => "INT",
                 ("precommit_privileged", "end") => "INT",
+                ("migrations", "version") => "INT",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",
