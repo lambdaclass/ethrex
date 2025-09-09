@@ -103,15 +103,15 @@ pub async fn get_blockdata(
             let db = rpc_db
                 .to_prover_db(&block)
                 .wrap_err("failed to build execution db")?;
-            let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
+            let prover_db_retrieval_duration = execution_witness_retrieval_start_time
                 .elapsed()
                 .unwrap_or_else(|e| {
                     panic!("SystemTime::elapsed failed: {e}");
                 });
 
             debug!(
-                "Got execution witness for block {requested_block_number} in {}",
-                format_duration(execution_witness_retrieval_duration)
+                "Got prover db for block {requested_block_number} in {}",
+                format_duration(prover_db_retrieval_duration)
             );
 
             debug!("Caching block {requested_block_number}");
