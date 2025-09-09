@@ -50,23 +50,27 @@ async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
         let snapshot_path = entry.path();
         let snapshot_contents = std::fs::read(&snapshot_path)
             .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-        let account_states_snapshot: Vec<(H256, AccountState)> =
+        let mut account_states_snapshot: Vec<(H256, AccountState)> =
             RLPDecode::decode(&snapshot_contents)
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        account_states_snapshot.sort_by_key(|(k, _)| *k);
 
         info!("Inserting accounts into the state trie");
 
         let store_clone = store.clone();
-        let current_state_root: Result<H256, SyncError> = tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-            let mut trie = store_clone.open_state_trie(computed_state_root)?;
+        let current_state_root: Result<H256, SyncError> =
+            tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
+                let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
-            for (account_hash, account) in account_states_snapshot {
-                trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-            }
-            info!("Comitting to disk");
-            let current_state_root = trie.hash()?;
-            Ok(current_state_root)
-        }).await?;
+                for (account_hash, account) in account_states_snapshot {
+                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+                }
+                info!("Comitting to disk");
+                let current_state_root = trie.hash()?;
+                Ok(current_state_root)
+            })
+            .await?;
 
         computed_state_root = current_state_root?;
     }
@@ -80,6 +84,8 @@ async fn main() {
     init_tracing(&opts);
     info!("Starting");
     let store: Store = open_store("/home/admin/.local/share/benchmarks/");
-    let _ = insert_accounts_into_db(store).await.inspect_err(|err| error!("We had the error {err:?}"));
+    let _ = insert_accounts_into_db(store)
+        .await
+        .inspect_err(|err| error!("We had the error {err:?}"));
     info!("finishing");
 }
