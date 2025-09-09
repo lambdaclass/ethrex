@@ -128,10 +128,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError>;
 
-    /// Obtain receipt for a canonical block represented by the block number.
+    /// Obtain receipt by block hash and index
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError>;
 

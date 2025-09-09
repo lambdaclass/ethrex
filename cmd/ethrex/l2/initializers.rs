@@ -14,7 +14,6 @@ use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use ethrex_vm::EvmEngine;
 use secp256k1::SecretKey;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
@@ -153,9 +152,8 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
-    if opts.node_opts.evm == EvmEngine::REVM {
-        panic!("L2 Doesn't support REVM, use LEVM instead.");
-    }
+    #[cfg(feature = "revm")]
+    panic!("L2 doesn't support REVM");
 
     let data_dir = init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = data_dir.clone() + "/rollup_store";
@@ -166,7 +164,7 @@ pub async fn init_l2(
     let store = init_store(&data_dir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2, true);
+    let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
 
     let signer = get_signer(&data_dir);
 
