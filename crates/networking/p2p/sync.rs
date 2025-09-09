@@ -214,9 +214,7 @@ impl Syncer {
                     Ok(PeerHandlerCallResponse::CurrentState(SyncState::FinishedHeaders(
                         headers,
                     ))) => break headers,
-                    Ok(PeerHandlerCallResponse::CurrentState(SyncState::RetrievingHeaders {
-                        ..
-                    })) => {
+                    Ok(PeerHandlerCallResponse::CurrentState(SyncState::RetrievingHeaders)) => {
                         debug!("Peer Handler is still downloading headers");
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     }
@@ -872,7 +870,7 @@ impl Syncer {
                         break;
                     }
                     Ok(PeerHandlerCallResponse::CurrentState(
-                        SyncState::RetrievingAccountRanges { .. },
+                        SyncState::RetrievingAccountRanges,
                     )) => {
                         info!("Peer Handler is still downloading account ranges");
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;

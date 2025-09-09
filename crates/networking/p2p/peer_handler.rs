@@ -86,7 +86,7 @@ pub struct PeerHandler {
     pub peers_info: Arc<Mutex<HashMap<H256, PeerInformation>>>,
     pending_tasks: VecDeque<Task>,
     started_tasks: HashMap<H256, (Task, Instant)>,
-    sync_state: SyncState,
+    sync_state: InternalSyncState,
     pivot_header: BlockHeader,
 }
 
@@ -113,7 +113,9 @@ enum Task {
 }
 
 #[derive(Clone)]
-pub enum SyncState {
+// Internal state used to handle the sync process
+// in each of its steps
+enum InternalSyncState {
     Idle,
     RetrievingHeaders {
         sync_head_number: u64,
@@ -149,25 +151,66 @@ pub enum SyncState {
     FinishedBytecode(Vec<Bytes>),
 }
 
-impl std::fmt::Display for SyncState {
+#[derive(Clone)]
+// State exposed to the caller, prevents cloning middle states
+// which is highly inneficient
+pub enum SyncState {
+    Idle,
+    RetrievingHeaders,
+    FinishedHeaders(Vec<BlockHeader>),
+    RetrievingAccountRanges,
+    FinishedAccountRanges,
+    RetrievingStorageRanges,
+    FinishedStorageRanges(u64, AccountStorageRoots),
+    RetrievingBytecode,
+    FinishedBytecode(Vec<Bytes>),
+}
+
+impl std::fmt::Display for InternalSyncState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SyncState::Idle => write!(f, "Idle"),
-            SyncState::RetrievingHeaders { .. } => write!(f, "RetrievingHeaders"),
-            SyncState::FinishedHeaders(_) => write!(f, "FinishedHeaders"),
-            SyncState::RetrievingAccountRanges { .. } => write!(f, "RetrievingAccountRanges"),
-            SyncState::FinishedAccountRanges => write!(f, "FinishedAccountRanges"),
-            SyncState::RetrievingStorageRanges { .. } => write!(f, "RetrievingStorageRanges"),
-            SyncState::FinishedStorageRanges(_, _) => write!(f, "FinishedStorageRanges"),
-            SyncState::RetrievingBytecode { .. } => write!(f, "RetrievingBytecode"),
-            SyncState::FinishedBytecode(_) => write!(f, "FinishedBytecode"),
+            InternalSyncState::Idle => write!(f, "Idle"),
+            InternalSyncState::RetrievingHeaders { .. } => write!(f, "RetrievingHeaders"),
+            InternalSyncState::FinishedHeaders(_) => write!(f, "FinishedHeaders"),
+            InternalSyncState::RetrievingAccountRanges { .. } => {
+                write!(f, "RetrievingAccountRanges")
+            }
+            InternalSyncState::FinishedAccountRanges => write!(f, "FinishedAccountRanges"),
+            InternalSyncState::RetrievingStorageRanges { .. } => {
+                write!(f, "RetrievingStorageRanges")
+            }
+            InternalSyncState::FinishedStorageRanges(_, _) => write!(f, "FinishedStorageRanges"),
+            InternalSyncState::RetrievingBytecode { .. } => write!(f, "RetrievingBytecode"),
+            InternalSyncState::FinishedBytecode(_) => write!(f, "FinishedBytecode"),
         }
     }
 }
 
-impl Debug for SyncState {
+impl Debug for InternalSyncState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+impl From<&InternalSyncState> for SyncState {
+    fn from(state: &InternalSyncState) -> Self {
+        match state {
+            InternalSyncState::Idle => SyncState::Idle,
+            InternalSyncState::RetrievingHeaders { .. } => SyncState::RetrievingHeaders,
+            InternalSyncState::FinishedHeaders(headers) => {
+                SyncState::FinishedHeaders(headers.clone())
+            }
+            InternalSyncState::RetrievingAccountRanges { .. } => SyncState::RetrievingAccountRanges,
+            InternalSyncState::FinishedAccountRanges => SyncState::FinishedAccountRanges,
+            InternalSyncState::RetrievingStorageRanges { .. } => SyncState::RetrievingStorageRanges,
+            InternalSyncState::FinishedStorageRanges(index, roots) => {
+                SyncState::FinishedStorageRanges(*index, roots.clone())
+            }
+            InternalSyncState::RetrievingBytecode { .. } => SyncState::RetrievingBytecode,
+            InternalSyncState::FinishedBytecode(bytecodes) => {
+                SyncState::FinishedBytecode(bytecodes.clone())
+            }
+        }
     }
 }
 
@@ -196,6 +239,7 @@ pub struct BytecodeTaskResult {
 }
 
 #[derive(Debug)]
+// TODO: add Storage actor?
 struct StorageTask {
     start_index: usize,
     end_index: usize,
@@ -211,7 +255,7 @@ impl PeerHandler {
             peers_info: Default::default(),
             pending_tasks: vec![].into(),
             started_tasks: Default::default(),
-            sync_state: SyncState::Idle,
+            sync_state: InternalSyncState::Idle,
             pivot_header: BlockHeader::default(),
         }
     }
@@ -706,7 +750,7 @@ pub enum PeerHandlerCastMessage {
         peer_id: H256,
         response: DownloaderResponse,
     },
-    UpdateState(SyncState),
+    UpdateState(InternalSyncState),
 }
 
 #[derive(Clone, Debug)]
@@ -740,7 +784,7 @@ pub enum PeerHandlerCallMessage {
 #[derive(Clone)]
 pub enum PeerHandlerCallResponse {
     PivotHeader(BlockHeader),
-    CurrentState(SyncState), // TODO: REWORK THIS, RETURNING A MID-STATE MIGHT BE CLONE COSTLY
+    CurrentState(SyncState),
     /// Use to signal that snap sync download request is in progress
     InProgress,
     BlockBodies(Vec<BlockBody>),
@@ -788,19 +832,21 @@ impl GenServer for PeerHandler {
                 }
 
                 let capabilities = match self.sync_state {
-                    SyncState::RetrievingHeaders { .. } => &SUPPORTED_ETH_CAPABILITIES,
-                    SyncState::RetrievingAccountRanges { .. }
-                    | SyncState::RetrievingStorageRanges { .. } => &SUPPORTED_SNAP_CAPABILITIES,
+                    InternalSyncState::RetrievingHeaders { .. } => &SUPPORTED_ETH_CAPABILITIES,
+                    InternalSyncState::RetrievingAccountRanges { .. }
+                    | InternalSyncState::RetrievingStorageRanges { .. } => {
+                        &SUPPORTED_SNAP_CAPABILITIES
+                    }
                     // Idle or finished states, should not get here
                     _ => &SUPPORTED_SNAP_CAPABILITIES,
                 };
 
                 while let Some(available_downloader) = match self.sync_state {
-                    SyncState::RetrievingHeaders { .. } => {
+                    InternalSyncState::RetrievingHeaders { .. } => {
                         self.get_random_downloader(capabilities).await
                     }
-                    SyncState::RetrievingAccountRanges { .. }
-                    | SyncState::RetrievingStorageRanges { .. } => {
+                    InternalSyncState::RetrievingAccountRanges { .. }
+                    | InternalSyncState::RetrievingStorageRanges { .. } => {
                         self.get_best_downloader(capabilities).await
                     }
                     // Idle or finished states, should not get here
@@ -818,7 +864,10 @@ impl GenServer for PeerHandler {
                             start_block,
                             chunk_limit,
                         } => {
-                            if !matches!(self.sync_state, SyncState::RetrievingHeaders { .. }) {
+                            if !matches!(
+                                self.sync_state,
+                                InternalSyncState::RetrievingHeaders { .. }
+                            ) {
                                 // TODO: I don't know in which case this can happen
                                 error!(
                                     "There's headers task, but the peer handler is not in the correct state"
@@ -840,7 +889,7 @@ impl GenServer for PeerHandler {
                             chunk_start,
                             chunk_end,
                         } => {
-                            let SyncState::RetrievingAccountRanges {
+                            let InternalSyncState::RetrievingAccountRanges {
                                 account_state_snapshots_dir: _,
                                 chunk_file_index: _,
                                 block_sync_state: _,
@@ -884,7 +933,7 @@ impl GenServer for PeerHandler {
                             start_hash,
                             end_hash,
                         } => {
-                            let SyncState::RetrievingStorageRanges {
+                            let InternalSyncState::RetrievingStorageRanges {
                                 account_storages_snapshots_dir: _,
                                 chunk_file_index: _,
                                 account_storage_roots,
@@ -940,7 +989,7 @@ impl GenServer for PeerHandler {
                             chunk_start,
                             chunk_end,
                         } => {
-                            let SyncState::RetrievingBytecode {
+                            let InternalSyncState::RetrievingBytecode {
                                 completed_tasks,
                                 all_bytecode_hashes,
                                 all_bytecodes: _,
@@ -1013,7 +1062,7 @@ impl GenServer for PeerHandler {
                         let downloaded_count = headers.len() as u64;
                         *METRICS.downloaded_headers.lock().await += downloaded_count;
 
-                        if let SyncState::RetrievingHeaders {
+                        if let InternalSyncState::RetrievingHeaders {
                             sync_head_number: _,
                             current_show,
                             acc_headers,
@@ -1051,7 +1100,7 @@ impl GenServer for PeerHandler {
                                     chunk_limit: chunk_limit - downloaded_headers,
                                 });
                             } else {
-                                if let SyncState::RetrievingHeaders {
+                                if let InternalSyncState::RetrievingHeaders {
                                     sync_head_number,
                                     current_show: _,
                                     acc_headers,
@@ -1063,7 +1112,9 @@ impl GenServer for PeerHandler {
                                         handle
                                             .clone()
                                             .cast(PeerHandlerCastMessage::UpdateState(
-                                                SyncState::FinishedHeaders(acc_headers.clone()), // TODO: clonning of headers migh be costly on memory
+                                                InternalSyncState::FinishedHeaders(
+                                                    acc_headers.clone(),
+                                                ), // TODO: clonning of headers migh be costly on memory
                                             ))
                                             .await
                                             .unwrap();
@@ -1081,7 +1132,7 @@ impl GenServer for PeerHandler {
                         // TODO: WE ARE MISSING THE IF STATEMENT OF
                         // if let Ok(Err(dump_account_data)) = dump_account_result_receiver.try_recv() {
 
-                        if let SyncState::RetrievingAccountRanges {
+                        if let InternalSyncState::RetrievingAccountRanges {
                             account_state_snapshots_dir,
                             chunk_file_index,
                             block_sync_state: _,
@@ -1142,13 +1193,14 @@ impl GenServer for PeerHandler {
                                     account_state_snapshots_dir.clone();
                                 // let dump_account_result_sender_cloned = dump_account_result_sender.clone();
                                 let index = chunk_file_index.clone();
-                                tokio::task::spawn(async move {
-                                    let path = get_account_state_snapshot_file(
-                                        account_state_snapshots_dir_cloned,
-                                        index,
-                                    );
-                                    dump_to_file(path, account_state_chunk).unwrap(); // TODO: HANDLE UNWRAP
-                                });
+                                // TODO: re-add as a separate task
+                                // tokio::task::spawn(async move {
+                                let path = get_account_state_snapshot_file(
+                                    account_state_snapshots_dir_cloned,
+                                    index,
+                                );
+                                dump_to_file(path, account_state_chunk).unwrap(); // TODO: HANDLE UNWRAP
+                                // });
 
                                 *chunk_file_index += 1;
                             }
@@ -1179,7 +1231,7 @@ impl GenServer for PeerHandler {
                                 handle
                                     .clone()
                                     .cast(PeerHandlerCastMessage::UpdateState(
-                                        SyncState::FinishedAccountRanges,
+                                        InternalSyncState::FinishedAccountRanges,
                                     ))
                                     .await
                                     .unwrap();
@@ -1187,7 +1239,7 @@ impl GenServer for PeerHandler {
                         }
                     }
                     DownloaderResponse::StorageRange(storage_task_result) => {
-                        if let SyncState::RetrievingStorageRanges {
+                        if let InternalSyncState::RetrievingStorageRanges {
                             account_storages_snapshots_dir,
                             chunk_file_index,
                             account_storage_roots,
@@ -1219,14 +1271,14 @@ impl GenServer for PeerHandler {
                                     account_storages_snapshots_dir.clone();
                                 let chunk_index = *chunk_file_index;
 
-                                // TODO: extremely flaky, we are not waitng for other dumps to finish
-                                tokio::spawn(async move {
-                                    let path = get_account_storages_snapshot_file(
-                                        account_storages_snapshots_dir_cloned,
-                                        chunk_index,
-                                    );
-                                    dump_to_file(path, snapshot)
-                                });
+                                // TODO: re-add as a separate task
+                                // tokio::spawn(async move {
+                                let path = get_account_storages_snapshot_file(
+                                    account_storages_snapshots_dir_cloned,
+                                    chunk_index,
+                                );
+                                dump_to_file(path, snapshot).unwrap();
+                                // });
                                 *chunk_file_index += 1;
                             }
 
@@ -1424,7 +1476,7 @@ impl GenServer for PeerHandler {
                                 handle
                                     .clone()
                                     .cast(PeerHandlerCastMessage::UpdateState(
-                                        SyncState::FinishedStorageRanges(
+                                        InternalSyncState::FinishedStorageRanges(
                                             chunk_index + 1,
                                             account_storage_roots.clone(),
                                         ), // TODO: clonning of account storages migh be costly on memory
@@ -1437,7 +1489,7 @@ impl GenServer for PeerHandler {
                         }
                     }
                     DownloaderResponse::Bytecode(bytecode_task_result) => {
-                        if let SyncState::RetrievingBytecode {
+                        if let InternalSyncState::RetrievingBytecode {
                             completed_tasks,
                             all_bytecode_hashes: _,
                             all_bytecodes,
@@ -1487,7 +1539,7 @@ impl GenServer for PeerHandler {
                                 handle
                                     .clone()
                                     .cast(PeerHandlerCastMessage::UpdateState(
-                                        SyncState::FinishedBytecode(all_bytecodes.clone()),
+                                        InternalSyncState::FinishedBytecode(all_bytecodes.clone()),
                                     ))
                                     .await
                                     .unwrap(); // TODO: handle unwrap
@@ -1520,7 +1572,7 @@ impl GenServer for PeerHandler {
                 ))
             }
             PeerHandlerCallMessage::CurrentState => CallResponse::Reply(
-                PeerHandlerCallResponse::CurrentState(self.sync_state.clone()), // TODO: CLONING STATE HERE IS COSTLY WITHOUT A GOOD REASON
+                PeerHandlerCallResponse::CurrentState((&self.sync_state).into()), // TODO: CLONING STATE HERE IS COSTLY WITHOUT A GOOD REASON
             ),
             PeerHandlerCallMessage::DownloadHeaders(start, sync_head) => {
                 // Retrieve sync head number
@@ -1635,7 +1687,7 @@ impl GenServer for PeerHandler {
                 );
                 self.pending_tasks = pending_tasks;
                 self.started_tasks = HashMap::new();
-                self.sync_state = SyncState::RetrievingHeaders {
+                self.sync_state = InternalSyncState::RetrievingHeaders {
                     sync_head_number,
                     current_show: 0,
                     acc_headers: vec![],
@@ -1693,7 +1745,7 @@ impl GenServer for PeerHandler {
                 );
                 self.pending_tasks = pending_tasks;
                 self.started_tasks = HashMap::new();
-                self.sync_state = SyncState::RetrievingAccountRanges {
+                self.sync_state = InternalSyncState::RetrievingAccountRanges {
                     account_state_snapshots_dir,
                     chunk_file_index: 0,
                     block_sync_state,
@@ -1749,7 +1801,7 @@ impl GenServer for PeerHandler {
 
                 self.pending_tasks = pending_tasks;
                 self.started_tasks = HashMap::new();
-                self.sync_state = SyncState::RetrievingStorageRanges {
+                self.sync_state = InternalSyncState::RetrievingStorageRanges {
                     account_storages_snapshots_dir,
                     chunk_file_index: chunk_index,
                     account_storage_roots: storage_accounts,
@@ -1794,7 +1846,7 @@ impl GenServer for PeerHandler {
                 let bytecode_hashes_len = bytecode_hashes.len();
                 self.started_tasks = HashMap::new();
                 self.pending_tasks = tasks_queue_not_started;
-                self.sync_state = SyncState::RetrievingBytecode {
+                self.sync_state = InternalSyncState::RetrievingBytecode {
                     completed_tasks: 0,
                     all_bytecode_hashes: bytecode_hashes,
                     all_bytecodes: vec![Bytes::new(); bytecode_hashes_len],
