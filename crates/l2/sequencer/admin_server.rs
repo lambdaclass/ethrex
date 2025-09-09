@@ -60,6 +60,7 @@ pub async fn start_api(
         .route("/committer/start", get(start_committer_default))
         .route("/committer/start/{delay}", get(start_committer))
         .route("/committer/stop", get(stop_committer))
+        .route("/health", get(health))
         .layer(cors)
         .with_state(admin.clone());
     let http_listener = TcpListener::bind(http_addr)
@@ -104,4 +105,8 @@ async fn stop_committer(State(mut admin): State<Admin>) -> Result<Json<Value>, A
         },
         Err(err) => Err(AdminErrorResponse::GenServerError(err)),
     }
+}
+
+async fn health(State(mut _admin): State<Admin>) -> Result<Json<Value>, AdminErrorResponse> {
+    Ok(Json::from(Value::String("ok".into())))
 }
