@@ -94,6 +94,7 @@ pub struct L1Committer {
     last_committed_batch_timestamp: u128,
     /// Last succesful committed batch number
     last_committed_batch: u64,
+    /// Cancellation token for the next inbound InMessage::Commit
     cancellation_token: Option<CancellationToken>,
 }
 
