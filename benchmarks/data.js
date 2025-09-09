@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757435027705,
+  "lastUpdate": 1757435292015,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13225,6 +13225,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169823610088,
             "range": "± 373982470",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d9b061e43c89a602689c0e71bab9ef255634fec",
+          "message": "fix(l1): fixed global storage slot metric (#4385)\n\n**Motivation**\n\nThe global storage slots metrics was displaying a number way larger than\nexpected.\n\n**Description**\n\n- Fixed bug where the global metrics counter was being added to itself\nmultiple times.",
+          "timestamp": "2025-09-09T15:34:55Z",
+          "tree_id": "af59bf84e46565134532c2a9646c7831bade6b5f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7d9b061e43c89a602689c0e71bab9ef255634fec"
+        },
+        "date": 1757435272419,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167123683890,
+            "range": "± 671421728",
             "unit": "ns/iter"
           }
         ]
