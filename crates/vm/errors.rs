@@ -1,12 +1,11 @@
+use ethrex_common::{Address, H160, H256, types::BlockHash};
+use ethrex_trie::TrieError;
+#[cfg(feature = "revm")]
+use revm::primitives::result::EVMError as RevmError;
+#[cfg(feature = "revm")]
 use std::fmt::Display;
 
-use ethereum_types::{H160, H256};
-use ethrex_common::{Address, types::BlockHash};
 use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
-use ethrex_trie::TrieError;
-use revm::primitives::{
-    Address as RevmAddress, B256 as RevmB256, U256 as RevmU256, result::EVMError as RevmError,
-};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -39,16 +38,6 @@ pub enum ProverDBError {
     Evm(#[from] Box<EvmError>), // boxed to avoid cyclic definition
     #[error("Trie error: {0}")]
     Trie(#[from] TrieError),
-    #[error("State proofs error: {0}")]
-    StateProofs(#[from] StateProofsError),
-    #[error("Account {0} not found")]
-    AccountNotFound(RevmAddress),
-    #[error("Code by hash {0} not found")]
-    CodeNotFound(RevmB256),
-    #[error("Storage for address {0} not found")]
-    StorageNotFound(RevmAddress),
-    #[error("Storage value for address {0} and key {1} not found")]
-    StorageValueNotFound(RevmAddress, RevmU256),
     #[error("Hash of block with number {0} not found")]
     BlockHashNotFound(u64),
     #[error("Missing state trie of block {0} while trying to create ProverDB")]
@@ -81,22 +70,7 @@ pub enum ProverDBError {
     Unreachable(String),
 }
 
-#[derive(Debug, Error)]
-pub enum StateProofsError {
-    #[error("Trie error: {0}")]
-    Trie(#[from] TrieError),
-    #[error("Storage trie for address {0} not found")]
-    StorageTrieNotFound(H160),
-    #[error("Storage for address {0} not found")]
-    StorageNotFound(RevmAddress),
-    #[error("Account proof for address {0} not found")]
-    AccountProofNotFound(RevmAddress),
-    #[error("Storage proofs for address {0} not found")]
-    StorageProofsNotFound(RevmAddress),
-    #[error("Storage proof for address {0} and key {1} not found")]
-    StorageProofNotFound(RevmAddress, RevmU256),
-}
-
+#[cfg(feature = "revm")]
 impl<E: Display> From<RevmError<E>> for EvmError {
     fn from(value: RevmError<E>) -> Self {
         match value {
