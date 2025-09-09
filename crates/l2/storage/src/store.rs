@@ -50,19 +50,23 @@ impl Store {
     }
 
     pub async fn init(&self) -> Result<(), RollupStoreError> {
-        // Stores batch 0 with block 0
-        self.seal_batch(Batch {
-            number: 0,
-            first_block: 0,
-            last_block: 0,
-            state_root: H256::zero(),
-            privileged_transactions_hash: H256::zero(),
-            message_hashes: Vec::new(),
-            blobs_bundle: BlobsBundle::empty(),
-            commit_tx: None,
-            verify_tx: None,
-        })
-        .await
+        if !self.contains_batch(&0).await? {
+            // Stores batch 0 with block 0
+            return self
+                .seal_batch(Batch {
+                    number: 0,
+                    first_block: 0,
+                    last_block: 0,
+                    state_root: H256::zero(),
+                    privileged_transactions_hash: H256::zero(),
+                    message_hashes: Vec::new(),
+                    blobs_bundle: BlobsBundle::empty(),
+                    commit_tx: None,
+                    verify_tx: None,
+                })
+                .await;
+        }
+        Ok(())
     }
 
     /// Returns the block numbers by a given batch_number
