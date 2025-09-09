@@ -18,7 +18,7 @@ use ethrex_common::{
     },
 };
 
-use ethrex_vm::{Evm, EvmEngine, EvmError};
+use ethrex_vm::{Evm, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -221,7 +221,6 @@ pub struct PayloadBuildContext {
 impl PayloadBuildContext {
     pub fn new(
         payload: Block,
-        evm_engine: EvmEngine,
         storage: &Store,
         blockchain_type: BlockchainType,
     ) -> Result<Self, EvmError> {
@@ -238,8 +237,8 @@ impl PayloadBuildContext {
 
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
         let vm = match blockchain_type {
-            BlockchainType::L1 => Evm::new_for_l1(evm_engine, vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(evm_engine, vm_db)?,
+            BlockchainType::L1 => Evm::new_for_l1(vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
         };
 
         Ok(PayloadBuildContext {
@@ -388,8 +387,7 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context =
-            PayloadBuildContext::new(payload, self.evm_engine, &self.storage, self.r#type.clone())?;
+        let mut context = PayloadBuildContext::new(payload, &self.storage, self.r#type.clone())?;
 
         if let BlockchainType::L1 = self.r#type {
             self.apply_system_operations(&mut context)?;

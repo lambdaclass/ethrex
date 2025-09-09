@@ -20,7 +20,6 @@ use ethrex_common::{
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
 use secp256k1::SecretKey;
 
 pub struct GasMeasurement;
@@ -116,14 +115,14 @@ fn recover_address_for_sk(sk: &SecretKey) -> Address {
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
-    let storage_path = tempdir::TempDir::new("storage").unwrap();
+    let storage_path = tempfile::TempDir::new().unwrap();
     if std::fs::exists(&storage_path).unwrap_or(false) {
         std::fs::remove_dir_all(&storage_path).unwrap();
     }
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     let store = Store::new(
-        &storage_path.into_path().display().to_string(),
+        &storage_path.path().display().to_string(),
         EngineType::Libmdbx,
     )
     .unwrap();
@@ -236,7 +235,6 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
 
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let block_chain = Blockchain::new(
-                        EvmEngine::LEVM,
                         store_with_genesis.clone(),
                         BlockchainType::L1, // TODO: Should we support L2?
                         false,
