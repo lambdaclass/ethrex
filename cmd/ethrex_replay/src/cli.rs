@@ -1,6 +1,7 @@
-use std::{io::Write, time::SystemTime};
+use std::{fs::File, io::Write, time::SystemTime};
 
 use clap::{ArgGroup, Parser, Subcommand};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     H256,
     types::{AccountUpdate, Block, Receipt},
@@ -8,6 +9,7 @@ use ethrex_common::{
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
 use tracing::info;
 
@@ -118,6 +120,8 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source")]
     pub cached: bool,
+    #[arg(long)]
+    pub no_backend: bool,
     #[arg(long, required = false)]
     pub bench: bool,
     #[arg(long, required = false)]
@@ -180,7 +184,13 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(block_opts) => replay_block(block_opts).await?,
+            Self::Block(block_opts) => {
+                if block_opts.opts.no_backend {
+                    replay_block_no_backend(block_opts).await?
+                } else {
+                    replay_block(block_opts).await?
+                }
+            }
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions { mut blocks, opts }) => {
                 if opts.cached {
@@ -428,6 +438,102 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
         file.flush()?;
     }
+
+    Ok(())
+}
+
+async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
+    let opts = block_opts.opts;
+
+    let block = block_opts.block;
+
+    if opts.cached {
+        unimplemented!("cached mode is not implemented yet");
+    }
+
+    let l2 = false;
+
+    let (eth_client, network) = setup(&opts, l2).await?;
+
+    #[cfg(feature = "l2")]
+    if network != Network::LocalDevnetL2 {
+        return Err(eyre::Error::msg(
+            "L2 mode is only supported on LocalDevnetL2 network",
+        ));
+    }
+
+    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+
+    let block =
+        cache.blocks.first().cloned().ok_or_else(|| {
+            eyre::Error::msg("no block found in the cache, this should never happen")
+        })?;
+
+    let witness = cache.witness;
+
+    let store = Store::new("testing", EngineType::InMemory).unwrap();
+    let genesis = network.get_genesis()?;
+    store.add_initial_state(genesis).await.unwrap();
+
+    // Add codes to the db
+    for (code_hash, code) in witness.codes {
+        store.add_account_code(code_hash, code).await.unwrap();
+    }
+
+    // Add block headers
+    for (_n, header) in witness.block_headers {
+        store.add_block_header(header.hash(), header).await.unwrap();
+    }
+
+    // let mut storage_trie =
+    //     store.open_state_trie(state_root);
+
+    // let mut trie = store_clone.open_state_trie(computed_state_root)?;
+
+    // for (account_hash, account) in account_states_snapshot {
+    //     METRICS
+    //         .account_tries_inserted
+    //         .fetch_add(1, Ordering::Relaxed);
+    //     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+    // }
+    // *METRICS.current_step.blocking_lock() =
+    //     "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
+    // let current_state_root = trie.hash()?;
+
+    let blockchain = Blockchain::default_with_store(store);
+
+    blockchain.add_block(&block).await.unwrap();
+
+    // let start = SystemTime::now();
+
+    // let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+
+    // let replayer_mode = replayer_mode(opts.execute)?;
+
+    // let block_run_report = BlockRunReport::new_for(
+    //     block,
+    //     network.clone(),
+    //     block_run_result,
+    //     replayer_mode.clone(),
+    //     start.elapsed()?,
+    // );
+
+    // block_run_report.log();
+
+    // if opts.to_csv {
+    //     let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
+
+    //     let mut file = std::fs::OpenOptions::new()
+    //         .append(true)
+    //         .create(true)
+    //         .open(file_name)?;
+
+    //     file.write_all(block_run_report.to_csv().as_bytes())?;
+
+    //     file.write_all(b"\n")?;
+
+    //     file.flush()?;
+    // }
 
     Ok(())
 }
