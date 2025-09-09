@@ -845,9 +845,9 @@ impl<'a> VM<'a> {
     pub fn handle_state_backup(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
         if ctx_result.is_success() {
             self.substate.commit_backup();
-            self.restore_cache_state()?;
         } else {
             self.substate.revert_backup();
+            self.restore_cache_state()?;
         }
 
         Ok(())
