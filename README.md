@@ -84,3 +84,8 @@ We take security seriously. If you discover a vulnerability in this project, ple
 - Alternatively, send an email to **[security@lambdaclass.com](mailto:security@lambdaclass.com)**.
 
 For more details, please refer to our [Security Policy](./.github/SECURITY.md).
+
+## Contributing
+
+We welcome contributions!  
+Check out [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and PR guidelines.
