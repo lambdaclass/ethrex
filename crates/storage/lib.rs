@@ -3,7 +3,7 @@ mod api;
 #[cfg(feature = "libmdbx")]
 mod rlp;
 mod store;
-mod store_db;
+pub mod store_db;
 mod trie_db;
 mod utils;
 

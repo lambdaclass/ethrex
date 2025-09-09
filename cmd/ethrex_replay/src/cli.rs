@@ -1,16 +1,24 @@
-use std::{fs::File, io::Write, time::SystemTime};
-
 use clap::{ArgGroup, Parser, Subcommand};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
-    H256,
-    types::{AccountUpdate, Block, Receipt},
+    Address, H256,
+    types::{AccountUpdate, Block, BlockHeader, Receipt},
 };
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_storage::store_db::in_memory::Store as InMemoryStore;
 use ethrex_storage::{EngineType, Store};
+use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRLP, NodeRef, Trie, TrieError};
 use reqwest::Url;
+use std::str::FromStr;
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::Write,
+    sync::{Arc, Mutex, RwLock},
+    time::SystemTime,
+};
 use tracing::info;
 
 use crate::bench::run_and_measure;
@@ -462,26 +470,111 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         ));
     }
 
-    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+    let mut cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
-    let witness = cache.witness;
+    let witness = &mut cache.witness;
+    witness.rebuild_state_trie().unwrap();
+    let root = witness.state_trie.as_ref().unwrap().hash_no_commit();
+    println!("Oldroot: {}", hex::encode(root));
 
-    let store = Store::new("testing", EngineType::InMemory).unwrap();
-    let genesis = network.get_genesis()?;
-    store.add_initial_state(genesis).await.unwrap();
+    // let store = Store::new("testing", EngineType::InMemory).unwrap();
+    let in_memory_store = InMemoryStore::new();
+    {
+        let mut inner_store = in_memory_store.inner().unwrap();
 
-    // Add codes to the db
-    for (code_hash, code) in witness.codes {
-        store.add_account_code(code_hash, code).await.unwrap();
+        // Witness -> state_nodes: BTreeMap<H256, NodeRLP>,
+        // In Memory DB -> state_trie_nodes: Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>,
+        // I wonder if they are RLP encoded as well. I don't know :D
+
+        // let state_nodes: BTreeMap<NodeHash, NodeRLP> = witness
+        //     .state_nodes
+        //     .iter()
+        //     .map(|(hash, rlp)| (NodeHash::Hashed(*hash), rlp.clone()))
+        //     .collect();
+
+        let root_hash = NodeHash::Hashed(witness.parent_block_header.state_root);
+        let root_rlp = witness.state_nodes.get(&root_hash.finalize()).unwrap();
+
+        fn inner(
+            all_nodes: &BTreeMap<H256, Vec<u8>>,
+            cur_node_hash: &NodeHash,
+            cur_node_rlp: &NodeRLP,
+            traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
+        ) -> Result<Node, TrieError> {
+            let node = Node::decode_raw(cur_node_rlp)?;
+            traversed_nodes.insert(*cur_node_hash, cur_node_rlp.to_vec());
+
+            Ok(match node {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            unreachable!()
+                        };
+
+                        if hash.is_valid() {
+                            *choice = match all_nodes.get(&hash.finalize()) {
+                                Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
+                                None => hash.into(),
+                            };
+                        }
+                    }
+
+                    (*node).into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        unreachable!()
+                    };
+
+                    node.child = match all_nodes.get(&hash.finalize()) {
+                        Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
+                        None => hash.into(),
+                    };
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            })
+        }
+
+        let mut necessary_nodes = BTreeMap::new();
+        let root: NodeRef = inner(
+            &witness.state_nodes,
+            &root_hash,
+            root_rlp,
+            &mut necessary_nodes,
+        )?
+        .into();
+        println!(
+            "Necessary nodes outside of that thang {}",
+            necessary_nodes.len()
+        );
+        let in_memory_trie = Arc::new(Mutex::new(necessary_nodes));
+
+        inner_store.state_trie_nodes = in_memory_trie;
     }
 
+    let store = Store {
+        engine: Arc::new(in_memory_store),
+        chain_config: Arc::new(RwLock::new(network.get_genesis().unwrap().config)),
+        latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+    };
+
+    // let genesis = network.get_genesis()?;
+    // store.add_initial_state(genesis).await.unwrap();
+
+    // // Add codes to the db
+    // for (code_hash, code) in witness.codes.clone() {
+    //     store.add_account_code(code_hash, code).await.unwrap();
+    // }
+
     // Add block headers
-    for (_n, header) in witness.block_headers {
+    for (_n, header) in witness.block_headers.clone() {
         store.add_block_header(header.hash(), header).await.unwrap();
     }
 
@@ -502,7 +595,17 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let blockchain = Blockchain::default_with_store(store);
 
-    blockchain.add_block(&block).await.unwrap();
+    let address = Address::from_str("79c0bb4ee51d7557e012f2f52db4a4ff85ca3196")
+        .expect("Failed to get address from string");
+    let block_hash =
+        H256::from_str("0x77ababe3f02226a1ed951ffff4c14a35683a56a9e8389e1439824d840e1bd820")
+            .unwrap();
+    blockchain
+        .storage
+        .get_account_info_by_hash(block_hash, address)
+        .unwrap();
+
+    // blockchain.add_block(&block).await.unwrap();
 
     // let start = SystemTime::now();
 

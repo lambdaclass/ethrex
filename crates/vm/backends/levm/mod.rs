@@ -43,7 +43,9 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<BlockExecutionResult, EvmError> {
+        println!("LEVM Execute Block: 1");
         Self::prepare_block(block, db, vm_type)?;
+        println!("LEVM Execute Block: 2");
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -63,6 +65,7 @@ impl LEVM {
 
             receipts.push(receipt);
         }
+        println!("LEVM Execute Block: 3");
 
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
@@ -322,18 +325,23 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
+        println!("LEVM Prepare Block: 1");
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
+        println!("LEVM Prepare Block: 2");
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         if let VMType::L2 = vm_type {
             return Ok(());
         }
 
+        println!("LEVM Prepare Block: 3");
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             Self::beacon_root_contract_call(block_header, db, vm_type)?;
         }
+
+        println!("LEVM Prepare Block: 4");
 
         if fork >= Fork::Prague {
             //eip 2935: stores parent block hash in system contract
@@ -351,6 +359,7 @@ pub fn generic_system_contract_levm(
     system_address: Address,
     vm_type: VMType,
 ) -> Result<ExecutionReport, EvmError> {
+    println!("LEVM Generic System Contract: 1");
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
     let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
@@ -385,7 +394,9 @@ pub fn generic_system_contract_levm(
     let mut vm =
         VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
+    println!("LEVM Generic System Contract: 2");
     let report = vm.execute().map_err(EvmError::from)?;
+    println!("LEVM Generic System Contract: 3");
 
     if let Some(system_account) = system_account_backup {
         db.current_accounts_state

@@ -53,7 +53,7 @@ pub struct ExecutionWitnessResult {
     /// This is precomputed during ExecutionWitness construction to avoid
     /// recomputing it when rebuilding tries.
     #[rkyv(with=rkyv::with::MapKV<crate::rkyv_utils::H256Wrapper, rkyv::with::AsBox>)]
-    pub state_nodes: BTreeMap<H256, NodeRLP>,
+    pub  state_nodes: BTreeMap<H256, NodeRLP>,
     /// This is a convenience map to track which accounts and storage slots were touched during execution.
     /// It maps an account address to a vector of all storage slots that were accessed for that account.
     /// This is needed for building `RpcExecutionWitness`.

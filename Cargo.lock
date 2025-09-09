@@ -4281,6 +4281,7 @@ dependencies = [
  "ethrex-prover",
  "ethrex-rpc",
  "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
  "eyre",
  "futures",

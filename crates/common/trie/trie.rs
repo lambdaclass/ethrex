@@ -52,7 +52,7 @@ pub type TrieNode = (NodeHash, NodeRLP);
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
-    root: NodeRef,
+    pub root: NodeRef,
 }
 
 impl Default for Trie {
@@ -314,6 +314,8 @@ impl Trie {
 
         let mut necessary_nodes = BTreeMap::new();
         let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
+        println!("All nodes: {}", state_nodes.len());
+        println!("necessary nodes len: {}", necessary_nodes.len());
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);

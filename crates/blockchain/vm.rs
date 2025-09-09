@@ -44,6 +44,10 @@ impl StoreVmDatabase {
 impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
+        println!(
+            "Gonna get account info by hash {:#x} {:#x}",
+            self.block_hash, address
+        );
         self.store
             .get_account_info_by_hash(self.block_hash, address)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -51,6 +55,7 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        println!("Gonna get storage slot");
         self.store
             .get_storage_at_hash(self.block_hash, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -98,6 +103,7 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
+        println!("Gonna get chain config");
         self.store
             .get_chain_config()
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -105,6 +111,7 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(level = "trace", name = "Account code read", skip_all)]
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+        println!("Gonna get account code");
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
