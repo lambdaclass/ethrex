@@ -13,18 +13,16 @@ use ethrex_common::{
     types::{Genesis, TxType},
 };
 use ethrex_l2::utils::test_data_io::read_genesis_file;
-use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::{
-    clients::send_generic_transaction,
-    signer::{LocalSigner, Signer},
-};
+use ethrex_l2_common::{calldata::Value, utils::get_address_from_secret_key};
+use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    calldata::encode_calldata, deploy_contract_from_bytecode, deploy_with_proxy_from_bytecode,
-    initialize_contract,
+    build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode,
+    deploy_with_proxy_from_bytecode, initialize_contract, send_generic_transaction,
+    wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     EthClient,
-    clients::{Overrides, eth::get_address_from_secret_key},
+    clients::Overrides,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;
@@ -38,7 +36,9 @@ use ethrex_common::H160;
 use hex::FromHexError;
 use secp256k1::SecretKey;
 
-use ethrex_config::networks::{LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNETL2_GENESIS_CONTENTS};
+use ethrex_config::networks::{
+    LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
+};
 
 #[derive(Parser)]
 pub struct DeployerOptions {
@@ -273,7 +273,7 @@ pub struct DeployerOptions {
     pub on_chain_proposer_owner_pk: Option<SecretKey>,
     #[arg(
         long,
-        default_value_t = format!("{}/../../crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
+        default_value_t = format!("{}/../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
@@ -282,7 +282,7 @@ pub struct DeployerOptions {
     pub sp1_vk_path: String,
     #[arg(
         long,
-        default_value_t = format!("{}/../../crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
+        default_value_t = format!("{}/../../crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
@@ -348,7 +348,7 @@ impl Default for DeployerOptions {
             .unwrap(),
             env_file_path: Some(PathBuf::from(".env")),
             deposit_rich: true,
-            private_keys_file_path: Some("../../fixtures/keys/private_keys_l1.txt".into()),
+            private_keys_file_path: None,
             genesis_l1_path: Some("../../fixtures/genesis/l1-dev.json".into()),
             genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
@@ -395,11 +395,11 @@ impl Default for DeployerOptions {
             ]),
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             risc0_vk_path: format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
+                "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             deploy_based_contracts: false,
@@ -619,7 +619,7 @@ async fn deploy_contracts(
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
         let (verifier_deployment_tx_hash, sp1_verifier_address) =
-            deploy_contract_from_bytecode(&[], SP1_VERIFIER_BYTECODE, deployer, &salt, eth_client)
+            create2_deploy_from_bytecode(&[], SP1_VERIFIER_BYTECODE, deployer, &salt, eth_client)
                 .await?;
 
         info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
@@ -748,7 +748,8 @@ async fn initialize_contracts(
     let sp1_vk = read_vk(&opts.sp1_vk_path);
     let risc0_vk = read_vk(&opts.risc0_vk_path);
 
-    let deployer_address = get_address_from_secret_key(&opts.private_key)?;
+    let deployer_address =
+        get_address_from_secret_key(&opts.private_key).map_err(DeployerError::InternalError)?;
 
     info!("Initializing OnChainProposer");
 
@@ -876,20 +877,18 @@ async fn initialize_contracts(
         if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
             let signer = Signer::Local(LocalSigner::new(owner_pk));
             let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
-            let accept_tx = eth_client
-                .build_generic_tx(
-                    TxType::EIP1559,
-                    contract_addresses.on_chain_proposer_address,
-                    opts.on_chain_proposer_owner,
-                    accept_ownership_calldata.into(),
-                    Overrides::default(),
-                )
-                .await?;
+            let accept_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                contract_addresses.on_chain_proposer_address,
+                opts.on_chain_proposer_owner,
+                accept_ownership_calldata.into(),
+                Overrides::default(),
+            )
+            .await?;
             let accept_tx_hash = send_generic_transaction(eth_client, accept_tx, &signer).await?;
 
-            eth_client
-                .wait_for_transaction_receipt(accept_tx_hash, 100)
-                .await?;
+            wait_for_transaction_receipt(accept_tx_hash, eth_client, 100).await?;
 
             info!(
                 transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
@@ -948,10 +947,13 @@ async fn make_deposits(
                 .ok_or(DeployerError::FailedToGetStringFromPath)?,
         )
     };
-    let pks = read_to_string(opts.private_keys_file_path.clone().ok_or(
-        DeployerError::ConfigValueNotSet("--private-keys-file-path".to_string()),
-    )?)
-    .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
+
+    let pks = if let Some(path) = &opts.private_keys_file_path {
+        &read_to_string(path).map_err(|_| DeployerError::FailedToGetStringFromPath)?
+    } else {
+        LOCAL_DEVNET_PRIVATE_KEYS
+    };
+
     let private_keys: Vec<String> = pks
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -985,15 +987,15 @@ async fn make_deposits(
             ..Overrides::default()
         };
 
-        let build = eth_client
-            .build_generic_tx(
-                TxType::EIP1559,
-                bridge,
-                signer.address(),
-                Bytes::new(),
-                overrides,
-            )
-            .await?;
+        let build = build_generic_tx(
+            eth_client,
+            TxType::EIP1559,
+            bridge,
+            signer.address(),
+            Bytes::new(),
+            overrides,
+        )
+        .await?;
 
         match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     sync::{Mutex, RwLock},
 };
 
@@ -16,9 +16,11 @@ use ethrex_common::{
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
+use std::collections::HashSet;
 
 #[derive(Debug, Default)]
 pub struct Mempool {
+    broadcast_pool: RwLock<HashSet<H256>>,
     transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
     blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
     txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
@@ -42,8 +44,39 @@ impl Mempool {
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
             .insert(hash, transaction);
+        self.broadcast_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+            .insert(hash);
 
         Ok(())
+    }
+
+    pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
+        let txs = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
+            .map(|pool| {
+                pool.iter()
+                    .filter_map(|(hash, tx)| {
+                        if !self.broadcast_pool.read().ok()?.contains(hash) {
+                            None
+                        } else {
+                            Some(tx.clone())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+        Ok(txs)
+    }
+
+    pub fn clear_broadcasted_txs(&self) {
+        self.broadcast_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))
+            .map(|mut pool| pool.clear())
+            .unwrap_or_default();
     }
 
     /// Add a blobs bundle to the pool by its blob transaction hash
@@ -75,6 +108,10 @@ impl Mempool {
             .transaction_pool
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        let mut broadcast_pool = self
+            .broadcast_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if let Some(tx) = tx_pool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
                 self.blobs_bundle_pool
@@ -88,6 +125,7 @@ impl Mempool {
                 .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
                 .remove(&(tx.sender(), tx.nonce()));
             tx_pool.remove(hash);
+            broadcast_pool.remove(hash);
         };
 
         Ok(())
@@ -132,6 +170,28 @@ impl Mempool {
         self.filter_transactions_with_filter_fn(&filter_tx)
     }
 
+    /// Gets all the transactions in the mempool
+    pub fn get_all_txs_by_sender(
+        &self,
+    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
+            HashMap::with_capacity(128);
+        let tx_pool = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+
+        for (_, tx) in tx_pool.iter() {
+            txs_by_sender
+                .entry(tx.sender())
+                .or_insert_with(|| Vec::with_capacity(128))
+                .push(tx.clone())
+        }
+
+        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
+        Ok(txs_by_sender)
+    }
+
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_transactions_with_filter_fn(
@@ -168,10 +228,9 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        let tx_set: HashSet<_> = tx_pool.keys().collect();
         Ok(possible_hashes
             .iter()
-            .filter(|hash| !tx_set.contains(hash))
+            .filter(|hash| !tx_pool.contains_key(hash))
             .copied()
             .collect())
     }

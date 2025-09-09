@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::report::EFTestsReport;
+#[cfg(feature = "revm")]
+use crate::runner::revm_runner::SpecId;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
     report::{self, EFTestReport, TestReRunReport, format_duration_as_mm_ss},
@@ -11,7 +13,6 @@ use colored::Colorize;
 use ethrex_common::Address;
 use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, VMError};
-use ethrex_vm::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 
@@ -61,7 +62,7 @@ pub struct EFTestRunnerOptions {
         long,
         value_name = "FORK",
         value_delimiter = ',',
-        default_value = "Merge,Shanghai,Cancun,Prague"
+        default_value = "Merge,Shanghai,Cancun,Prague,Osaka"
     )]
     pub forks: Option<Vec<SpecId>>,
     /// For running specific .json files

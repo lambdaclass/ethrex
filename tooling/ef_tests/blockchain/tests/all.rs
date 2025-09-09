@@ -1,31 +1,40 @@
 use ef_tests_blockchain::test_runner::parse_and_execute;
-use ethrex_vm::EvmEngine;
 use std::path::Path;
 
 const TEST_FOLDER: &str = "vectors/";
 
-fn parse_and_execute_runner(path: &Path) -> datatest_stable::Result<()> {
-    let engine = if cfg!(feature = "revm") {
-        EvmEngine::REVM
-    } else {
-        EvmEngine::LEVM
-    };
+#[cfg(not(feature = "revm"))]
+const SKIPPED_TESTS: &[&str] = &["system_contract_deployment"];
+#[cfg(feature = "revm")]
+const SKIPPED_TESTS: &[&str] = &[
+    "system_contract_deployment",
+    "fork_Osaka",
+    "fork_PragueToOsaka",
+];
 
-    parse_and_execute(path, engine, None, false)
+// If neither `sp1` nor `stateless` is enabled: run with whichever engine
+// the features imply (LEVM if `levm` is on; otherwise REVM).
+#[cfg(not(any(feature = "sp1", feature = "stateless")))]
+fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
+    parse_and_execute(path, Some(SKIPPED_TESTS), None)
 }
 
-#[cfg(feature = "levm")]
-fn parse_and_execute_stateless_runner(path: &Path) -> datatest_stable::Result<()> {
-    parse_and_execute(path, EvmEngine::LEVM, None, true)
+// If `sp1` or `stateless` is enabled: always use LEVM with the appropriate backend.
+#[cfg(any(feature = "sp1", feature = "stateless"))]
+fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
+    #[cfg(feature = "stateless")]
+    let backend = Some(ethrex_prover_lib::backend::Backend::Exec);
+    #[cfg(feature = "sp1")]
+    let backend = Some(ethrex_prover_lib::backend::Backend::SP1);
+
+    parse_and_execute(path, Some(SKIPPED_TESTS), backend)
 }
-#[cfg(feature = "levm")]
-datatest_stable::harness!(
-    parse_and_execute_runner,
-    TEST_FOLDER,
-    r".*",
-    parse_and_execute_stateless_runner,
-    TEST_FOLDER,
-    r".*"
-);
-#[cfg(not(feature = "levm"))]
-datatest_stable::harness!(parse_and_execute_runner, TEST_FOLDER, r".*",);
+
+datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");
+
+#[cfg(any(
+    all(feature = "sp1", feature = "stateless"),
+    all(feature = "sp1", feature = "revm"),
+    all(feature = "stateless", feature = "revm"),
+))]
+compile_error!("Only one of `sp1`, `stateless`, or `revm` can be enabled at a time.");

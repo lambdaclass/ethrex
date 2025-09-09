@@ -1,7 +1,10 @@
 use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::errors::CommitterError,
+    sequencer::{
+        errors::CommitterError,
+        utils::{self, system_now_ms},
+    },
 };
 
 use bytes::Bytes;
@@ -22,9 +25,11 @@ use ethrex_l2_common::{
     },
     state_diff::{StateDiff, prepare_state_diff},
 };
-use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
 use ethrex_l2_rpc::signer::Signer;
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{
+    build_generic_tx, calldata::encode_calldata, get_last_committed_batch,
+    send_tx_bump_gas_exponential_backoff,
+};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
@@ -47,6 +52,8 @@ use spawned_concurrency::{
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+/// Default wake up time for the committer to check if it should send a commit tx
+const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -72,11 +79,17 @@ pub struct L1Committer {
     signer: Signer,
     based: bool,
     sequencer_state: SequencerState,
+    /// Time to wait before checking if it should send a new batch
+    committer_wake_up_ms: u64,
+    /// Timestamp of last successful committed batch
+    last_committed_batch_timestamp: u128,
+    /// Last succesful committed batch number
+    last_committed_batch: u64,
 }
 
 impl L1Committer {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
         blockchain: Arc<Blockchain>,
@@ -85,16 +98,20 @@ impl L1Committer {
         based: bool,
         sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
+        let eth_client = EthClient::new_with_config(
+            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_config.max_number_of_retries,
+            eth_config.backoff_factor,
+            eth_config.min_retry_delay,
+            eth_config.max_retry_delay,
+            Some(eth_config.maximum_allowed_max_fee_per_gas),
+            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
+        )?;
+        let last_committed_batch =
+            get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)
+                .await?;
         Ok(Self {
-            eth_client: EthClient::new_with_config(
-                eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
-                eth_config.max_number_of_retries,
-                eth_config.backoff_factor,
-                eth_config.min_retry_delay,
-                eth_config.max_retry_delay,
-                Some(eth_config.maximum_allowed_max_fee_per_gas),
-                Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
-            )?,
+            eth_client,
             blockchain,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
@@ -105,6 +122,11 @@ impl L1Committer {
             signer: committer_config.signer.clone(),
             based,
             sequencer_state,
+            committer_wake_up_ms: committer_config
+                .commit_time_ms
+                .min(COMMITTER_DEFAULT_WAKE_TIME_MS),
+            last_committed_batch_timestamp: 0,
+            last_committed_batch,
         })
     }
 
@@ -123,21 +145,22 @@ impl L1Committer {
             rollup_store.clone(),
             cfg.based.enabled,
             sequencer_state,
-        )?;
-        let mut l1_committer = state.start();
-        l1_committer
-            .cast(InMessage::Commit)
-            .await
-            .map_err(CommitterError::GenServerError)
+        )
+        .await?;
+        let l1_committer = state.start();
+        send_after(
+            random_duration(cfg.l1_committer.first_wake_up_time_ms),
+            l1_committer,
+            InMessage::Commit,
+        );
+        Ok(())
     }
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
         info!("Running committer main loop");
         // Get the batch to commit
-        let last_committed_batch_number = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
+        let last_committed_batch_number =
+            get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
         let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
@@ -148,12 +171,12 @@ impl L1Committer {
                     .get_block_numbers_by_batch(last_committed_batch_number)
                     .await?
                     .ok_or(
-                        CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
+                        CommitterError::RetrievalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
                     )?;
                 let last_block = last_committed_blocks
                     .last()
                     .ok_or(
-                        CommitterError::InternalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
+                        CommitterError::RetrievalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
                     )?;
                 let first_block_to_commit = last_block + 1;
 
@@ -164,7 +187,9 @@ impl L1Committer {
                     message_hashes,
                     privileged_transactions_hash,
                     last_block_of_batch,
-                ) = self.prepare_batch_from_block(*last_block).await?;
+                ) = self
+                    .prepare_batch_from_block(*last_block, batch_to_commit)
+                    .await?;
 
                 if *last_block == last_block_of_batch {
                     debug!("No new blocks to commit, skipping");
@@ -241,6 +266,7 @@ impl L1Committer {
     async fn prepare_batch_from_block(
         &mut self,
         mut last_added_block_number: BlockNumber,
+        batch_number: u64,
     ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
@@ -254,7 +280,10 @@ impl L1Committer {
 
         #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
-        let mut _blob_size = 0_usize;
+        #[cfg(feature = "metrics")]
+        let mut blob_size = 0_usize;
+        #[cfg(feature = "metrics")]
+        let mut batch_gas_used = 0_u64;
 
         info!("Preparing state diff from block {first_block_of_batch}");
 
@@ -286,7 +315,7 @@ impl L1Committer {
                     .store
                     .get_receipt(block_to_commit_number, index.try_into()?)
                     .await?
-                    .ok_or(CommitterError::InternalError(
+                    .ok_or(CommitterError::RetrievalError(
                         "Transactions in a block should have a receipt".to_owned(),
                     ))?;
                 txs.push(tx.clone());
@@ -298,7 +327,8 @@ impl L1Committer {
                     .len()
                     .try_into()
                     .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
-                    .unwrap_or(0)
+                    .unwrap_or(0);
+                batch_gas_used += block_to_commit_header.gas_used;
             );
             // Get block messages and privileged transactions
             let messages = get_block_l1_messages(&receipts);
@@ -361,6 +391,11 @@ impl L1Committer {
             };
 
             let Ok((bundle, latest_blob_size)) = result else {
+                if block_to_commit_number == first_block_of_batch {
+                    return Err(CommitterError::Unreachable(
+                        "Not enough blob space for a single block batch. This means a block was incorrectly produced.".to_string(),
+                    ));
+                }
                 warn!(
                     "Batch size limit reached. Any remaining blocks will be processed in the next batch."
                 );
@@ -370,7 +405,10 @@ impl L1Committer {
 
             // Save current blobs_bundle and continue to add more blocks.
             blobs_bundle = bundle;
-            _blob_size = latest_blob_size;
+
+            metrics!(
+                blob_size = latest_blob_size;
+            );
 
             privileged_transactions_hashes.extend(
                 privileged_transactions
@@ -403,8 +441,14 @@ impl L1Committer {
                     });
             }
             #[allow(clippy::as_conversions)]
-            let blob_usage_percentage = _blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
+            let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
+            let batch_gas_used = batch_gas_used.try_into()?;
+            let batch_size = (last_added_block_number - first_block_of_batch).try_into()?;
+            let tx_count = tx_count.try_into()?;
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
+            METRICS.set_batch_gas_used(batch_number, batch_gas_used)?;
+            METRICS.set_batch_size(batch_number, batch_size)?;
+            METRICS.set_batch_tx_count(batch_number, tx_count)?;
         );
 
         let privileged_transactions_hash =
@@ -472,7 +516,7 @@ impl L1Committer {
             .await?
             .try_into()
             .map_err(|_| {
-                CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
+                CommitterError::ConversionError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
         // Validium: EIP1559 Transaction.
@@ -489,44 +533,60 @@ impl L1Committer {
 
             let gas_price_per_blob = U256::from_little_endian(&le_bytes);
 
-            self.eth_client
-                .build_generic_tx(
-                    TxType::EIP4844,
-                    self.on_chain_proposer_address,
-                    self.signer.address(),
-                    calldata.into(),
-                    Overrides {
-                        from: Some(self.signer.address()),
-                        gas_price_per_blob: Some(gas_price_per_blob),
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        blobs_bundle: Some(batch.blobs_bundle.clone()),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(CommitterError::from)?
+            build_generic_tx(
+                &self.eth_client,
+                TxType::EIP4844,
+                self.on_chain_proposer_address,
+                self.signer.address(),
+                calldata.into(),
+                Overrides {
+                    from: Some(self.signer.address()),
+                    gas_price_per_blob: Some(gas_price_per_blob),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    blobs_bundle: Some(batch.blobs_bundle.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(CommitterError::from)?
         } else {
             info!("L2 is in validium mode, sending EIP-1559 (no blob) tx to commit block");
-            self.eth_client
-                .build_generic_tx(
-                    TxType::EIP1559,
-                    self.on_chain_proposer_address,
-                    self.signer.address(),
-                    calldata.into(),
-                    Overrides {
-                        from: Some(self.signer.address()),
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(CommitterError::from)?
+            build_generic_tx(
+                &self.eth_client,
+                TxType::EIP1559,
+                self.on_chain_proposer_address,
+                self.signer.address(),
+                calldata.into(),
+                Overrides {
+                    from: Some(self.signer.address()),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(CommitterError::from)?
         };
 
         let commit_tx_hash =
             send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
+
+        metrics!(
+            let commit_tx_receipt = self
+                .eth_client
+                .get_transaction_receipt(commit_tx_hash)
+                .await?
+                .ok_or(CommitterError::UnexpectedError("no commit tx receipt".to_string()))?;
+            let commit_gas_used = commit_tx_receipt.tx_info.gas_used.try_into()?;
+            METRICS.set_batch_commitment_gas(batch.number, commit_gas_used)?;
+            if !self.validium {
+                let blob_gas_used = commit_tx_receipt.tx_info.blob_gas_used
+                    .ok_or(CommitterError::UnexpectedError("no blob in rollup mode".to_string()))?
+                    .try_into()?;
+                METRICS.set_batch_commitment_blob_gas(batch.number, blob_gas_used)?;
+            }
+        );
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 
@@ -541,19 +601,49 @@ impl GenServer for L1Committer {
 
     type Error = CommitterError;
 
+    // Right now we only have the `Commit` message, so we ignore the `message` parameter
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        // Right now we only have the Commit message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .commit_next_batch_to_l1()
-                .await
-                .inspect_err(|err| error!("L1 Committer Error: {err}"));
+            let current_last_committed_batch =
+                get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
+                    .await
+                    .unwrap_or(self.last_committed_batch);
+            let Some(current_time) = utils::system_now_ms() else {
+                let check_interval = random_duration(self.committer_wake_up_ms);
+                send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+                return CastResponse::NoReply;
+            };
+
+            // In the event that the current batch in L1 is greater than the one we have recorded we shouldn't send a new batch
+            if current_last_committed_batch > self.last_committed_batch {
+                self.last_committed_batch = current_last_committed_batch;
+                self.last_committed_batch_timestamp = current_time;
+                let check_interval = random_duration(self.committer_wake_up_ms);
+                send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+                return CastResponse::NoReply;
+            }
+
+            let commit_time: u128 = self.commit_time_ms.into();
+            let should_send_commitment =
+                current_time - self.last_committed_batch_timestamp > commit_time;
+            #[allow(clippy::collapsible_if)]
+            if should_send_commitment {
+                if self
+                    .commit_next_batch_to_l1()
+                    .await
+                    .inspect_err(|e| error!("L1 Committer Error: {e}"))
+                    .is_ok()
+                {
+                    self.last_committed_batch_timestamp = system_now_ms().unwrap_or(current_time);
+                    self.last_committed_batch = current_last_committed_batch + 1;
+                }
+            }
         }
-        let check_interval = random_duration(self.commit_time_ms);
+        let check_interval = random_duration(self.committer_wake_up_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
         CastResponse::NoReply
     }
@@ -582,7 +672,7 @@ fn get_last_block_hash(
     store
         .get_block_header(last_block_number)?
         .map(|header| header.hash())
-        .ok_or(CommitterError::InternalError(
+        .ok_or(CommitterError::RetrievalError(
             "Failed to get last block hash from storage".to_owned(),
         ))
 }

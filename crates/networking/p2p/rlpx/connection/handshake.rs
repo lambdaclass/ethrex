@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use super::{
     codec::RLPxCodec,
@@ -64,13 +60,13 @@ pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
-        InnerState::Initiator(Initiator { context, node }) => {
+        InnerState::Initiator(Initiator { context, node, .. }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
                     log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
-                    context.table.lock().await.replace_peer(node.node_id());
+                    // context.table.lock().await.replace_peer(node.node_id());
                     return Err(error)?;
                 }
             };
@@ -129,13 +125,12 @@ pub(crate) async fn perform(
             negotiated_eth_capability: None,
             negotiated_snap_capability: None,
             last_block_range_update_block: 0,
-            broadcasted_txs: HashSet::new(),
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
             table: context.table.clone(),
             backend_channel: None,
-            inbound,
+            _inbound: inbound,
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
@@ -145,7 +140,10 @@ pub(crate) async fn perform(
 }
 
 async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
-    TcpSocket::new_v4()?.connect(addr).await
+    match addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4()?.connect(addr).await,
+        SocketAddr::V6(_) => TcpSocket::new_v6()?.connect(addr).await,
+    }
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
