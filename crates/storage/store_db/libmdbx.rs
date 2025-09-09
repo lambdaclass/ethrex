@@ -30,6 +30,7 @@ use libmdbx::{
     table_info,
 };
 use serde_json;
+use smallvec::SmallVec;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -134,7 +135,7 @@ impl StoreEngine for Store {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
+            for (_prefix_len, _full_path, node_hash, node_data) in update_batch.account_updates {
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
@@ -146,7 +147,7 @@ impl StoreEngine for Store {
             }
 
             for (hashed_address, nodes) in update_batch.storage_updates {
-                for (node_hash, node_data) in nodes {
+                for (_prefix_len, _full_path, node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
@@ -988,14 +989,14 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             for (hashed_address, nodes) in storage_trie_nodes {
-                for (node_hash, node_data) in nodes {
+                for (_prefix_len, _full_path, node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 

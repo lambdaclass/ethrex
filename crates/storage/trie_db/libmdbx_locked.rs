@@ -3,6 +3,7 @@ use libmdbx::{
     RO,
     orm::{Database, Table, Transaction},
 };
+use smallvec::SmallVec;
 use std::{marker::PhantomData, sync::Arc};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
 pub struct LibmdbxLockedTrieDB<T: Table> {
@@ -46,11 +47,19 @@ impl<T> TrieDB for LibmdbxLockedTrieDB<T>
 where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        self.txn.get::<T>(key).map_err(TrieError::DbError)
+    fn get(
+        &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        node_hash: NodeHash,
+    ) -> Result<Option<Vec<u8>>, TrieError> {
+        self.txn.get::<T>(node_hash).map_err(TrieError::DbError)
     }
 
-    fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(
+        &self,
+        key_values: Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
+    ) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!(
             "LockedTrie is read-only"
         )))

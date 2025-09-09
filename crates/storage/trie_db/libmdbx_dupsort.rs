@@ -4,6 +4,7 @@ use super::utils::node_hash_to_fixed_size;
 use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::orm::{Database, DupSort, Encodable};
+use smallvec::SmallVec;
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
@@ -37,17 +38,25 @@ where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(
+        &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        node_hash: NodeHash,
+    ) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+        txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(node_hash)))
             .map_err(TrieError::DbError)
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(
+        &self,
+        key_values: Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
+    ) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        for (key, value) in key_values {
+        for (_prefix_len, _full_path, node_hash, value) in key_values {
             txn.upsert::<T>(
-                (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
+                (self.fixed_key.clone(), node_hash_to_fixed_size(node_hash)),
                 value,
             )
             .map_err(TrieError::DbError)?;
@@ -73,9 +82,13 @@ mod test {
         let inner_db = new_db::<Nodes>();
         let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32]);
         let key = NodeHash::from_encoded_raw(b"hello");
-        assert_eq!(db.get(key).unwrap(), None);
-        db.put(key, "value".into()).unwrap();
-        assert_eq!(db.get(key).unwrap(), Some("value".into()));
+        // FIXME: proper prefix
+        assert_eq!(db.get(0, SmallVec::new(), key).unwrap(), None);
+        db.put(0, SmallVec::new(), key, "value".into()).unwrap();
+        assert_eq!(
+            db.get(0, SmallVec::new(), key).unwrap(),
+            Some("value".into())
+        );
     }
 
     #[test]
@@ -84,9 +97,17 @@ mod test {
         let db_a = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db.clone(), [5; 32]);
         let db_b = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [7; 32]);
         let key = NodeHash::from_encoded_raw(b"hello");
-        db_a.put(key, "hello!".into()).unwrap();
-        db_b.put(key, "go away!".into()).unwrap();
-        assert_eq!(db_a.get(key).unwrap(), Some("hello!".into()));
-        assert_eq!(db_b.get(key).unwrap(), Some("go away!".into()));
+        // FIXME: proper prefix
+        db_a.put(0, SmallVec::new(), key, "hello!".into()).unwrap();
+        db_b.put(0, SmallVec::new(), key, "go away!".into())
+            .unwrap();
+        assert_eq!(
+            db_a.get(0, SmallVec::new(), key).unwrap(),
+            Some("hello!".into())
+        );
+        assert_eq!(
+            db_b.get(0, SmallVec::new(), key).unwrap(),
+            Some("go away!".into())
+        );
     }
 }

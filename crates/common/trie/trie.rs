@@ -12,6 +12,7 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
+use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -93,26 +94,40 @@ impl Trie {
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
-            NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
-            NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
-                    .map_err(TrieError::RLPDecode)?
-                    .get(self.db.as_ref(), Nibbles::from_bytes(path))?
-            }
+            NodeRef::Node(ref node, _) => node.get(
+                0,
+                SmallVec::from_slice(path),
+                self.db.as_ref(),
+                Nibbles::from_bytes(path),
+            )?,
+            NodeRef::Hash(hash) if hash.is_valid() => Node::decode(
+                &self
+                    .db
+                    .get(0, SmallVec::from_slice(path), hash)?
+                    .ok_or(TrieError::InconsistentTree)?,
+            )
+            .map_err(TrieError::RLPDecode)?
+            .get(
+                0,
+                SmallVec::from_slice(path),
+                self.db.as_ref(),
+                Nibbles::from_bytes(path),
+            )?,
             _ => None,
         })
     }
 
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
+        let full_path = SmallVec::from_slice(&path);
         let path = Nibbles::from_bytes(&path);
 
         self.root = if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
             self.root
-                .get_node(self.db.as_ref())?
+                .get_node(0, full_path.clone(), self.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, value)?
+                .insert(0, full_path.clone(), self.db.as_ref(), path.clone(), value)?
                 .into()
         } else {
             // If the trie is empty, just add a leaf.
@@ -132,9 +147,14 @@ impl Trie {
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
             .root
-            .get_node(self.db.as_ref())?
+            .get_node(0, SmallVec::from_slice(&path), self.db.as_ref())?
             .ok_or(TrieError::InconsistentTree)?
-            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+            .remove(
+                0,
+                SmallVec::from_slice(&path),
+                self.db.as_ref(),
+                Nibbles::from_bytes(&path),
+            )?;
         self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
@@ -163,7 +183,9 @@ impl Trie {
     /// # Returns
     ///
     /// A tuple containing the hash and the list of changes.
-    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
+    pub fn collect_changes_since_last_hash(
+        &mut self,
+    ) -> (H256, Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>) {
         let updates = self.commit_without_storing();
         let ret_hash = self.hash_no_commit();
         (ret_hash, updates)
@@ -176,7 +198,7 @@ impl Trie {
     pub fn commit(&mut self) -> Result<(), TrieError> {
         if self.root.is_valid() {
             let mut acc = Vec::new();
-            self.root.commit(&mut acc);
+            self.root.commit(0, SmallVec::new(), &mut acc);
             self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
@@ -185,10 +207,12 @@ impl Trie {
 
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
-    pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
+    pub fn commit_without_storing(
+        &mut self,
+    ) -> Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
-            self.root.commit(&mut acc);
+            self.root.commit(0, SmallVec::new(), &mut acc);
         }
 
         acc
@@ -210,11 +234,20 @@ impl Trie {
                 node_path.push(data[..len as usize].to_vec());
             }
 
-            let root = match self.root.get_node(self.db.as_ref())? {
+            let root = match self
+                .root
+                .get_node(0, SmallVec::from_slice(path), self.db.as_ref())?
+            {
                 Some(x) => x,
                 None => return Ok(Vec::new()),
             };
-            root.get_path(self.db.as_ref(), Nibbles::from_bytes(path), &mut node_path)?;
+            root.get_path(
+                0,
+                SmallVec::from_slice(path),
+                self.db.as_ref(),
+                Nibbles::from_bytes(path),
+                &mut node_path,
+            )?;
 
             Ok(node_path)
         } else {
@@ -232,7 +265,7 @@ impl Trie {
         if self.root.is_valid() {
             let encoded_root = self
                 .root
-                .get_node(self.db.as_ref())?
+                .get_node(0, SmallVec::new(), self.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
                 .encode_raw();
 
@@ -342,11 +375,19 @@ impl Trie {
         struct NullTrieDB;
 
         impl TrieDB for NullTrieDB {
-            fn get(&self, _key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+            fn get(
+                &self,
+                _prefix_len: usize,
+                _full_path: SmallVec<[u8; 32]>,
+                _key: NodeHash,
+            ) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
             }
 
-            fn put_batch(&self, _key_values: Vec<TrieNode>) -> Result<(), TrieError> {
+            fn put_batch(
+                &self,
+                _key_values: Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
+            ) -> Result<(), TrieError> {
                 Ok(())
             }
         }
@@ -381,8 +422,9 @@ impl Trie {
                     Some(idx) => {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
-                            let child_node =
-                                child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                            let child_node = child_ref
+                                .get_node(0, SmallVec::new(), db)?
+                                .ok_or(TrieError::InconsistentTree)?;
                             get_node_inner(db, child_node, partial_path)
                         } else {
                             Ok(vec![])
@@ -396,7 +438,7 @@ impl Trie {
                     {
                         let child_node = extension_node
                             .child
-                            .get_node(db)?
+                            .get_node(0, SmallVec::new(), db)?
                             .ok_or(TrieError::InconsistentTree)?;
                         get_node_inner(db, child_node, partial_path)
                     } else {
@@ -412,7 +454,7 @@ impl Trie {
             get_node_inner(
                 self.db.as_ref(),
                 self.root
-                    .get_node(self.db.as_ref())?
+                    .get_node(0, SmallVec::new(), self.db.as_ref())?
                     .ok_or(TrieError::InconsistentTree)?,
                 partial_path,
             )
@@ -425,7 +467,7 @@ impl Trie {
         if self.hash_no_commit() == *EMPTY_TRIE_HASH {
             return Ok(None);
         }
-        self.root.get_node(self.db.as_ref())
+        self.root.get_node(0, SmallVec::new(), self.db.as_ref())
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
@@ -463,9 +505,15 @@ impl ProofTrie {
             // If the trie is not empty, call the root node's insertion logic.
             self.0
                 .root
-                .get_node(self.0.db.as_ref())?
+                .get_node(0, SmallVec::new(), self.0.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.0.db.as_ref(), partial_path, external_ref)?
+                .insert(
+                    0,
+                    SmallVec::new(),
+                    self.0.db.as_ref(),
+                    partial_path,
+                    external_ref,
+                )?
                 .into()
         } else {
             external_ref.into()

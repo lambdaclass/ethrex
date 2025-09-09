@@ -10,6 +10,7 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
+use smallvec::SmallVec;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
@@ -88,7 +89,7 @@ impl StoreEngine for Store {
                 .state_trie_nodes
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in update_batch.account_updates {
+            for (_prefix_len, _full_path, node_hash, node_data) in update_batch.account_updates {
                 state_trie_store.insert(node_hash, node_data);
             }
         }
@@ -105,7 +106,7 @@ impl StoreEngine for Store {
                 .or_default()
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
+            for (_prefix_len, _full_path, node_hash, node_data) in nodes {
                 addr_store.insert(node_hash, node_data);
             }
         }
@@ -673,7 +674,7 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
@@ -684,7 +685,7 @@ impl StoreEngine for Store {
                 .or_default()
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
+            for (_prefix_len, _full_path, node_hash, node_data) in nodes {
                 addr_store.insert(node_hash, node_data);
             }
         }

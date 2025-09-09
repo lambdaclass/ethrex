@@ -18,6 +18,7 @@ use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
+use smallvec::SmallVec;
 use tracing::{error, info};
 
 use crate::{
@@ -301,7 +302,10 @@ async fn heal_state_trie(
                         to_write
                             .into_iter()
                             .filter_map(|node| match node.compute_hash() {
-                                hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                                // FIXME: use the real path
+                                hash @ NodeHash::Hashed(_) => {
+                                    Some((0, SmallVec::new(), hash, node.encode_to_vec()))
+                                }
                                 NodeHash::Inline(_) => None,
                             })
                             .collect(),
@@ -456,7 +460,8 @@ pub fn node_missing_children(
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
+                // FIXME: use the real path
+                if child.is_valid() && child.get_node(0, SmallVec::new(), trie_state)?.is_none() {
                     missing_children_count += 1;
                     paths.extend(vec![RequestMetadata {
                         hash: child.compute_hash().finalize(),
@@ -467,7 +472,13 @@ pub fn node_missing_children(
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
+            // FIXME: use the real path
+            if node.child.is_valid()
+                && node
+                    .child
+                    .get_node(0, SmallVec::new(), trie_state)?
+                    .is_none()
+            {
                 missing_children_count += 1;
 
                 paths.extend(vec![RequestMetadata {

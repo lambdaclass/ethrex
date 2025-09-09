@@ -4,6 +4,7 @@ use std::{
 };
 
 use ethrex_rlp::decode::RLPDecode;
+use smallvec::SmallVec;
 
 use crate::{Node, NodeHash, Trie, TrieDB, TrieError};
 
@@ -33,8 +34,13 @@ impl TrieLogger {
 }
 
 impl TrieDB for TrieLogger {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let result = self.inner_db.get(key)?;
+    fn get(
+        &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        node_hash: NodeHash,
+    ) -> Result<Option<Vec<u8>>, TrieError> {
+        let result = self.inner_db.get(prefix_len, full_path, node_hash)?;
         if let Some(result) = result.as_ref() {
             if let Ok(decoded) = Node::decode(result) {
                 let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
@@ -44,11 +50,10 @@ impl TrieDB for TrieLogger {
         Ok(result)
     }
 
-    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        self.inner_db.put(key, value)
-    }
-
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(
+        &self,
+        key_values: Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
+    ) -> Result<(), TrieError> {
         self.inner_db.put_batch(key_values)
     }
 }

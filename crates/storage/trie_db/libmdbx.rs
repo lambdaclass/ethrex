@@ -1,5 +1,6 @@
 use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::orm::{Database, Table};
+use smallvec::SmallVec;
 use std::{marker::PhantomData, sync::Arc};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
 pub struct LibmdbxTrieDB<T: Table> {
@@ -25,14 +26,22 @@ impl<T> TrieDB for LibmdbxTrieDB<T>
 where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(
+        &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        node_hash: NodeHash,
+    ) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>(key).map_err(TrieError::DbError)
+        txn.get::<T>(node_hash).map_err(TrieError::DbError)
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(
+        &self,
+        key_values: Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
+    ) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        for (key, value) in key_values {
+        for (_, _, key, value) in key_values {
             txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
@@ -50,6 +59,7 @@ mod test {
         orm::{Database, table},
         table_info,
     };
+    use smallvec::SmallVec;
     use std::sync::Arc;
     use tempdir::TempDir;
 
@@ -62,9 +72,12 @@ mod test {
         let inner_db = new_db::<Nodes>();
         let key = NodeHash::from_encoded_raw(b"hello");
         let db = LibmdbxTrieDB::<Nodes>::new(inner_db);
-        assert_eq!(db.get(key).unwrap(), None);
-        db.put(key, "value".into()).unwrap();
-        assert_eq!(db.get(key).unwrap(), Some("value".into()));
+        assert_eq!(db.get(0, SmallVec::new(), key).unwrap(), None);
+        db.put(0, SmallVec::new(), key, "value".into()).unwrap();
+        assert_eq!(
+            db.get(0, SmallVec::new(), key).unwrap(),
+            Some("value".into())
+        );
     }
 
     #[test]
@@ -85,8 +98,8 @@ mod test {
         let db_a = LibmdbxTrieDB::<TableA>::new(inner_db.clone());
         let db_b = LibmdbxTrieDB::<TableB>::new(inner_db.clone());
         let key = NodeHash::from_encoded_raw(b"hello");
-        db_a.put(key, "value".into()).unwrap();
-        assert_eq!(db_b.get(key).unwrap(), None);
+        db_a.put(0, SmallVec::new(), key, "value".into()).unwrap();
+        assert_eq!(db_b.get(0, SmallVec::new(), key).unwrap(), None);
     }
 
     #[test]

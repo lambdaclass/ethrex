@@ -3,6 +3,7 @@ use ethereum_types::{H256, U256};
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
+use smallvec::SmallVec;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
@@ -374,7 +375,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>)>,
     ) -> Result<(), StoreError>;
 
     async fn write_account_code_batch(

@@ -25,6 +25,7 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use smallvec::SmallVec;
 use std::fmt::Debug;
 
 // Column Family names - matching libmdbx tables
@@ -54,7 +55,7 @@ impl Store {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache 
+        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache
 
         db_options.set_max_open_files(-1);
         db_options.set_max_file_opening_threads(16);
@@ -123,15 +124,16 @@ impl Store {
 
         // Create descriptors for ALL existing CFs + expected ones (RocksDB requires opening all existing CFs)
         let mut all_cfs_to_open = HashSet::new();
-        
+
         // Add all expected CFs
         for cf in &expected_column_families {
             all_cfs_to_open.insert(cf.to_string());
         }
-        
+
         // Add all existing CFs (we must open them to be able to drop obsolete ones later)
         for cf in &existing_cfs {
-            if cf != "default" { // default is handled automatically
+            if cf != "default" {
+                // default is handled automatically
                 all_cfs_to_open.insert(cf.clone());
             }
         }
@@ -149,7 +151,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_cache(&cache);
@@ -161,7 +163,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_cache(&cache);
@@ -172,14 +174,14 @@ impl Store {
                 }
                 CF_STATE_TRIE_NODES | CF_STORAGE_TRIES_NODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB 
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter 
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB 
+                    block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_block_cache(&cache);
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     block_opts.set_cache_index_and_filter_blocks(true);
@@ -206,7 +208,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
@@ -233,7 +235,11 @@ impl Store {
                     Ok(_) => info!("Successfully dropped column family: {}", cf_name),
                     Err(e) => {
                         // Log error but don't fail initialization - the database is still usable
-                        tracing::warn!("Failed to drop obsolete column family '{}': {}", cf_name, e);
+                        tracing::warn!(
+                            "Failed to drop obsolete column family '{}': {}",
+                            cf_name,
+                            e
+                        );
                     }
                 }
             }
@@ -388,19 +394,33 @@ impl StoreEngine for Store {
 
             // Process account updates
             if let Some(cf_state) = db.cf_handle(CF_STATE_TRIE_NODES) {
-                for (node_hash, node_data) in update_batch.account_updates {
-                    batch.put_cf(&cf_state, node_hash.as_ref(), node_data);
+                for (prefix_len, full_path, node_hash, node_data) in update_batch.account_updates {
+                    let mut key = [0u8; 65];
+                    let to_copy = prefix_len.div_ceil(2);
+                    key[..to_copy].copy_from_slice(&full_path[..to_copy]);
+                    if prefix_len % 2 != 0 {
+                        key[to_copy - 1] = full_path[to_copy - 1] & 0xf0;
+                    }
+                    key[32] = prefix_len as u8;
+                    key[33..].copy_from_slice(&node_hash.finalize().0);
+                    batch.put_cf(&cf_state, key, node_data);
                 }
             }
 
             // Process storage updates
             if let Some(cf_storage) = db.cf_handle(CF_STORAGE_TRIES_NODES) {
                 for (address_hash, storage_updates) in update_batch.storage_updates {
-                    for (node_hash, node_data) in storage_updates {
+                    for (prefix_len, full_path, node_hash, node_data) in storage_updates {
                         // Key: address_hash + node_hash
-                        let mut key = Vec::with_capacity(64);
-                        key.extend_from_slice(address_hash.as_bytes());
-                        key.extend_from_slice(node_hash.as_ref());
+                        let mut key = [0u8; 97];
+                        let to_copy = prefix_len.div_ceil(2);
+                        key[..32].copy_from_slice(&address_hash.0);
+                        key[32..32 + to_copy].copy_from_slice(&full_path[..to_copy]);
+                        if prefix_len % 2 != 0 {
+                            key[32 + to_copy - 1] = full_path[to_copy - 1] & 0xf0;
+                        }
+                        key[64] = prefix_len as u8;
+                        key[65..].copy_from_slice(&node_hash.finalize().0);
                         batch.put_cf(&cf_storage, key, node_data);
                     }
                 }
@@ -1506,12 +1526,12 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
         for (address_hash, nodes) in storage_trie_nodes {
-            for (node_hash, node_data) in nodes {
+            for (_prefix_len, _full_path, node_hash, node_data) in nodes {
                 // Create composite key: address_hash + node_hash
                 let mut key = Vec::with_capacity(64);
                 key.extend_from_slice(address_hash.as_bytes());

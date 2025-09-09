@@ -5,6 +5,7 @@ use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::RO;
 use libmdbx::orm::{Database, DupSort, Encodable, Transaction};
+use smallvec::SmallVec;
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
@@ -57,13 +58,21 @@ where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(
+        &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        node_hash: NodeHash,
+    ) -> Result<Option<Vec<u8>>, TrieError> {
         self.txn
-            .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+            .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(node_hash)))
             .map_err(TrieError::DbError)
     }
 
-    fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(
+        &self,
+        key_values: Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
+    ) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!(
             "LockedTrie is read-only"
         )))

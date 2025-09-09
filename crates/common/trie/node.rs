@@ -2,6 +2,7 @@ mod branch;
 mod extension;
 mod leaf;
 
+use smallvec::SmallVec;
 use std::{
     array,
     sync::{Arc, OnceLock},
@@ -31,14 +32,19 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
+    pub fn get_node(
+        &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        db: &dyn TrieDB,
+    ) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(hash)?
+                .get(prefix_len, full_path, hash)?
                 .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                 .transpose(),
         }
@@ -51,23 +57,47 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
+    pub fn commit(
+        &mut self,
+        mut prefix_len: usize,
+        mut full_path: SmallVec<[u8; 32]>,
+        acc: &mut Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
+    ) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
-                        for node in &mut node.choices {
-                            node.commit(acc);
+                        for (i, node) in &mut node.choices.iter_mut().enumerate() {
+                            let mut full_path = full_path.clone();
+                            if prefix_len % 2 == 1 {
+                                let j = full_path.len() - 1;
+                                full_path[j] |= i as u8;
+                            } else {
+                                full_path.push((i << 4) as u8);
+                            }
+                            node.commit(prefix_len + 1, full_path, acc);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(acc);
+                        let mut full_path = full_path.clone();
+                        let mut prefix = node.prefix.clone();
+                        let mut prefix_len = prefix_len;
+                        while let Some(nibble) = prefix.next() {
+                            if prefix_len % 2 == 1 {
+                                let j = full_path.len() - 1;
+                                full_path[j] |= nibble;
+                            } else {
+                                full_path.push(nibble << 4);
+                            }
+                            prefix_len += 1;
+                        }
+                        node.child.commit(prefix_len, full_path, acc);
                     }
-                    Node::Leaf(_) => {}
+                    Node::Leaf(node) => {}
                 }
 
                 let hash = hash.get_or_init(|| node.compute_hash());
-                acc.push((*hash, node.encode_to_vec()));
+                acc.push((prefix_len, full_path, *hash, node.encode_to_vec()));
 
                 let hash = *hash;
                 *self = hash.into();
@@ -161,25 +191,33 @@ impl From<LeafNode> for Node {
 
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        db: &dyn TrieDB,
+        path: Nibbles,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         match self {
-            Node::Branch(n) => n.get(db, path),
-            Node::Extension(n) => n.get(db, path),
-            Node::Leaf(n) => n.get(path),
+            Node::Branch(n) => n.get(prefix_len, full_path, db, path),
+            Node::Extension(n) => n.get(prefix_len, full_path, db, path),
+            Node::Leaf(n) => n.get(prefix_len, full_path, path),
         }
     }
 
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
     pub fn insert(
         self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
         db: &dyn TrieDB,
         path: Nibbles,
         value: impl Into<ValueOrHash>,
     ) -> Result<Node, TrieError> {
         match self {
-            Node::Branch(n) => n.insert(db, path, value.into()),
-            Node::Extension(n) => n.insert(db, path, value.into()),
-            Node::Leaf(n) => n.insert(path, value.into()),
+            Node::Branch(n) => n.insert(prefix_len, full_path, db, path, value.into()),
+            Node::Extension(n) => n.insert(prefix_len, full_path, db, path, value.into()),
+            Node::Leaf(n) => n.insert(prefix_len, full_path, path, value.into()),
         }
     }
 
@@ -187,13 +225,15 @@ impl Node {
     /// Returns the new root of the subtrie (if any) and the removed value if it existed in the subtrie
     pub fn remove(
         self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
         db: &dyn TrieDB,
         path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         match self {
-            Node::Branch(n) => n.remove(db, path),
-            Node::Extension(n) => n.remove(db, path),
-            Node::Leaf(n) => n.remove(path),
+            Node::Branch(n) => n.remove(prefix_len, full_path, db, path),
+            Node::Extension(n) => n.remove(prefix_len, full_path, db, path),
+            Node::Leaf(n) => n.remove(prefix_len, full_path, path),
         }
     }
 
@@ -202,13 +242,15 @@ impl Node {
     /// Only nodes with encoded len over or equal to 32 bytes are included
     pub fn get_path(
         &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
         db: &dyn TrieDB,
         path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         match self {
-            Node::Branch(n) => n.get_path(db, path, node_path),
-            Node::Extension(n) => n.get_path(db, path, node_path),
+            Node::Branch(n) => n.get_path(prefix_len, full_path, db, path, node_path),
+            Node::Extension(n) => n.get_path(prefix_len, full_path, db, path, node_path),
             Node::Leaf(n) => n.get_path(node_path),
         }
     }

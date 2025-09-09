@@ -1,4 +1,5 @@
 use ethrex_rlp::structs::Encoder;
+use smallvec::SmallVec;
 
 use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
 
@@ -18,7 +19,12 @@ impl LeafNode {
     }
 
     /// Returns the stored value if the given path matches the stored path
-    pub fn get(&self, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        path: Nibbles,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         if self.partial == path {
             Ok(Some(self.value.clone()))
         } else {
@@ -27,7 +33,13 @@ impl LeafNode {
     }
 
     /// Stores the received value and returns the new root of the subtrie previously consisting of self
-    pub fn insert(mut self, path: Nibbles, value: ValueOrHash) -> Result<Node, TrieError> {
+    pub fn insert(
+        mut self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        path: Nibbles,
+        value: ValueOrHash,
+    ) -> Result<Node, TrieError> {
         /* Possible flow paths:
             Leaf { SelfValue } -> Leaf { Value }
             Leaf { SelfValue } -> Extension { Branch { [Self,...] Value } }
@@ -104,7 +116,12 @@ impl LeafNode {
     }
 
     /// Removes own value if the path matches own path and returns self and the value if it was removed
-    pub fn remove(self, path: Nibbles) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
+    pub fn remove(
+        self,
+        prefix_len: usize,
+        full_path: SmallVec<[u8; 32]>,
+        path: Nibbles,
+    ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         Ok(if self.partial == path {
             (None, Some(self.value))
         } else {
@@ -155,7 +172,8 @@ mod test {
         };
 
         assert_eq!(
-            node.get(Nibbles::from_bytes(&[0x12])).unwrap(),
+            node.get(0, SmallVec::new(), Nibbles::from_bytes(&[0x12]))
+                .unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
     }
@@ -166,7 +184,11 @@ mod test {
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
-        assert!(node.get(Nibbles::from_bytes(&[0x34])).unwrap().is_none());
+        assert!(
+            node.get(0, SmallVec::new(), Nibbles::from_bytes(&[0x34]))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -176,7 +198,12 @@ mod test {
         };
 
         let node = node
-            .insert(Nibbles::from_bytes(&[0x12]), vec![0x13].into())
+            .insert(
+                0,
+                SmallVec::new(),
+                Nibbles::from_bytes(&[0x12]),
+                vec![0x13].into(),
+            )
             .unwrap();
         let node = match node {
             Node::Leaf(x) => x,
@@ -194,12 +221,18 @@ mod test {
         };
         let path = Nibbles::from_bytes(&[0x22]);
         let value = vec![0x23];
-        let node = node.insert(path.clone(), value.clone().into()).unwrap();
+        let node = node
+            .insert(0, SmallVec::new(), path.clone(), value.clone().into())
+            .unwrap();
         let node = match node {
             Node::Branch(x) => x,
             _ => panic!("expected a branch node"),
         };
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(
+            node.get(0, SmallVec::new(), trie.db.as_ref(), path)
+                .unwrap(),
+            Some(value)
+        );
     }
 
     #[test]
@@ -212,10 +245,16 @@ mod test {
         let path = Nibbles::from_bytes(&[0x13]);
         let value = vec![0x15];
 
-        let node = node.insert(path.clone(), value.clone().into()).unwrap();
+        let node = node
+            .insert(0, SmallVec::new(), path.clone(), value.clone().into())
+            .unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(
+            node.get(0, SmallVec::new(), trie.db.as_ref(), path)
+                .unwrap(),
+            Some(value)
+        );
     }
 
     #[test]
@@ -228,10 +267,16 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12, 0x34]);
         let value = vec![0x17];
 
-        let node = node.insert(path.clone(), value.clone().into()).unwrap();
+        let node = node
+            .insert(0, SmallVec::new(), path.clone(), value.clone().into())
+            .unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(
+            node.get(0, SmallVec::new(), trie.db.as_ref(), path)
+                .unwrap(),
+            Some(value)
+        );
     }
 
     #[test]
@@ -244,10 +289,16 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12]);
         let value = vec![0x17];
 
-        let node = node.insert(path.clone(), value.clone().into()).unwrap();
+        let node = node
+            .insert(0, SmallVec::new(), path.clone(), value.clone().into())
+            .unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(
+            node.get(0, SmallVec::new(), trie.db.as_ref(), path)
+                .unwrap(),
+            Some(value)
+        );
     }
 
     // An insertion that returns branch [value=(x)] -> leaf (y) is not possible because of the path
@@ -264,7 +315,9 @@ mod test {
             Nibbles::from_bytes(&[0x12, 0x34]),
             vec![0x12, 0x34, 0x56, 0x78],
         );
-        let (node, value) = node.remove(Nibbles::from_bytes(&[0x12, 0x34])).unwrap();
+        let (node, value) = node
+            .remove(0, SmallVec::new(), Nibbles::from_bytes(&[0x12, 0x34]))
+            .unwrap();
 
         assert!(node.is_none());
         assert_eq!(value, Some(vec![0x12, 0x34, 0x56, 0x78]));
@@ -277,7 +330,9 @@ mod test {
             vec![0x12, 0x34, 0x56, 0x78],
         );
 
-        let (node, value) = node.remove(Nibbles::from_bytes(&[0x12])).unwrap();
+        let (node, value) = node
+            .remove(0, SmallVec::new(), Nibbles::from_bytes(&[0x12]))
+            .unwrap();
 
         assert!(node.is_some());
         assert_eq!(value, None);

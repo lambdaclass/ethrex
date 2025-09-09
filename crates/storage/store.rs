@@ -20,6 +20,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
+use smallvec::SmallVec;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::{
@@ -40,7 +41,7 @@ pub struct Store {
     latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
-pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+pub type StorageTrieNodes = Vec<(H256, Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>)>;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,9 +55,9 @@ pub enum EngineType {
 
 pub struct UpdateBatch {
     /// Nodes to be added to the state trie
-    pub account_updates: Vec<TrieNode>,
+    pub account_updates: Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
     /// Storage tries updated and their new nodes
-    pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+    pub storage_updates: Vec<(H256, Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>)>,
     /// Blocks to be added
     pub blocks: Vec<Block>,
     /// Receipts added per block
@@ -65,11 +66,11 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+type StorageUpdates = Vec<(H256, Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>)>;
 
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
-    pub state_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub state_updates: Vec<(usize, SmallVec<[u8; 32]>, NodeHash, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Bytes)>,
 }
@@ -1110,7 +1111,7 @@ impl Store {
         Ok(self
             .open_state_trie(*EMPTY_TRIE_HASH)?
             .db()
-            .get(node_hash.into())?
+            .get(0, SmallVec::new(), node_hash.into())?
             .is_some())
     }
 
@@ -1124,7 +1125,7 @@ impl Store {
         Ok(self
             .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?
             .db()
-            .get(node_hash.into())?
+            .get(0, SmallVec::new(), node_hash.into())?
             .is_some())
     }
 
