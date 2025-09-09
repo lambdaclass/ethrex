@@ -992,7 +992,10 @@ pub fn validate_block(
         let block_rlp_size = block.encode_to_vec().len();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(error::ChainError::InvalidBlock(
-                InvalidBlockError::MaximumSizeExceeded(MAX_RLP_BLOCK_SIZE, block_rlp_size as u64),
+                InvalidBlockError::MaximumRlpSizeExceeded(
+                    MAX_RLP_BLOCK_SIZE,
+                    block_rlp_size as u64,
+                ),
             ));
         }
     } else if chain_config.is_prague_activated(block.header.timestamp) {
