@@ -16,7 +16,7 @@ concurrency:
 jobs:
   assign-author:
     name: Assign Author
-    if: github.event.action == 'opened' && github.event.repository.fork == false
+    if: github.event.action == 'opened' && github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
       - name: Assign PR author
@@ -32,7 +32,7 @@ jobs:
 
   label-pr:
     name: Set Label
-    if: github.event.repository.fork == false
+    if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
       - name: Check if PR already has labels
