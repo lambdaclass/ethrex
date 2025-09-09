@@ -1,7 +1,11 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 
 use super::{
-    codec::RLPxCodec,
+    codec::{EthCapVersion, RLPxCodec},
     server::{Initiator, Receiver},
 };
 use crate::{
@@ -58,6 +62,7 @@ pub(crate) struct LocalState {
 
 pub(crate) async fn perform(
     state: InnerState,
+    eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node, .. }) => {
@@ -76,7 +81,7 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             log_peer_debug(&node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec), false)
         }
@@ -94,7 +99,7 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             let node = Node::new(
                 peer_addr.ip(),
                 peer_addr.port(),

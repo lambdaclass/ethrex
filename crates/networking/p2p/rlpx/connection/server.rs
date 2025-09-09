@@ -1,4 +1,9 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::MempoolTransaction;
@@ -61,6 +66,8 @@ use crate::{
     tx_broadcaster::send_tx_hashes,
     types::Node,
 };
+
+use super::codec::EthCapVersion;
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -197,7 +204,10 @@ impl GenServer for RLPxConnection {
         mut self,
         handle: &GenServerHandle<Self>,
     ) -> Result<InitResult<Self>, Self::Error> {
-        match handshake::perform(self.inner_state).await {
+        // Set a default eth version that we can update after we negotiate peer capabilities
+        // This eth version will only be used to decode the initial `Status` & `Capabilities` messages.
+        let eth_version = Arc::new(RwLock::new(EthCapVersion::V68));
+        match handshake::perform(self.inner_state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
                 log_peer_debug(&established_state.node, "Starting RLPx connection");
 
@@ -240,6 +250,15 @@ impl GenServer for RLPxConnection {
                         )
                         .await;
 
+                    // Update eth capability version to the negotiated version for further message decoding
+                    let version = match &established_state.negotiated_eth_capability {
+                        Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
+                        Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
+                        _ => EthCapVersion::default(),
+                    };
+                    *eth_version
+                        .write()
+                        .map_err(|err| RLPxError::InternalError(err.to_string()))? = version;
                     // New state
                     self.inner_state = InnerState::Established(established_state);
                     Ok(Success(self))

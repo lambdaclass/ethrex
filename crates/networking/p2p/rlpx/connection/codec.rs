@@ -1,3 +1,5 @@
+use std::sync::{Arc, RwLock};
+
 use crate::rlpx::{error::RLPxError, message as rlpx, utils::ecdh_xchng};
 
 use super::handshake::{LocalState, RemoteState};
@@ -18,12 +20,45 @@ const MAX_MESSAGE_SIZE: u32 = 0xFFFFFF;
 
 type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
+const ETH_CAPABILITY_OFFSET: u8 = 0x10;
+const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
+const SNAP_CAPABILITY_OFFSET_ETH_69: u8 = 0x22;
+const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
+const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum EthCapVersion {
+    #[default]
+    V68,
+    V69,
+}
+
+impl EthCapVersion {
+    pub const fn eth_capability_offset(&self) -> u8 {
+        ETH_CAPABILITY_OFFSET
+    }
+
+    pub const fn snap_capability_offset(&self) -> u8 {
+        match self {
+            EthCapVersion::V68 => SNAP_CAPABILITY_OFFSET_ETH_68,
+            EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
+        }
+    }
+
+    pub const fn based_capability_offset(&self) -> u8 {
+        match self {
+            EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
+            EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
+        }
+    }
+}
 pub struct RLPxCodec {
     pub(crate) mac_key: H256,
     pub(crate) ingress_mac: Keccak256,
     pub(crate) egress_mac: Keccak256,
     pub(crate) ingress_aes: Aes256Ctr64BE,
     pub(crate) egress_aes: Aes256Ctr64BE,
+    pub(crate) eth_version: Arc<RwLock<EthCapVersion>>,
 }
 
 impl RLPxCodec {
@@ -31,6 +66,7 @@ impl RLPxCodec {
         local_state: &LocalState,
         remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
+        eth_version: Arc<RwLock<EthCapVersion>>,
     ) -> Result<Self, RLPxError> {
         let ephemeral_key_secret = ecdh_xchng(
             &local_state.ephemeral_key,
@@ -67,6 +103,7 @@ impl RLPxCodec {
             egress_mac,
             ingress_aes,
             egress_aes,
+            eth_version,
         })
     }
 }
@@ -80,6 +117,7 @@ impl std::fmt::Debug for RLPxCodec {
             .field("egress_mac", &self.egress_mac)
             .field("ingress_aes", &"Aes256Ctr64BE")
             .field("egress_aes", &"Aes256Ctr64BE")
+            .field("eth_version", &self.eth_version)
             .finish()
     }
 }
@@ -203,7 +241,14 @@ impl Decoder for RLPxCodec {
         let (frame_data, _padding) = frame_ciphertext.split_at(frame_size as usize);
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
-        Ok(Some(rlpx::Message::decode(msg_id, msg_data)?))
+        Ok(Some(rlpx::Message::decode(
+            msg_id,
+            msg_data,
+            *self
+                .eth_version
+                .read()
+                .map_err(|err| RLPxError::InternalError(err.to_string()))?,
+        )?))
     }
 
     fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -232,7 +277,13 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 
     fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         let mut frame_data = vec![];
-        message.encode(&mut frame_data)?;
+        message.encode(
+            &mut frame_data,
+            *self
+                .eth_version
+                .read()
+                .map_err(|err| RLPxError::InternalError(err.to_string()))?,
+        )?;
 
         let mac_aes_cipher = Aes256Enc::new_from_slice(&self.mac_key.0)?;
 
