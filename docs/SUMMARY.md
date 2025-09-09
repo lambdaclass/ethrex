@@ -27,6 +27,7 @@
 - [Guides](./l2/guides/README.md)
     - [Depositing assets](./l2/guides/depositing.md)
     - [Withdrawing assets](./l2/guides/withdrawing.md)
+    - [Admin server](./l2/guides/admin.md)
 - [Fundamentals](./l2/overview.md)
   - [Components](./l2/fundamentals/components/components.md)
     - [Sequencer](./l2/fundamentals/components/sequencer.md)
