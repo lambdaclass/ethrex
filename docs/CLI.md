@@ -52,12 +52,6 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
@@ -170,12 +164,6 @@ Node options:
 
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
-
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
