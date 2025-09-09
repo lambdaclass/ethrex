@@ -358,7 +358,7 @@ impl Store {
                 StoreError::Custom(format!("Column family not found: {}", cf_name))
             })?;
 
-            let mut results = Vec::new();
+            let mut results = Vec::with_capacity(keys.len());
 
             for key in keys {
                 match db.get_cf(&cf, key)? {
