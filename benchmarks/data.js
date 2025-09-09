@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757430089476,
+  "lastUpdate": 1757430213564,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13105,6 +13105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167474675882,
             "range": "± 383326976",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4627745f9fd704c9abcdcbfc53a36987ba26922f",
+          "message": "refactor(l1): unify peer score (#4294)\n\n**Motivation**\n\nPerformance improvement on snap sync.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nThis PR refactors the P2P networking layer by centralizing peer scoring\nfunctionality into a unified system. The changes move from multiple\nscattered peer scoring implementations to a single `PeerScore` module\nthat manages peer reputation and selection consistently across all sync\noperations.\n\nKey changes include:\n\n- Creation of a centralized `PeerScores` system to replace scattered\nscoring logic\n- Removal of local peer scoring implementations from state and storage\nhealing modules\n- Updated peer selection to use the unified scoring system across all\nsync operations\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2073 \n\n**Known issues**\n\n#4352: the usage of this method is required for scoring to be useful,\nbut it shouldn't be used always for performance reasons. This is error\nprone, so eventually the scoring data should be embedded in the kademlia\ntable's `PeerData`.\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Juan Munoz <juanmunoz890@gmail.com>\nCo-authored-by: Mateo Rico <89949621+ricomateo@users.noreply.github.com>\nCo-authored-by: Esteban Dimitroff Hodi <esteban.dimitroff@lambdaclass.com>\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: Gianbelinche <39842759+gianbelinche@users.noreply.github.com>\nCo-authored-by: Francisco Xavier Gauna <francisco.gauna@lambdaclass.com>\nCo-authored-by: ricomateo <mrico@fi.uba.ar>\nCo-authored-by: juan518munoz <62400508+juan518munoz@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-09T14:08:41Z",
+          "tree_id": "f75c02950a9553120b346d611a3fe0c1f8cfdb0c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4627745f9fd704c9abcdcbfc53a36987ba26922f"
+        },
+        "date": 1757430195271,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166577666818,
+            "range": "± 197097527",
             "unit": "ns/iter"
           }
         ]
