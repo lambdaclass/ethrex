@@ -52,7 +52,7 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 // How much we store in memory of request_account_range and request_storage_ranges
 // before we dump it into the file. This tunes how much memory ethrex uses during
 // the first steps of snap sync
-pub const RANGE_FILE_CHUNK_SIZE: u64 = 1024 * 1024 * 512; // 512MB
+pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 512; // 512MB
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -730,9 +730,7 @@ impl PeerHandler {
         let mut last_update: SystemTime = SystemTime::now();
 
         loop {
-            if all_accounts_state.len() * size_of::<AccountState>()
-                >= RANGE_FILE_CHUNK_SIZE as usize
-            {
+            if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
                 let current_account_hashes = std::mem::take(&mut all_account_hashes);
                 let current_account_states = std::mem::take(&mut all_accounts_state);
 
@@ -1315,8 +1313,7 @@ impl PeerHandler {
         let mut last_update = SystemTime::now();
         debug!("Starting request_storage_ranges loop");
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64
-                > RANGE_FILE_CHUNK_SIZE as usize
+            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > RANGE_FILE_CHUNK_SIZE
             {
                 let current_account_storages = std::mem::take(&mut all_account_storages);
                 all_account_storages =
