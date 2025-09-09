@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757432340951,
+  "lastUpdate": 1757434637644,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13165,6 +13165,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166550891334,
             "range": "± 297495985",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "87890b1abc1d9806ab15137de43a25c33e11ed56",
+          "message": "feat(l1): p256 verify implementation on L1 (#4292)\n\n**Description**\n\n- Implements\n[EIP-7591](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7951.md),\nwhich consists of the L1 implementation for the P256 precompile that\nalready exists on L2; with the main difference being gas cost.\n\n- Unifies the L2 and L1 implementations of the precompile for our\nclient, having a single function for both\n\nCloses #4160",
+          "timestamp": "2025-09-09T15:24:26Z",
+          "tree_id": "b061b02578bacfc0d70ee8d846344701da39a925",
+          "url": "https://github.com/lambdaclass/ethrex/commit/87890b1abc1d9806ab15137de43a25c33e11ed56"
+        },
+        "date": 1757434619083,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169239051291,
+            "range": "± 993492418",
             "unit": "ns/iter"
           }
         ]
