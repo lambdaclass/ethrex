@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757415247141,
+  "lastUpdate": 1757417199811,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -27075,6 +27075,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/5e527c38f73159ff1015167d5e587a67f01f26a9"
         },
         "date": 1757415245757,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0011052631578947368,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e3c6248444160b9602b66d0f272048168894afa",
+          "message": "feat(l2): add `ethrex_batchNumber` to RPC (#4349)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe lack a way to get the latest batch sealed, something similar to\n`eth_blockNumber`.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd a new RPC method `ethrex_batchNumber` that returns the last sealed\nbatch.\n\nHow to test:\n1. Start an L2 node:\n    ```\n    COMPILE_CONTRACTS=true cargo run --release -- l2 --dev\n    ```\n3. Wait about 1 minute until a batch is sealed.\n4. Request the last batch number:\n    ```\ncurl localhost:1729 -H 'content-type: application/json' -d '{\"jsonrpc\":\n\"2.0\", \"id\": \"1\", \"method\": \"ethrex_batchNumber\"}'\n    ```\nShould return something like `{\"id\":\"1\",\"jsonrpc\":\"2.0\",\"result\":\"0x2\"}`\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-08T17:22:00Z",
+          "tree_id": "630b490baa65ba03fbd39762c9c9adc7e56c3901",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2e3c6248444160b9602b66d0f272048168894afa"
+        },
+        "date": 1757417179117,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
