@@ -1,5 +1,4 @@
 use crate::{
-    kademlia::PeerChannels,
     metrics::METRICS,
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
     rlpx::{
@@ -65,15 +64,6 @@ pub struct InflightRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct PeerScore {
-    /// This tracks if a peer has a task in flight
-    /// So we can't use it yet
-    in_flight: bool,
-    /// This tracks the score of a peer
-    score: i64,
-}
-
-#[derive(Debug, Clone)]
 pub struct StorageHealer {
     last_update: Instant,
     /// We use this to track what is still to be downloaded
@@ -85,11 +75,6 @@ pub struct StorageHealer {
     store: Store,
     /// Memory of everything stored
     membatch: Membatch,
-    /// We use this to track which peers we can send stuff to
-    peer_handler: PeerHandler,
-    /// We use this to track which peers are occupied, and we can't send stuff to
-    /// Alongside their score for this situation
-    scored_peers: HashMap<H256, PeerScore>,
     /// With this we track how many requests are inflight to our peer
     /// This allows us to know if one is wildly out of time
     requests: HashMap<u64, InflightRequest>,
@@ -135,7 +120,7 @@ pub struct NodeRequest {
 pub async fn heal_storage_trie(
     state_root: H256,
     storage_accounts: &AccountStorageRoots,
-    peers: PeerHandler,
+    peers: &mut PeerHandler,
     store: Store,
     membatch: Membatch,
     staleness_timestamp: u64,
@@ -152,8 +137,6 @@ pub async fn heal_storage_trie(
         download_queue,
         store,
         membatch,
-        peer_handler: peers,
-        scored_peers: HashMap::new(),
         requests: HashMap::new(),
         staleness_timestamp,
         state_root,
@@ -191,10 +174,15 @@ pub async fn heal_storage_trie(
                 .healing_empty_try_recv
                 .store(state.empty_count as u64, Ordering::Relaxed);
             state.last_update = Instant::now();
+            peers
+                .peer_scores
+                .lock()
+                .await
+                .update_peers(&peers.peer_table)
+                .await;
             debug!(
                 "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
-                state
-                    .peer_handler
+                peers
                     .peer_table
                     .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
                     .await
@@ -249,9 +237,8 @@ pub async fn heal_storage_trie(
             &mut state.download_queue,
             &mut state.requests,
             &mut requests_task_joinset,
-            &state.peer_handler,
+            peers,
             state.state_root,
-            &mut state.scored_peers,
             &task_sender,
         )
         .await;
@@ -274,12 +261,14 @@ pub async fn heal_storage_trie(
             Ok(trie_nodes) => {
                 let Some(mut nodes_from_peer) = zip_requeue_node_responses_score_peer(
                     &mut state.requests,
-                    &mut state.scored_peers,
+                    peers,
                     &mut state.download_queue,
                     trie_nodes.clone(), // TODO: remove unnecesary clone, needed now for log 🏗️🏗️
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
-                ) else {
+                )
+                .await
+                else {
                     continue;
                 };
 
@@ -302,13 +291,16 @@ pub async fn heal_storage_trie(
                 state
                     .download_queue
                     .extend(inflight_request.requests.clone());
-                state
-                    .scored_peers
-                    .entry(inflight_request.peer_id)
-                    .and_modify(|entry| {
-                        entry.in_flight = false;
-                        entry.score -= 1;
-                    });
+                peers
+                    .peer_scores
+                    .lock()
+                    .await
+                    .record_failure(inflight_request.peer_id);
+                peers
+                    .peer_scores
+                    .lock()
+                    .await
+                    .free_peer(inflight_request.peer_id);
             }
         }
     }
@@ -323,12 +315,18 @@ async fn ask_peers_for_nodes(
     >,
     peers: &PeerHandler,
     state_root: H256,
-    scored_peers: &mut HashMap<H256, PeerScore>,
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
-        let Some(mut peer) =
-            get_peer_with_highest_score_and_mark_it_as_occupied(peers, scored_peers).await
+        let Some((peer_id, mut peer_channel)) = peers
+            .peer_scores
+            .lock()
+            .await
+            .get_peer_channel_with_highest_score_and_mark_as_used(
+                &peers.peer_table,
+                &SUPPORTED_SNAP_CAPABILITIES,
+            )
+            .await
         else {
             // warn!("We have no free peers for storage healing!"); way too spammy, moving to trace
             // If we have no peers we shrug our shoulders and wait until next free peer
@@ -343,7 +341,7 @@ async fn ask_peers_for_nodes(
             req_id,
             InflightRequest {
                 requests: inflight_requests_data,
-                peer_id: peer.0,
+                peer_id,
             },
         );
         let gtn = GetTrieNodes {
@@ -358,7 +356,7 @@ async fn ask_peers_for_nodes(
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
-            let response = PeerHandler::request_storage_trienodes(&mut peer.1, gtn).await;
+            let response = PeerHandler::request_storage_trienodes(&mut peer_channel, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
@@ -401,9 +399,9 @@ fn create_node_requests(
     (result, inflight_request)
 }
 
-fn zip_requeue_node_responses_score_peer(
+async fn zip_requeue_node_responses_score_peer(
     requests: &mut HashMap<u64, InflightRequest>,
-    scored_peers: &mut HashMap<H256, PeerScore>,
+    peer_handler: &mut PeerHandler,
     download_queue: &mut VecDeque<NodeRequest>,
     trie_nodes: TrieNodes,
     succesful_downloads: &mut usize,
@@ -417,15 +415,20 @@ fn zip_requeue_node_responses_score_peer(
         info!("We received a response where we had a missing requests {trie_nodes:?}");
         return None;
     };
-    let peer = scored_peers
-        .get_mut(&request.peer_id)
-        .expect("Each time we request we should add to scored_peeers");
-    peer.in_flight = false;
+    peer_handler
+        .peer_scores
+        .lock()
+        .await
+        .free_peer(request.peer_id);
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
         *failed_downloads += 1;
-        peer.score -= 1;
+        peer_handler
+            .peer_scores
+            .lock()
+            .await
+            .record_failure(request.peer_id);
         download_queue.extend(request.requests);
         return None;
     }
@@ -459,13 +462,11 @@ fn zip_requeue_node_responses_score_peer(
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
         *succesful_downloads += 1;
-        if peer.score < 10 {
-            peer.score += 1;
-        }
+        peer_handler.peer_scores.lock().await.record_success(request.peer_id);
         Some(nodes)
     } else {
         *failed_downloads += 1;
-        peer.score -= 1;
+        peer_handler.peer_scores.lock().await.record_failure(request.peer_id);
         download_queue.extend(request.requests);
         None
     }
@@ -698,43 +699,4 @@ fn commit_node(
         membatch.insert(parent_key, parent_entry);
     }
     Ok(())
-}
-
-async fn get_peer_with_highest_score_and_mark_it_as_occupied(
-    peers: &PeerHandler,
-    scored_peers: &mut HashMap<H256, PeerScore>,
-) -> Option<(H256, PeerChannels)> {
-    let mut chosen_peer: Option<(H256, PeerChannels)> = None;
-    let mut max_score = i64::MIN;
-
-    for (peer_id, peer_channel) in peers
-        .peer_table
-        .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-        .await
-    {
-        if let Some(known_peer_score) = scored_peers.get_mut(&peer_id) {
-            if known_peer_score.in_flight {
-                continue;
-            }
-            if known_peer_score.score > max_score {
-                chosen_peer = Some((peer_id, peer_channel));
-                max_score = known_peer_score.score;
-            }
-        } else if chosen_peer.is_none() {
-            chosen_peer = Some((peer_id, peer_channel));
-            max_score = 0;
-        }
-    }
-
-    if let Some((peer_id, _)) = chosen_peer {
-        scored_peers
-            .entry(peer_id)
-            .and_modify(|peer_score| peer_score.in_flight = true)
-            .or_insert(PeerScore {
-                in_flight: true,
-                score: 0,
-            });
-    }
-
-    chosen_peer
 }
