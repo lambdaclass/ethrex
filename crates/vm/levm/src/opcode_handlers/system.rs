@@ -843,14 +843,13 @@ impl<'a> VM<'a> {
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
     pub fn handle_state_backup(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
-        let backup = self
-            .substate_backups
-            .pop()
-            .ok_or(InternalError::CallFrame)?;
-        if !ctx_result.is_success() {
-            self.substate = backup;
+        if ctx_result.is_success() {
+            self.substate.commit_backup();
             self.restore_cache_state()?;
+        } else {
+            self.substate.revert_backup();
         }
+
         Ok(())
     }
 
