@@ -11,7 +11,7 @@ use bytes::Bytes;
 use ethrex_common::tracing::CallType::{
     self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
 };
-use ethrex_common::{Address, U256, types::Fork};
+use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -623,7 +623,7 @@ impl<'a> VM<'a> {
         // Calculate create address
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer, &code, salt)?,
-            None => calculate_create_address(deployer, deployer_nonce)?,
+            None => calculate_create_address(deployer, deployer_nonce),
         };
 
         // Add new contract to accessed addresses
