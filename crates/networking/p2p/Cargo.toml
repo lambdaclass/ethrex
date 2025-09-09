@@ -29,10 +29,10 @@ spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
 keccak-hash.workspace = true
+futures.workspace = true
 prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
-futures = "0.3.31"
 sha3 = "0.10.8"
 
 serde_json = "1.0.117"

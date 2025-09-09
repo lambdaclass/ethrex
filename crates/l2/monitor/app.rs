@@ -3,10 +3,10 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ethers::providers::StreamExt;
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
+use futures::StreamExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};

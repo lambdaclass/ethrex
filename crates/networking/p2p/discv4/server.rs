@@ -118,13 +118,13 @@ impl DiscoveryServer {
             kademlia: kademlia.clone(),
         };
 
-        info!("Adding {} bootnodes", bootnodes.len());
+        info!(count = bootnodes.len(), "Adding bootnodes");
 
         let mut table = kademlia.table.lock().await;
 
         for bootnode in &bootnodes {
             let _ = discovery_server.send_ping(bootnode).await.inspect_err(|e| {
-                error!("Failed to ping bootnode: {e}");
+                error!(error=?e, "Failed to ping bootnode");
             });
             table.insert(bootnode.node_id(), bootnode.clone().into());
         }
@@ -205,6 +205,7 @@ impl DiscoveryServer {
             }
             Message::ENRResponse(enrresponse_message) => {
                 /*
+                    TODO
                     - Look up in kademlia the peer associated with this message
                     - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
                     - Check that the seq number matches the one we have in our table (this requires setting it).
@@ -292,7 +293,7 @@ impl DiscoveryServer {
         if number_of_peers < TARGET_PEERS && number_of_contacts < TARGET_CONTACTS {
             INITIAL_LOOKUP_INTERVAL
         } else {
-            info!("Reached target number of peers or contacts. Using longer lookup interval.");
+            trace!("Reached target number of peers or contacts. Using longer lookup interval.");
             LOOKUP_INTERVAL
         }
     }
@@ -539,7 +540,7 @@ impl GenServer for DiscoveryServer {
                         Some(InMessage::Message(Box::new(Discv4Message::from(msg, addr))))
                     }
                     Err(e) => {
-                        tracing::error!("Error receiving Discv4 message: {e:?}");
+                        debug!(error=?e, "Error receiving Discv4 message");
                         // Skipping invalid data
                         None
                     }
@@ -567,18 +568,18 @@ impl GenServer for DiscoveryServer {
                 self.handle_message(*message).await;
             }
             Self::CastMsg::Revalidate => {
-                debug!(received = "Revalidate");
+                trace!(received = "Revalidate");
                 self.revalidate().await;
             }
             Self::CastMsg::Lookup => {
-                debug!(received = "Lookup");
+                trace!(received = "Lookup");
                 self.lookup().await;
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
             }
             Self::CastMsg::Prune => {
-                debug!(received = "Prune");
+                trace!(received = "Prune");
                 self.prune().await;
             }
         }

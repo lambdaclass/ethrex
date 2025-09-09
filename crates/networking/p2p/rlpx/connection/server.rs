@@ -443,7 +443,7 @@ where
         stream.filter_map(|result| match result {
             Ok(msg) => Some(CastMessage::PeerMessage(msg)),
             Err(e) => {
-                tracing::error!("Error receiving RLPx message: {e:?}");
+                debug!(error=?e, "Error receiving RLPx message");
                 // Skipping invalid data
                 None
             }
