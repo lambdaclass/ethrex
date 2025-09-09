@@ -18,8 +18,8 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::fmt::Debug;
 use std::sync::Arc;
+use std::{collections::BTreeSet, fmt::Debug};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
@@ -138,6 +138,37 @@ impl Store {
             balance: account_state.balance,
             nonce: account_state.nonce,
         }))
+    }
+
+    pub fn get_account_info_by_hash_batch(
+        &self,
+        block_hash: BlockHash,
+        addresses: &BTreeSet<Address>,
+    ) -> Result<BTreeMap<Address, AccountInfo>, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(BTreeMap::new());
+        };
+
+        let state_trie = self.open_locked_state_trie(header.state_root)?;
+
+        let mut map = BTreeMap::new();
+        for address in addresses {
+            let hashed_address = hash_address(address);
+            let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+                continue;
+            };
+            let account_state = AccountState::decode(&encoded_state)?;
+            map.insert(
+                *address,
+                AccountInfo {
+                    code_hash: account_state.code_hash,
+                    balance: account_state.balance,
+                    nonce: account_state.nonce,
+                },
+            );
+        }
+
+        Ok(map)
     }
 
     pub fn get_account_state_by_acc_hash(

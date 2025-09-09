@@ -6,7 +6,10 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeSet, HashMap},
+};
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -46,6 +49,16 @@ impl VmDatabase for StoreVmDatabase {
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
         self.store
             .get_account_info_by_hash(self.block_hash, address)
+            .map_err(|e| EvmError::DB(e.to_string()))
+    }
+
+    #[instrument(level = "trace", name = "Account read batch", skip_all)]
+    fn get_account_info_batch(
+        &self,
+        addresses: &BTreeSet<Address>,
+    ) -> Result<std::collections::BTreeMap<Address, AccountInfo>, EvmError> {
+        self.store
+            .get_account_info_by_hash_batch(self.block_hash, addresses)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 

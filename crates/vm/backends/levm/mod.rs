@@ -28,6 +28,7 @@ use ethrex_levm::{
     vm::{Substate, VM},
 };
 use std::cmp::min;
+use std::collections::BTreeSet;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -48,9 +49,22 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })? {
+        })?;
+
+        let mut addresses = BTreeSet::new();
+
+        for (tx, sender) in &txs_with_sender {
+            addresses.insert(*sender);
+            if let TxKind::Call(to) = tx.to() {
+                addresses.insert(to);
+            }
+        }
+        db.preload_accounts(&addresses)?;
+
+        for (tx, tx_sender) in txs_with_sender {
+            tx.to();
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
