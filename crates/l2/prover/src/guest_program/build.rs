@@ -107,7 +107,7 @@ fn build_openvm_program() {
     let sdk = Sdk::standard();
 
     let guest_opts = GuestOptions::default();
-    let target_path = "./openvm/";
+    let target_path = "./src/openvm/";
     let _elf = sdk
         .build(guest_opts, target_path, &None, None)
         .expect("could not build OpenVM program");
@@ -117,7 +117,7 @@ fn build_openvm_program() {
     let vk = bincode::serialize(&app_vk).expect("could not serialize OpenVM vk");
 
     std::fs::write(
-        "./openvm/out/riscv32im-openvm-vk",
+        "./src/openvm/out/riscv32im-openvm-vk",
         format!("0x{}\n", hex::encode(vk)),
     )
     .expect("could not write OpenVM vk to file");
