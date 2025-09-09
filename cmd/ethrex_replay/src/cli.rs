@@ -578,21 +578,6 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         store.add_block_header(header.hash(), header).await.unwrap();
     }
 
-    // let mut storage_trie =
-    //     store.open_state_trie(state_root);
-
-    // let mut trie = store_clone.open_state_trie(computed_state_root)?;
-
-    // for (account_hash, account) in account_states_snapshot {
-    //     METRICS
-    //         .account_tries_inserted
-    //         .fetch_add(1, Ordering::Relaxed);
-    //     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-    // }
-    // *METRICS.current_step.blocking_lock() =
-    //     "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
-    // let current_state_root = trie.hash()?;
-
     let blockchain = Blockchain::default_with_store(store);
 
     let address = Address::from_str("79c0bb4ee51d7557e012f2f52db4a4ff85ca3196")
