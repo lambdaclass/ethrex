@@ -2,7 +2,6 @@ use ethrex_common::types::Block;
 use ethrex_common::types::blobs_bundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use eyre::Context;
-use eyre::OptionExt;
 use rkyv::rancor::Error;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -63,32 +62,20 @@ pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
 }
 
 pub fn write_cache(cache: &Cache, l2: bool) -> eyre::Result<()> {
+    if cache.blocks.is_empty() {
+        return Err(eyre::Error::msg("tried to write cache with no blocks"));
+    }
+
     let file_name = get_block_cache_file_name(
         cache.witness.chain_config.chain_id,
-        cache
-            .blocks
-            .first()
-            .ok_or_eyre("tried writing cache for no blocks")?
-            .header
-            .number,
+        cache.blocks[0].header.number,
         if cache.blocks.len() == 1 {
             None
         } else {
-            Some(
-                cache
-                    .blocks
-                    .last()
-                    .ok_or_eyre("tried writing cache for no blocks")?
-                    .header
-                    .number,
-            )
+            cache.blocks.last().map(|b| b.header.number)
         },
         l2,
     );
-
-    if cache.blocks.is_empty() {
-        return Err(eyre::Error::msg("cache can't be empty"));
-    }
 
     let mut file = BufWriter::new(File::create(file_name)?);
 
