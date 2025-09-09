@@ -20,7 +20,7 @@ pub fn get_address_from_secret_key(secret_key: &secp256k1::SecretKey) -> Result<
 }
 
 #[cfg(not(feature = "secp256k1"))]
-pub fn get_address_from_secret_key(secret_key: &k256::SecretKey) -> Result<Address, String> {
+pub fn get_address_from_secret_key(secret_key: &k256::elliptic_curve::SecretKey<k256::Secp256k1>) -> Result<Address, String> {
     use k256::elliptic_curve::sec1::ToEncodedPoint;
 
     let public_key = secret_key.public_key().to_encoded_point(false);
