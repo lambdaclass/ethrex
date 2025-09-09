@@ -21,7 +21,8 @@ use ethrex_l2_common::{
     l1_messages::{get_block_l1_messages, get_l1_message_hash},
     merkle_tree::compute_merkle_root,
     privileged_transactions::{
-        compute_privileged_transactions_hash, get_block_privileged_transactions,
+        PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
+        get_block_privileged_transactions,
     },
     state_diff::{StateDiff, prepare_state_diff},
 };
@@ -376,6 +377,14 @@ impl L1Committer {
                 .parent_hash;
             let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
 
+            if acc_privileged_txs.len() as u64 > PRIVILEGED_TX_BUDGET {
+                warn!(
+                    "Privileged transactions budget exceeded. Any remaining blocks will be processed in the next batch."
+                );
+                // Break loop. Use the previous generated blobs_bundle.
+                break;
+            }
+
             let result = if !self.validium {
                 // Prepare current state diff.
                 let state_diff = prepare_state_diff(
@@ -449,6 +458,11 @@ impl L1Committer {
             METRICS.set_batch_gas_used(batch_number, batch_gas_used)?;
             METRICS.set_batch_size(batch_number, batch_size)?;
             METRICS.set_batch_tx_count(batch_number, tx_count)?;
+        );
+
+        info!(
+            "Added {} privileged transactions to the batch",
+            privileged_transactions_hashes.len()
         );
 
         let privileged_transactions_hash =

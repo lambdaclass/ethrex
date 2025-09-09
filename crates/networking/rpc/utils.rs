@@ -39,6 +39,8 @@ pub enum RpcErr {
     InvalidPayloadAttributes(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -139,6 +141,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
+            },
+            RpcErr::Custom(context) => RpcErrorMetadata {
+                code: -32000,
+                data: None,
+                message: format!("Custom error: {context}"),
             },
         }
     }

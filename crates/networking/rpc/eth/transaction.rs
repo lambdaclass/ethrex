@@ -508,7 +508,8 @@ impl RpcHandler for EstimateGasRequest {
             storage.clone(),
             blockchain.clone(),
             fork,
-        )?;
+        )
+        .map_err(|e| RpcErr::Custom(format!("Simulation failed using highest gas limit: {e}")))?;
 
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
