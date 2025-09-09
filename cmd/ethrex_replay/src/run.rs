@@ -1,4 +1,4 @@
-use crate::cache::Cache;
+use crate::cache::ReplayInput;
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
@@ -13,22 +13,22 @@ use std::{
     sync::Arc,
 };
 
-pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
+pub async fn exec(backend: Backend, replay_input: ReplayInput) -> eyre::Result<()> {
     #[cfg(feature = "l2")]
-    let input = get_l2_input(cache)?;
+    let input = get_l2_input(replay_input)?;
     #[cfg(not(feature = "l2"))]
-    let input = get_l1_input(cache)?;
+    let input = get_l1_input(replay_input)?;
 
     ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
 
     Ok(())
 }
 
-pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
+pub async fn prove(backend: Backend, replay_input: ReplayInput) -> eyre::Result<()> {
     #[cfg(feature = "l2")]
-    let input = get_l2_input(cache)?;
+    let input = get_l2_input(replay_input)?;
     #[cfg(not(feature = "l2"))]
-    let input = get_l1_input(cache)?;
+    let input = get_l1_input(replay_input)?;
 
     catch_unwind(AssertUnwindSafe(|| {
         ethrex_prover_lib::prove(backend, input, false).map_err(|e| eyre::Error::msg(e.to_string()))
@@ -39,16 +39,16 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
 }
 
 pub async fn run_tx(
-    cache: Cache,
+    input: ReplayInput,
     tx_hash: H256,
     l2: bool,
 ) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
-    let block = cache
+    let block = input
         .blocks
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
-    let mut prover_db = cache.witness;
+    let mut prover_db = input.witness;
     prover_db.rebuild_state_trie()?;
     let mut wrapped_db = ExecutionWitnessWrapper::new(prover_db);
 
@@ -78,12 +78,12 @@ pub async fn run_tx(
     Err(eyre::Error::msg("transaction not found inside block"))
 }
 
-fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
-    let Cache {
+fn get_l1_input(replay_input: ReplayInput) -> eyre::Result<ProgramInput> {
+    let ReplayInput {
         blocks,
         witness: db,
         l2_fields,
-    } = cache;
+    }: ReplayInput = replay_input;
 
     if l2_fields.is_some() {
         return Err(eyre::eyre!("Unexpected L2 fields in cache"));
@@ -106,12 +106,12 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
 }
 
 #[cfg(feature = "l2")]
-fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
-    let Cache {
+fn get_l2_input(replay_input: ReplayInput) -> eyre::Result<ProgramInput> {
+    let ReplayInput {
         blocks,
         witness: db,
         l2_fields,
-    } = cache;
+    }: ReplayInput = replay_input;
 
     let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
 

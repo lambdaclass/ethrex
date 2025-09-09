@@ -1,4 +1,4 @@
-use ethrex_common::types::{Transaction, TxKind};
+use ethrex_common::types::{Block, Transaction, TxKind};
 use std::collections::HashMap;
 
 use charming::{
@@ -7,8 +7,6 @@ use charming::{
     element::{Tooltip, Trigger},
     series::Pie,
 };
-
-use crate::cache::Cache;
 
 const TOP_N_DESTINATIONS: usize = 10;
 const TOP_N_SELECTORS: usize = 10;
@@ -155,10 +153,9 @@ impl BlockStats {
     }
 }
 
-pub async fn plot(cache: Cache) -> eyre::Result<()> {
+pub async fn plot(blocks: &[Block]) -> eyre::Result<()> {
     let mut stats = BlockStats::default();
-    let txs = cache
-        .blocks
+    let txs = blocks
         .iter()
         .flat_map(|b| b.body.transactions.clone())
         .collect::<Vec<_>>();
