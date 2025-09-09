@@ -18,8 +18,8 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::fmt::Debug;
 use std::sync::Arc;
+use std::{collections::BTreeSet, fmt::Debug};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
@@ -143,7 +143,7 @@ impl Store {
     pub fn get_account_info_by_hash_batch(
         &self,
         block_hash: BlockHash,
-        addresses: &[Address],
+        addresses: &BTreeSet<Address>,
     ) -> Result<BTreeMap<Address, AccountInfo>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(BTreeMap::new());

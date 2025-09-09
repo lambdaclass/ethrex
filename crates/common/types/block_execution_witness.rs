@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -305,7 +305,7 @@ impl ExecutionWitnessResult {
 
     pub fn get_account_info_by_hash_batch(
         &mut self,
-        addresses: &[Address],
+        addresses: &BTreeSet<Address>,
     ) -> Result<BTreeMap<Address, AccountInfo>, ExecutionWitnessError> {
         let state_trie = self
             .state_trie
@@ -316,28 +316,29 @@ impl ExecutionWitnessResult {
 
         let mut map = BTreeMap::new();
         for address in addresses {
-            let hashed_address = self
-                .account_hashes_by_address
-                .entry(*address)
-                .or_insert_with(|| hash_address(address));
+            if !map.contains_key(address) {
+                let hashed_address = self
+                    .account_hashes_by_address
+                    .entry(*address)
+                    .or_insert_with(|| hash_address(address));
+                let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
+                    continue;
+                };
+                let account_state = AccountState::decode(&encoded_state).map_err(|_| {
+                    ExecutionWitnessError::Database(
+                        "Failed to get decode account from trie".to_string(),
+                    )
+                })?;
 
-            let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
-                continue;
-            };
-            let account_state = AccountState::decode(&encoded_state).map_err(|_| {
-                ExecutionWitnessError::Database(
-                    "Failed to get decode account from trie".to_string(),
-                )
-            })?;
-
-            map.insert(
-                *address,
-                AccountInfo {
-                    code_hash: account_state.code_hash,
-                    balance: account_state.balance,
-                    nonce: account_state.nonce,
-                },
-            );
+                map.insert(
+                    *address,
+                    AccountInfo {
+                        code_hash: account_state.code_hash,
+                        balance: account_state.balance,
+                        nonce: account_state.nonce,
+                    },
+                );
+            }
         }
 
         Ok(map)

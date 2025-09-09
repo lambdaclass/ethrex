@@ -62,7 +62,7 @@ impl LEVM {
                 addresses.insert(to);
             }
         }
-        db.preload_accounts(&addresses.into_iter().collect::<Vec<_>>())?;
+        db.preload_accounts(&addresses)?;
 
         for (tx, tx_sender) in txs_with_sender {
             tx.to();

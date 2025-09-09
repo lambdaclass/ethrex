@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::EvmError;
 use bytes::Bytes;
@@ -12,7 +12,7 @@ pub trait VmDatabase: Send + Sync + DynClone {
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError>;
     fn get_account_info_batch(
         &self,
-        addresses: &[Address],
+        addresses: &BTreeSet<Address>,
     ) -> Result<BTreeMap<Address, AccountInfo>, EvmError>;
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError>;
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError>;

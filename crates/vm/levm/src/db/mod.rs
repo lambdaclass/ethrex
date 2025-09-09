@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::errors::DatabaseError;
 use bytes::Bytes;
@@ -13,7 +13,7 @@ pub trait Database: Send + Sync {
     fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError>;
     fn get_account_info_batch(
         &self,
-        addresses: &[Address],
+        addresses: &BTreeSet<Address>,
     ) -> Result<BTreeMap<Address, AccountInfo>, DatabaseError>;
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError>;
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError>;

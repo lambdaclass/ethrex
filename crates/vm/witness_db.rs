@@ -7,7 +7,10 @@ use ethrex_common::{
         block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
     },
 };
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 #[derive(Clone)]
 pub struct ExecutionWitnessWrapper {
@@ -97,7 +100,7 @@ impl VmDatabase for ExecutionWitnessWrapper {
 
     fn get_account_info_batch(
         &self,
-        addresses: &[Address],
+        addresses: &BTreeSet<Address>,
     ) -> Result<std::collections::BTreeMap<Address, AccountInfo>, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?

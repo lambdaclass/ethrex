@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -103,7 +104,7 @@ impl GeneralizedDatabase {
     /// This is used to preload accounts that are known that will be used, such as transaction senders.
     ///
     /// The preloaded accounts are cached internally.
-    pub fn preload_accounts(&mut self, addresses: &[Address]) -> Result<(), InternalError> {
+    pub fn preload_accounts(&mut self, addresses: &BTreeSet<Address>) -> Result<(), InternalError> {
         let accounts = self.store.get_account_info_batch(addresses)?;
         self.preloaded_account_state.extend(accounts);
         Ok(())

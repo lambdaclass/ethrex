@@ -7,7 +7,7 @@ use ethrex_levm::db::Database as LevmDatabase;
 use crate::VmDatabase;
 use crate::db::DynVmDatabase;
 use ethrex_levm::errors::DatabaseError;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::result::Result;
 use std::sync::{Arc, Mutex};
 
@@ -48,7 +48,7 @@ impl LevmDatabase for DatabaseLogger {
 
     fn get_account_info_batch(
         &self,
-        addresses: &[CoreAddress],
+        addresses: &BTreeSet<CoreAddress>,
     ) -> Result<std::collections::BTreeMap<CoreAddress, AccountInfo>, DatabaseError> {
         {
             let mut state = self
@@ -132,7 +132,7 @@ impl LevmDatabase for DynVmDatabase {
 
     fn get_account_info_batch(
         &self,
-        addresses: &[CoreAddress],
+        addresses: &BTreeSet<CoreAddress>,
     ) -> Result<std::collections::BTreeMap<CoreAddress, AccountInfo>, DatabaseError> {
         let accounts = <dyn VmDatabase>::get_account_info_batch(self.as_ref(), addresses)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?;
