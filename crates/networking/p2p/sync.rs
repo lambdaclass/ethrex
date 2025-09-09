@@ -193,7 +193,11 @@ impl Syncer {
             debug!("Sync Log 1: In snap sync");
             debug!(
                 "Sync Log 2: State block hashes len {}",
-                block_sync_state.to_snap_block_hashes().len()
+                match block_sync_state {
+                    BlockSyncState::Full(_) => 0,
+                    BlockSyncState::Snap(ref snap_block_sync_state) =>
+                        snap_block_sync_state.block_hashes.len(),
+                }
             );
             debug!("Requesting Block Headers from {current_head}");
 
@@ -538,15 +542,6 @@ impl BlockSyncState {
         }
     }
 
-    /// Consumes the current state and returns the contained block hashes if the state is a SnapSynd state
-    /// If it is a FullSync state, returns an empty vector
-    pub fn to_snap_block_hashes(&self) -> Vec<BlockHash> {
-        match self {
-            BlockSyncState::Full(_) => vec![],
-            BlockSyncState::Snap(state) => state.block_hashes.clone(),
-        }
-    }
-
     /// Converts self into a FullSync state, does nothing if self is already a FullSync state
     pub async fn into_fullsync(self) -> Result<Self, SyncError> {
         // Switch from Snap to Full sync and vice versa
@@ -819,10 +814,15 @@ impl Syncer {
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
         // - Execute blocks after the pivot (like in full-sync)
-        let all_block_hashes = block_sync_state.to_snap_block_hashes();
-        let pivot_idx = all_block_hashes.len().saturating_sub(1);
+        let pivot_hash = match block_sync_state {
+            BlockSyncState::Full(_) => return Err(SyncError::NotInSnapSync),
+            BlockSyncState::Snap(snap_block_sync_state) => snap_block_sync_state
+                .block_hashes
+                .last()
+                .ok_or(SyncError::NoBlockHeaders)?,
+        };
         let mut pivot_header = store
-            .get_block_header_by_hash(all_block_hashes[pivot_idx])?
+            .get_block_header_by_hash(*pivot_hash)?
             .ok_or(SyncError::CorruptDB)?;
 
         while block_is_stale(&pivot_header) {
@@ -1133,14 +1133,16 @@ impl Syncer {
 
         store.add_block(block).await?;
 
-        let all_block_hashes = block_sync_state.to_snap_block_hashes();
-
-        let numbers_and_hashes = all_block_hashes
-            .into_iter()
-            .rev()
-            .enumerate()
-            .map(|(i, hash)| (pivot_header.number - i as u64, hash))
-            .collect::<Vec<_>>();
+        let numbers_and_hashes = match block_sync_state {
+            BlockSyncState::Full(_) => return Err(SyncError::NotInSnapSync),
+            BlockSyncState::Snap(snap_block_sync_state) => snap_block_sync_state
+                .block_hashes
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(i, hash)| (pivot_header.number - i as u64, *hash))
+                .collect::<Vec<_>>(),
+        };
 
         store
             .forkchoice_update(
