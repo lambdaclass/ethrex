@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757417365976,
+  "lastUpdate": 1757422197752,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -27139,6 +27139,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0011052631578947368,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d9cd6cd9e2082636a46dbe3333fc90291b0f1206",
+          "message": "refactor(l1): add revm feature flag (#4317)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe want to be able to compile ethrex without compiling revm, this PR\nenables it.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-08T20:18:15Z",
+          "tree_id": "371ea0a016183445a166d86d20665dfa89c4c012",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d9cd6cd9e2082636a46dbe3333fc90291b0f1206"
+        },
+        "date": 1757422175334,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0010937499999999999,
             "unit": "Mgas/s"
           }
         ]
