@@ -1667,28 +1667,20 @@ impl GenServer for PeerHandler {
                 *METRICS.headers_to_download.lock().await = sync_head_number + 1;
                 *METRICS.sync_head_hash.lock().await = sync_head;
 
-                let block_count = sync_head_number + 1 - start;
-                let chunk_count = if block_count < 8000_u64 { 1 } else { 800_u64 };
-
-                // 2) partition the amount of headers in `K` tasks
-                let chunk_limit = block_count / chunk_count;
-
-                // list of tasks to be executed
+                let max_chunk_size = 800;
                 let mut pending_tasks = VecDeque::new();
 
-                for i in 0..chunk_count {
-                    pending_tasks.push_back(Task::Headers {
-                        start_block: i * chunk_limit + start,
-                        chunk_limit,
-                    });
-                }
+                let mut current_start = start;
+                while current_start <= sync_head_number {
+                    let remaining = sync_head_number + 1 - current_start;
+                    let size = remaining.min(max_chunk_size);
 
-                // Push the reminder
-                if block_count % chunk_count != 0 {
                     pending_tasks.push_back(Task::Headers {
-                        start_block: chunk_count * chunk_limit + start,
-                        chunk_limit: block_count % chunk_count,
+                        start_block: current_start,
+                        chunk_limit: size,
                     });
+
+                    current_start += size;
                 }
 
                 debug!(
