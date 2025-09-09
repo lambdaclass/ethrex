@@ -37,7 +37,6 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
-use tracing::error;
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 

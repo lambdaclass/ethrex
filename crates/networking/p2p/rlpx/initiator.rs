@@ -1,13 +1,11 @@
-use std::{sync::LazyLock, time::Duration};
+use std::time::Duration;
 
 use spawned_concurrency::{
     messages::Unused,
-    tasks::GenServerHandle,
     tasks::{CastResponse, GenServer, send_after},
 };
 
-use tokio::{sync::OnceCell, time::Instant};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::{metrics::METRICS, network::P2PContext};
 
@@ -32,11 +30,10 @@ pub struct RLPxInitiator {
     initial_lookup_interval: Duration,
     lookup_interval: Duration,
 
-    /// Interval for logging the amount for peers and clearing the table of aleeady connected peers.
-    last_log_time: Instant,
-
     /// The target number of RLPx connections to reach.
     target_peers: u64,
+    /// The rate at which to try new connections.
+    new_connections_per_lookup: u64,
 }
 
 impl RLPxInitiator {
@@ -45,8 +42,8 @@ impl RLPxInitiator {
             context,
             initial_lookup_interval: Duration::from_secs(3),
             lookup_interval: Duration::from_secs(5 * 60),
-            target_peers: 500,
-            last_log_time: Instant::now(),
+            target_peers: 50,
+            new_connections_per_lookup: 5000,
         }
     }
 
@@ -55,41 +52,19 @@ impl RLPxInitiator {
 
         let state = RLPxInitiator::new(context);
 
-        let server = RLPxInitiator::start(state.clone());
-        if let Err(err) = INITIATOR.set(server) {
-            error!("We tried to start multiple RLPxInitiators: {err}");
-        };
+        let mut server = RLPxInitiator::start(state.clone());
 
-        for _ in 0..state.target_peers {
-            let _ = INITIATOR
-                .get()
-                .expect("We should get the initiator we just set up")
-                .clone()
-                .cast(InMessage::LookForPeer)
-                .await;
-        }
+        let _ = server.cast(InMessage::LookForPeers).await;
 
         Ok(())
     }
 
-    /// Looks for a single peer. If it finds one to attempt a connection, returns true
-    /// Else returns false
-    async fn look_for_peer(&mut self) -> bool {
+    async fn look_for_peers(&self) {
+        info!("Looking for peers");
+
         let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
-        let peer_number = self.context.table.peers.lock().await.len() as u64;
 
-        if self.last_log_time.elapsed() > Duration::from_secs(2) {
-            info!(
-                "Resetting list of tried peers. Current peers {}",
-                peer_number,
-            );
-            self.last_log_time = Instant::now();
-            already_tried_peers.clear();
-        }
-
-        if peer_number > self.target_peers {
-            return false;
-        }
+        let mut tried_connections = 0;
 
         for contact in self.context.table.table.lock().await.values() {
             let node_id = contact.node.node_id();
@@ -103,10 +78,17 @@ impl RLPxInitiator {
                 RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
 
                 METRICS.record_new_rlpx_conn_attempt().await;
-                return true;
+                tried_connections += 1;
+                if tried_connections >= self.new_connections_per_lookup {
+                    break;
+                }
             }
         }
-        false
+
+        if tried_connections < self.new_connections_per_lookup {
+            info!("Resetting list of tried peers.");
+            already_tried_peers.clear();
+        }
     }
 
     async fn get_lookup_interval(&self) -> Duration {
@@ -119,15 +101,11 @@ impl RLPxInitiator {
             self.lookup_interval
         }
     }
-
-    pub async fn down(handle: &mut GenServerHandle<RLPxInitiator>) {
-        handle.cast(InMessage::LookForPeer).await;
-    }
 }
 
 #[derive(Debug, Clone)]
 pub enum InMessage {
-    LookForPeer,
+    LookForPeers,
 }
 
 #[derive(Debug, Clone)]
@@ -147,22 +125,19 @@ impl GenServer for RLPxInitiator {
         handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            Self::CastMsg::LookForPeer => {
+            Self::CastMsg::LookForPeers => {
                 debug!(received = "Look for peers");
 
-                if !self.look_for_peer().await {
-                    send_after(
-                        self.get_lookup_interval().await,
-                        handle.clone(),
-                        Self::CastMsg::LookForPeer,
-                    );
-                };
+                self.look_for_peers().await;
+
+                send_after(
+                    self.get_lookup_interval().await,
+                    handle.clone(),
+                    Self::CastMsg::LookForPeers,
+                );
 
                 CastResponse::NoReply
             }
         }
     }
 }
-
-pub static INITIATOR: LazyLock<OnceCell<GenServerHandle<RLPxInitiator>>> =
-    LazyLock::new(OnceCell::new);
