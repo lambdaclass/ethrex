@@ -64,7 +64,7 @@ impl L2Command {
 
         let matches = app.try_get_matches_from(args_with_program)?;
         let init_options = Options::from_arg_matches(&matches)?;
-        l2::init_tracing(&init_options);
+        let log_filter_handler = l2::init_tracing(&init_options);
         let mut l2_options = init_options;
 
         if l2_options.node_opts.dev {
@@ -72,7 +72,11 @@ impl L2Command {
             remove_db(DB_ETHREX_DEV_L1, true);
             remove_db(DB_ETHREX_DEV_L2, true);
             println!("Initializing L1");
-            init_l1(crate::cli::Options::default_l1()).await?;
+            init_l1(
+                crate::cli::Options::default_l1(),
+                log_filter_handler.clone(),
+            )
+            .await?;
             println!("Deploying contracts...");
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
@@ -89,7 +93,7 @@ impl L2Command {
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
         }
-        l2::init_l2(l2_options).await?;
+        l2::init_l2(l2_options, log_filter_handler).await?;
         Ok(())
     }
 }
@@ -268,7 +272,7 @@ impl Command {
                 ..Default::default()
             }),
             _ => init_tracing(&crate::cli::Options::default()),
-        }
+        };
 
         match self {
             Command::Prover {
