@@ -123,15 +123,16 @@ impl Store {
 
         // Create descriptors for ALL existing CFs + expected ones (RocksDB requires opening all existing CFs)
         let mut all_cfs_to_open = HashSet::new();
-        
+
         // Add all expected CFs
         for cf in &expected_column_families {
             all_cfs_to_open.insert(cf.to_string());
         }
-        
+
         // Add all existing CFs (we must open them to be able to drop obsolete ones later)
         for cf in &existing_cfs {
-            if cf != "default" { // default is handled automatically
+            if cf != "default" {
+                // default is handled automatically
                 all_cfs_to_open.insert(cf.clone());
             }
         }
@@ -233,7 +234,11 @@ impl Store {
                     Ok(_) => info!("Successfully dropped column family: {}", cf_name),
                     Err(e) => {
                         // Log error but don't fail initialization - the database is still usable
-                        tracing::warn!("Failed to drop obsolete column family '{}': {}", cf_name, e);
+                        tracing::warn!(
+                            "Failed to drop obsolete column family '{}': {}",
+                            cf_name,
+                            e
+                        );
                     }
                 }
             }
@@ -880,13 +885,9 @@ impl StoreEngine for Store {
     // TODO: Check differences with libmdbx
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
-            return Ok(None);
-        };
-
         let key = (block_hash, index).encode_to_vec();
 
         self.read_async(CF_RECEIPTS, key)
