@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757417199811,
+  "lastUpdate": 1757417365976,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12985,6 +12985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169279859191,
             "range": "± 558310195",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dmitriymozir@gmail.com",
+            "name": "MozirDmitriy",
+            "username": "MozirDmitriy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b35fe1d6e51fce8cb985b949f8e9b1efacc414ef",
+          "message": "docs(levm): add detailed documentation for CallFrame backups and revert/merge logic (#4074)\n\n## Motivation\n\nThis pull request aims to improve the documentation for the Lambda EVM\nimplementation by providing a clear and detailed explanation of\nCallFrame backups. Proper documentation of this mechanism is essential\nfor both new and existing contributors to understand how state reversion\nand merging are handled during nested calls and transaction execution.\n\n## Description\n\nThis PR adds a comprehensive section to callframe.md that covers:\n\n- The structure and purpose of CallFrame backups.\n- When and why backups are created and used.\n- The logic for reverting and merging state changes during nested calls.\n- The importance of the order of operations (such as value transfer and\nnonce increment).\n- A practical example based on the generic_call function.\n- References to relevant code locations for further study.\nCloses #3071",
+          "timestamp": "2025-09-09T10:35:18Z",
+          "tree_id": "4684d2ea564ff77a41f143ee127adb20208c9ee3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b35fe1d6e51fce8cb985b949f8e9b1efacc414ef"
+        },
+        "date": 1757417347278,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169373268412,
+            "range": "± 980805735",
             "unit": "ns/iter"
           }
         ]
