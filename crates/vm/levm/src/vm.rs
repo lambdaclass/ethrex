@@ -176,7 +176,7 @@ impl Substate {
                     .extend(slot_set.iter().copied());
             }
 
-            current = match self.parent.as_deref() {
+            current = match current.parent.as_deref() {
                 Some(x) => x,
                 None => break,
             };
@@ -281,34 +281,19 @@ impl Substate {
     }
 
     /// Iterate over all logs.
-    pub fn iter_logs(&mut self) -> impl Iterator<Item = &Log> {
-        struct Iter<'a> {
-            parent: Option<&'a Substate>,
-            iter: std::slice::Iter<'a, Log>,
-        }
-
-        impl<'a> Iterator for Iter<'a> {
-            type Item = &'a Log;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                let next_item = self.iter.next();
-                if next_item.is_none() {
-                    if let Some(parent) = self.parent {
-                        self.parent = parent.parent.as_deref();
-                        self.iter = parent.logs.iter();
-
-                        return self.next();
-                    }
-                }
-
-                next_item
+    pub fn extract_logs(&self) -> Vec<Log> {
+        fn inner(substrate: &Substate, target: &mut Vec<Log>) {
+            if let Some(parent) = substrate.parent.as_deref() {
+                inner(parent, target);
             }
+
+            target.extend_from_slice(&substrate.logs);
         }
 
-        Iter {
-            parent: self.parent.as_deref(),
-            iter: self.logs.iter(),
-        }
+        let mut logs = Vec::new();
+        inner(self, &mut logs);
+
+        logs
     }
 
     /// Push a log record.
@@ -543,7 +528,7 @@ impl<'a> VM<'a> {
             gas_used: ctx_result.gas_used,
             gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut ctx_result.output),
-            logs: self.substate.iter_logs().cloned().collect(),
+            logs: self.substate.extract_logs(),
         };
 
         Ok(report)
