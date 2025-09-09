@@ -8,7 +8,7 @@ use std::{
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
         ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
@@ -216,6 +216,7 @@ pub struct PayloadBuildContext {
     pub store: Store,
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
+    pub payload_size: u64,
 }
 
 impl PayloadBuildContext {
@@ -241,6 +242,7 @@ impl PayloadBuildContext {
             BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
         };
 
+        let payload_size = payload.encode_to_vec().len() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
@@ -254,6 +256,7 @@ impl PayloadBuildContext {
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
+            payload_size,
         })
     }
 }
@@ -515,6 +518,16 @@ impl Blockchain {
                 debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
+                continue;
+            }
+
+            // Check adding a transaction wouldn't exceed the Osaka block size limit of 10 MiB
+            context.payload_size += head_tx.encode_canonical_to_vec().len() as u64;
+            if context
+                .chain_config()?
+                .is_osaka_activated(context.payload.header.timestamp)
+                && context.payload_size > MAX_RLP_BLOCK_SIZE
+            {
                 continue;
             }
 
