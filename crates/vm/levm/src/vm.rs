@@ -139,19 +139,19 @@ impl Substate {
         let is_present = self
             .parent
             .as_ref()
-            .map(|parent| parent.is_address_accessed(&address))
+            .map(|parent| parent.is_selfdestruct(&address))
             .unwrap_or_default();
 
-        is_present || !self.accessed_addresses.insert(address)
+        is_present || !self.selfdestruct_set.insert(address)
     }
 
     /// Return whether an address is already marked as selfdestructed.
     pub fn is_selfdestruct(&self, address: &Address) -> bool {
-        self.accessed_addresses.contains(address)
+        self.selfdestruct_set.contains(address)
             || self
                 .parent
                 .as_ref()
-                .map(|parent| parent.is_address_accessed(address))
+                .map(|parent| parent.is_selfdestruct(address))
                 .unwrap_or_default()
     }
 
