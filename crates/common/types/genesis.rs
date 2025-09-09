@@ -85,6 +85,15 @@ impl TryFrom<&Path> for Genesis {
             warn!("Invalid fork, only post-merge networks are supported.");
         }
 
+        if genesis.config.bpo1_time.is_some() && genesis.config.blob_schedule.bpo1.is_none()
+            || genesis.config.bpo2_time.is_some() && genesis.config.blob_schedule.bpo2.is_none()
+            || genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
+            || genesis.config.bpo4_time.is_some() && genesis.config.blob_schedule.bpo4.is_none()
+            || genesis.config.bpo5_time.is_some() && genesis.config.blob_schedule.bpo5.is_none()
+        {
+            warn!("BPO time set but no BPO BlobSchedule found in ChainConfig")
+        }
+
         Ok(genesis)
     }
 }
