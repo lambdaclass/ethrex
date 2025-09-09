@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757443835498,
+  "lastUpdate": 1757446601886,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13315,6 +13315,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168338954735,
             "range": "± 787005546",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a1e7ca8f9e17a62418b1ad1c6fe8f7d0c8c944ee",
+          "message": "perf(levm): refactor substate backups (#4381)\n\n**Motivation**\n\nCurrently, `Substate` backups clone everything, which is expensive.\n\n**Description**\n\nImplement the `Substate` as a stack of updates, which can be merged or\ndiscarded at need.\n\nCloses #issue_number",
+          "timestamp": "2025-09-09T18:42:00Z",
+          "tree_id": "7d6870e2dcc6ac877fed7be141efc1176068f503",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a1e7ca8f9e17a62418b1ad1c6fe8f7d0c8c944ee"
+        },
+        "date": 1757446580465,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 171048774640,
+            "range": "± 1248498167",
             "unit": "ns/iter"
           }
         ]
