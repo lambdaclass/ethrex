@@ -38,7 +38,7 @@ pub async fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
     store: &Store,
-    last_privileged_nonce: &mut u64,
+    last_privileged_nonce: &mut Option<u64>,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -95,7 +95,7 @@ pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
-    last_privileged_nonce: &mut u64,
+    last_privileged_nonce: &mut Option<u64>,
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
@@ -211,13 +211,15 @@ pub async fn fill_transactions(
                 continue;
             }
             let id = head_tx.nonce();
-            if id != *last_privileged_nonce + 1 && *last_privileged_nonce != 0 {
-                debug!("Ignoring out-of-order privileged transaction");
-                txs.pop();
-                undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-                continue;
+            if let Some(last_nonce) = last_privileged_nonce {
+                if id != *last_nonce + 1 {
+                    debug!("Ignoring out-of-order privileged transaction");
+                    txs.pop();
+                    undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                    continue;
+                }
             }
-            *last_privileged_nonce = id;
+            last_privileged_nonce.replace(id);
             privileged_tx_count += 1;
         }
 

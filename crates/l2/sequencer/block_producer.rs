@@ -53,7 +53,7 @@ pub struct BlockProducer {
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     // Needed to ensure privileged tx nonces are sequential
-    last_privileged_nonce: u64,
+    last_privileged_nonce: Option<u64>,
 }
 
 impl BlockProducer {
@@ -78,7 +78,7 @@ impl BlockProducer {
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
-            last_privileged_nonce: 0,
+            last_privileged_nonce: None,
         }
     }
 
