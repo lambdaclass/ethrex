@@ -53,7 +53,6 @@ impl LEVM {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })?;
 
-        // Assume most txs are transfers, so they will have 2 addresses each.
         let mut addresses = BTreeSet::new();
 
         for (tx, sender) in &txs_with_sender {
