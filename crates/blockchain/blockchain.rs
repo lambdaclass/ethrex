@@ -24,6 +24,7 @@ use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
@@ -988,7 +989,7 @@ pub fn validate_block(
         .map_err(InvalidBlockError::from)?;
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
-        let block_rlp_size = block.get_rlp_encode_size();
+        let block_rlp_size = block.encode_to_vec().len();
         if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
             return Err(error::ChainError::InvalidBlock(
                 InvalidBlockError::MaximumSizeExceeded(MAX_RLP_BLOCK_SIZE, block_rlp_size as u64),

@@ -202,7 +202,10 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                     "Block header not found after querying for the block number".to_owned(),
                 ),
             )?;
-            let new_block = Block::new(new_block_header, new_block_body);
+            let new_block = Block {
+                header: new_block_header,
+                body: new_block_body,
+            };
             let signature = match l2_state
                 .store_rollup
                 .get_signature_by_block(new_block.hash())
