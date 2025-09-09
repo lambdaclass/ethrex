@@ -65,7 +65,6 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Commit,
-    StoreCancellationToken(CancellationToken),
 }
 
 #[allow(dead_code)]
@@ -159,16 +158,18 @@ impl L1Committer {
             sequencer_state,
         )
         .await?;
-        let mut l1_committer = state.start();
-        let handle = send_after(
-            random_duration(cfg.l1_committer.first_wake_up_time_ms),
-            l1_committer.clone(),
-            InMessage::Commit,
-        );
-        l1_committer
-            .cast(InMessage::StoreCancellationToken(handle.cancellation_token))
-            .await?;
-        Ok(l1_committer)
+        let l1_committer = state.start();
+        if let OutMessage::Error(reason) = l1_committer
+            .clone()
+            .call(CallMessage::Start(cfg.l1_committer.first_wake_up_time_ms))
+            .await?
+        {
+            Err(CommitterError::UnexpectedError(format!(
+                "Failed to send first wake up message to committer {reason}"
+            )))
+        } else {
+            Ok(l1_committer)
+        }
     }
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
@@ -608,16 +609,59 @@ impl L1Committer {
         Ok(commit_tx_hash)
     }
 
-    async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
+    async fn stop_sequencer(&mut self) -> CallResponse<Self> {
+        if let Some(token) = self.cancellation_token.take() {
+            token.cancel();
+            info!("L1 committer stopped");
+            CallResponse::Reply(OutMessage::Stopped)
+        } else {
+            warn!("L1 committer received stop command but it is already stopped");
+            CallResponse::Reply(OutMessage::Error("Already stopped".to_string()))
+        }
+    }
+
+    async fn start_sequencer(
+        &mut self,
+        handle: GenServerHandle<Self>,
+        delay: u64,
+    ) -> CallResponse<Self> {
+        if self.cancellation_token.is_none() {
+            self.schedule_commit(delay, handle);
+            info!("L1 committer restarted next commit will be sent in {delay}ms");
+            CallResponse::Reply(OutMessage::Started)
+        } else {
+            warn!("L1 committer received start command but it is already running");
+            CallResponse::Reply(OutMessage::Error("Already started".to_string()))
+        }
+    }
+
+    fn schedule_commit(&mut self, delay: u64, handle: GenServerHandle<Self>) {
+        let check_interval = random_duration(delay);
+        let handle = send_after(check_interval, handle, InMessage::Commit);
+        self.cancellation_token = Some(handle.cancellation_token);
+    }
+}
+
+impl GenServer for L1Committer {
+    type CallMsg = CallMessage;
+    type CastMsg = InMessage;
+    type OutMsg = OutMessage;
+
+    type Error = CommitterError;
+
+    // Right now we only have the `Commit` message, so we ignore the `message` parameter
+    async fn handle_cast(
+        &mut self,
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+    ) -> CastResponse {
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
                     .await
                     .unwrap_or(self.last_committed_batch);
             let Some(current_time) = utils::system_now_ms() else {
-                let check_interval = random_duration(self.committer_wake_up_ms);
-                let handle = send_after(check_interval, handle.clone(), InMessage::Commit);
-                self.cancellation_token = Some(handle.cancellation_token);
+                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
                 return CastResponse::NoReply;
             };
 
@@ -625,9 +669,7 @@ impl L1Committer {
             if current_last_committed_batch > self.last_committed_batch {
                 self.last_committed_batch = current_last_committed_batch;
                 self.last_committed_batch_timestamp = current_time;
-                let check_interval = random_duration(self.committer_wake_up_ms);
-                let handle = send_after(check_interval, handle.clone(), InMessage::Commit);
-                self.cancellation_token = Some(handle.cancellation_token);
+                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
                 return CastResponse::NoReply;
             }
 
@@ -647,60 +689,8 @@ impl L1Committer {
                 }
             }
         }
-        let check_interval = random_duration(self.committer_wake_up_ms);
-        let handle = send_after(check_interval, handle.clone(), InMessage::Commit);
-        self.cancellation_token = Some(handle.cancellation_token);
+        self.schedule_commit(self.commit_time_ms, handle.clone());
         CastResponse::NoReply
-    }
-
-    async fn stop_sequencer(&mut self) -> CallResponse<Self> {
-        if let Some(token) = self.cancellation_token.take() {
-            token.cancel();
-            info!("L1 committer stopped");
-            CallResponse::Reply(OutMessage::Stopped)
-        } else {
-            warn!("L1 committer received stop command but it is already stopped");
-            CallResponse::Reply(OutMessage::Error("Already stopped".to_string()))
-        }
-    }
-
-    async fn start_sequencer(
-        &mut self,
-        handle: GenServerHandle<Self>,
-        delay: u64,
-    ) -> CallResponse<Self> {
-        if self.cancellation_token.is_none() {
-            let handle = send_after(random_duration(delay), handle, InMessage::Commit);
-            self.cancellation_token = Some(handle.cancellation_token);
-            info!("L1 committer restarted next commit will be sent in {delay}ms");
-            CallResponse::Reply(OutMessage::Started)
-        } else {
-            warn!("L1 committer received start command but it is already running");
-            CallResponse::Reply(OutMessage::Error("Already started".to_string()))
-        }
-    }
-}
-
-impl GenServer for L1Committer {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-
-    type Error = CommitterError;
-
-    // Right now we only have the `Commit` message, so we ignore the `message` parameter
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            InMessage::Commit => self.handle_commit_message(handle).await,
-            InMessage::StoreCancellationToken(token) => {
-                self.cancellation_token = Some(token);
-                CastResponse::NoReply
-            }
-        }
     }
 
     async fn handle_call(
