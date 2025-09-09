@@ -1,5 +1,5 @@
-use openvm_sdk::{Sdk, StdIn};
 use guest_program::input::ProgramInput;
+use openvm_sdk::{Sdk, StdIn};
 
 pub struct ProgramOutput(pub [u8; 32]);
 
