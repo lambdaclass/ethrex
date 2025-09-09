@@ -211,7 +211,7 @@ impl GenServer for RLPxConnection {
                 log_peer_debug(&established_state.node, "Starting RLPx connection");
 
                 if let Err(reason) =
-                    initialize_connection(handle, &mut established_state, stream).await
+                    initialize_connection(handle, &mut established_state, stream, eth_version).await
                 {
                     if let Some(contact) = established_state
                         .table
@@ -248,16 +248,6 @@ impl GenServer for RLPxConnection {
                                 .unwrap_or("Unknown".to_string()),
                         )
                         .await;
-
-                    // Update eth capability version to the negotiated version for further message decoding
-                    let version = match &established_state.negotiated_eth_capability {
-                        Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
-                        Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
-                        _ => EthCapVersion::default(),
-                    };
-                    *eth_version
-                        .write()
-                        .map_err(|err| RLPxError::InternalError(err.to_string()))? = version;
                     // New state
                     self.inner_state = InnerState::Established(established_state);
                     Ok(Success(self))
@@ -401,6 +391,7 @@ async fn initialize_connection<S>(
     handle: &RLPxConnectionHandle,
     state: &mut Established,
     mut stream: S,
+    eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(), RLPxError>
 where
     S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
@@ -408,6 +399,16 @@ where
     post_handshake_checks(state.table.clone()).await?;
 
     exchange_hello_messages(state, &mut stream).await?;
+
+    // Update eth capability version to the negotiated version for further message decoding
+    let version = match &state.negotiated_eth_capability {
+        Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
+        Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
+        _ => EthCapVersion::default(),
+    };
+    *eth_version
+        .write()
+        .map_err(|err| RLPxError::InternalError(err.to_string()))? = version;
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
