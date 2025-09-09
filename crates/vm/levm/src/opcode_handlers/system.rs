@@ -541,7 +541,7 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
-        let target_account_is_cold = self.substate.accessed_addresses.insert(beneficiary);
+        let target_account_is_cold = !self.substate.add_accessed_address(beneficiary);
         let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
 
         let current_account = self.db.get_account(to)?;
@@ -559,17 +559,17 @@ impl<'a> VM<'a> {
             self.transfer(to, beneficiary, balance)?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
-            if self.substate.created_accounts.contains(&to) {
+            if self.substate.is_account_created(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.get_account_mut(to)?.info.balance = U256::zero();
 
-                self.substate.selfdestruct_set.insert(to);
+                self.substate.add_selfdestruct(to);
             }
         } else {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
-            self.substate.selfdestruct_set.insert(to);
+            self.substate.add_selfdestruct(to);
         }
 
         self.tracer
@@ -627,7 +627,7 @@ impl<'a> VM<'a> {
         };
 
         // Add new contract to accessed addresses
-        self.substate.accessed_addresses.insert(new_address);
+        self.substate.add_accessed_address(new_address);
 
         // Log CREATE in tracer
         let call_type = match salt {
@@ -699,9 +699,8 @@ impl<'a> VM<'a> {
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
 
-        self.backup_substate();
-
-        self.substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
+        self.substate.push_backup();
+        self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
@@ -836,7 +835,7 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
             }
 
-            self.backup_substate();
+            self.substate.push_backup();
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
@@ -996,7 +995,7 @@ impl<'a> VM<'a> {
         address: Address,
     ) -> Result<(usize, u64, bool, bool), VMError> {
         // Creation of previously empty accounts and cold addresses have higher gas cost
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account_is_empty = self.db.get_account(address)?.is_empty();
 
         // Calculated here for memory expansion gas cost

@@ -20,11 +20,12 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{Fork, Log, Transaction},
+    types::{AccessListEntry, Fork, Log, Transaction},
 };
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    mem,
     rc::Rc,
 };
 
@@ -37,16 +38,222 @@ pub enum VMType {
     L2,
 }
 
-#[derive(Debug, Clone, Default)]
-/// Information that changes during transaction execution
+/// Information that changes during transaction execution.
+// Most fields are private by design. The backup mechanism (`parent` field) will only work properly
+// if data is append-only, therefore
+#[derive(Debug, Default)]
 pub struct Substate {
-    pub selfdestruct_set: HashSet<Address>,
-    pub accessed_addresses: HashSet<Address>,
-    pub accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
-    pub created_accounts: HashSet<Address>,
+    parent: Option<Box<Self>>,
+
+    selfdestruct_set: HashSet<Address>,
+    accessed_addresses: HashSet<Address>,
+    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
-    pub transient_storage: TransientStorage,
-    pub logs: Vec<Log>,
+    transient_storage: TransientStorage,
+    logs: Vec<Log>,
+}
+
+impl Substate {
+    pub fn from_accesses(
+        accessed_addresses: HashSet<Address>,
+        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    ) -> Self {
+        Self {
+            parent: None,
+
+            selfdestruct_set: HashSet::new(),
+            accessed_addresses,
+            accessed_storage_slots,
+            created_accounts: HashSet::new(),
+            refunded_gas: 0,
+            transient_storage: TransientStorage::new(),
+            logs: Vec::new(),
+        }
+    }
+
+    /// Push a checkpoint that can be either reverted or committed. All data up to this point is
+    /// still accessible.
+    pub fn push_backup(&mut self) {
+        let parent = mem::take(self);
+        self.parent = Some(Box::new(parent));
+    }
+
+    /// Pop and merge with the last backup.
+    pub fn commit_backup(&mut self) {
+        let mut delta = *mem::take(&mut self.parent).expect("no backup found");
+        mem::swap(self, &mut delta);
+
+        self.selfdestruct_set.extend(delta.selfdestruct_set);
+        self.accessed_addresses.extend(delta.accessed_addresses);
+        self.accessed_storage_slots
+            .extend(delta.accessed_storage_slots);
+        self.created_accounts.extend(delta.created_accounts);
+        self.refunded_gas = delta.refunded_gas;
+        self.transient_storage.extend(delta.transient_storage);
+        self.logs.extend(delta.logs);
+    }
+
+    /// Discard current changes and revert to last backup.
+    pub fn revert_backup(&mut self) {
+        *self = *mem::take(&mut self.parent).expect("no backup found");
+    }
+
+    /// Return an iterator over all selfdestruct addresses.
+    pub fn iter_selfdestruct(&self) -> impl Iterator<Item = &Address> {
+        struct Iter<'a> {
+            parent: Option<&'a Substate>,
+            iter: std::collections::hash_set::Iter<'a, Address>,
+        }
+
+        impl<'a> Iterator for Iter<'a> {
+            type Item = &'a Address;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                let next_item = self.iter.next();
+                if next_item.is_none() {
+                    if let Some(parent) = self.parent {
+                        self.parent = parent.parent.as_deref();
+                        self.iter = parent.selfdestruct_set.iter();
+
+                        return self.next();
+                    }
+                }
+
+                next_item
+            }
+        }
+
+        Iter {
+            parent: self.parent.as_deref(),
+            iter: self.selfdestruct_set.iter(),
+        }
+    }
+
+    /// Mark an address as selfdestructed and return whether is was already marked.
+    pub fn add_selfdestruct(&mut self, address: Address) -> bool {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.is_address_accessed(&address))
+            .unwrap_or_else(|| self.accessed_addresses.insert(address))
+    }
+
+    /// Return whether an address is already marked as selfdestructed.
+    pub fn is_selfdestruct(&self, address: &Address) -> bool {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.is_address_accessed(address))
+            .unwrap_or_else(|| self.accessed_addresses.contains(address))
+    }
+
+    /// Build an access list from all accessed storage slots.
+    pub fn make_access_list(&self) -> Vec<AccessListEntry> {
+        let mut entries = BTreeMap::<Address, BTreeSet<H256>>::new();
+
+        let mut current = self;
+        loop {
+            for (address, slot_set) in &current.accessed_storage_slots {
+                entries
+                    .entry(*address)
+                    .or_default()
+                    .extend(slot_set.iter().copied());
+            }
+
+            current = match self.parent.as_deref() {
+                Some(x) => x,
+                None => break,
+            };
+        }
+
+        entries
+            .into_iter()
+            .map(|(address, storage_keys)| AccessListEntry {
+                address,
+                storage_keys: storage_keys.into_iter().collect(),
+            })
+            .collect()
+    }
+
+    /// Mark an address as accessed and return whether is was already marked.
+    pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.is_slot_accessed(&address, &key))
+            .unwrap_or_else(|| {
+                self.accessed_storage_slots
+                    .entry(address)
+                    .or_default()
+                    .insert(key)
+            })
+    }
+
+    /// Return whether an address has already been accessed.
+    pub fn is_slot_accessed(&self, address: &Address, key: &H256) -> bool {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.is_slot_accessed(address, key))
+            .unwrap_or_else(|| {
+                self.accessed_storage_slots
+                    .get(address)
+                    .map(|slot_set| slot_set.contains(key))
+                    .unwrap_or_default()
+            })
+    }
+
+    /// Mark an address as accessed and return whether is was already marked.
+    pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.is_address_accessed(&address))
+            .unwrap_or_else(|| self.accessed_addresses.insert(address))
+    }
+
+    /// Return whether an address has already been accessed.
+    pub fn is_address_accessed(&self, address: &Address) -> bool {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.is_address_accessed(address))
+            .unwrap_or_else(|| self.accessed_addresses.contains(address))
+    }
+
+    /// Mark an address as a new account and return whether is was already marked.
+    pub fn add_created_account(&mut self, address: Address) -> bool {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.is_account_created(&address))
+            .unwrap_or_else(|| self.created_accounts.insert(address))
+    }
+
+    /// Return whether an address has already been marked as a new account.
+    pub fn is_account_created(&self, address: &Address) -> bool {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.is_account_created(address))
+            .unwrap_or_else(|| self.created_accounts.contains(address))
+    }
+
+    /// Return the data associated with a transient storage entry, or zero if not present.
+    pub fn get_transient(&self, to: &Address, key: &U256) -> U256 {
+        self.transient_storage
+            .get(&(*to, *key))
+            .copied()
+            .unwrap_or_else(|| {
+                self.parent
+                    .as_ref()
+                    .map(|parent| parent.get_transient(to, key))
+                    .unwrap_or_default()
+            })
+    }
+
+    /// Return the data associated with a transient storage entry, or zero if not present.
+    pub fn set_transient(&mut self, to: &Address, key: &U256, value: U256) {
+        self.transient_storage.insert((*to, *key), value);
+    }
+
+    /// Push a log record.
+    pub fn add_log(&mut self, log: Log) {
+        self.logs.push(log);
+    }
 }
 
 pub struct VM<'a> {
@@ -164,7 +371,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        self.backup_substate();
+        self.substate.push_backup();
         let context_result = self.run_execution()?;
 
         let report = self.finalize_execution(context_result)?;
@@ -320,15 +527,8 @@ impl Substate {
             initial_accessed_storage_slots.insert(address, warm_slots);
         }
 
-        let substate = Substate {
-            selfdestruct_set: HashSet::new(),
-            accessed_addresses: initial_accessed_addresses,
-            accessed_storage_slots: initial_accessed_storage_slots,
-            created_accounts: HashSet::new(),
-            refunded_gas: 0,
-            transient_storage: HashMap::new(),
-            logs: Vec::new(),
-        };
+        let substate =
+            Substate::from_accesses(initial_accessed_addresses, initial_accessed_storage_slots);
 
         Ok(substate)
     }
