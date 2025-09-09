@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -82,7 +82,7 @@ pub fn execution_witness_from_rpc_chain_config(
         .codes
         .iter()
         .map(|code| (keccak_hash::keccak(code), code.clone()))
-        .collect::<HashMap<_, _>>();
+        .collect::<BTreeMap<_, _>>();
 
     let block_headers = rpc_witness
         .headers
@@ -93,7 +93,7 @@ pub fn execution_witness_from_rpc_chain_config(
         .expect("Failed to decode block headers from RpcExecutionWitness")
         .iter()
         .map(|header| (header.number, header.clone()))
-        .collect::<HashMap<_, _>>();
+        .collect::<BTreeMap<_, _>>();
 
     let parent_number = first_block_number
         .checked_sub(1)
@@ -105,12 +105,12 @@ pub fn execution_witness_from_rpc_chain_config(
         ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
     )?;
 
-    let mut state_nodes = HashMap::new();
+    let mut state_nodes = BTreeMap::new();
     for node in rpc_witness.state.iter() {
         state_nodes.insert(keccak(node), node.to_vec());
     }
 
-    let mut touched_account_storage_slots = HashMap::new();
+    let mut touched_account_storage_slots = BTreeMap::new();
     let mut address = Address::default();
     for bytes in rpc_witness.keys {
         if bytes.len() == Address::len_bytes() {
@@ -128,12 +128,13 @@ pub fn execution_witness_from_rpc_chain_config(
     let mut witness = ExecutionWitnessResult {
         codes,
         state_trie: None, // `None` because we'll rebuild the tries afterwards
-        storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
+        storage_tries: BTreeMap::new(), // empty map because we'll rebuild the tries afterwards
         block_headers,
         chain_config,
         parent_block_header: parent_header,
         state_nodes,
         touched_account_storage_slots,
+        account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
     };
 
     witness.rebuild_state_trie()?;

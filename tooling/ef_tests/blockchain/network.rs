@@ -58,6 +58,31 @@ pub static PRAGUE_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
         ..*CANCUN_TO_PRAGUE_AT_15K_CONFIG
 });
 
+pub static PRAGUE_TO_OSAKA_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+        osaka_time: Some(0x3a98),
+        ..*PRAGUE_CONFIG
+});
+
+pub static OSAKA_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+        osaka_time: Some(0),
+        ..*PRAGUE_CONFIG
+});
+
+pub static OSAKA_TO_BPO1_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+        bpo1_time: Some(0x3a98),
+        ..*OSAKA_CONFIG
+});
+
+pub static BPO1_TO_BPO2_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+        bpo2_time: Some(0x3a98),
+        ..*PRAGUE_CONFIG
+});
+
+pub static BPO2_TO_BPO3_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+        bpo3_time: Some(0x3a98),
+        ..*PRAGUE_CONFIG
+});
+
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Network {
     Frontier = 0,          // For parsing tests
@@ -76,6 +101,11 @@ pub enum Network {
     Cancun = 11,
     CancunToPragueAtTime15k = 12,
     Prague = 13,
+    PragueToOsakaAtTime15k = 14,
+    Osaka = 15,
+    OsakaToBPO1AtTime15k = 16,
+    BPO1ToBPO2AtTime15k = 17,
+    BPO2ToBPO3AtTime15k = 18,
 }
 
 impl Network {
@@ -88,6 +118,11 @@ impl Network {
             Network::Cancun => &CANCUN_CONFIG,
             Network::CancunToPragueAtTime15k => &CANCUN_TO_PRAGUE_AT_15K_CONFIG,
             Network::Prague => &PRAGUE_CONFIG,
+            Network::PragueToOsakaAtTime15k => &PRAGUE_TO_OSAKA_AT_15K_CONFIG,
+            Network::Osaka => &OSAKA_CONFIG,
+            Network::OsakaToBPO1AtTime15k => &OSAKA_TO_BPO1_AT_15K_CONFIG,
+            Network::BPO1ToBPO2AtTime15k => &BPO1_TO_BPO2_AT_15K_CONFIG,
+            Network::BPO2ToBPO3AtTime15k => &BPO2_TO_BPO3_AT_15K_CONFIG,
             Network::Frontier
             | Network::Homestead
             | Network::ConstantinopleFix

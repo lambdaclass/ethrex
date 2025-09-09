@@ -337,6 +337,20 @@ impl StoreEngineRollup for Store {
         self.inner()?.precommit_privileged = range;
         Ok(())
     }
+
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        let mut inner = self.inner()?;
+        inner.batch_proofs.remove(&(proof_type, batch_number));
+        Ok(())
+    }
+
+    async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self.inner()?.state_roots.keys().max().cloned())
+    }
 }
 
 impl Debug for Store {
