@@ -229,8 +229,6 @@ impl L1Committer {
             batch.number,
         );
 
-        self.rollup_store.update_precommit_privileged(None).await?;
-
         match self.send_commitment(&batch).await {
             Ok(commit_tx_hash) => {
                 metrics!(
