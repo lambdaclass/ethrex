@@ -82,8 +82,8 @@ impl GeneralizedDatabase {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let info = if let Some(info) = self.preloaded_account_state.get(&address) {
-                    info.clone()
+                let info = if let Some(info) = self.preloaded_account_state.remove(&address) {
+                    info
                 } else {
                     self.store.get_account_info(address)?
                 };
