@@ -1,8 +1,8 @@
 use openvm_keccak256::keccak256;
 use rkyv::rancor::Error;
-use zkvm_interface::{execution::execution_program, io::ProgramInput};
+use guest_program::{execution::execution_program, input::ProgramInput};
 
-openvm::init!();
+//openvm::init!();
 
 pub fn main() {
     openvm::io::println("start reading input");
