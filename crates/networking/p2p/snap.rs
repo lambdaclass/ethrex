@@ -12,89 +12,97 @@ use crate::rlpx::{
 
 // Request Processing
 
-pub fn process_account_range_request(
+pub async fn process_account_range_request(
     request: GetAccountRange,
     store: Store,
 ) -> Result<AccountRange, StoreError> {
-    let mut accounts = vec![];
-    let mut bytes_used = 0;
-    for (hash, account) in store.iter_accounts(request.root_hash)? {
-        if hash >= request.starting_hash {
-            let account = AccountStateSlim::from(account);
-            bytes_used += 32 + account.length() as u64;
-            accounts.push(AccountRangeUnit { hash, account });
+    tokio::task::spawn_blocking(move || {
+        let mut accounts = vec![];
+        let mut bytes_used = 0;
+        for (hash, account) in store.iter_accounts(request.root_hash)? {
+            if hash >= request.starting_hash {
+                let account = AccountStateSlim::from(account);
+                bytes_used += 32 + account.length() as u64;
+                accounts.push(AccountRangeUnit { hash, account });
+            }
+            if hash >= request.limit_hash || bytes_used >= request.response_bytes {
+                break;
+            }
         }
-        if hash >= request.limit_hash || bytes_used >= request.response_bytes {
-            break;
-        }
-    }
-    let proof = proof_to_encodable(store.get_account_range_proof(
-        request.root_hash,
-        request.starting_hash,
-        accounts.last().map(|acc| acc.hash),
-    )?);
-    Ok(AccountRange {
-        id: request.id,
-        accounts,
-        proof,
+        let proof = proof_to_encodable(store.get_account_range_proof(
+            request.root_hash,
+            request.starting_hash,
+            accounts.last().map(|acc| acc.hash),
+        )?);
+        Ok(AccountRange {
+            id: request.id,
+            accounts,
+            proof,
+        })
     })
+    .await
+    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
 }
 
-pub fn process_storage_ranges_request(
+pub async fn process_storage_ranges_request(
     request: GetStorageRanges,
     store: Store,
 ) -> Result<StorageRanges, StoreError> {
-    let mut slots = vec![];
-    let mut proof = vec![];
-    let mut bytes_used = 0;
+    tokio::task::spawn_blocking(move || {
+        let mut slots = vec![];
+        let mut proof = vec![];
+        let mut bytes_used = 0;
 
-    for hashed_address in request.account_hashes {
-        let mut account_slots = vec![];
-        let mut res_capped = false;
+        for hashed_address in request.account_hashes {
+            let mut account_slots = vec![];
+            let mut res_capped = false;
 
-        if let Some(storage_iter) = store.iter_storage(request.root_hash, hashed_address)? {
-            for (hash, data) in storage_iter {
-                if hash >= request.starting_hash {
-                    bytes_used += 64_u64; // slot size
-                    account_slots.push(StorageSlot { hash, data });
-                }
-                if hash >= request.limit_hash || bytes_used >= request.response_bytes {
-                    if bytes_used >= request.response_bytes {
-                        res_capped = true;
+            if let Some(storage_iter) = store.iter_storage(request.root_hash, hashed_address)? {
+                for (hash, data) in storage_iter {
+                    if hash >= request.starting_hash {
+                        bytes_used += 64_u64; // slot size
+                        account_slots.push(StorageSlot { hash, data });
                     }
-                    break;
+                    if hash >= request.limit_hash || bytes_used >= request.response_bytes {
+                        if bytes_used >= request.response_bytes {
+                            res_capped = true;
+                        }
+                        break;
+                    }
                 }
             }
-        }
 
-        // Generate proofs only if the response doesn't contain the full storage range for the account
-        // Aka if the starting hash is not zero or if the response was capped due to byte limit
-        if !request.starting_hash.is_zero() || res_capped && !account_slots.is_empty() {
-            proof.extend(proof_to_encodable(
-                store
-                    .get_storage_range_proof(
-                        request.root_hash,
-                        hashed_address,
-                        request.starting_hash,
-                        account_slots.last().map(|acc| acc.hash),
-                    )?
-                    .unwrap_or_default(),
-            ));
-        }
+            // Generate proofs only if the response doesn't contain the full storage range for the account
+            // Aka if the starting hash is not zero or if the response was capped due to byte limit
+            if !request.starting_hash.is_zero() || res_capped && !account_slots.is_empty() {
+                proof.extend(proof_to_encodable(
+                    store
+                        .get_storage_range_proof(
+                            request.root_hash,
+                            hashed_address,
+                            request.starting_hash,
+                            account_slots.last().map(|acc| acc.hash),
+                        )?
+                        .unwrap_or_default(),
+                ));
+            }
 
-        if !account_slots.is_empty() {
-            slots.push(account_slots);
-        }
+            if !account_slots.is_empty() {
+                slots.push(account_slots);
+            }
 
-        if bytes_used >= request.response_bytes {
-            break;
+            if bytes_used >= request.response_bytes {
+                break;
+            }
         }
-    }
-    Ok(StorageRanges {
-        id: request.id,
-        slots,
-        proof,
+        Ok(StorageRanges {
+            id: request.id,
+            slots,
+            proof,
+        })
     })
+    .await
+    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
 }
 
 pub fn process_byte_codes_request(
@@ -196,8 +204,8 @@ mod tests {
         static ref HASH_FIRST_PLUS_ONE: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() + 1));
     }
 
-    #[test]
-    fn hive_account_range_a() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_a() -> Result<(), StoreError> {
         let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
@@ -206,7 +214,7 @@ mod tests {
             limit_hash: *HASH_MAX,
             response_bytes: 4000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 86);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -218,8 +226,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_b() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_b() -> Result<(), StoreError> {
         let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
@@ -228,7 +236,7 @@ mod tests {
             limit_hash: *HASH_MAX,
             response_bytes: 3000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 65);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -240,8 +248,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_c() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_c() -> Result<(), StoreError> {
         let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
@@ -250,7 +258,7 @@ mod tests {
             limit_hash: *HASH_MAX,
             response_bytes: 2000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 44);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -262,8 +270,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_d() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_d() -> Result<(), StoreError> {
         let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
@@ -272,7 +280,7 @@ mod tests {
             limit_hash: *HASH_MAX,
             response_bytes: 1,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -280,8 +288,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_e() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_e() -> Result<(), StoreError> {
         let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
@@ -290,7 +298,7 @@ mod tests {
             limit_hash: *HASH_MAX,
             response_bytes: 0,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -298,8 +306,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_f() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_f() -> Result<(), StoreError> {
         // In this test, we request a range where startingHash is before the first available
         // account key, and limitHash is after. The server should return the first and second
         // account of the state (because the second account is the 'next available').
@@ -311,7 +319,7 @@ mod tests {
             limit_hash: *HASH_FIRST_PLUS_ONE,
             response_bytes: 4000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 2);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -319,8 +327,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_g() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_g() -> Result<(), StoreError> {
         // Here we request range where both bounds are before the first available account key.
         // This should return the first account (even though it's out of bounds).
         let (store, root) = setup_initial_state()?;
@@ -331,7 +339,7 @@ mod tests {
             limit_hash: *HASH_FIRST_MINUS_450,
             response_bytes: 4000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -339,8 +347,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_h() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_h() -> Result<(), StoreError> {
         // In this test, both startingHash and limitHash are zero.
         // The server should return the first available account.
         let (store, root) = setup_initial_state()?;
@@ -351,7 +359,7 @@ mod tests {
             limit_hash: *HASH_MIN,
             response_bytes: 4000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -359,8 +367,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_i() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_i() -> Result<(), StoreError> {
         let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
@@ -369,7 +377,7 @@ mod tests {
             limit_hash: *HASH_MAX,
             response_bytes: 4000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 86);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -381,8 +389,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_j() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_j() -> Result<(), StoreError> {
         let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
@@ -391,7 +399,7 @@ mod tests {
             limit_hash: *HASH_MAX,
             response_bytes: 4000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 86);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_SECOND);
@@ -407,8 +415,8 @@ mod tests {
 
     // Non-sensical requests
 
-    #[test]
-    fn hive_account_range_k() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_k() -> Result<(), StoreError> {
         // In this test, the startingHash is the first available key, and limitHash is
         // a key before startingHash (wrong order). The server should return the first available key.
         let (store, root) = setup_initial_state()?;
@@ -419,7 +427,7 @@ mod tests {
             limit_hash: *HASH_FIRST_MINUS_ONE,
             response_bytes: 4000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
@@ -427,8 +435,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hive_account_range_m() -> Result<(), StoreError> {
+    #[tokio::test]
+    async fn hive_account_range_m() -> Result<(), StoreError> {
         // In this test, the startingHash is the first available key and limitHash is zero.
         // (wrong order). The server should return the first available key.
         let (store, root) = setup_initial_state()?;
@@ -439,7 +447,7 @@ mod tests {
             limit_hash: *HASH_MIN,
             response_bytes: 4000,
         };
-        let res = process_account_range_request(request, store).unwrap();
+        let res = process_account_range_request(request, store).await.unwrap();
         // Check test invariants
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
