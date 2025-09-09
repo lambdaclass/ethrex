@@ -1,4 +1,4 @@
-# Committer Admin API
+# Admin API
 
 This API exposes endpoints to manage the Sequencer.
 
