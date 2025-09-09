@@ -557,6 +557,9 @@ impl PeerHandler {
         Some(ret)
     }
 
+    /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
+    /// - No peer returned a valid response in the given time and retry limits
+    /// Since request_block_headers brought problems in cases of reorg seen in this pr, we have this other function to request block headers only for full sync.
     pub async fn request_block_headers_full_sync(
         &self,
         start: H256,

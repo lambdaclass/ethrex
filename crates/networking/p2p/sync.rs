@@ -590,7 +590,7 @@ impl FullBlockSyncState {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
         // If we have the sync_head as a pending block form a new_payload request and its parent_hash matches the hash of the latest received header
-        // we set the sync_head as found and later, after requesting all blocks, we'll add the pending block in current_blocks for execution.
+        // we set the sync_head as found. Then later, after requesting all blocks, we'll add the pending block in current_blocks for execution.
         if let Some(block) = self.store.get_pending_block(sync_head).await? {
             if let Some(last_header) = self.current_headers.last() {
                 if block.header.parent_hash == last_header.hash() {
@@ -679,7 +679,7 @@ impl FullBlockSyncState {
         {
             if let Some(batch_failure) = batch_failure {
                 warn!("Failed to add block during FullSync: {err}");
-                // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor.
+                // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
                 match err {
                     ChainError::InvalidBlock(_)
                     | ChainError::InvalidTransaction(_)
