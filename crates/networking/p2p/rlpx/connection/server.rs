@@ -206,7 +206,7 @@ impl GenServer for RLPxConnection {
     ) -> Result<InitResult<Self>, Self::Error> {
         // Set a default eth version that we can update after we negotiate peer capabilities
         // This eth version will only be used to decode the initial `Status` & `Capabilities` messages.
-        let eth_version = Arc::new(RwLock::new(EthCapVersion::V68));
+        let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
         match handshake::perform(self.inner_state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
                 log_peer_debug(&established_state.node, "Starting RLPx connection");
