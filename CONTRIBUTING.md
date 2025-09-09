@@ -67,6 +67,10 @@ If there are no open "good first issues" at the moment, feel free to browse othe
 
 We recommend starting with one of these issues to get familiar with the project and our workflow.
 
+### Contributions Related to Spelling and Grammar
+
+We do not accept PRs from first-time contributors that only address spelling or grammatical errors in documentation, code, or elsewhere. For your initial contribution, please focus on meaningful improvements, bug fixes, or new features.
+
 ## Contact / Support
 
 - Ask questions in the community chat ([Telegram](https://t.me/ethrex_client)) or open an issue.
