@@ -1667,7 +1667,7 @@ impl GenServer for PeerHandler {
                 *METRICS.headers_to_download.lock().await = sync_head_number + 1;
                 *METRICS.sync_head_hash.lock().await = sync_head;
 
-                let max_chunk_size = 800;
+                let max_chunk_size = 1000;
                 let mut pending_tasks = VecDeque::new();
 
                 let mut current_start = start;
