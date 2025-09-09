@@ -4,6 +4,7 @@ use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
 use crate::monitor::EthrexMonitor;
 use crate::sequencer::admin_server::start_api;
+use crate::sequencer::errors::SequencerError;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
@@ -191,26 +192,37 @@ pub async fn start_l2(
         l1_committer?,
     )
     .await
-    .map_err(errors::SequencerError::Admin)?
-    .into_future();
+    .inspect_err(|err| {
+        error!("Error starting admin server: {err}");
+    })
+    .ok();
 
-    if let Some(handle) = verifier_handle {
-        let (server_res, verifier_res) = tokio::join!(admin_server, handle);
-        match verifier_res {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                error!("Error running verifier: {err}");
+    match (verifier_handle, admin_server) {
+        (Some(handle), Some(admin_server)) => {
+            let (server_res, verifier_res) = tokio::join!(admin_server.into_future(), handle);
+            if let Err(e) = server_res {
+                error!("Admin server task error: {e}");
             }
-            Err(err) => {
-                error!("Task error: {err}");
-            }
-        };
-        if let Err(e) = server_res {
-            error!("Admin server task error: {e}");
+            handle_verifier_result(verifier_res).await;
         }
-    } else if let Err(e) = admin_server.await {
-        error!("Admin server task error: {e}");
-    };
+        (Some(handle), None) => {
+            handle_verifier_result(tokio::join!(handle).0).await;
+        }
+        (None, Some(admin_server)) => {
+            if let Err(e) = admin_server.into_future().await {
+                error!("Admin server task error: {e}");
+            }
+        }
+        (None, None) => {}
+    }
 
     Ok(())
+}
+
+async fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
+    match res {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => error!("verifier error: {err}"),
+        Err(err) => error!("verifier task join error: {err}"),
+    }
 }
