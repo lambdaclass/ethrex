@@ -1694,7 +1694,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
- "secp256k1",
+ "k256",
  "sha3",
  "thiserror 2.0.16",
  "tokio",
@@ -1712,13 +1712,13 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "k256",
  "keccak-hash",
  "kzg-rs",
  "lazy_static",
  "once_cell",
  "rayon",
  "rkyv",
- "secp256k1",
  "serde",
  "serde_json",
  "sha2",
@@ -1744,9 +1744,9 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "k256",
  "keccak-hash",
  "lambdaworks-crypto",
- "secp256k1",
  "serde",
  "sha3",
  "thiserror 2.0.16",
@@ -1773,7 +1773,6 @@ dependencies = [
  "malachite",
  "p256",
  "ripemd",
- "secp256k1",
  "serde",
  "serde_json",
  "sha2",
@@ -2138,6 +2137,28 @@ dependencies = [
  "ff 0.13.1",
  "rand_core 0.6.4",
  "subtle",
+]
+
+[[package]]
+name = "guest_program"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "hex",
+ "openvm-build",
+ "openvm-sdk",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.16",
 ]
 
 [[package]]
@@ -6838,30 +6859,8 @@ dependencies = [
 name = "zkvm-openvm-program"
 version = "0.1.0"
 dependencies = [
+ "guest_program",
  "openvm 1.4.0 (git+https://github.com/openvm-org/openvm.git?tag=v1.4.0)",
  "openvm-keccak256",
  "rkyv",
- "zkvm_interface",
-]
-
-[[package]]
-name = "zkvm_interface"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
- "hex",
- "openvm-build",
- "openvm-sdk",
- "rkyv",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror 2.0.16",
 ]
