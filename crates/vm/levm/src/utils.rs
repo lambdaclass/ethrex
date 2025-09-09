@@ -17,6 +17,7 @@ use ExceptionalHalt::OutOfGas;
 use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
+    evm::calculate_create_address,
     types::{Account, Fork, Transaction, tx_fields::*},
     utils::u256_to_big_endian,
 };
@@ -42,23 +43,6 @@ pub fn address_to_word(address: Address) -> U256 {
     }
 
     u256_from_big_endian_const(word)
-}
-
-/// Calculates the address of a new conctract using the CREATE
-/// opcode as follows:
-///
-/// address = keccak256(rlp([sender_address,sender_nonce]))[12:]
-pub fn calculate_create_address(
-    sender_address: Address,
-    sender_nonce: u64,
-) -> Result<Address, InternalError> {
-    let mut encoded = Vec::new();
-    (sender_address, sender_nonce).encode(&mut encoded);
-    let mut hasher = Keccak256::new();
-    hasher.update(encoded);
-    Ok(Address::from_slice(
-        hasher.finalize().get(12..).ok_or(InternalError::Slicing)?,
-    ))
 }
 
 /// Calculates the address of a new contract using the CREATE2 opcode as follows
@@ -595,7 +579,7 @@ impl<'a> VM<'a> {
             TxKind::Create => {
                 let sender_nonce = db.get_account(env.origin)?.info.nonce;
 
-                let created_address = calculate_create_address(env.origin, sender_nonce)?;
+                let created_address = calculate_create_address(env.origin, sender_nonce);
 
                 substate.accessed_addresses.insert(created_address);
                 substate.created_accounts.insert(created_address);
