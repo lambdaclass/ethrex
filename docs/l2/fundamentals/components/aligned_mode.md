@@ -73,7 +73,6 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
 	--network <L2_GENESIS_FILE_PATH> \
 	--http.port <L2_PORT> \
 	--http.addr <L2_RPC_ADDRESS> \
-	--evm levm \
 	--datadir <ethrex_L2_DEV_DB> \
 	--l1.bridge-address <BRIDGE_ADDRESS> \
 	--l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \

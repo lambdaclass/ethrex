@@ -4,7 +4,7 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
@@ -38,7 +38,7 @@ use tokio::sync::Mutex;
 #[derive(Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub db: ExecutionWitnessResult,
+    pub db: ExecutionWitness,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]

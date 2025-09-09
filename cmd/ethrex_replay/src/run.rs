@@ -1,12 +1,14 @@
 use crate::cache::Cache;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
+    types::{
+        AccountUpdate, ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
+    },
 };
 use ethrex_l2_common::prover::ProofFormat;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backend::Backend;
-use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
+use ethrex_vm::{DynVmDatabase, Evm, GuestProgramStateWrapper, backends::levm::LEVM};
 use eyre::Ok;
 use guest_program::input::ProgramInput;
 use std::{
@@ -49,10 +51,15 @@ pub async fn run_tx(
         .blocks
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
+
     let mut remaining_gas = block.header.gas_limit;
-    let mut prover_db = cache.witness;
-    prover_db.rebuild_state_trie()?;
-    let mut wrapped_db = ExecutionWitnessWrapper::new(prover_db);
+
+    let execution_witness = cache.witness;
+
+    let guest_program_state: GuestProgramState =
+        execution_witness.try_into().map_err(eyre::Error::msg)?;
+
+    let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 
@@ -62,13 +69,14 @@ pub async fn run_tx(
         LEVM::prepare_block(block, &mut db, vm_type)?;
         LEVM::get_state_transitions(&mut db)?
     };
+
     wrapped_db.apply_account_updates(&changes)?;
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
         let mut vm = if l2 {
-            Evm::new_for_l2(EvmEngine::LEVM, wrapped_db.clone())?
+            Evm::new_for_l2(wrapped_db.clone())?
         } else {
-            Evm::new_for_l1(EvmEngine::LEVM, wrapped_db.clone())
+            Evm::new_for_l1(wrapped_db.clone())
         };
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
