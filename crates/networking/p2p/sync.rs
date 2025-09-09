@@ -27,6 +27,7 @@ use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use spawned_concurrency::tasks::{GenServer, GenServerHandle};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
+use std::time::Duration;
 use std::{
     array,
     cmp::min,
@@ -488,12 +489,19 @@ impl Syncer {
 /// Fetches all block bodies for the given block hashes via p2p and stores them
 async fn store_block_bodies(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: GenServerHandle<PeerHandler>,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
+
+        if let Ok(PeerHandlerCallResponse::BlockBodies(block_bodies)) = peers
+            .call_with_timeout(
+                PeerHandlerCallMessage::DownloadBlockBodies(block_hashes.clone()),
+                Duration::from_secs(20),
+            )
+            .await
+        {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
@@ -818,7 +826,6 @@ impl Syncer {
         let all_block_hashes = block_sync_state.to_snap_block_hashes();
         let pivot_idx = all_block_hashes.len().saturating_sub(1);
 
-        // TODO: PIVOT HEADER IS TO BE REFRESHED BY CALLING THE PEER HANDLER
         let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
@@ -1100,31 +1107,60 @@ impl Syncer {
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
-        // let mut bytecode_iter = store
-        //     .iter_accounts(pivot_header.state_root)
-        //     .expect("we couldn't iterate over accounts")
-        //     .map(|(_, state)| state.code_hash)
-        //     .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
-        // for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
-        //     // Download bytecodes
-        //     bytecode_hashes.sort();
-        //     bytecode_hashes.dedup();
-        //     info!(
-        //         "Starting bytecode download of {} hashes",
-        //         bytecode_hashes.len()
-        //     );
-        //     let bytecodes = self
-        //         .peers
-        //         .request_bytecodes(&bytecode_hashes)
-        //         .await
-        //         .map_err(SyncError::PeerHandler)?
-        //         .ok_or(SyncError::BytecodesNotFound)?;
-        //     store
-        //         .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
-        //         .await?;
-        // }
+        let mut bytecode_iter = store
+            .iter_accounts(pivot_header.state_root)
+            .expect("we couldn't iterate over accounts")
+            .map(|(_, state)| state.code_hash)
+            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
+        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
+            // Download bytecodes
+            bytecode_hashes.sort();
+            bytecode_hashes.dedup();
+            info!(
+                "Starting bytecode download of {} hashes",
+                bytecode_hashes.len()
+            );
 
-        // store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
+            match self
+                .peers
+                .call(PeerHandlerCallMessage::DownloadBytecode(
+                    bytecode_hashes.clone(),
+                ))
+                .await
+            {
+                Ok(PeerHandlerCallResponse::InProgress) => {
+                    info!(
+                        "Started downloading bytecode for hashes: {:?}",
+                        bytecode_hashes
+                    )
+                }
+                _ => return Err(SyncError::PeerHandler(PeerHandlerError::NoResponseFromPeer)),
+            };
+
+            let bytecodes = loop {
+                match self.peers.call(PeerHandlerCallMessage::CurrentState).await {
+                    Ok(PeerHandlerCallResponse::CurrentState(SyncState::FinishedBytecode(
+                        bytecodes,
+                    ))) => break bytecodes,
+                    Ok(PeerHandlerCallResponse::CurrentState(SyncState::RetrievingBytecode {
+                        ..
+                    })) => {
+                        info!("Peer Handler is still downloading bytecodes");
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    }
+                    _ => {
+                        error!("Something went very wrong");
+                        todo!()
+                    }
+                }
+            };
+
+            store
+                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+                .await?;
+        }
+
+        store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
         let block = store
             .get_block_by_hash(pivot_header.hash())
@@ -1135,22 +1171,23 @@ impl Syncer {
 
         let all_block_hashes = block_sync_state.to_snap_block_hashes();
 
-        // let numbers_and_hashes = all_block_hashes
-        //     .into_iter()
-        //     .rev()
-        //     .enumerate()
-        //     .map(|(i, hash)| (pivot_header.number - i as u64, hash))
-        //     .collect::<Vec<_>>();
+        let numbers_and_hashes = all_block_hashes
+            .into_iter()
+            .rev()
+            .enumerate()
+            .map(|(i, hash)| (pivot_header.number - i as u64, hash))
+            .collect::<Vec<_>>();
 
-        // store
-        //     .forkchoice_update(
-        //         Some(numbers_and_hashes),
-        //         pivot_header.number,
-        //         pivot_header.hash(),
-        //         None,
-        //         None,
-        //     )
-        //     .await?;
+        let pivot_header = self.get_pivot_header().await;
+        store
+            .forkchoice_update(
+                Some(numbers_and_hashes),
+                pivot_header.number,
+                pivot_header.hash(),
+                None,
+                None,
+            )
+            .await?;
         Ok(())
     }
 }

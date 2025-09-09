@@ -9,7 +9,7 @@ use std::{
 use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
-    types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
+    types::{AccountState, BlockBody, BlockHash, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
@@ -45,6 +45,7 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 pub const CHUNK_COUNT: u64 = 800;
+const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
 
 pub const SNAP_LIMIT: usize = 128;
 
@@ -105,6 +106,10 @@ enum Task {
         start_hash: H256,
         end_hash: Option<H256>,
     },
+    Bytecode {
+        chunk_start: usize,
+        chunk_end: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -136,6 +141,12 @@ pub enum SyncState {
         completed_tasks: u64,
     },
     FinishedStorageRanges(u64, AccountStorageRoots),
+    RetrievingBytecode {
+        completed_tasks: u64,
+        all_bytecode_hashes: Vec<H256>,
+        all_bytecodes: Vec<Bytes>,
+    },
+    FinishedBytecode(Vec<Bytes>),
 }
 
 impl std::fmt::Display for SyncState {
@@ -148,6 +159,8 @@ impl std::fmt::Display for SyncState {
             SyncState::FinishedAccountRanges => write!(f, "FinishedAccountRanges"),
             SyncState::RetrievingStorageRanges { .. } => write!(f, "RetrievingStorageRanges"),
             SyncState::FinishedStorageRanges(_, _) => write!(f, "FinishedStorageRanges"),
+            SyncState::RetrievingBytecode { .. } => write!(f, "RetrievingBytecode"),
+            SyncState::FinishedBytecode(_) => write!(f, "FinishedBytecode"),
         }
     }
 }
@@ -173,6 +186,7 @@ pub struct StorageTaskResult {
     pub remaining_hash_range: (H256, Option<H256>),
 }
 
+#[derive(Clone, Debug)]
 pub struct BytecodeTaskResult {
     pub start_index: usize,
     pub bytecodes: Vec<Bytes>,
@@ -255,7 +269,6 @@ impl PeerHandler {
     /// Helper function that frees peers after being busy
     /// for more than the tolerated time
     pub async fn reset_timed_out_busy_peers(&self) {
-        info!("Peer status: {:?}", self.peers_info.lock().await);
         for (_, peer) in self.peers_info.lock().await.iter_mut() {
             if peer
                 .request_time
@@ -1760,6 +1773,7 @@ pub enum DownloaderResponse {
     Headers(Vec<BlockHeader>),
     AccountRange(Vec<AccountRangeUnit>, Option<(H256, H256)>),
     StorageRange(StorageTaskResult),
+    Bytecode(BytecodeTaskResult),
 }
 
 #[derive(Clone)]
@@ -1778,15 +1792,20 @@ pub enum PeerHandlerCallMessage {
         account_storages_snapshot_dir: String,
         chunk_index: u64,
     },
+    DownloadBytecode(Vec<H256>),
+    DownloadBlockBodies(Vec<BlockHash>),
 }
 
 #[derive(Clone)]
 pub enum PeerHandlerCallResponse {
     PivotHeader(BlockHeader),
-    CurrentState(SyncState), // TODO: REWORK THIS, RETURNING A MID-STATE MIGHT BE COSTLY
+    CurrentState(SyncState), // TODO: REWORK THIS, RETURNING A MID-STATE MIGHT BE CLONE COSTLY
+    /// Use to signal that snap sync download request is in progress
     InProgress,
+    BlockBodies(Vec<BlockBody>),
     // Possible errors
     SyncHeadNotFound,
+    BlockBodiesNotFound,
 }
 
 impl GenServer for PeerHandler {
@@ -1884,7 +1903,7 @@ impl GenServer for PeerHandler {
                                 account_state_snapshots_dir: _,
                                 chunk_file_index: _,
                                 block_sync_state: _,
-                                completed_tasks: _,
+                                completed_tasks,
                                 all_account_hashes: _,
                                 all_accounts_state: _,
                             } = &mut self.sync_state
@@ -1895,6 +1914,12 @@ impl GenServer for PeerHandler {
                                 );
                                 return CastResponse::NoReply;
                             };
+
+                            // Prevent requesting empty tasks
+                            if chunk_start == chunk_end {
+                                *completed_tasks += 1;
+                                continue;
+                            }
 
                             if block_is_stale(&self.pivot_header) {
                                 warn!("request_account_range became stale, updating pivot");
@@ -1923,10 +1948,10 @@ impl GenServer for PeerHandler {
                                 chunk_file_index: _,
                                 account_storage_roots,
                                 all_account_storages: _,
-                                accounts_done,
-                                current_account_hashes,
+                                accounts_done: _,
+                                current_account_hashes: _,
                                 task_count: _,
-                                completed_tasks: _,
+                                completed_tasks,
                             } = &mut self.sync_state
                             else {
                                 // TODO: I don't know in which case this can happen
@@ -1935,6 +1960,12 @@ impl GenServer for PeerHandler {
                                 );
                                 return CastResponse::NoReply;
                             };
+
+                            // Prevent requesting empty tasks
+                            if start_index == end_index {
+                                *completed_tasks += 1;
+                                continue;
+                            }
 
                             if block_is_stale(&self.pivot_header) {
                                 info!("request_storage_ranges became stale, breaking");
@@ -1964,17 +1995,57 @@ impl GenServer for PeerHandler {
                                 .await
                                 .unwrap();
                         }
+                        Task::Bytecode {
+                            chunk_start,
+                            chunk_end,
+                        } => {
+                            let SyncState::RetrievingBytecode {
+                                completed_tasks,
+                                all_bytecode_hashes,
+                                all_bytecodes: _,
+                            } = &mut self.sync_state
+                            else {
+                                error!(
+                                    "There's a bytecode task, but the peer handler is not in the correct state"
+                                );
+                                return CastResponse::NoReply;
+                            };
+
+                            // Prevent requesting empty tasks
+                            if chunk_start == chunk_end {
+                                *completed_tasks += 1;
+                                continue;
+                            }
+
+                            let hashes_to_request: Vec<H256> = all_bytecode_hashes
+                                .iter()
+                                .skip(chunk_start)
+                                .take((chunk_end - chunk_start).min(MAX_BYTECODES_REQUEST_SIZE))
+                                .copied()
+                                .collect();
+
+                            // Prevent requesting empty tasks
+                            if hashes_to_request.is_empty() {
+                                *completed_tasks += 1;
+                                continue;
+                            }
+
+                            downloader_handle
+                                .cast(DownloaderCastRequest::ByteCodeNew {
+                                    response_handle: handle.clone(),
+                                    hashes_to_request,
+                                    chunk_start,
+                                    chunk_end,
+                                })
+                                .await
+                                .unwrap();
+                        }
                     }
                     debug!("Sent Downloader actor {peer_id} new request");
                     self.mark_peer_as_busy(peer_id).await;
                     self.started_tasks
                         .insert(peer_id, (next_task, Instant::now()));
                 }
-
-                info!(
-                    "pending tasks after assigning downloaders: {}",
-                    self.pending_tasks.len()
-                );
             }
             PeerHandlerCastMessage::TaskFinished { peer_id, response } => {
                 self.mark_peer_as_free(peer_id).await;
@@ -2424,6 +2495,68 @@ impl GenServer for PeerHandler {
                             }
                         }
                     }
+                    DownloaderResponse::Bytecode(bytecode_task_result) => {
+                        if let SyncState::RetrievingBytecode {
+                            completed_tasks,
+                            all_bytecode_hashes: _,
+                            all_bytecodes,
+                        } = &mut self.sync_state
+                        {
+                            let BytecodeTaskResult {
+                                start_index,
+                                bytecodes,
+                                peer_id,
+                                remaining_start,
+                                remaining_end,
+                            } = bytecode_task_result;
+
+                            if remaining_start < remaining_end {
+                                self.pending_tasks.push_back(Task::Bytecode {
+                                    chunk_start: remaining_start,
+                                    chunk_end: remaining_end,
+                                });
+                            } else {
+                                info!("COMPLETE TASK");
+                                *completed_tasks += 1;
+                            }
+
+                            // TODO: This check should be the first thing we do
+                            if bytecodes.is_empty() {
+                                error!("EMPTY BYTECODE RESULT");
+                                self.peers_info.lock().await.entry(peer_id).and_modify(
+                                    |peer_info| {
+                                        peer_info.score -= 1;
+                                    },
+                                );
+                                self.pending_tasks.push_back(requested_task);
+                                return CastResponse::NoReply;
+                            }
+
+                            self.peers_info
+                                .lock()
+                                .await
+                                .entry(peer_id)
+                                .and_modify(|peer_info| {
+                                    peer_info.score += 1;
+                                });
+
+                            for (i, bytecode) in bytecodes.into_iter().enumerate() {
+                                all_bytecodes[start_index + i] = bytecode;
+                            }
+
+                            let chunk_count = 800; // TODO: move to a constant value
+                            if *completed_tasks >= chunk_count {
+                                info!("Finished downloading all bytecodes");
+                                handle
+                                    .clone()
+                                    .cast(PeerHandlerCastMessage::UpdateState(
+                                        SyncState::FinishedBytecode(all_bytecodes.clone()),
+                                    ))
+                                    .await
+                                    .unwrap(); // TODO: handle unwrap
+                            }
+                        }
+                    }
                 }
             }
             PeerHandlerCastMessage::UpdateState(new_state) => {
@@ -2690,6 +2823,89 @@ impl GenServer for PeerHandler {
                     completed_tasks,
                 };
                 CallResponse::Reply(PeerHandlerCallResponse::InProgress)
+            }
+            PeerHandlerCallMessage::DownloadBytecode(bytecode_hashes) => {
+                // 1) split the range in chunks of same length
+                let chunk_count = 800;
+                let chunk_size = bytecode_hashes.len() / chunk_count;
+
+                // list of tasks to be executed
+                // NOTE: end_index is NOT inclusive
+                let mut tasks_queue_not_started = VecDeque::new();
+                for i in 0..chunk_count {
+                    let chunk_start = chunk_size * i;
+                    let chunk_end = chunk_start + chunk_size;
+
+                    tasks_queue_not_started.push_back(Task::Bytecode {
+                        chunk_start,
+                        chunk_end,
+                    });
+                }
+
+                // Modify the last chunk to include the limit
+                if let Some(Task::Bytecode {
+                    chunk_start,
+                    chunk_end: _,
+                }) = tasks_queue_not_started.pop_back()
+                {
+                    tasks_queue_not_started.push_back(Task::Bytecode {
+                        chunk_start,
+                        chunk_end: bytecode_hashes.len(),
+                    });
+                }
+
+                let bytecode_hashes_len = bytecode_hashes.len();
+                self.started_tasks = HashMap::new();
+                self.pending_tasks = tasks_queue_not_started;
+                self.sync_state = SyncState::RetrievingBytecode {
+                    completed_tasks: 0,
+                    all_bytecode_hashes: bytecode_hashes,
+                    all_bytecodes: vec![Bytes::new(); bytecode_hashes_len],
+                };
+
+                CallResponse::Reply(PeerHandlerCallResponse::InProgress)
+            }
+            PeerHandlerCallMessage::DownloadBlockBodies(block_hashes) => {
+                for _ in 0..REQUEST_RETRY_ATTEMPTS {
+                    let available_downloader = loop {
+                        self.reset_timed_out_busy_peers().await;
+                        match self
+                            .get_random_downloader(&SUPPORTED_ETH_CAPABILITIES)
+                            .await
+                        {
+                            Some(downloader) => break downloader,
+                            None => {
+                                debug!("No available downloader found, retrying...");
+                                tokio::time::sleep(Duration::from_secs(10)).await;
+                                continue;
+                            }
+                        }
+                    };
+
+                    let peer_id = available_downloader.peer_id();
+                    match available_downloader
+                        .start()
+                        .call(DownloaderCallRequest::BlockBodies {
+                            block_hashes: block_hashes.clone(),
+                        })
+                        .await
+                    {
+                        Ok(DownloaderCallResponse::BlockBodies(block_bodies)) => {
+                            self.record_peer_success(peer_id).await;
+                            return CallResponse::Reply(PeerHandlerCallResponse::BlockBodies(
+                                block_bodies,
+                            ));
+                        }
+                        _ => {
+                            warn!(
+                                "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
+                            );
+                            self.record_peer_failure(peer_id).await;
+                            continue;
+                        }
+                    }
+                }
+                CallResponse::Reply(PeerHandlerCallResponse::BlockBodiesNotFound)
             }
         }
     }

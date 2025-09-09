@@ -128,6 +128,12 @@ pub enum DownloaderCastRequest {
         chunk_account_hashes: Vec<H256>,
         chunk_storage_roots: Vec<H256>,
     },
+    ByteCodeNew {
+        response_handle: GenServerHandle<PeerHandler>,
+        hashes_to_request: Vec<H256>,
+        chunk_start: usize,
+        chunk_end: usize,
+    },
     //
     // OLD METHODS, REMOVE EVENTUALLY
     //
@@ -914,6 +920,106 @@ impl GenServer for Downloader {
                     })
                     .await
                     .unwrap(); // TODO: Handle unwrap
+
+                CastResponse::Stop
+            }
+            DownloaderCastRequest::ByteCodeNew {
+                mut response_handle,
+                hashes_to_request,
+                chunk_start,
+                chunk_end,
+            } => {
+                let empty_task_result = BytecodeTaskResult {
+                    start_index: chunk_start,
+                    bytecodes: vec![],
+                    peer_id: self.peer_id,
+                    remaining_start: chunk_start,
+                    remaining_end: chunk_end,
+                };
+                debug!(
+                    "Requesting bytecode from peer {}, chunk: {chunk_start:?} - {chunk_end:?}",
+                    self.peer_id
+                );
+                let request_id = rand::random();
+                let request = RLPxMessage::GetByteCodes(GetByteCodes {
+                    id: request_id,
+                    hashes: hashes_to_request.clone(),
+                    bytes: MAX_RESPONSE_BYTES,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = (self.peer_channels.connection)
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    error!("Failed to send message to peer: {err:?}");
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::Bytecode(empty_task_result),
+                        })
+                        .await
+                        .unwrap(); // TODO: handle unwrap
+                    return CastResponse::Stop;
+                }
+
+                if let Some(codes) = tokio::time::timeout(BYTECODE_REPLY_TIMEOUT, async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
+                                if id == request_id =>
+                            {
+                                return Some(codes);
+                            }
+                            Some(_) => continue,
+                            None => return None,
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+                {
+                    if codes.is_empty() {
+                        response_handle
+                            .cast(PeerHandlerCastMessage::TaskFinished {
+                                peer_id: self.peer_id(),
+                                response: DownloaderResponse::Bytecode(empty_task_result),
+                            })
+                            .await
+                            .unwrap(); // TODO: handle unwrap
+                        return CastResponse::Stop;
+                    }
+                    // Validate response by hashing bytecodes
+                    let validated_codes: Vec<Bytes> = codes
+                        .into_iter()
+                        .zip(hashes_to_request)
+                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
+                        .map(|(b, _hash)| b)
+                        .collect();
+                    let msg = BytecodeTaskResult {
+                        start_index: chunk_start,
+                        remaining_start: chunk_start + validated_codes.len(),
+                        bytecodes: validated_codes,
+                        peer_id: self.peer_id,
+                        remaining_end: chunk_end,
+                    };
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::Bytecode(msg),
+                        })
+                        .await
+                        .unwrap(); // TODO: handle unwrap
+                } else {
+                    tracing::debug!("Failed to get bytecode");
+                    response_handle
+                        .cast(PeerHandlerCastMessage::TaskFinished {
+                            peer_id: self.peer_id(),
+                            response: DownloaderResponse::Bytecode(empty_task_result),
+                        })
+                        .await
+                        .unwrap(); // TODO: handle unwrap
+                }
 
                 CastResponse::Stop
             }
