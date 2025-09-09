@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757422197752,
+  "lastUpdate": 1757424429402,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13015,6 +13015,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169373268412,
             "range": "± 980805735",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "23f0f6506fa326b092302e2838471e25e34dbdde",
+          "message": "feat(l1): avoid cloning the list of all block hashes (#4347)\n\n**Motivation**\n\nWe want to reduce RAM usage. On mainnet, the list of block hashes uses\n>700MB (23M blocks * 32B per hash).\n\n**Description**\n\nWe avoid cloning this list when possible, and keep it in RAM less time\nif possible.",
+          "timestamp": "2025-09-09T12:34:02Z",
+          "tree_id": "a93b6f196a3d42a0a7692a8ed8f3e0b60dcbff20",
+          "url": "https://github.com/lambdaclass/ethrex/commit/23f0f6506fa326b092302e2838471e25e34dbdde"
+        },
+        "date": 1757424410511,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167910639449,
+            "range": "± 660162464",
             "unit": "ns/iter"
           }
         ]
