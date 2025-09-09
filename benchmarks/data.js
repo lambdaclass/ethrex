@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757428664809,
+  "lastUpdate": 1757430089476,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -27258,6 +27258,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0010937499999999999,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9445a758ae1892cf118d15ec106dd6a9184a0a71",
+          "message": "ci(l1,l2): improve PR auto labelling. (#4354)\n\n**Motivation**\nIf a pr had multiple scopes, only l2 label was added\n\n**Description**\n- Fix labeling per scope. If a pr has multiple scopes, potentially add\nmultiple labels.\n- Move the script to a separate file",
+          "timestamp": "2025-09-08T20:27:51Z",
+          "tree_id": "7030dc4cc2354ed9557605fa3e80993bf673aae4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9445a758ae1892cf118d15ec106dd6a9184a0a71"
+        },
+        "date": 1757430068572,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0011170212765957447,
             "unit": "Mgas/s"
           }
         ]
