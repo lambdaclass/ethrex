@@ -1,7 +1,7 @@
 use crate::sequencer::l1_committer::{CallMessage, L1Committer, OutMessage};
 use axum::extract::{Path, State};
 use axum::serve::WithGracefulShutdown;
-use axum::{Json, Router, http::StatusCode, routing::post};
+use axum::{Json, Router, http::StatusCode, routing::get};
 use serde_json::Value;
 use spawned_concurrency::tasks::GenServerHandle;
 use thiserror::Error;
@@ -32,9 +32,9 @@ pub async fn start_api(
     let cors = CorsLayer::permissive();
 
     let http_router = Router::new()
-        .route("/committer/start", post(start_committer_default))
-        .route("/committer/start/{delay}", post(start_committer))
-        .route("/committer/stop", post(stop_committer))
+        .route("/committer/start", get(start_committer_default))
+        .route("/committer/start/{delay}", get(start_committer))
+        .route("/committer/stop", get(stop_committer))
         .layer(cors)
         .with_state(admin.clone());
     let http_listener = TcpListener::bind("0.0.0.0:5555")
@@ -54,7 +54,6 @@ async fn start_committer(
     State(mut admin): State<Admin>,
     Path(delay): Path<u64>,
 ) -> Result<Json<Value>, StatusCode> {
-    dbg!(delay);
     let response = match admin.l1_committer.call(CallMessage::Start(delay)).await {
         Ok(ok) => match ok {
             OutMessage::Started => "ok".to_string(),
