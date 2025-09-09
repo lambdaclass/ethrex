@@ -124,8 +124,8 @@ pub struct EthrexReplayOptions {
     pub to_csv: bool,
     #[arg(
         long,
-        help = "Block cache level: off, failed, all (default: all)",
-        default_value = "all"
+        help = "Block cache level: off, failed, on (default: on)",
+        default_value = "on"
     )]
     pub cache_level: CacheLevel,
 }
@@ -135,7 +135,7 @@ pub enum CacheLevel {
     Off,
     Failed,
     #[default]
-    All,
+    On,
 }
 
 #[derive(Parser)]
@@ -433,7 +433,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     // Apply cache level rules
     match opts.cache_level {
-        CacheLevel::All => write_cache(&cache, l2)?,
+        CacheLevel::On => write_cache(&cache, l2)?,
         CacheLevel::Failed => {
             if block_run_failed {
                 write_cache(&cache, l2)?;
