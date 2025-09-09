@@ -6860,7 +6860,10 @@ name = "zkvm-openvm-program"
 version = "0.1.0"
 dependencies = [
  "guest_program",
+ "k256",
  "openvm 1.4.0 (git+https://github.com/openvm-org/openvm.git?tag=v1.4.0)",
+ "openvm-algebra-guest 1.4.0 (git+https://github.com/openvm-org/openvm.git?tag=v1.4.0)",
+ "openvm-ecc-guest 1.4.0 (git+https://github.com/openvm-org/openvm.git?tag=v1.4.0)",
  "openvm-keccak256",
  "rkyv",
 ]
