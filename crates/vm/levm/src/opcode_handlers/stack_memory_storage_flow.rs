@@ -37,12 +37,7 @@ impl<'a> VM<'a> {
 
         let key = self.current_call_frame.stack.pop1()?;
         let to = self.current_call_frame.to;
-        let value = self
-            .substate
-            .transient_storage
-            .get(&(to, key))
-            .cloned()
-            .unwrap_or(U256::zero());
+        let value = self.substate.get_transient(&to, &key);
 
         let current_call_frame = &mut self.current_call_frame;
 
@@ -70,7 +65,7 @@ impl<'a> VM<'a> {
             let [key, value] = *current_call_frame.stack.pop()?;
             (key, value, current_call_frame.to)
         };
-        self.substate.transient_storage.insert((to, key), value);
+        self.substate.set_transient(&to, &key, value);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

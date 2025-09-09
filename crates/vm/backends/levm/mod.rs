@@ -9,7 +9,7 @@ use crate::constants::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, U256,
     types::{
         AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
         EIP7702Transaction, Fork, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
@@ -25,7 +25,7 @@ use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
     errors::{ExecutionReport, TxResult, VMError},
-    vm::{Substate, VM},
+    vm::VM,
 };
 use std::cmp::min;
 
@@ -306,15 +306,20 @@ impl LEVM {
         let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         vm.stateless_execute()?;
-        let access_list = build_access_list(&vm.substate);
 
         // Execute the tx again, now with the created access list.
-        tx.access_list = access_list.iter().map(|item| item.into()).collect();
+        tx.access_list = vm.substate.make_access_list();
         let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 
-        Ok((report.into(), access_list))
+        Ok((
+            report.into(),
+            tx.access_list
+                .into_iter()
+                .map(|x| (x.address, x.storage_keys))
+                .collect(),
+        ))
     }
 
     pub fn prepare_block(
@@ -471,16 +476,6 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
     {
         env.block_excess_blob_gas = None;
     }
-}
-
-pub fn build_access_list(substate: &Substate) -> AccessList {
-    let access_list: AccessList = substate
-        .accessed_storage_slots
-        .iter()
-        .map(|(address, slots)| (*address, slots.iter().cloned().collect::<Vec<H256>>()))
-        .collect();
-
-    access_list
 }
 
 fn env_from_generic(

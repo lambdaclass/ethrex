@@ -43,7 +43,7 @@ impl<'a> VM<'a> {
 
         self.tracer.log(&log)?;
 
-        self.substate.logs.push(log);
+        self.substate.add_log(log);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

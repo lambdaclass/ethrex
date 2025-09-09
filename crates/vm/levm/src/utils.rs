@@ -350,10 +350,9 @@ pub fn eip7702_get_code(
     // The delegation code has the authorized address
     let auth_address = get_authorized_address_from_code(bytecode)?;
 
-    let access_cost = if accrued_substate.accessed_addresses.contains(&auth_address) {
+    let access_cost = if accrued_substate.add_accessed_address(auth_address) {
         WARM_ADDRESS_ACCESS_COST
     } else {
-        accrued_substate.accessed_addresses.insert(auth_address);
         COLD_ADDRESS_ACCESS_COST
     };
 
@@ -393,7 +392,7 @@ impl<'a> VM<'a> {
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             let authority_info = self.db.get_account(authority_address)?.info.clone();
             let authority_code = self.db.get_code(authority_info.code_hash)?;
-            self.substate.accessed_addresses.insert(authority_address);
+            self.substate.add_accessed_address(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
@@ -556,11 +555,6 @@ impl<'a> VM<'a> {
         Ok(min_gas_used)
     }
 
-    /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
-    pub fn backup_substate(&mut self) {
-        self.substate_backups.push(self.substate.clone());
-    }
-
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.
     /// Bool indicates whether it is a `create` transaction or not.
     pub fn get_tx_callee(
@@ -571,7 +565,7 @@ impl<'a> VM<'a> {
     ) -> Result<(Address, bool), VMError> {
         match tx.to() {
             TxKind::Call(address_to) => {
-                substate.accessed_addresses.insert(address_to);
+                substate.add_accessed_address(address_to);
 
                 Ok((address_to, false))
             }
@@ -581,8 +575,8 @@ impl<'a> VM<'a> {
 
                 let created_address = calculate_create_address(env.origin, sender_nonce);
 
-                substate.accessed_addresses.insert(created_address);
-                substate.created_accounts.insert(created_address);
+                substate.add_accessed_address(created_address);
+                substate.add_created_account(created_address);
 
                 Ok((created_address, true))
             }
