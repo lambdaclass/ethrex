@@ -10,8 +10,8 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options,
-    SliceTransform, WriteBatch,
+    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode,
+    MultiThreaded, Options, SliceTransform, WriteBatch,
 };
 use std::{collections::HashSet, sync::Arc};
 use tracing::info;
@@ -245,10 +245,7 @@ impl Store {
     }
 
     // Helper method to get column family handle
-    fn cf_handle(
-        &self,
-        cf_name: &str,
-    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily>, StoreError> {
+    fn cf_handle(&self, cf_name: &str) -> Result<std::sync::Arc<BoundColumnFamily>, StoreError> {
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
@@ -385,88 +382,84 @@ impl StoreEngine for Store {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
+            let [
+                cf_state,
+                cf_storage,
+                cf_receipts,
+                cf_codes,
+                cf_block_numbers,
+                cf_tx_locations,
+                cf_headers,
+                cf_bodies,
+            ] = open_cfs(
+                &db,
+                [
+                    CF_STATE_TRIE_NODES,
+                    CF_STORAGE_TRIES_NODES,
+                    CF_RECEIPTS,
+                    CF_ACCOUNT_CODES,
+                    CF_BLOCK_NUMBERS,
+                    CF_TRANSACTION_LOCATIONS,
+                    CF_HEADERS,
+                    CF_BODIES,
+                ],
+            )?;
+
             let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
 
-            // Process account updates
-            if let Some(cf_state) = db.cf_handle(CF_STATE_TRIE_NODES) {
-                for (node_hash, node_data) in update_batch.account_updates {
-                    batch.put_cf(&cf_state, node_hash.as_ref(), node_data);
-                }
+            for (node_hash, node_data) in update_batch.account_updates {
+                batch.put_cf(&cf_state, node_hash.as_ref(), node_data);
             }
 
-            // Process storage updates
-            if let Some(cf_storage) = db.cf_handle(CF_STORAGE_TRIES_NODES) {
-                for (address_hash, storage_updates) in update_batch.storage_updates {
-                    for (node_hash, node_data) in storage_updates {
-                        // Key: address_hash + node_hash
-                        let mut key = Vec::with_capacity(64);
-                        key.extend_from_slice(address_hash.as_bytes());
-                        key.extend_from_slice(node_hash.as_ref());
-                        batch.put_cf(&cf_storage, key, node_data);
-                    }
+            for (address_hash, storage_updates) in update_batch.storage_updates {
+                for (node_hash, node_data) in storage_updates {
+                    // Key: address_hash + node_hash
+                    let mut key = Vec::with_capacity(64);
+                    key.extend_from_slice(address_hash.as_bytes());
+                    key.extend_from_slice(node_hash.as_ref());
+                    batch.put_cf(&cf_storage, key, node_data);
                 }
             }
-
-            // Process blocks
-            let cf_headers = db.cf_handle(CF_HEADERS);
-            let cf_bodies = db.cf_handle(CF_BODIES);
-            let cf_block_numbers = db.cf_handle(CF_BLOCK_NUMBERS);
-            let cf_tx_locations = db.cf_handle(CF_TRANSACTION_LOCATIONS);
 
             for block in update_batch.blocks {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
 
-                if let Some(cf) = &cf_headers {
-                    let hash_key_rlp = BlockHashRLP::from(block_hash);
-                    let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-                    batch.put_cf(cf, hash_key_rlp.bytes(), header_value_rlp.bytes());
-                }
+                let hash_key_rlp = BlockHashRLP::from(block_hash);
+                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+                batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
 
-                if let Some(cf) = &cf_bodies {
-                    let hash_key: Rlp<H256> = block_hash.into();
-                    let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                    batch.put_cf(cf, hash_key.bytes(), body_value.bytes());
-                }
+                let hash_key: Rlp<H256> = block_hash.into();
+                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+                batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
 
-                if let Some(cf) = &cf_block_numbers {
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    batch.put_cf(cf, hash_key, block_number.to_le_bytes());
-                }
+                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
 
-                if let Some(cf) = &cf_tx_locations {
-                    for (index, transaction) in block.body.transactions.iter().enumerate() {
-                        let tx_hash = transaction.hash();
-                        // Key: tx_hash + block_hash
-                        let mut composite_key = Vec::with_capacity(64);
-                        composite_key.extend_from_slice(tx_hash.as_bytes());
-                        composite_key.extend_from_slice(block_hash.as_bytes());
-                        let location_value =
-                            (block_number, block_hash, index as u64).encode_to_vec();
-                        batch.put_cf(cf, composite_key, location_value);
-                    }
+                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    let tx_hash = transaction.hash();
+                    // Key: tx_hash + block_hash
+                    let mut composite_key = Vec::with_capacity(64);
+                    composite_key.extend_from_slice(tx_hash.as_bytes());
+                    composite_key.extend_from_slice(block_hash.as_bytes());
+                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                    batch.put_cf(&cf_tx_locations, composite_key, location_value);
                 }
             }
 
-            // Process receipts
-            if let Some(cf_receipts) = db.cf_handle(CF_RECEIPTS) {
-                for (block_hash, receipts) in update_batch.receipts {
-                    for (index, receipt) in receipts.into_iter().enumerate() {
-                        let key = (block_hash, index as u64).encode_to_vec();
-                        let value = receipt.encode_to_vec();
-                        batch.put_cf(&cf_receipts, key, value);
-                    }
+            for (block_hash, receipts) in update_batch.receipts {
+                for (index, receipt) in receipts.into_iter().enumerate() {
+                    let key = (block_hash, index as u64).encode_to_vec();
+                    let value = receipt.encode_to_vec();
+                    batch.put_cf(&cf_receipts, key, value);
                 }
             }
 
-            // Process code updates
-            if let Some(cf_codes) = db.cf_handle(CF_ACCOUNT_CODES) {
-                for (code_hash, code) in update_batch.code_updates {
-                    let code_key = code_hash.as_bytes();
-                    let code_value = AccountCodeRLP::from(code).bytes().clone();
-                    batch.put_cf(&cf_codes, code_key, code_value);
-                }
+            for (code_hash, code) in update_batch.code_updates {
+                let code_key = code_hash.as_bytes();
+                let code_value = AccountCodeRLP::from(code).bytes().clone();
+                batch.put_cf(&cf_codes, code_key, code_value);
             }
 
             // Single write operation
@@ -485,43 +478,39 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
-            let cf_headers = db.cf_handle(CF_HEADERS);
-            let cf_bodies = db.cf_handle(CF_BODIES);
-            let cf_block_numbers = db.cf_handle(CF_BLOCK_NUMBERS);
-            let cf_tx_locations = db.cf_handle(CF_TRANSACTION_LOCATIONS);
+            let [cf_headers, cf_bodies, cf_block_numbers, cf_tx_locations] = open_cfs(
+                &db,
+                [
+                    CF_HEADERS,
+                    CF_BODIES,
+                    CF_BLOCK_NUMBERS,
+                    CF_TRANSACTION_LOCATIONS,
+                ],
+            )?;
 
             for block in blocks {
                 let block_hash = block.hash();
                 let block_number = block.header.number;
 
-                if let Some(cf) = &cf_headers {
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                    batch.put_cf(cf, hash_key, header_value);
-                }
+                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
+                batch.put_cf(&cf_headers, hash_key, header_value);
 
-                if let Some(cf) = &cf_bodies {
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                    batch.put_cf(cf, hash_key, body_value);
-                }
+                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
+                batch.put_cf(&cf_bodies, hash_key, body_value);
 
-                if let Some(cf) = &cf_block_numbers {
-                    let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                    batch.put_cf(cf, hash_key, block_number.to_le_bytes());
-                }
+                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+                batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
 
-                if let Some(cf) = &cf_tx_locations {
-                    for (index, transaction) in block.body.transactions.iter().enumerate() {
-                        let tx_hash = transaction.hash();
-                        // Key: tx_hash + block_hash
-                        let mut composite_key = Vec::with_capacity(64);
-                        composite_key.extend_from_slice(tx_hash.as_bytes());
-                        composite_key.extend_from_slice(block_hash.as_bytes());
-                        let location_value =
-                            (block_number, block_hash, index as u64).encode_to_vec();
-                        batch.put_cf(cf, composite_key, location_value);
-                    }
+                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    let tx_hash = transaction.hash();
+                    // Key: tx_hash + block_hash
+                    let mut composite_key = Vec::with_capacity(64);
+                    composite_key.extend_from_slice(tx_hash.as_bytes());
+                    composite_key.extend_from_slice(block_hash.as_bytes());
+                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
+                    batch.put_cf(&cf_tx_locations, composite_key, location_value);
                 }
             }
 
@@ -602,28 +591,19 @@ impl StoreEngine for Store {
             return Ok(());
         };
 
-        let cf_canonical = self
-            .db
-            .cf_handle(CF_CANONICAL_BLOCK_HASHES)
-            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+        let [cf_canonical, cf_bodies, cf_headers, cf_block_numbers] = open_cfs(
+            &self.db,
+            [
+                CF_CANONICAL_BLOCK_HASHES,
+                CF_BODIES,
+                CF_HEADERS,
+                CF_BLOCK_NUMBERS,
+            ],
+        )?;
+
         batch.delete_cf(&cf_canonical, block_number.to_le_bytes());
-
-        let cf_bodies = self
-            .db
-            .cf_handle(CF_BODIES)
-            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
         batch.delete_cf(&cf_bodies, hash.as_bytes());
-
-        let cf_headers = self
-            .db
-            .cf_handle(CF_HEADERS)
-            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
         batch.delete_cf(&cf_headers, hash.as_bytes());
-
-        let cf_block_numbers = self
-            .db
-            .cf_handle(CF_BLOCK_NUMBERS)
-            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
         batch.delete_cf(&cf_block_numbers, hash.as_bytes());
 
         self.db
@@ -637,8 +617,6 @@ impl StoreEngine for Store {
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
         let numbers: Vec<BlockNumber> = (from..=to).collect();
-
-        // Step 1: Bulk read canonical block hashes
         let number_keys: Vec<Vec<u8>> = numbers.iter().map(|n| n.to_le_bytes().to_vec()).collect();
 
         let hashes = self
@@ -649,7 +627,6 @@ impl StoreEngine for Store {
             })
             .await?;
 
-        // Step 2: Bulk read block bodies using the hashes
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
             .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
@@ -808,11 +785,10 @@ impl StoreEngine for Store {
         let tx_hash_key = transaction_hash.as_bytes().to_vec();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db
-                .cf_handle(CF_TRANSACTION_LOCATIONS)
-                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+            let [cf_transaction_locations, cf_canonical] =
+                open_cfs(&db, [CF_TRANSACTION_LOCATIONS, CF_CANONICAL_BLOCK_HASHES])?;
 
-            let mut iter = db.prefix_iterator_cf(&cf, &tx_hash_key);
+            let mut iter = db.prefix_iterator_cf(&cf_transaction_locations, &tx_hash_key);
             let mut transaction_locations = Vec::new();
 
             while let Some(Ok((key, value))) = iter.next() {
@@ -821,9 +797,6 @@ impl StoreEngine for Store {
                 if key.len() == 64 && &key[0..32] == tx_hash_key.as_slice() {
                     transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
                 }
-                // } else {
-                //     break; // No longer matching our transaction hash
-                // }
             }
 
             if transaction_locations.is_empty() {
@@ -833,10 +806,6 @@ impl StoreEngine for Store {
             // If there are multiple locations, filter by the canonical chain
             for (block_number, block_hash, index) in transaction_locations {
                 let canonical_hash = {
-                    let cf_canonical = db
-                        .cf_handle(CF_CANONICAL_BLOCK_HASHES)
-                        .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
                     db.get_cf(&cf_canonical, block_number.to_le_bytes())?
                         .and_then(|bytes| BlockHashRLP::from_bytes(bytes).to().ok())
                 };
@@ -1136,12 +1105,11 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
+            let [cf_canonical, cf_chain_data] =
+                open_cfs(&db, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
+
             // Update canonical block hashes
             if let Some(canonical_blocks) = new_canonical_blocks {
-                let cf_canonical = db
-                    .cf_handle(CF_CANONICAL_BLOCK_HASHES)
-                    .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
                 for (block_number, block_hash) in canonical_blocks {
                     let number_key = block_number.to_le_bytes();
                     let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
@@ -1149,38 +1117,33 @@ impl StoreEngine for Store {
                 }
             }
 
-            // Remove anything after the head from the canonical chain (like LibMDBX)
-            if let Some(cf_canonical) = db.cf_handle(CF_CANONICAL_BLOCK_HASHES) {
-                for number in (head_number + 1)..=(latest) {
-                    batch.delete_cf(&cf_canonical, number.to_le_bytes());
-                }
+            // Remove anything after the head from the canonical chain
+            for number in (head_number + 1)..=(latest) {
+                batch.delete_cf(&cf_canonical, number.to_le_bytes());
             }
 
             // Make head canonical
-            if let Some(cf_canonical) = db.cf_handle(CF_CANONICAL_BLOCK_HASHES) {
-                let head_key = head_number.to_le_bytes();
-                let head_value = BlockHashRLP::from(head_hash).bytes().clone();
-                batch.put_cf(&cf_canonical, head_key, head_value);
-            }
+            let head_key = head_number.to_le_bytes();
+            let head_value = BlockHashRLP::from(head_hash).bytes().clone();
+            batch.put_cf(&cf_canonical, head_key, head_value);
 
             // Update chain data
-            if let Some(cf_chain_data) = db.cf_handle(CF_CHAIN_DATA) {
-                let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
-                batch.put_cf(&cf_chain_data, latest_key, head_number.to_le_bytes());
 
-                if let Some(safe_number) = safe {
-                    let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
-                    batch.put_cf(&cf_chain_data, safe_key, safe_number.to_le_bytes());
-                }
+            let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
+            batch.put_cf(&cf_chain_data, latest_key, head_number.to_le_bytes());
 
-                if let Some(finalized_number) = finalized {
-                    let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-                    batch.put_cf(
-                        &cf_chain_data,
-                        finalized_key,
-                        finalized_number.to_le_bytes(),
-                    );
-                }
+            if let Some(safe_number) = safe {
+                let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
+                batch.put_cf(&cf_chain_data, safe_key, safe_number.to_le_bytes());
+            }
+
+            if let Some(finalized_number) = finalized {
+                let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+                batch.put_cf(
+                    &cf_chain_data,
+                    finalized_key,
+                    finalized_number.to_le_bytes(),
+                );
             }
 
             db.write(batch)
@@ -1535,4 +1498,23 @@ impl StoreEngine for Store {
 
         self.write_batch_async(batch_ops).await
     }
+}
+
+/// Open column families
+fn open_cfs<'a, const N: usize>(
+    db: &'a Arc<DBWithThreadMode<MultiThreaded>>,
+    names: [&str; N],
+) -> Result<[Arc<BoundColumnFamily<'a>>; N], StoreError> {
+    let mut handles = Vec::with_capacity(N);
+
+    for name in names {
+        handles
+            .push(db.cf_handle(name).ok_or_else(|| {
+                StoreError::Custom(format!("Column family '{}' not found", name))
+            })?);
+    }
+
+    handles
+        .try_into()
+        .map_err(|_| StoreError::Custom("Unexpected number of column families".to_string()))
 }
