@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757458778058,
+  "lastUpdate": 1757460297488,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -27587,6 +27587,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0011170212765957447,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c048c71213a517ffce7a7e8718e1c2d11b367f0b",
+          "message": "fix(l2): update privileged_range once all checks have passed (#4224)\n\n**Motivation**\n\nNoticed a weird behavior while testing #4211. Once the configured\n`max_gas_limit` was reached, no further deposits were included in\nsubsequent blocks until a new batch is started. This happens because we\nfirst update the `privileged_range`, and if the transaction is later\nrejected (for example, due to the gas limit), we don’t remove the nonce\nfrom the range. As a result, when the next block starts, we try to add\nthe tx again, but since the nonce was already included to the range, the\ntransaction is marked as out-of-order.\n\n#### Why haven’t we seen the error before?\n\nThere is an `if` check that prevents the error from appearing in our\ndaily usage:\n\n```Rust\n// Check if we have enough space for the StateDiff to run more transactions\nif acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE\n> safe_bytes_per_blob {\n\twarn!(\"No more StateDiff space to run transactions\");\n\tbreak;\n};\n```\n\nThis is an early return that checks if we have enough space for a simple\ntransfer in our `stateDiff`, and stops adding transactions to the block\nif we don’t. But, it can happen that we have enough space for a simple\ntransfer, but the transaction we are trying to add occupies more space\nthan that, making us restore the previous state in another check a[ few\nlines\nlater](https://github.com/lambdaclass/ethrex/blob/0cae720162fd889eb18417010e5f091c6d097d35/crates/l2/sequencer/block_producer/payload_builder.rs#L215).\n\n<!-- \n#### How to trigger the error\n\nThe easiest way to trigger the error is to comment out the early return,\nallowing the `payload_builder` to attempt restoring the previous state.\nThen start the `L2` and `prover` with:\n\n```\nmake init\nmake init-prover\n```\n\nand run a load test with:\n```\ncargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys_l1.txt -t eth-transfers -n \"http://localhost:1729\"\n```\n\nObserve the following behavior in the monitor:\n\nAfter a block reaches its max `stateDiff` size allowed, the subsequent\nblocks contain 0 transactions until a new batch is started.\n-->\n\n**Description**\n\nMoves the update of `privileged_range` after all other checks have\npassed.\n\n\nIssues #4248 and #4243 were created.\nCloses None",
+          "timestamp": "2025-09-09T13:31:21Z",
+          "tree_id": "df56e5007050016e7d074b6056550ac4f98c64b7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c048c71213a517ffce7a7e8718e1c2d11b367f0b"
+        },
+        "date": 1757460276635,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0011052631578947368,
             "unit": "Mgas/s"
           }
         ]
