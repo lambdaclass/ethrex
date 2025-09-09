@@ -1044,7 +1044,7 @@ pub fn p_256_verify(
     }
 
     // Parse parameters
-    #[expect(clippy::indexing_slicing)]
+    #[expect(clippy::indexing_slicing, reason = "length of the calldata is checked before slicing")]
     let (message_hash, r, s, x, y) = (
         &calldata[0..32],
         &calldata[32..64],
