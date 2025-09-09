@@ -483,7 +483,7 @@ impl StoreEngineRollup for SQLStore {
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.execute(
-            "UPDATE operation_count SET transactions = transactions + ?1, privileged_transactions = privileged_transactions + ?2, messages = messages + ?3", 
+            "UPDATE operation_count SET transactions = transactions + ?1, privileged_transactions = privileged_transactions + ?2, messages = messages + ?3",
             (transaction_inc, privileged_transactions_inc, messages_inc)).await?;
         Ok(())
     }
@@ -797,6 +797,14 @@ impl StoreEngineRollup for SQLStore {
             ));
         }
         self.execute_in_tx(queries, None).await
+    }
+
+    async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
+        let mut rows = self.query("SELECT MAX(batch) FROM state_roots", ()).await?;
+        rows.next()
+            .await?
+            .map(|row| read_from_row_int(&row, 0))
+            .transpose()
     }
 }
 
