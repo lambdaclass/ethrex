@@ -1,5 +1,4 @@
 use clap::Parser;
-use ethrex::networks::Network;
 use ethrex::{
     initializers::{get_local_node_record, get_signer, init_blockchain, init_store},
     utils::get_client_version,
@@ -7,8 +6,10 @@ use ethrex::{
 use ethrex_blockchain::BlockchainType;
 use ethrex_common::types::Genesis;
 use ethrex_common::{Bytes, types::ChainConfig};
-use ethrex_common::{H256, H512};
+use ethrex_common::{H256, H512, U256};
+use ethrex_config::networks::Network;
 use ethrex_p2p::kademlia;
+use ethrex_p2p::rlpx::snap::GetAccountRange;
 use ethrex_p2p::utils::public_key_from_signing_key;
 use ethrex_p2p::{
     kademlia::Kademlia,
@@ -201,6 +202,7 @@ async fn main() -> Result<(), ConsoleError> {
     let p2p_context = get_p2p_context(network).await?;
 
     let _ = RLPxConnection::spawn_as_initiator(p2p_context.clone(), &node).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
     let mut peer_channel = p2p_context
         .table
         .get_peer_channel(node.node_id())
@@ -216,18 +218,19 @@ async fn main() -> Result<(), ConsoleError> {
 
     paths[0].extend(trienodes.clone());
 
-    let gtn = GetTrieNodes {
+    let gtn = GetAccountRange {
         id: 0,
         root_hash: opts.state_root,
-        paths,
-        bytes: MAX_RESPONSE_BYTES,
+        starting_hash: H256::from_str(SAI_TEST_TOKEN)?,
+        limit_hash: H256::from_str(SAI_TEST_TOKEN)?,
+        response_bytes: MAX_RESPONSE_BYTES,
     };
 
     info!("Sending the gtn {gtn:?}");
 
     peer_channel
         .connection
-        .cast(CastMessage::BackendMessage(Message::GetTrieNodes(gtn)))
+        .cast(CastMessage::BackendMessage(Message::GetAccountRange(gtn)))
         .await?;
 
     let mut receiver = peer_channel.receiver.lock().await;

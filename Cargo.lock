@@ -4455,6 +4455,7 @@ dependencies = [
  "ethrex",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
