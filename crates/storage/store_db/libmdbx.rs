@@ -3,7 +3,7 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-    BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
+    BlockRLP, Rlp, TransactionHashRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -15,8 +15,7 @@ use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-    Transaction, payload::PayloadBundle,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
@@ -141,8 +140,8 @@ impl StoreEngine for Store {
             }
 
             // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+            for (code_hash, code) in update_batch.code_updates {
+                tx.upsert::<AccountCodes>(code_hash.into(), code.into())
                     .map_err(StoreError::LibmdbxError)?;
             }
 
@@ -427,17 +426,13 @@ impl StoreEngine for Store {
 
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-            let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            let key = (hash, index).into();
-            IndexedChunk::read_from_db(&mut cursor, key)
-        } else {
-            Ok(None)
-        }
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+        let key = (block_hash, index).into();
+        IndexedChunk::read_from_db(&mut cursor, key)
     }
 
     async fn add_transaction_location(
@@ -629,28 +624,6 @@ impl StoreEngine for Store {
             .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
             .transpose()
             .map_err(StoreError::from)
-    }
-
-    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.write::<Payloads>(payload_id, PayloadBundle::from_block(block).into())
-            .await
-    }
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        Ok(self
-            .read::<Payloads>(payload_id)
-            .await?
-            .map(|b| b.to())
-            .transpose()
-            .map_err(StoreError::from)?)
-    }
-
-    async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
-    ) -> Result<(), StoreError> {
-        self.write::<Payloads>(payload_id, payload.into()).await
     }
 
     async fn get_transaction_by_hash(
@@ -1235,13 +1208,6 @@ table!(
     ( StateTrieNodes ) NodeHash => Vec<u8>
 );
 
-// Local Blocks
-
-table!(
-    /// payload id to payload table
-    ( Payloads ) u64 => PayloadBundleRLP
-);
-
 table!(
     /// Stores blocks that are pending validation.
     ( PendingBlocks ) BlockHashRLP => BlockRLP
@@ -1354,7 +1320,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StateTrieNodes),
         table_info!(StorageTriesNodes),
         table_info!(CanonicalBlockHashes),
-        table_info!(Payloads),
         table_info!(PendingBlocks),
         table_info!(SnapState),
         table_info!(StorageSnapShot),

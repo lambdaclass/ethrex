@@ -52,12 +52,6 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
@@ -75,16 +69,10 @@ P2P options:
       --p2p.enabled
 
 
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P protocol.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -177,12 +165,6 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
@@ -199,17 +181,10 @@ P2P options:
 
       --p2p.enabled
 
-
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.

@@ -24,6 +24,7 @@ use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
+use std::time::SystemTime;
 use std::{
     array,
     cmp::min,
@@ -41,6 +42,13 @@ use tracing::{debug, error, info, warn};
 const MIN_FULL_BLOCKS: usize = 64;
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
+/// Amount of seconds between blocks
+const SECONDS_PER_BLOCK: u64 = 12;
+
+/// Bytecodes to downloader per batch
+const BYTECODE_CHUNK_SIZE: usize = 50_000;
+
+const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -167,7 +175,7 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let current_head_number = store
+        let mut current_head_number = store
             .get_block_number(current_head)
             .await?
             .ok_or(SyncError::BlockNumber(current_head))?;
@@ -184,7 +192,11 @@ impl Syncer {
             debug!("Sync Log 1: In snap sync");
             debug!(
                 "Sync Log 2: State block hashes len {}",
-                block_sync_state.to_snap_block_hashes().len()
+                match block_sync_state {
+                    BlockSyncState::Full(_) => 0,
+                    BlockSyncState::Snap(ref snap_block_sync_state) =>
+                        snap_block_sync_state.block_hashes.len(),
+                }
             );
             debug!("Requesting Block Headers from {current_head}");
 
@@ -245,6 +257,7 @@ impl Syncer {
 
             // Update current fetch head
             current_head = last_block_hash;
+            current_head_number = last_block_number;
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
             if sync_mode == SyncMode::Snap && sync_head_found {
@@ -310,7 +323,7 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let current_head_number = store
+        let mut current_head_number = store
             .get_block_number(current_head)
             .await?
             .ok_or(SyncError::BlockNumber(current_head))?;
@@ -396,6 +409,7 @@ impl Syncer {
 
             // Update current fetch head
             current_head = last_block_hash;
+            current_head_number = last_block_number;
 
             // Discard the first header as we already have it
             block_headers.remove(0);
@@ -539,15 +553,6 @@ impl BlockSyncState {
         match self {
             BlockSyncState::Full(state) => state.get_current_head().await,
             BlockSyncState::Snap(state) => state.get_current_head().await,
-        }
-    }
-
-    /// Consumes the current state and returns the contained block hashes if the state is a SnapSynd state
-    /// If it is a FullSync state, returns an empty vector
-    pub fn to_snap_block_hashes(&self) -> Vec<BlockHash> {
-        match self {
-            BlockSyncState::Full(_) => vec![],
-            BlockSyncState::Snap(state) => state.block_hashes.clone(),
         }
     }
 
@@ -775,14 +780,25 @@ impl Syncer {
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
         // - Execute blocks after the pivot (like in full-sync)
-        let all_block_hashes = block_sync_state.to_snap_block_hashes();
-        let pivot_idx = all_block_hashes.len().saturating_sub(1);
+        let pivot_hash = match block_sync_state {
+            BlockSyncState::Full(_) => return Err(SyncError::NotInSnapSync),
+            BlockSyncState::Snap(snap_block_sync_state) => snap_block_sync_state
+                .block_hashes
+                .last()
+                .ok_or(SyncError::NoBlockHeaders)?,
+        };
         let mut pivot_header = store
-            .get_block_header_by_hash(all_block_hashes[pivot_idx])?
+            .get_block_header_by_hash(*pivot_hash)?
             .ok_or(SyncError::CorruptDB)?;
 
         while block_is_stale(&pivot_header) {
-            pivot_header = update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                &self.peers,
+                block_sync_state,
+            )
+            .await?;
         }
         debug!(
             "Selected block {} as pivot for snap sync",
@@ -811,22 +827,14 @@ impl Syncer {
                 .await?;
             info!("Finish downloading account ranges from peers");
 
-            /*             let storage_tries_to_download = get_number_of_storage_tries_to_download().await?;
-            *METRICS.storage_tries_to_download.lock().await = storage_tries_to_download;
-            let mut downloaded_account_storages = 0;
-
-            METRICS
-                .storage_tries_download_start_time
-                .lock()
-                .await
-                .replace(SystemTime::now()); */
-
+            *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
             let mut computed_state_root = *EMPTY_TRIE_HASH;
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
+                *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
                 let entry = entry.map_err(|err| {
                     SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
                 })?;
@@ -859,8 +867,13 @@ impl Syncer {
                         let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
                         for (account_hash, account) in account_states_snapshot {
+                            METRICS
+                                .account_tries_inserted
+                                .fetch_add(1, Ordering::Relaxed);
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                         }
+                        *METRICS.current_step.blocking_lock() =
+                            "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
                         let current_state_root = trie.hash()?;
                         Ok(current_state_root)
                     })
@@ -873,31 +886,29 @@ impl Syncer {
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
             );
-
-            /*             METRICS
-                .storage_tries_download_end_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-            info!("Starting to compute the state root...");
-
-            let account_store_start = Instant::now(); */
-
-            /*             *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
-
-            let account_store_time = Instant::now().saturating_duration_since(account_store_start); */
+            *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
             info!("Original state root: {state_root:?}");
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
+            *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
+            METRICS.storage_accounts_initial.store(
+                storage_accounts.accounts_with_storage_root.len() as u64,
+                Ordering::Relaxed,
+            );
             // We start downloading the storage leafs. To do so, we need to be sure that the storage root
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
             let mut state_leafs_healed = 0_u64;
             loop {
                 while block_is_stale(&pivot_header) {
-                    pivot_header =
-                        update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                    pivot_header = update_pivot(
+                        pivot_header.number,
+                        pivot_header.timestamp,
+                        &self.peers,
+                        block_sync_state,
+                    )
+                    .await?;
                 }
                 // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
                 // We just need to update the pivot and start again
@@ -915,7 +926,7 @@ impl Syncer {
                 };
 
                 info!(
-                    "Started request_storage_ranges with {} accounts with storage root known",
+                    "Started request_storage_ranges with {} accounts with storage root unchanged",
                     storage_accounts.accounts_with_storage_root.len()
                 );
                 chunk_index = self
@@ -930,7 +941,7 @@ impl Syncer {
                     .map_err(SyncError::PeerHandler)?;
 
                 info!(
-                    "Ended request_storage_ranges with {} accounts with storage root known and not downloaded yet and with {} big/healed accounts",
+                    "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
                     storage_accounts.accounts_with_storage_root.len(),
                     // These accounts are marked as heals if they're a big account. This is
                     // because we don't know if the storage root is still valid
@@ -942,21 +953,18 @@ impl Syncer {
                 info!("We stopped because of staleness, restarting loop");
             }
             info!("Finished request_storage_ranges");
-
-            /*             let storages_store_start = Instant::now();
-
-            METRICS
-                .storage_tries_state_roots_start_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-
-            *METRICS.storage_tries_state_roots_to_compute.lock().await =
-                downloaded_account_storages; */
+            METRICS.storage_accounts_healed.store(
+                storage_accounts.healed_accounts.len() as u64,
+                Ordering::Relaxed,
+            );
+            *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
             let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
+            *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
+            *METRICS.current_step.lock().await =
+                "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
@@ -1006,36 +1014,12 @@ impl Syncer {
                     .write_storage_trie_nodes_batch(storage_trie_node_changes)
                     .await?;
             }
-            info!("Finished writing to db");
+            *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
-            for (account_hash, computed_storage_root) in maybe_big_account_storage_state_roots
-                .lock()
-                .map_err(|_| SyncError::MaybeBigAccount)?
-                .iter()
-            {
-                let account_state = store
-                    .get_account_state_by_acc_hash(pivot_header.hash(), *account_hash)?
-                    .ok_or(SyncError::AccountState(pivot_header.hash(), *account_hash))?;
-
-                if *computed_storage_root != account_state.storage_root {
-                    debug!(
-                        "Incomplete or incorrect download for account hash {:?}, expected: {:?}, computed: {:?}",
-                        *account_hash, account_state.storage_root, *computed_storage_root,
-                    );
-                }
-            }
-            /*
-            METRICS
-                .storage_tries_state_roots_end_time
-                .lock()
-                .await
-                .replace(SystemTime::now());
-
-            let storages_store_time =
-                Instant::now().saturating_duration_since(storages_store_start); */
             info!("Finished storing storage tries");
         }
 
+        *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
         info!("Starting Healing Process");
         let mut global_state_leafs_healed: u64 = 0;
         let mut global_storage_leafs_healed: u64 = 0;
@@ -1043,8 +1027,13 @@ impl Syncer {
         while !healing_done {
             // This if is an edge case for the skip snap sync scenario
             if block_is_stale(&pivot_header) {
-                pivot_header =
-                    update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+                pivot_header = update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    &self.peers,
+                    block_sync_state,
+                )
+                .await?;
             }
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
@@ -1069,35 +1058,37 @@ impl Syncer {
             )
             .await;
         }
-        // TODO: 💀💀💀 either remove or change to a debug flag
-        validate_state_root(store.clone(), pivot_header.state_root).await;
-        validate_storage_root(store.clone(), pivot_header.state_root).await;
+        *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
+
+        debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
-        let mut bytecode_hashes: Vec<H256> = store
+        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+        let mut bytecode_iter = store
             .iter_accounts(pivot_header.state_root)
             .expect("we couldn't iterate over accounts")
             .map(|(_, state)| state.code_hash)
-            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH)
-            .collect();
-        bytecode_hashes.sort();
-        bytecode_hashes.dedup();
-
-        // Download bytecodes
-        info!(
-            "Starting bytecode download of {} hashes",
-            bytecode_hashes.len()
-        );
-        let bytecodes = self
-            .peers
-            .request_bytecodes(&bytecode_hashes)
-            .await
-            .map_err(SyncError::PeerHandler)?
-            .ok_or(SyncError::BytecodesNotFound)?;
-
-        store
-            .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
-            .await?;
+            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
+        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
+            // Download bytecodes
+            bytecode_hashes.sort();
+            bytecode_hashes.dedup();
+            info!(
+                "Starting bytecode download of {} hashes",
+                bytecode_hashes.len()
+            );
+            let bytecodes = self
+                .peers
+                .request_bytecodes(&bytecode_hashes)
+                .await
+                .map_err(SyncError::PeerHandler)?
+                .ok_or(SyncError::BytecodesNotFound)?;
+            store
+                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+                .await?;
+        }
+        *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
@@ -1108,14 +1099,16 @@ impl Syncer {
 
         store.add_block(block).await?;
 
-        let all_block_hashes = block_sync_state.to_snap_block_hashes();
-
-        let numbers_and_hashes = all_block_hashes
-            .into_iter()
-            .rev()
-            .enumerate()
-            .map(|(i, hash)| (pivot_header.number - i as u64, hash))
-            .collect::<Vec<_>>();
+        let numbers_and_hashes = match block_sync_state {
+            BlockSyncState::Full(_) => return Err(SyncError::NotInSnapSync),
+            BlockSyncState::Snap(snap_block_sync_state) => snap_block_sync_state
+                .block_hashes
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(i, hash)| (pivot_header.number - i as u64, *hash))
+                .collect::<Vec<_>>(),
+        };
 
         store
             .forkchoice_update(
@@ -1133,13 +1126,13 @@ impl Syncer {
 type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
 
 fn compute_storage_roots(
-    maybe_big_account_storage_state_roots_clone: Arc<Mutex<HashMap<H256, H256>>>,
+    maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
     account_hash: H256,
     key_value_pairs: Vec<(H256, U256)>,
     pivot_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
-    let account_storage_root = match maybe_big_account_storage_state_roots_clone
+    let account_storage_root = match maybe_big_account_storage_state_roots
         .lock()
         .map_err(|_| SyncError::MaybeBigAccount)?
         .entry(account_hash)
@@ -1158,18 +1151,18 @@ fn compute_storage_roots(
         }
     }
 
-    let (computed_state_root, changes) = storage_trie.collect_changes_since_last_hash();
-
-    maybe_big_account_storage_state_roots_clone
-        .lock()
-        .map_err(|_| SyncError::MaybeBigAccount)?
-        .insert(account_hash, computed_state_root);
+    let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
 
     let account_state = store
         .get_account_state_by_acc_hash(pivot_hash, account_hash)?
         .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
-    if computed_state_root == account_state.storage_root {
+    if computed_storage_root == account_state.storage_root {
         METRICS.storage_tries_state_roots_computed.inc();
+    } else {
+        maybe_big_account_storage_state_roots
+            .lock()
+            .map_err(|_| SyncError::MaybeBigAccount)?
+            .insert(account_hash, computed_storage_root);
     }
 
     Ok((account_hash, changes))
@@ -1177,12 +1170,18 @@ fn compute_storage_roots(
 
 pub async fn update_pivot(
     block_number: u64,
+    block_timestamp: u64,
     peers: &PeerHandler,
     block_sync_state: &mut BlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
-    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
-    // latest one, or a slot was missed
-    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
+    // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
+    let new_pivot_block_number = block_number
+        + ((current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) as f64
+            * MISSING_SLOTS_PERCENTAGE) as u64;
+    debug!(
+        "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
+        block_number, block_timestamp, new_pivot_block_number
+    );
     loop {
         let mut scores = peers.peer_scores.lock().await;
 
@@ -1332,14 +1331,14 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     tree_validated
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) {
+pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
-    store
+    let is_valid = store
         .clone()
         .iter_accounts(state_root)
         .expect("We should be able to open the store")
         .par_bridge()
-        .for_each(|(hashed_address, account_state)|
+        .map(|(hashed_address, account_state)|
     {
         let store_clone = store.clone();
         let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
@@ -1351,14 +1350,23 @@ pub async fn validate_storage_root(store: Store, state_root: H256) {
             );
 
         let tree_validated = account_state.storage_root == computed_storage_root;
-        if tree_validated {
-            //info!("Succesfully validated tree, {computed_storage_root} found");
-        } else {
+        if !tree_validated {
             error!(
                 "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
                 account_state.storage_root
             );
         }
-    });
+        tree_validated
+    })
+    .all(|valid| valid);
     info!("Finished validate_storage_root");
+    is_valid
+}
+
+fn bytecode_iter_fn<T>(bytecode_iter: &mut T) -> Option<Vec<H256>>
+where
+    T: Iterator<Item = H256>,
+{
+    Some(bytecode_iter.by_ref().take(BYTECODE_CHUNK_SIZE).collect())
+        .filter(|chunk: &Vec<_>| !chunk.is_empty())
 }
