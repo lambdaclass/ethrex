@@ -818,7 +818,6 @@ impl Syncer {
         store: Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
-        error!("REENABLE EVERYTHING HERE");
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
@@ -1116,10 +1115,6 @@ impl Syncer {
             // Download bytecodes
             bytecode_hashes.sort();
             bytecode_hashes.dedup();
-            info!(
-                "Starting bytecode download of {} hashes",
-                bytecode_hashes.len()
-            );
 
             match self
                 .peers
@@ -1130,8 +1125,8 @@ impl Syncer {
             {
                 Ok(PeerHandlerCallResponse::InProgress) => {
                     info!(
-                        "Started downloading bytecode for hashes: {:?}",
-                        bytecode_hashes
+                        "Started downloading bytecode for {} hashes",
+                        bytecode_hashes.len()
                     )
                 }
                 _ => return Err(SyncError::PeerHandler(PeerHandlerError::NoResponseFromPeer)),
