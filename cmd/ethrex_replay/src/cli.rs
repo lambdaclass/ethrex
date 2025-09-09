@@ -1,6 +1,6 @@
 use std::{io::Write, time::SystemTime};
 
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use ethrex_common::{
     H256,
     types::{AccountUpdate, Block, Receipt},
@@ -11,10 +11,10 @@ use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use reqwest::Url;
 use tracing::info;
 
-use crate::bench::run_and_measure;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
+use crate::{bench::run_and_measure, cache::write_cache};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
@@ -122,6 +122,20 @@ pub struct EthrexReplayOptions {
     pub bench: bool,
     #[arg(long, required = false)]
     pub to_csv: bool,
+    #[arg(
+        long,
+        help = "Block cache level: off, failed, all (default: all)",
+        default_value = "all"
+    )]
+    pub cache_level: CacheLevel,
+}
+
+#[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Default)]
+pub enum CacheLevel {
+    Off,
+    Failed,
+    #[default]
+    All,
 }
 
 #[derive(Parser)]
@@ -400,7 +414,10 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let start = SystemTime::now();
 
-    let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+    let block_run_result = run_and_measure(replay(cache.clone(), &opts), opts.bench).await;
+
+    // We save this because block_run_result (Result<u64, Report>) is not clonable.
+    let block_run_failed = block_run_result.is_err();
 
     let replayer_mode = replayer_mode(opts.execute)?;
 
@@ -413,6 +430,23 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     );
 
     block_run_report.log();
+
+    // Apply cache level rules
+    match opts.cache_level {
+        CacheLevel::Failed => {
+            if block_run_failed {
+                let file_name = format!("cache_{network}_{}.bin", cache.blocks[0].header.number);
+
+                write_cache(&cache, &file_name).expect("failed to write cache");
+            }
+        }
+        CacheLevel::All => {
+            let file_name = format!("cache_{network}_{}.bin", cache.blocks[0].header.number);
+
+            write_cache(&cache, &file_name).expect("failed to write cache");
+        }
+        CacheLevel::Off => {}
+    }
 
     if opts.to_csv {
         let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");

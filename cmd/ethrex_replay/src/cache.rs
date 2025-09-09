@@ -10,7 +10,7 @@ use std::io::Write;
 use std::{fs::File, io::BufWriter};
 
 #[serde_as]
-#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
 pub struct L2Fields {
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
@@ -18,7 +18,7 @@ pub struct L2Fields {
     pub blob_proof: blobs_bundle::Proof,
 }
 
-#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
 pub struct Cache {
     pub blocks: Vec<Block>,
     pub witness: ExecutionWitness,
