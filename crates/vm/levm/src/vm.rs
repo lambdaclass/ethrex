@@ -86,8 +86,12 @@ impl Substate {
 
         self.selfdestruct_set.extend(delta.selfdestruct_set);
         self.accessed_addresses.extend(delta.accessed_addresses);
-        self.accessed_storage_slots
-            .extend(delta.accessed_storage_slots);
+        for (address, slot_set) in delta.accessed_storage_slots {
+            self.accessed_storage_slots
+                .entry(address)
+                .or_default()
+                .extend(slot_set);
+        }
         self.created_accounts.extend(delta.created_accounts);
         self.refunded_gas = delta.refunded_gas;
         self.transient_storage.extend(delta.transient_storage);
@@ -132,10 +136,13 @@ impl Substate {
 
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
-        self.parent
+        let is_present = self
+            .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_else(|| self.accessed_addresses.insert(address))
+            .unwrap_or_default();
+
+        is_present || !self.accessed_addresses.insert(address)
     }
 
     /// Return whether an address is already marked as selfdestructed.
@@ -176,15 +183,18 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
-        self.parent
+        let is_present = self
+            .parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or_else(|| {
-                self.accessed_storage_slots
-                    .entry(address)
-                    .or_default()
-                    .insert(key)
-            })
+            .unwrap_or_default();
+
+        is_present
+            || !self
+                .accessed_storage_slots
+                .entry(address)
+                .or_default()
+                .insert(key)
     }
 
     /// Return whether an address has already been accessed.
@@ -202,10 +212,13 @@ impl Substate {
 
     /// Mark an address as accessed and return whether is was already marked.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
-        self.parent
+        let is_present = self
+            .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_else(|| self.accessed_addresses.insert(address))
+            .unwrap_or_default();
+
+        is_present || !self.accessed_addresses.insert(address)
     }
 
     /// Return whether an address has already been accessed.
@@ -218,10 +231,13 @@ impl Substate {
 
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
-        self.parent
+        let is_present = self
+            .parent
             .as_ref()
             .map(|parent| parent.is_account_created(&address))
-            .unwrap_or_else(|| self.created_accounts.insert(address))
+            .unwrap_or_default();
+
+        is_present || !self.created_accounts.insert(address)
     }
 
     /// Return whether an address has already been marked as a new account.
