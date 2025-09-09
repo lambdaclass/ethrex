@@ -109,8 +109,7 @@ impl TxBroadcaster {
         let peer_sqrt = (peers.len() as f64).sqrt();
 
         let full_txs = txs_to_broadcast
-            .clone()
-            .into_iter()
+            .iter()
             .map(|tx| tx.transaction().clone())
             .filter(|tx| !matches!(tx, Transaction::EIP4844Transaction { .. }))
             .collect::<Vec<Transaction>>();
@@ -140,10 +139,10 @@ impl TxBroadcaster {
             self.add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
             // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
             let txs_message = Message::Transactions(Transactions {
-                transactions: txs_to_send.clone(),
+                transactions: txs_to_send,
             });
             peer_channels.connection.cast(CastMessage::BackendMessage(
-                txs_message.clone(),
+                txs_message,
             )).await.unwrap_or_else(|err| {
                 error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
