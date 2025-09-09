@@ -55,7 +55,7 @@ pub enum StateDiffError {
     EVMError(#[from] EvmError),
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,

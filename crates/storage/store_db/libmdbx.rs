@@ -140,8 +140,8 @@ impl StoreEngine for Store {
             }
 
             // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+            for (code_hash, code) in update_batch.code_updates {
+                tx.upsert::<AccountCodes>(code_hash.into(), code.into())
                     .map_err(StoreError::LibmdbxError)?;
             }
 
@@ -426,17 +426,13 @@ impl StoreEngine for Store {
 
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-            let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            let key = (hash, index).into();
-            IndexedChunk::read_from_db(&mut cursor, key)
-        } else {
-            Ok(None)
-        }
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+        let key = (block_hash, index).into();
+        IndexedChunk::read_from_db(&mut cursor, key)
     }
 
     async fn add_transaction_location(

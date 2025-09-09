@@ -94,8 +94,8 @@ impl StoreEngine for Store {
         }
 
         // store code updates
-        for (hashed_address, code) in update_batch.code_updates {
-            store.account_codes.insert(hashed_address, code);
+        for (code_hash, code) in update_batch.code_updates {
+            store.account_codes.insert(code_hash, code);
         }
 
         for (hashed_address, nodes) in update_batch.storage_updates {
@@ -336,19 +336,15 @@ impl StoreEngine for Store {
 
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         let store = self.inner()?;
-        if let Some(hash) = store.canonical_hashes.get(&block_number) {
-            Ok(store
-                .receipts
-                .get(hash)
-                .and_then(|entry| entry.get(&index))
-                .cloned())
-        } else {
-            Ok(None)
-        }
+        Ok(store
+            .receipts
+            .get(&block_hash)
+            .and_then(|entry| entry.get(&index))
+            .cloned())
     }
 
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {

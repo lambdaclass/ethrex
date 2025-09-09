@@ -9,11 +9,12 @@ use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_rpc::signer::SignerError;
+use ethrex_metrics::MetricsError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
-use ethrex_vm::{EvmError, ProverDBError};
+use ethrex_vm::EvmError;
 use spawned_concurrency::error::GenServerError;
 use tokio::task::JoinError;
 
@@ -109,12 +110,12 @@ pub enum ProofCoordinatorError {
     BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
     #[error("Failed to execute command: {0}")]
     ComandError(std::io::Error),
-    #[error("ProofCoordinator failed failed because of a ProverDB error: {0}")]
-    ProverDBError(#[from] ProverDBError),
     #[error("Missing blob for batch {0}")]
     MissingBlob(u64),
     #[error("Missing TDX private key")]
     MissingTDXPrivateKey,
+    #[error("Metrics error")]
+    Metrics(#[from] MetricsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -139,6 +140,10 @@ pub enum ProofSenderError {
     AlignedGetNonceError(String),
     #[error("Proof Sender failed to submit proof: {0}")]
     AlignedSubmitProofError(String),
+    #[error("Metrics error")]
+    Metrics(#[from] MetricsError),
+    #[error("Failed to convert integer")]
+    TryIntoError(#[from] std::num::TryFromIntError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -165,8 +170,6 @@ pub enum BlockProducerError {
     ChainError(#[from] ChainError),
     #[error("Block Producer failed because of a EvmError error: {0}")]
     EvmError(#[from] EvmError),
-    #[error("Block Producer failed because of a ProverDB error: {0}")]
-    ProverDBError(#[from] ProverDBError),
     #[error("Block Producer failed because of a InvalidForkChoice error: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Block Producer failed to produce block: {0}")]
@@ -231,7 +234,7 @@ pub enum CommitterError {
     InvalidWithdrawalTransaction,
     #[error("Blob estimation failed: {0}")]
     BlobEstimationError(#[from] BlobEstimationError),
-    #[error("length does not fit in u16")]
+    #[error("Failed to convert integer")]
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
@@ -241,12 +244,18 @@ pub enum CommitterError {
     FailedToSignError(#[from] SignerError),
     #[error("Privileged Transaction error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
+    #[error("Metrics error")]
+    Metrics(#[from] MetricsError),
     #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
     #[error("Retrieval Error: {0}")]
     RetrievalError(String),
     #[error("Conversion Error: {0}")]
     ConversionError(String),
+    #[error("Unexpected Error: {0}")]
+    UnexpectedError(String),
+    #[error("Unreachable code reached: {0}")]
+    Unreachable(String),
 }
 
 #[derive(Debug, thiserror::Error)]

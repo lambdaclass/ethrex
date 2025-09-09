@@ -17,16 +17,15 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
-use ethrex_prover_lib::backends::Backend;
+use ethrex_prover_lib::backend::Backend;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{EvmEngine, EvmError};
+use ethrex_vm::EvmError;
+use guest_program::input::ProgramInput;
 use regex::Regex;
-use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(
     path: &Path,
-    evm: EvmEngine,
     skipped_tests: Option<&[&str]>,
     stateless_backend: Option<Backend>,
 ) -> datatest_stable::Result<()> {
@@ -34,7 +33,7 @@ pub fn parse_and_execute(
     let tests = parse_tests(path);
     //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
     //EIPs should be added as strings in the format 'eip-XXXX'
-    let fusaka_eips_to_test: Vec<&str> = vec!["eip-7883", "eip-7939"];
+    let fusaka_eips_to_test: Vec<&str> = vec!["eip-7594", "eip-7883", "eip-7939"];
 
     //Hashes of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
     //We should really remove this once we're finished with implementing Fusaka, but it's a good-enough workaround to run specific tests for now
@@ -52,11 +51,7 @@ pub fn parse_and_execute(
                 && (!fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
                     && !hashes_of_fusaka_tests_to_run
                         .iter()
-                        .any(|hash| *hash == test.info.hash.clone().unwrap())
-                    || match evm {
-                        EvmEngine::LEVM => false,
-                        EvmEngine::REVM => true,
-                    }))
+                        .any(|hash| *hash == test.info.hash.clone().unwrap())))
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
@@ -65,7 +60,7 @@ pub fn parse_and_execute(
             continue;
         }
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, evm, stateless_backend));
+        let result = rt.block_on(run_ef_test(&test_key, &test, stateless_backend));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
@@ -84,7 +79,6 @@ pub fn parse_and_execute(
 pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
-    evm: EvmEngine,
     stateless_backend: Option<Backend>,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
@@ -99,7 +93,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1, false);
+    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {

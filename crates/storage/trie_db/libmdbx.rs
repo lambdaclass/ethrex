@@ -75,7 +75,7 @@ mod test {
         table_info,
     };
     use std::sync::Arc;
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     #[test]
     fn simple_addition() {
@@ -147,9 +147,9 @@ mod test {
         let root = trie.hash().unwrap();
 
         trie.insert([0; 32].to_vec(), vec![0x04]).unwrap();
-        trie.remove([1; 32].to_vec()).unwrap();
+        trie.remove(&[1; 32].to_vec()).unwrap();
         trie.insert([2; 32].to_vec(), vec![0x05]).unwrap();
-        trie.remove([0; 32].to_vec()).unwrap();
+        trie.remove(&[0; 32].to_vec()).unwrap();
 
         assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), None);
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), None);
@@ -196,13 +196,13 @@ mod test {
         let root = trie.hash().unwrap();
 
         trie.insert([0; 32].to_vec(), [4; 32].to_vec()).unwrap();
-        trie.remove([1; 32].to_vec()).unwrap();
+        trie.remove(&[1; 32].to_vec()).unwrap();
         trie.insert([2; 32].to_vec(), [5; 32].to_vec()).unwrap();
-        trie.remove([0; 32].to_vec()).unwrap();
+        trie.remove(&[0; 32].to_vec()).unwrap();
 
         let mut trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
 
-        trie.remove([2; 32].to_vec()).unwrap();
+        trie.remove(&[2; 32].to_vec()).unwrap();
 
         assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
@@ -213,8 +213,7 @@ mod test {
     fn resume_trie() {
         use crate::trie_db::test_utils::libmdbx::{new_db_with_path, open_db};
 
-        const TRIE_DIR: &str = "trie-db-resume-trie-test";
-        let trie_dir = TempDir::new(TRIE_DIR).expect("Failed to create temp dir");
+        let trie_dir = TempDir::new().expect("Failed to create temp dir");
         let trie_dir = trie_dir.path();
 
         // Create new trie from clean DB

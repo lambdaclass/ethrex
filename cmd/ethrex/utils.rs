@@ -1,14 +1,13 @@
 use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::Kademlia,
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_vm::EvmEngine;
 use hex::FromHexError;
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -77,10 +76,6 @@ pub fn read_block_file(block_file_path: &str) -> Block {
         .unwrap_or_else(|_| panic!("Failed to read block file with path {block_file_path}"));
     Block::decode(&encoded_block)
         .unwrap_or_else(|_| panic!("Failed to decode block file {block_file_path}"))
-}
-
-pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
-    EvmEngine::try_from(s.to_owned()).map_err(|e| eyre::eyre!("{e}"))
 }
 
 pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
@@ -189,4 +184,21 @@ pub fn get_client_version() -> String {
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         env!("VERGEN_RUSTC_SEMVER")
     )
+}
+
+pub fn display_chain_initialization(genesis: &Genesis) {
+    let border = "═".repeat(70);
+
+    info!("{border}");
+    info!("NETWORK CONFIGURATION");
+    info!("{border}");
+
+    for line in genesis.config.display_config().lines() {
+        info!("{line}");
+    }
+
+    info!("");
+    let hash = genesis.get_block().hash();
+    info!("Genesis Block Hash: {hash:x}");
+    info!("{border}");
 }

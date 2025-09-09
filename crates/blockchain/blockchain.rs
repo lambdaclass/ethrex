@@ -28,7 +28,7 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use sha3::{Digest, Keccak256};
@@ -62,7 +62,6 @@ pub enum BlockchainType {
 
 #[derive(Debug)]
 pub struct Blockchain {
-    pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
@@ -96,14 +95,8 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(
-        evm_engine: EvmEngine,
-        store: Store,
-        blockchain_type: BlockchainType,
-        perf_logs_enabled: bool,
-    ) -> Self {
+    pub fn new(store: Store, blockchain_type: BlockchainType, perf_logs_enabled: bool) -> Self {
         Self {
-            evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
@@ -115,7 +108,6 @@ impl Blockchain {
 
     pub fn default_with_store(store: Store) -> Self {
         Self {
-            evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
@@ -196,7 +188,7 @@ impl Blockchain {
 
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
-        let mut touched_account_storage_slots = HashMap::new();
+        let mut touched_account_storage_slots = BTreeMap::new();
         // This will become the state trie + storage trie
         let mut used_trie_nodes = Vec::new();
 
@@ -206,7 +198,7 @@ impl Blockchain {
         })?;
 
         let mut block_hashes = HashMap::new();
-        let mut codes = HashMap::new();
+        let mut codes = BTreeMap::new();
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
@@ -358,7 +350,8 @@ impl Blockchain {
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
         needed_block_numbers.sort();
-        // The last block number we need is the parent of the last block we execute
+
+        // Last needed block header for the witness is the parent of the last block we need to execute
         let last_needed_block_number = blocks
             .last()
             .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
@@ -372,7 +365,7 @@ impl Blockchain {
                 first_needed_block_number = **block_number_from_logger;
             }
         }
-        let mut block_headers = HashMap::new();
+        let mut block_headers = BTreeMap::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
             let header = self.storage.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration("Failed to get block header".to_string()),
@@ -394,13 +387,14 @@ impl Blockchain {
             state_trie: None,
             block_headers,
             chain_config,
-            storage_tries: HashMap::new(),
+            storage_tries: BTreeMap::new(),
             parent_block_header: self
                 .storage
                 .get_block_header_by_hash(first_block_header.parent_hash)?
                 .ok_or(ChainError::ParentNotFound)?,
             state_nodes,
             touched_account_storage_slots,
+            account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
         })
     }
 
@@ -897,8 +891,8 @@ impl Blockchain {
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
         let evm = match self.r#type {
-            BlockchainType::L1 => Evm::new_for_l1(self.evm_engine, vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(self.evm_engine, vm_db)?,
+            BlockchainType::L1 => Evm::new_for_l1(vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
         };
         Ok(evm)
     }
