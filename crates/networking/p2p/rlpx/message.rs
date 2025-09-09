@@ -8,7 +8,7 @@ use crate::rlpx::snap::{
 };
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
-use super::eth::receipts::{GetReceipts, Receipts};
+use super::eth::receipts::{GetReceipts, Receipts, Receipts68, Receipts69};
 use super::eth::status::StatusMessage;
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
@@ -188,7 +188,10 @@ impl Message {
                     PooledTransactions::decode(data)?,
                 )),
                 GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
+                Receipts::CODE => Ok(Message::Receipts(match eth_version {
+                    EthCapVersion::V68 => Receipts::Receipts68(Receipts68::decode(data)?),
+                    EthCapVersion::V69 => Receipts::Receipts69(Receipts69::decode(data)?),
+                })),
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
@@ -250,7 +253,10 @@ impl Message {
             Message::GetPooledTransactions(msg) => msg.encode(buf),
             Message::PooledTransactions(msg) => msg.encode(buf),
             Message::GetReceipts(msg) => msg.encode(buf),
-            Message::Receipts(msg) => msg.encode(buf),
+            Message::Receipts(msg) => match msg {
+                Receipts::Receipts68(receipts68) => receipts68.encode(buf),
+                Receipts::Receipts69(receipts69) => receipts69.encode(buf),
+            },
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),

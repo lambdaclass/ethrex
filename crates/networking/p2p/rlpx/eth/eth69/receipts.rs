@@ -21,6 +21,10 @@ impl Receipts69 {
     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self {
         Self { receipts, id }
     }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
+    }
 }
 
 impl RLPxMessage for Receipts69 {

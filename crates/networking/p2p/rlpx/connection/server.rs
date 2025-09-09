@@ -41,7 +41,7 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts},
+            receipts::{GetReceipts, Receipts, Receipts68, Receipts69},
             status::StatusMessage,
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
@@ -795,7 +795,15 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 for hash in block_hashes.iter() {
                     receipts.push(state.storage.get_receipts_for_block(hash)?);
                 }
-                let response = Receipts::new(id, receipts, eth)?;
+                let response = match eth.version {
+                    68 => Receipts::Receipts68(Receipts68::new(id, receipts)),
+                    69 => Receipts::Receipts69(Receipts69::new(id, receipts)),
+                    ver => {
+                        return Err(RLPxError::InternalError(format!(
+                            "Invalid eth version {ver}"
+                        )));
+                    }
+                };
                 send(state, Message::Receipts(response)).await?;
             }
         }

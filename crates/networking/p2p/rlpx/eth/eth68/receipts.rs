@@ -44,6 +44,10 @@ impl Receipts68 {
             .map(|receipts| receipts.iter().map(Receipt::from).collect())
             .collect()
     }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
+    }
 }
 
 impl RLPxMessage for Receipts68 {
