@@ -815,6 +815,14 @@ impl GenServer for PeerHandler {
                 self.update_peers_info().await;
             }
             PeerHandlerCastMessage::AssignTasks => {
+                if !self
+                    .peers_info
+                    .iter()
+                    .any(|(_, peer_info)| peer_info.is_available())
+                {
+                    return CastResponse::NoReply;
+                }
+
                 self.reset_timed_out_tasks().await;
 
                 if self.pending_tasks.is_empty() {
@@ -822,25 +830,21 @@ impl GenServer for PeerHandler {
                 }
 
                 let capabilities = match self.sync_state {
-                    InternalSyncState::RetrievingHeaders { .. } => &SUPPORTED_ETH_CAPABILITIES,
                     InternalSyncState::RetrievingAccountRanges { .. }
-                    | InternalSyncState::RetrievingStorageRanges { .. } => {
-                        &SUPPORTED_SNAP_CAPABILITIES
-                    }
-                    // Idle or finished states, should not get here
-                    _ => &SUPPORTED_SNAP_CAPABILITIES,
+                    | InternalSyncState::RetrievingStorageRanges { .. }
+                    | InternalSyncState::RetrievingBytecode { .. } => &SUPPORTED_SNAP_CAPABILITIES,
+                    // Any other state should be handled by eth capabilities
+                    _ => &SUPPORTED_ETH_CAPABILITIES,
                 };
 
                 while let Some(available_downloader) = match self.sync_state {
+                    // Header retrieval is done with random downloaders
+                    // to do an initial probing on their performance
                     InternalSyncState::RetrievingHeaders { .. } => {
                         self.get_random_downloader(capabilities).await
                     }
-                    InternalSyncState::RetrievingAccountRanges { .. }
-                    | InternalSyncState::RetrievingStorageRanges { .. } => {
-                        self.get_best_downloader(capabilities).await
-                    }
-                    // Idle or finished states, should not get here
-                    _ => self.get_random_downloader(capabilities).await,
+                    // Any other download task should be handled by the best downloader
+                    _ => self.get_best_downloader(capabilities).await,
                 } {
                     let Some(next_task) = self.pending_tasks.pop_front() else {
                         // No tasks to assign
