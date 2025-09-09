@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-09-09
+
+- Preload known block accounts (sender, to) in a single batch. #[4343](https://github.com/lambdaclass/ethrex/pull/4343)
+
 ### 2025-09-02
 
 - Use x86-64-v2 cpu target on linux by default, dockerfile will use it too. [#4252](https://github.com/lambdaclass/ethrex/pull/4252)
