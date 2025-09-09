@@ -12,6 +12,7 @@ pub mod risc0;
 #[cfg(feature = "sp1")]
 pub mod sp1;
 
+#[cfg(feature = "openvm")]
 pub mod openvm;
 
 #[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]

@@ -1,10 +1,11 @@
 use openvm_sdk::{Sdk, StdIn};
+use guest_program::input::ProgramInput;
 
 pub struct ProgramOutput(pub [u8; 32]);
 
-const PROGRAM_ELF: &[u8] = include_bytes!("../../zkvm/interface/openvm/out/riscv32im-openvm-elf");
+static PROGRAM_ELF: &[u8] = include_bytes!("../guest_program/src/openvm/out/riscv32im-openvm-elf");
 
-pub fn execute(input: zkvm_interface::io::ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let sdk = Sdk::standard();
 
     let mut stdin = StdIn::default();
@@ -14,7 +15,7 @@ pub fn execute(input: zkvm_interface::io::ProgramInput) -> Result<(), Box<dyn st
 }
 
 pub fn prove(
-    _input: zkvm_interface::io::ProgramInput,
+    _input: ProgramInput,
     _aligned_mode: bool,
 ) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     unimplemented!("OpenVM prove is not implemented yet");
