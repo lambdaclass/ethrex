@@ -835,7 +835,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
-            let response = process_trie_nodes_request(req, state.storage.clone())?;
+            let response = process_trie_nodes_request(req, state.storage.clone()).await?;
             send(state, Message::TrieNodes(response)).await?
         }
         Message::L2(req) if peer_supports_l2 => {
