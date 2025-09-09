@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757442542321,
+  "lastUpdate": 1757443835498,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13285,6 +13285,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167687602207,
             "range": "± 596422050",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5b4c943007b96152453e5a8f8a1a592608b11ea0",
+          "message": "fix(l1, l2): remove trust assumptions from guest program inputs (#4337)\n\n**Motivation**\n\nFor performance reasons, [this\nPR](https://github.com/lambdaclass/ethrex/pull/4172) was focused on\ndoing heavy work before pushing data to the zkVM.\n\nDespite hashing and decoding beforehand is helpful for performance,\nthese optimizations introduced some trust assumptions on the guest\nprogram about the correctness of the hashing and decoding computation.\n\n**Description**\n\nThis PR aims to remove these trust assumptions by moving the computation\nof the convenient data structures from outside the guest program to the\ninside of it.\n\nThe block headers decoding, bytecode hashing, and state RLP nodes\nhashing computation is now part of the guest program execution\n(`crates/l2/prover/src/guest_program/src/execution.rs`), ensuring its\ncorrectness.\n\nThis PR also refactors the `ExecutionWitnessResult` by splitting it into\ntwo different structs with different responsibilities:\n`ExecutionWitness`, which essentially is an `RpcExecutionWitness` but\nwith extra useful data like the chain config and the number of the first\nblock to execute; and `GuestProgramState`, which is a result of a\nperformance-friendly preprocessing of the `ExecutionWitness` **inside\nthe zkVM** and has some other useful fields that are filled on-demand\nduring stateless execution.\n\n**Test it out**\n\nStep into `ethrex`'s root directory and run, depending on your test\ncase:\n\n- Executing the latest mainnet block without any prover backend \n```\ncargo r -r -p ethrex-replay -- block --execute --rpc-url http://157.180.1.98:8545\n```\n- Executing the latest mainnet block with SP1\n```\ncargo r -r -p ethrex-replay --features sp1 -- block --execute --rpc-url http://157.180.1.98:8545\n```\n- Proving the latest mainnet block with \n```\ncargo r -r -p ethrex-replay --features sp1,gpu -- block --prove --rpc-url http://157.180.1.98:8545\n```\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-09-09T17:55:20Z",
+          "tree_id": "dd056f6c23bfbe23081b0e13c61b4159e26d0cd1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5b4c943007b96152453e5a8f8a1a592608b11ea0"
+        },
+        "date": 1757443816308,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168338954735,
+            "range": "± 787005546",
             "unit": "ns/iter"
           }
         ]
