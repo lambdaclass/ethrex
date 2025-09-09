@@ -2,10 +2,10 @@ use std::{cmp::min, fmt::Display};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
+use k256::ecdsa::{RecoveryId, VerifyingKey};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
-use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
 use sha3::{Digest, Keccak256};
@@ -306,6 +306,14 @@ pub enum TxType {
     // We take the same approach as Optimism to define the privileged tx prefix
     // https://github.com/ethereum-optimism/specs/blob/c6903a3b2cad575653e1f5ef472debb573d83805/specs/protocol/deposits.md#the-deposited-transaction-type
     Privileged = 0x7e,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum EcdsaError {
+    #[error("k256 error: {0}")]
+    K256(#[from] k256::ecdsa::Error),
+    #[error("invalid recovery id (> 3)")]
+    InvalidRecoveryId,
 }
 
 impl From<TxType> for u8 {
@@ -934,7 +942,7 @@ impl RLPDecode for PrivilegedL2Transaction {
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Result<Address, secp256k1::Error> {
+    pub fn sender(&self) -> Result<Address, EcdsaError> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1263,7 +1271,7 @@ impl Transaction {
 pub fn recover_address_from_message(
     signature: Signature,
     message: &Bytes,
-) -> Result<Address, secp256k1::Error> {
+) -> Result<Address, EcdsaError> {
     // Hash message
     let payload: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
         .finalize()
@@ -1271,18 +1279,18 @@ pub fn recover_address_from_message(
     recover_address(signature, H256::from_slice(&payload))
 }
 
-pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
+pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, EcdsaError> {
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
-    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
-        &signature_bytes[..64],
-        RecoveryId::from_i32(signature_bytes[64] as i32)?, // cannot fail
-    )?;
+    let signature = k256::ecdsa::Signature::from_slice(&signature_bytes[0..64])?;
+    let recovery_id =
+        RecoveryId::from_byte(signature_bytes[64]).ok_or(EcdsaError::InvalidRecoveryId)?;
+
     // Recover public key
-    let public = secp256k1::SECP256K1
-        .recover_ecdsa(&Message::from_digest(payload.to_fixed_bytes()), &signature)?;
+    let public = VerifyingKey::recover_from_prehash(payload.as_bytes(), &signature, recovery_id)?;
+    let encoded = public.to_encoded_point(false);
     // Hash public key to obtain address
-    let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
+    let hash = Keccak256::new_with_prefix(&encoded.as_bytes()[1..]).finalize();
     Ok(Address::from_slice(&hash[12..]))
 }
 

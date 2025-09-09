@@ -11,7 +11,7 @@ ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-p2p.workspace = true
 ethrex-storage-rollup.workspace = true
-ethrex-l2-common.workspace = true
+ethrex-l2-common = { workspace = true, features = ["secp256k1"] }
 ethrex-rpc.workspace = true
 ethrex-rlp.workspace = true
 

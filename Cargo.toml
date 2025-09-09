@@ -108,6 +108,7 @@ eyre = "0.6.12"
 rustc-hex = "2.1.0"
 url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
+k256 = "0.13.4"
 libsql = "0.9.10"
 futures = "0.3.31"
 spawned-concurrency = "0.3.0"
