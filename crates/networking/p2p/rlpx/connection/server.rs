@@ -781,9 +781,6 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             }
         }
         Message::BlockRangeUpdate(update) => {
-            dbg!(&update);
-            // We will only validate the incoming update, we may decide to store and use this information in the future
-            update.validate()?;
             log_peer_debug(
                 &state.node,
                 &format!(
@@ -791,6 +788,17 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     update.earliest_block, update.latest_block
                 ),
             );
+            // We will only validate the incoming update, we may decide to store and use this information in the future
+            if let Err(err) = update.validate() {
+                log_peer_warn(
+                    &state.node,
+                    &format!("disconnected from peer. Reason: {err}"),
+                );
+                send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                return Err(RLPxError::DisconnectSent(
+                    DisconnectReason::SubprotocolError,
+                ));
+            }
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
             let hashes =
