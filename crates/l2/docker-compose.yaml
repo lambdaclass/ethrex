@@ -1,7 +1,7 @@
 services:
   ethrex_l1:
     container_name: ethrex_l1
-    image: "ethrex:unstable"
+    image: "ethrex:main"
     build: ../../
     ports:
       - 127.0.0.1:8545:8545
@@ -11,7 +11,7 @@ services:
 
   contract_deployer:
     container_name: contract_deployer
-    image: "ethrex:unstable"
+    image: "ethrex:main"
     build: ../../
     volumes:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
@@ -20,8 +20,8 @@ services:
       - ../../fixtures/genesis/l1-dev.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
-      - ./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
-      - ./prover/zkvm/interface/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
+      - ./prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
+      - ./prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
@@ -58,7 +58,7 @@ services:
 
   ethrex_l2:
     container_name: ethrex_l2
-    image: "ethrex:unstable"
+    image: "ethrex:main"
     build: ../../
     ports:
       # RPC
@@ -100,11 +100,11 @@ services:
 
   ethrex_prover:
     container_name: ethrex_prover
-    image: "ethrex:unstable"
+    image: "ethrex:main"
     build: ../../
     command: >
       l2 prover
       --backend exec
-      --proof-coordinator tcp://ethrex_l2:3900
+      --proof-coordinators tcp://ethrex_l2:3900
     depends_on:
       - ethrex_l2

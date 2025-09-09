@@ -14,6 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
 ethrex-common.workspace = true
+ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
@@ -55,7 +56,7 @@ tui-logger.workspace = true
 tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 
-zkvm_interface = { path = "./prover/zkvm/interface/" }
+guest_program = { path = "./prover/src/guest_program/" }
 
 
 [build-dependencies]
@@ -75,4 +76,4 @@ panic = "deny"
 [features]
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics"]
-l2 = ["zkvm_interface/l2"]
+l2 = ["guest_program/l2"]

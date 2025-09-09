@@ -66,6 +66,7 @@ use std::{
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
+use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -83,6 +84,7 @@ pub struct RpcApiContext {
     pub peer_handler: PeerHandler,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
+    pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +127,7 @@ pub async fn start_api(
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -142,6 +145,7 @@ pub async fn start_api(
             client_version,
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
+        log_filter_handler,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -263,7 +267,7 @@ pub async fn handle_authrpc_request(
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
+        Ok(RpcNamespace::Admin) => map_admin_requests(req, context).await,
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
@@ -382,10 +386,11 @@ pub async fn map_engine_requests(
     }
 }
 
-pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
-        "admin_peers" => admin::peers(&context),
+        "admin_peers" => admin::peers(&context).await,
+        "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -512,10 +517,16 @@ mod tests {
                         "pragueTime": 1718232101,
                         "verkleTime": null,
                         "osakaTime": null,
+                        "bpo1Time": null,
+                        "bpo2Time": null,
+                        "bpo3Time": null,
+                        "bpo4Time": null,
+                        "bpo5Time": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
                         "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
+                        "enableVerkleAtGenesis": false,
                     }
                 },
             }

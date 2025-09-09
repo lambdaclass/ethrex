@@ -28,6 +28,7 @@ use std::{
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
+use tracing_subscriber::{EnvFilter, Registry, reload};
 
 use crate::l2::transaction::SponsoredTx;
 use ethrex_common::Address;
@@ -76,6 +77,7 @@ pub async fn start_api(
     valid_delegation_addresses: Vec<Address>,
     sponsor_pk: SecretKey,
     rollup_store: StoreRollup,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -94,6 +96,7 @@ pub async fn start_api(
                 client_version,
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
+            log_filter_handler,
         },
         valid_delegation_addresses,
         sponsor_pk,

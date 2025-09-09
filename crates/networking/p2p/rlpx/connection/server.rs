@@ -1,16 +1,9 @@
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{
-    H256,
-    types::{MempoolTransaction, Transaction},
-};
-use ethrex_storage::Store;
+use ethrex_common::types::MempoolTransaction;
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
@@ -22,10 +15,10 @@ use spawned_concurrency::{
         send_interval, spawn_listener,
     },
 };
-use spawned_rt::tasks::BroadcastStream;
+use spawned_rt::tasks::{BroadcastStream, mpsc};
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, broadcast, mpsc::Sender},
+    sync::{Mutex, broadcast},
     task::{self, Id},
 };
 use tokio_stream::StreamExt;
@@ -33,10 +26,11 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    discv4::server::MAX_PEERS_TCP_CONNECTIONS,
-    kademlia::{KademliaTable, PeerChannels},
+    kademlia::{Kademlia, PeerChannels},
+    metrics::METRICS,
     network::P2PContext,
     rlpx::{
+        Message,
         connection::{codec::RLPxCodec, handshake},
         error::RLPxError,
         eth::{
@@ -44,7 +38,7 @@ use crate::{
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
             status::StatusMessage,
-            transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
+            transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
         l2::{
@@ -54,7 +48,6 @@ use crate::{
                 handle_l2_broadcast,
             },
         },
-        message::Message,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
@@ -65,22 +58,17 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
+    tx_broadcaster::send_tx_hashes,
     types::Node,
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
-const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(500);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
-// Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
-const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
 type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
-
-#[derive(Clone)]
-pub struct RLPxConnectionState(pub InnerState);
 
 #[derive(Clone, Debug)]
 pub struct Initiator {
@@ -108,7 +96,6 @@ pub struct Established {
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
-    pub(crate) broadcasted_txs: HashSet<H256>,
     pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
@@ -122,9 +109,9 @@ pub struct Established {
     /// TODO: Improve this mechanism
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
-    pub(crate) table: Arc<Mutex<KademliaTable>>,
-    pub(crate) backend_channel: Option<Sender<Message>>,
-    pub(crate) inbound: bool,
+    pub(crate) table: Kademlia,
+    pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
+    pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
 }
 
@@ -150,37 +137,17 @@ pub enum InnerState {
     Established(Established),
 }
 
-impl RLPxConnectionState {
-    pub fn new_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) -> Self {
-        Self(InnerState::Receiver(Receiver {
-            context,
-            peer_addr,
-            stream: Arc::new(stream),
-        }))
-    }
-
-    pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
-        Self(InnerState::Initiator(Initiator {
-            context,
-            node: node.clone(),
-        }))
-    }
-}
-
 #[derive(Clone, Debug)]
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
     BackendMessage(Message),
     SendPing,
-    SendNewPooledTxHashes,
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
     L2(L2Cast),
 }
 
-#[derive(Clone)]
-#[allow(private_interfaces)]
 pub enum OutMessage {
     InitResponse {
         node: Node,
@@ -237,15 +204,42 @@ impl GenServer for RLPxConnection {
                 if let Err(reason) =
                     initialize_connection(handle, &mut established_state, stream).await
                 {
+                    if let Some(contact) = established_state
+                        .table
+                        .table
+                        .lock()
+                        .await
+                        .get_mut(&established_state.node.node_id())
+                    {
+                        match &reason {
+                            RLPxError::NoMatchingCapabilities() | RLPxError::HandshakeError(_) => {
+                                contact.unwanted = true
+                            }
+                            _ => {}
+                        }
+                    }
                     connection_failed(
                         &mut established_state,
                         "Failed to initialize RLPx connection",
-                        reason,
+                        &reason,
                     )
                     .await;
+
+                    METRICS.record_new_rlpx_conn_failure(reason).await;
+
                     self.inner_state = InnerState::Established(established_state);
                     Ok(NoSuccess(self))
                 } else {
+                    METRICS
+                        .record_new_rlpx_conn_established(
+                            &established_state
+                                .node
+                                .version
+                                .clone()
+                                .unwrap_or("Unknown".to_string()),
+                        )
+                        .await;
+
                     // New state
                     self.inner_state = InnerState::Established(established_state);
                     Ok(Success(self))
@@ -285,9 +279,6 @@ impl GenServer for RLPxConnection {
                 }
                 Self::CastMsg::SendPing => {
                     send(established_state, Message::Ping(PingMessage {})).await
-                }
-                Self::CastMsg::SendNewPooledTxHashes => {
-                    send_new_pooled_tx_hashes(established_state).await
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(
@@ -337,6 +328,19 @@ impl GenServer for RLPxConnection {
                         );
                         return CastResponse::Stop;
                     }
+                    RLPxError::StoreError(StoreError::Trie(TrieError::InconsistentTree)) => {
+                        if established_state.blockchain.is_synced() {
+                            log_peer_error(
+                                &established_state.node,
+                                &format!("Error handling cast message: {e}"),
+                            );
+                        } else {
+                            log_peer_debug(
+                                &established_state.node,
+                                &format!("Error handling cast message: {e}"),
+                            );
+                        }
+                    }
                     _ => {
                         log_peer_warn(
                             &established_state.node,
@@ -361,9 +365,10 @@ impl GenServer for RLPxConnection {
                 );
                 established_state
                     .table
+                    .peers
                     .lock()
                     .await
-                    .replace_peer(established_state.node.node_id());
+                    .remove(&established_state.node.node_id());
                 established_state.teardown().await;
             }
             _ => {
@@ -388,36 +393,26 @@ where
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
-    let (peer_channels, sender) = PeerChannels::create(handle.clone());
+    let (mut peer_channels, sender) = PeerChannels::create(handle.clone());
 
     // Updating the state to establish the backend channel
     state.backend_channel = Some(sender);
 
-    // NOTE: if the peer came from the discovery server it will already be inserted in the table
-    // but that might not always be the case, so we try to add it to the table
-    // Note: we don't ping the node we let the validation service do its job
-    {
-        let mut table_lock = state.table.lock().await;
-        table_lock.insert_node_forced(state.node.clone());
-        table_lock.init_backend_communication(
-            state.node.node_id(),
-            peer_channels,
-            state.capabilities.clone(),
-            state.inbound,
-        );
-    }
     init_capabilities(state, &mut stream).await?;
+
+    state
+        .table
+        .set_connected_peer(
+            state.node.clone(),
+            peer_channels.clone(),
+            state.capabilities.clone(),
+        )
+        .await;
+
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
-    send_new_pooled_tx_hashes(state).await?;
-
-    // Periodic broadcast check repeated events.
-    send_interval(
-        TX_BROADCAST_INTERVAL,
-        handle.clone(),
-        CastMessage::SendNewPooledTxHashes,
-    );
+    send_all_pooled_tx_hashes(state, &mut peer_channels).await?;
 
     // Periodic Pings repeated events.
     send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
@@ -459,42 +454,27 @@ where
     Ok(())
 }
 
-async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxError> {
-    if SUPPORTED_ETH_CAPABILITIES
-        .iter()
-        .any(|cap| state.capabilities.contains(cap))
-    {
-        let filter = |tx: &Transaction| -> bool { !state.broadcasted_txs.contains(&tx.hash()) };
-        let txs: Vec<MempoolTransaction> = state
-            .blockchain
-            .mempool
-            .filter_transactions_with_filter_fn(&filter)?
-            .into_values()
-            .flatten()
-            .collect();
-        if !txs.is_empty() {
-            for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-                let tx_count = tx_chunk.len();
-                let mut txs_to_send = Vec::with_capacity(tx_count);
-                for tx in tx_chunk {
-                    txs_to_send.push((**tx).clone());
-                    state.broadcasted_txs.insert(tx.hash());
-                }
-
-                send(
-                    state,
-                    Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
-                        txs_to_send,
-                        &state.blockchain,
-                    )?),
-                )
-                .await?;
-                log_peer_debug(
-                    &state.node,
-                    &format!("Sent {tx_count} transaction hashes to peer"),
-                );
-            }
-        }
+async fn send_all_pooled_tx_hashes(
+    state: &mut Established,
+    peer_channels: &mut PeerChannels,
+) -> Result<(), RLPxError> {
+    let txs: Vec<MempoolTransaction> = state
+        .blockchain
+        .mempool
+        .get_all_txs_by_sender()?
+        .into_values()
+        .flatten()
+        .collect();
+    if !txs.is_empty() {
+        send_tx_hashes(
+            txs,
+            state.capabilities.clone(),
+            peer_channels,
+            state.node.node_id(),
+            &state.blockchain,
+        )
+        .await
+        .map_err(|e| RLPxError::SendMessage(e.to_string()))?;
     }
     Ok(())
 }
@@ -560,19 +540,7 @@ where
     Ok(())
 }
 
-async fn post_handshake_checks(
-    table: Arc<Mutex<crate::kademlia::KademliaTable>>,
-) -> Result<(), RLPxError> {
-    // Check if connected peers exceed the limit
-    let peer_count = {
-        let table_lock = table.lock().await;
-        table_lock.count_connected_peers()
-    };
-
-    if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
-        return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
-    }
-
+async fn post_handshake_checks(_table: Kademlia) -> Result<(), RLPxError> {
     Ok(())
 }
 
@@ -587,11 +555,13 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
         });
 }
 
-async fn connection_failed(state: &mut Established, error_text: &str, error: RLPxError) {
+async fn connection_failed(state: &mut Established, error_text: &str, error: &RLPxError) {
+    log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
+
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
     // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
     if !matches!(error, RLPxError::DisconnectReceived(_)) {
-        send_disconnect_message(state, match_disconnect_reason(&error)).await;
+        send_disconnect_message(state, match_disconnect_reason(error)).await;
     }
 
     // Discard peer from kademlia table in some cases
@@ -608,7 +578,6 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
                 &state.node,
                 &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
             );
-            state.table.lock().await.replace_peer(state.node.node_id());
         }
     }
 
@@ -743,12 +712,22 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
     let peer_supports_l2 = state.l2_state.connection_state().is_ok();
     match message {
         Message::Disconnect(msg_data) => {
-            log_peer_debug(
-                &state.node,
-                &format!("Received Disconnect: {}", msg_data.reason()),
-            );
+            let reason = msg_data.reason();
+
+            log_peer_debug(&state.node, &format!("Received Disconnect: {reason}"));
+
+            METRICS
+                .record_new_rlpx_conn_disconnection(
+                    &state.node.version.clone().unwrap_or("Unknown".to_string()),
+                    reason,
+                )
+                .await;
+
+            state.table.peers.lock().await.remove(&state.node.node_id());
+
             // TODO handle the disconnection request
-            return Err(RLPxError::DisconnectReceived(msg_data.reason()));
+
+            return Err(RLPxError::DisconnectReceived(reason));
         }
         Message::Ping(_) => {
             log_peer_debug(&state.node, "Sending pong message");
@@ -769,27 +748,11 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
-                let mut valid_txs = vec![];
                 for tx in txs.transactions {
-                    // Mark as broadcasted for the sender so we don't include it in the next
-                    // `SendNewPooledTxHashes` message to this peer. Doing so violates spec.
-                    // For broadcast itself, `handle_broadcast` filters by task id already.
-                    state.broadcasted_txs.insert(tx.hash());
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
-                    valid_txs.push(tx);
-                }
-                // FIXME(#1131): we're supposed to send `Transaction` message only to a random
-                // subset and send only the hashes to everyone else.
-                // Consider sending to the sqrt of the number of peers like geth does.
-                if !valid_txs.is_empty() {
-                    log_peer_debug(
-                        &state.node,
-                        &format!("Broadcasted {} transactions to peers", valid_txs.len()),
-                    );
-                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }
         }
@@ -843,6 +806,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
             if state.blockchain.is_synced() {
+                // TODO(#3745): disconnect from peers that send invalid blob sidecars
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(requested, fork).await {
@@ -890,8 +854,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 .as_mut()
                 // TODO: this unwrap() is temporary, until we fix the backend process to use spawned
                 .expect("Backend channel is not available")
-                .send(message)
-                .await?
+                .send(message)?
         }
         // TODO: Add new message types and handlers as they are implemented
         message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
@@ -914,30 +877,6 @@ async fn handle_broadcast(
 ) -> Result<(), RLPxError> {
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
-            Message::Transactions(txs) => {
-                let mut filtered = Vec::with_capacity(txs.transactions.len());
-                for tx in &txs.transactions {
-                    let tx_hash = tx.hash();
-                    if state.broadcasted_txs.contains(&tx_hash) {
-                        continue;
-                    }
-                    filtered.push(tx.clone());
-                    state.broadcasted_txs.insert(tx_hash);
-                }
-                if !filtered.is_empty() {
-                    log_peer_debug(
-                        &state.node,
-                        &format!(
-                            "Sending {} transactions to peer from broadcast",
-                            filtered.len()
-                        ),
-                    );
-                    let new_msg = Message::Transactions(Transactions {
-                        transactions: filtered,
-                    });
-                    send(state, new_msg).await?;
-                }
-            }
             l2_msg @ Message::L2(_) => {
                 handle_l2_broadcast(state, l2_msg).await?;
             }
@@ -961,16 +900,6 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
 
 pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
-        txs_msg @ Message::Transactions(_) => {
-            let txs = Arc::new(txs_msg);
-            let task_id = tokio::task::id();
-            let Ok(_) = state.connection_broadcast_send.send((task_id, txs)) else {
-                let error_message = "Could not broadcast received transactions";
-                log_peer_error(&state.node, error_message);
-                return Err(RLPxError::BroadcastError(error_message.to_owned()));
-            };
-            Ok(())
-        }
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
