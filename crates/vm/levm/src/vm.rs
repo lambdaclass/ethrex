@@ -272,6 +272,37 @@ impl Substate {
         self.transient_storage.insert((*to, *key), value);
     }
 
+    /// Iterate over all logs.
+    pub fn iter_logs(&mut self) -> impl Iterator<Item = &Log> {
+        struct Iter<'a> {
+            parent: Option<&'a Substate>,
+            iter: std::slice::Iter<'a, Log>,
+        }
+
+        impl<'a> Iterator for Iter<'a> {
+            type Item = &'a Log;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                let next_item = self.iter.next();
+                if next_item.is_none() {
+                    if let Some(parent) = self.parent {
+                        self.parent = parent.parent.as_deref();
+                        self.iter = parent.logs.iter();
+
+                        return self.next();
+                    }
+                }
+
+                next_item
+            }
+        }
+
+        Iter {
+            parent: self.parent.as_deref(),
+            iter: self.logs.iter(),
+        }
+    }
+
     /// Push a log record.
     pub fn add_log(&mut self, log: Log) {
         self.logs.push(log);
@@ -506,7 +537,7 @@ impl<'a> VM<'a> {
             gas_used: ctx_result.gas_used,
             gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut ctx_result.output),
-            logs: self.substate.logs.clone(),
+            logs: self.substate.iter_logs().cloned().collect(),
         };
 
         Ok(report)
