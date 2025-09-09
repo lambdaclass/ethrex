@@ -145,9 +145,7 @@ impl Store {
         block_hash: BlockHash,
         addresses: &BTreeSet<Address>,
     ) -> Result<BTreeMap<Address, AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(BTreeMap::new());
-        };
+        let state_trie = self.open_locked_state_trie(block_hash)?;
 
         let mut map = BTreeMap::new();
         for address in addresses {
