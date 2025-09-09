@@ -109,7 +109,7 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
+      HIVE_COMMIT_HASH: a442a9408e1b7a00abaa2072d643d285d87e5009
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
