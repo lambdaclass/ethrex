@@ -15,4 +15,6 @@ pub enum RollupStoreError {
     Custom(String),
     #[error("Bincode (de)serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
+    #[error("Database version mismatch. Current: {current}. Expected: {expected}")]
+    VersionMismatch { current: u64, expected: u64 },
 }

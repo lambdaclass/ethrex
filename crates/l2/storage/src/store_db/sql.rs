@@ -28,6 +28,8 @@ impl Debug for SQLStore {
     }
 }
 
+// Change version if the DB_SCHEMA changes
+const MIGRATION_VERSION: u64 = 1;
 const DB_SCHEMA: [&str; 10] = [
     "CREATE TABLE batches (number INT PRIMARY KEY, first_block INT NOT NULL, last_block INT NOT NULL, privileged_transactions_hash BLOB, state_root BLOB NOT NULL, commit_tx BLOB, verify_tx BLOB, signature BLOB)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
@@ -54,6 +56,15 @@ impl SQLStore {
                 read_conn: db.connect()?,
                 write_conn: Arc::new(Mutex::new(write_conn)),
             };
+
+            let current_version = store.get_version().await?;
+            if current_version != MIGRATION_VERSION {
+                return Err(RollupStoreError::VersionMismatch {
+                    current: current_version,
+                    expected: MIGRATION_VERSION,
+                });
+            }
+
             store.init_db().await?;
             Ok(store)
         })
@@ -163,6 +174,18 @@ impl SQLStore {
             (block_number, serialized).into_params()?,
         )];
         self.execute_in_tx(query, db_tx).await
+    }
+
+    async fn get_version(&self) -> Result<u64, RollupStoreError> {
+        let mut rows = self
+            .query("SELECT MAX(version) FROM migrations", ())
+            .await?;
+        rows.next()
+            .await?
+            .map(|row| read_from_row_int(&row, 0))
+            .ok_or(RollupStoreError::Custom(
+                "Migration version not found".to_string(),
+            ))?
     }
 }
 
