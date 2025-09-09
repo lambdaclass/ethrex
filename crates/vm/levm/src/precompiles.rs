@@ -1029,7 +1029,6 @@ pub fn bls12_g1add(
 /// If the verification succeeds, returns 1 in a 32-bit big-endian format.
 /// If the verification fails, returns an empty `Bytes` object.
 /// Implemented following https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7951.md
-// The length of the calldata is checked before slicing, so it should never fail
 pub fn p_256_verify(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -1044,7 +1043,10 @@ pub fn p_256_verify(
     }
 
     // Parse parameters
-    #[expect(clippy::indexing_slicing, reason = "length of the calldata is checked before slicing")]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "length of the calldata is checked before slicing"
+    )]
     let (message_hash, r, s, x, y) = (
         &calldata[0..32],
         &calldata[32..64],
