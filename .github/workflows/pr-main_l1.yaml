@@ -109,14 +109,14 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: a442a9408e1b7a00abaa2072d643d285d87e5009
+      HIVE_COMMIT_HASH: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
         # TODO: Change repo back to https://github.com/ethereum/hive when
         # https://github.com/ethereum/hive/pull/1325 is merged
         run: |
-          git clone --single-branch --branch update_dockerfile https://github.com/lambdaclass/hive
+          git clone --single-branch --branch master https://github.com/lambdaclass/hive
           cd hive
           git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
           go build .
