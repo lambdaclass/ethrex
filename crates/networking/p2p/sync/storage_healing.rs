@@ -169,7 +169,7 @@ pub async fn heal_storage_trie(
         if state.last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             METRICS
                 .global_storage_tries_leafs_healed
-                .fetch_add(*global_leafs_healed, Ordering::Relaxed);
+                .store(*global_leafs_healed, Ordering::Relaxed);
             METRICS
                 .healing_empty_try_recv
                 .store(state.empty_count as u64, Ordering::Relaxed);
