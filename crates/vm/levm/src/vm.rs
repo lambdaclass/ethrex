@@ -147,10 +147,12 @@ impl Substate {
 
     /// Return whether an address is already marked as selfdestructed.
     pub fn is_selfdestruct(&self, address: &Address) -> bool {
-        self.parent
-            .as_ref()
-            .map(|parent| parent.is_address_accessed(address))
-            .unwrap_or_else(|| self.accessed_addresses.contains(address))
+        self.accessed_addresses.contains(address)
+            || self
+                .parent
+                .as_ref()
+                .map(|parent| parent.is_address_accessed(address))
+                .unwrap_or_default()
     }
 
     /// Build an access list from all accessed storage slots.
@@ -199,15 +201,15 @@ impl Substate {
 
     /// Return whether an address has already been accessed.
     pub fn is_slot_accessed(&self, address: &Address, key: &H256) -> bool {
-        self.parent
-            .as_ref()
-            .map(|parent| parent.is_slot_accessed(address, key))
-            .unwrap_or_else(|| {
-                self.accessed_storage_slots
-                    .get(address)
-                    .map(|slot_set| slot_set.contains(key))
-                    .unwrap_or_default()
-            })
+        self.accessed_storage_slots
+            .get(address)
+            .map(|slot_set| slot_set.contains(key))
+            .unwrap_or_default()
+            || self
+                .parent
+                .as_ref()
+                .map(|parent| parent.is_slot_accessed(address, key))
+                .unwrap_or_default()
     }
 
     /// Mark an address as accessed and return whether is was already marked.
@@ -223,10 +225,12 @@ impl Substate {
 
     /// Return whether an address has already been accessed.
     pub fn is_address_accessed(&self, address: &Address) -> bool {
-        self.parent
-            .as_ref()
-            .map(|parent| parent.is_address_accessed(address))
-            .unwrap_or_else(|| self.accessed_addresses.contains(address))
+        self.accessed_addresses.contains(address)
+            || self
+                .parent
+                .as_ref()
+                .map(|parent| parent.is_address_accessed(address))
+                .unwrap_or_default()
     }
 
     /// Mark an address as a new account and return whether is was already marked.
@@ -242,10 +246,12 @@ impl Substate {
 
     /// Return whether an address has already been marked as a new account.
     pub fn is_account_created(&self, address: &Address) -> bool {
-        self.parent
-            .as_ref()
-            .map(|parent| parent.is_account_created(address))
-            .unwrap_or_else(|| self.created_accounts.contains(address))
+        self.created_accounts.contains(address)
+            || self
+                .parent
+                .as_ref()
+                .map(|parent| parent.is_account_created(address))
+                .unwrap_or_default()
     }
 
     /// Return the data associated with a transient storage entry, or zero if not present.
