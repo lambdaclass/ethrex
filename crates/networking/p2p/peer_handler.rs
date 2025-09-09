@@ -83,7 +83,7 @@ impl PeerInformation {
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: Kademlia,
-    pub peers_info: Arc<Mutex<HashMap<H256, PeerInformation>>>,
+    pub peers_info: HashMap<H256, PeerInformation>,
     pending_tasks: VecDeque<Task>,
     started_tasks: HashMap<H256, (Task, Instant)>,
     sync_state: InternalSyncState,
@@ -281,20 +281,16 @@ impl PeerHandler {
     async fn record_peer_critical_failure(&self, _peer_id: H256) {}
 
     /// Marks a peer as free (available for requests)
-    async fn mark_peer_as_free(&self, peer_id: H256) {
+    async fn mark_peer_as_free(&mut self, peer_id: H256) {
         self.peers_info
-            .lock()
-            .await
             .entry(peer_id)
             .and_modify(|info| info.request_time = None);
         debug!("Downloader {peer_id} freed");
     }
 
     /// Marks a peer as busy (currently handling a request)
-    async fn mark_peer_as_busy(&self, peer_id: H256) {
+    async fn mark_peer_as_busy(&mut self, peer_id: H256) {
         self.peers_info
-            .lock()
-            .await
             .entry(peer_id)
             .and_modify(|info| info.request_time = Some(Instant::now()));
         debug!("Downloader {peer_id} marked as busy");
@@ -302,8 +298,8 @@ impl PeerHandler {
 
     /// Helper function called in between snap sync steps.
     /// Prevents peers from being marked as busy indefinitely.
-    async fn refresh_peers_availability(&self) {
-        for (_, peer) in self.peers_info.lock().await.iter_mut() {
+    async fn refresh_peers_availability(&mut self) {
+        for (_, peer) in self.peers_info.iter_mut() {
             peer.request_time = None;
         }
     }
@@ -312,8 +308,8 @@ impl PeerHandler {
     // TODO: redundant as `reset_timed_out_tasks`
     /// Helper function that frees peers after being busy
     /// for more than the tolerated time
-    pub async fn reset_timed_out_busy_peers(&self) {
-        for (_, peer) in self.peers_info.lock().await.iter_mut() {
+    pub async fn reset_timed_out_busy_peers(&mut self) {
+        for (_, peer) in self.peers_info.iter_mut() {
             if peer
                 .request_time
                 .is_some_and(|time| time.elapsed() > PEER_REPLY_TIMEOUT)
@@ -363,18 +359,17 @@ impl PeerHandler {
         Ok(Some((free_peer_id, free_peer_channel.clone())))
     }
 
-    async fn update_peers_info(&self) {
+    async fn update_peers_info(&mut self) {
         let peer_channels = self
             .peer_table
             .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
             .await;
         for (peer_id, _peer_channels) in &peer_channels {
-            let mut peers_info = self.peers_info.lock().await;
-            if peers_info.contains_key(peer_id) {
+            if self.peers_info.contains_key(peer_id) {
                 // Peer is already in the downloaders list, skip it
                 continue;
             }
-            peers_info.insert(*peer_id, PeerInformation::default());
+            self.peers_info.insert(*peer_id, PeerInformation::default());
 
             debug!("{peer_id} added as downloader");
         }
@@ -396,13 +391,11 @@ impl PeerHandler {
 
     /// Returns a random available `Downloader` with supported capabilities,
     /// or None if there are no peers are available
-    async fn get_random_downloader(&self, capabilities: &[Capability]) -> Option<Downloader> {
+    async fn get_random_downloader(&mut self, capabilities: &[Capability]) -> Option<Downloader> {
         // self.update_peers_info().await;
 
         let free_downloaders = self
             .peers_info
-            .lock()
-            .await
             .clone()
             .into_iter()
             .filter(|(_downloader_id, peer_info)| peer_info.is_available())
@@ -424,7 +417,7 @@ impl PeerHandler {
             debug!(
                 "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
             );
-            self.peers_info.lock().await.remove(&free_peer_id);
+            self.peers_info.remove(&free_peer_id);
             return None;
         };
 
@@ -433,13 +426,11 @@ impl PeerHandler {
 
     /// Returns the best available `Downloader` with supported capabilities,
     /// or None if there are no peers are available
-    async fn get_best_downloader(&self, capabilities: &[Capability]) -> Option<Downloader> {
+    async fn get_best_downloader(&mut self, capabilities: &[Capability]) -> Option<Downloader> {
         // self.update_peers_info().await;
 
         let free_downloaders = self
             .peers_info
-            .lock()
-            .await
             .clone()
             .into_iter()
             .filter(|(_downloader_id, peer_info)| peer_info.is_available())
@@ -451,17 +442,16 @@ impl PeerHandler {
 
         let (mut free_peer_id, _) = free_downloaders[0];
 
-        let peers_info = self.peers_info.lock().await;
         for (peer_id, _) in free_downloaders.iter() {
-            if let (Some(peer_info), Some(free_peer_info)) =
-                (peers_info.get(peer_id), peers_info.get(&free_peer_id))
-            {
+            if let (Some(peer_info), Some(free_peer_info)) = (
+                self.peers_info.get(peer_id),
+                self.peers_info.get(&free_peer_id),
+            ) {
                 if peer_info.score >= free_peer_info.score {
                     free_peer_id = *peer_id;
                 }
             }
         }
-        drop(peers_info);
 
         let Some(free_downloader_channels) = self
             .retrieve_peer_channels(free_peer_id, capabilities)
@@ -471,7 +461,7 @@ impl PeerHandler {
             debug!(
                 "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
             );
-            self.peers_info.lock().await.remove(&free_peer_id);
+            self.peers_info.remove(&free_peer_id);
             return None;
         };
 
@@ -514,7 +504,7 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - The requested peer did not return a valid response in the given time limit
     async fn request_block_bodies_inner(
-        &self,
+        &mut self,
         block_hashes: Vec<H256>,
     ) -> Option<(Vec<BlockBody>, H256)> {
         self.refresh_peers_availability().await;
@@ -560,7 +550,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
     pub async fn request_and_validate_block_bodies(
-        &self,
+        &mut self,
         block_headers: &[BlockHeader],
     ) -> Option<Vec<BlockBody>> {
         self.refresh_peers_availability().await;
@@ -597,7 +587,7 @@ impl PeerHandler {
     /// Returns the lists of receipts or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
+    pub async fn request_receipts(&mut self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         self.refresh_peers_availability().await;
         let mut attempts = 0;
         while attempts < REQUEST_RETRY_ATTEMPTS {
@@ -1052,8 +1042,7 @@ impl GenServer for PeerHandler {
                     DownloaderResponse::Headers(headers) => {
                         if headers.is_empty() {
                             debug!("Peer {peer_id} returned empty headers");
-                            if let Some(peer_info) = self.peers_info.lock().await.get_mut(&peer_id)
-                            {
+                            if let Some(peer_info) = self.peers_info.get_mut(&peer_id) {
                                 peer_info.score -= 1;
                             }
                             self.pending_tasks.push_back(requested_task);
@@ -1125,7 +1114,7 @@ impl GenServer for PeerHandler {
                                 }
                             }
                         }
-                        if let Some(peer_info) = self.peers_info.lock().await.get_mut(&peer_id) {
+                        if let Some(peer_info) = self.peers_info.get_mut(&peer_id) {
                             peer_info.score += 1;
                         }
                     }
@@ -1157,16 +1146,13 @@ impl GenServer for PeerHandler {
                             }
 
                             if accounts.is_empty() {
-                                if let Some(peer_info) =
-                                    self.peers_info.lock().await.get_mut(&peer_id)
-                                {
+                                if let Some(peer_info) = self.peers_info.get_mut(&peer_id) {
                                     peer_info.score -= 1;
                                 }
                                 self.pending_tasks.push_back(requested_task);
                                 return CastResponse::NoReply;
                             }
-                            if let Some(peer_info) = self.peers_info.lock().await.get_mut(&peer_id)
-                            {
+                            if let Some(peer_info) = self.peers_info.get_mut(&peer_id) {
                                 peer_info.score += 1;
                             }
 
@@ -1294,8 +1280,6 @@ impl GenServer for PeerHandler {
                             *completed_tasks += 1;
 
                             self.peers_info
-                                .lock()
-                                .await
                                 .entry(peer_id)
                                 .and_modify(|info| info.request_time = None);
 
@@ -1382,11 +1366,9 @@ impl GenServer for PeerHandler {
                             }
 
                             if account_storages.is_empty() {
-                                self.peers_info.lock().await.entry(peer_id).and_modify(
-                                    |peer_info| {
-                                        peer_info.score -= 1;
-                                    },
-                                );
+                                self.peers_info.entry(peer_id).and_modify(|peer_info| {
+                                    peer_info.score -= 1;
+                                });
                                 return CastResponse::NoReply;
                             }
                             if let Some(hash_end) = hash_end {
@@ -1398,8 +1380,7 @@ impl GenServer for PeerHandler {
                                 }
                             }
 
-                            if let Some(peer_info) = self.peers_info.lock().await.get_mut(&peer_id)
-                            {
+                            if let Some(peer_info) = self.peers_info.get_mut(&peer_id) {
                                 if peer_info.score < 10 {
                                     peer_info.score += 1;
                                 }
@@ -1503,11 +1484,9 @@ impl GenServer for PeerHandler {
                                 remaining_end,
                             } = bytecode_task_result;
                             if bytecodes.is_empty() {
-                                self.peers_info.lock().await.entry(peer_id).and_modify(
-                                    |peer_info| {
-                                        peer_info.score -= 1;
-                                    },
-                                );
+                                self.peers_info.entry(peer_id).and_modify(|peer_info| {
+                                    peer_info.score -= 1;
+                                });
                                 self.pending_tasks.push_back(requested_task);
                                 return CastResponse::NoReply;
                             }
@@ -1521,13 +1500,9 @@ impl GenServer for PeerHandler {
                                 *completed_tasks += 1;
                             }
 
-                            self.peers_info
-                                .lock()
-                                .await
-                                .entry(peer_id)
-                                .and_modify(|peer_info| {
-                                    peer_info.score += 1;
-                                });
+                            self.peers_info.entry(peer_id).and_modify(|peer_info| {
+                                peer_info.score += 1;
+                            });
 
                             for (i, bytecode) in bytecodes.into_iter().enumerate() {
                                 all_bytecodes[start_index + i] = bytecode;

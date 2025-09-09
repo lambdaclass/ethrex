@@ -522,7 +522,7 @@ async fn store_block_bodies(
 #[allow(unused)]
 async fn store_receipts(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
@@ -625,7 +625,7 @@ impl FullBlockSyncState {
         block_headers: Vec<BlockHeader>,
         sync_head_found: bool,
         blockchain: Arc<Blockchain>,
-        peers: PeerHandler,
+        mut peers: PeerHandler,
         cancel_token: CancellationToken,
     ) -> Result<bool, SyncError> {
         info!("Processing incoming headers full sync");
