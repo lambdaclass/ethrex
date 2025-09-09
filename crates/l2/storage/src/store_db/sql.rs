@@ -125,7 +125,7 @@ impl SQLStore {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
-                "INSERT OR REPLACE INTO messages VALUES (?1, ?2, ?3)",
+                "INSERT OR REPLACE INTO messages (batch, idx, message_hash) VALUES (?1, ?2, ?3)",
                 (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
             ));
         }
@@ -143,7 +143,7 @@ impl SQLStore {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
-                "INSERT OR REPLACE INTO blob_bundles VALUES (?1, ?2, ?3)",
+                "INSERT OR REPLACE INTO blob_bundles (batch, idx, blob_bundle) VALUES (?1, ?2, ?3)",
                 (batch_number, index, blob.to_vec()).into_params()?,
             ));
         }
@@ -158,7 +158,7 @@ impl SQLStore {
     ) -> Result<(), RollupStoreError> {
         let serialized = bincode::serialize(&account_updates)?;
         let query = vec![(
-            "INSERT OR REPLACE INTO account_updates VALUES (?1, ?2)",
+            "INSERT OR REPLACE INTO account_updates (block_number, updates) VALUES (?1, ?2)",
             (block_number, serialized).into_params()?,
         )];
         self.execute_in_tx(query, db_tx).await
@@ -493,7 +493,10 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<(), RollupStoreError> {
         let serialized_proof = bincode::serialize(&proof)?;
         let prover_type: u32 = prover_type.into();
-        self.execute("INSERT OR REPLACE INTO batch_proofs VALUES (?1, ?2, ?3) WHERE batch = ?1 AND prover_type = ?2", (batch_number, prover_type, serialized_proof).into_params()?).await
+        self.execute(
+            "INSERT OR REPLACE INTO batch_proofs (batch, prover_type, proof) VALUES (?1, ?2, ?3) WHERE batch = ?1 AND prover_type = ?2",
+            (batch_number, prover_type, serialized_proof).into_params()?
+        ).await
     }
 
     async fn get_proof_by_batch_and_type(
