@@ -31,7 +31,7 @@ use tokio::time::Instant;
 use tracing::{debug, error};
 
 /// Max privileged tx to allow per batch
-const PRIVILEGED_TX_BUDGET: u64 = 300;
+const PRIVILEGED_TX_BUDGET: usize = 300;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -47,12 +47,7 @@ pub async fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(
-        payload,
-        blockchain.evm_engine,
-        store,
-        blockchain.r#type.clone(),
-    )?;
+    let mut context = PayloadBuildContext::new(payload, store, blockchain.r#type.clone())?;
 
     fill_transactions(
         blockchain.clone(),
