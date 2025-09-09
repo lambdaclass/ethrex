@@ -1,8 +1,10 @@
 use crate::sequencer::l1_committer::{CallMessage, L1Committer, OutMessage};
 use axum::extract::{Path, State};
+use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
 use axum::{Json, Router, http::StatusCode, routing::get};
 use serde_json::Value;
+use spawned_concurrency::error::GenServerError;
 use spawned_concurrency::tasks::GenServerHandle;
 use thiserror::Error;
 use tokio::net::TcpListener;
@@ -17,6 +19,28 @@ pub enum AdminError {
 #[derive(Clone)]
 pub struct Admin {
     pub l1_committer: GenServerHandle<L1Committer>,
+}
+
+pub enum AdminErrorResponse {
+    MessageError(String),
+    UnexpectedResponse { component: String },
+    GenServerError(GenServerError),
+}
+
+impl IntoResponse for AdminErrorResponse {
+    fn into_response(self) -> axum::response::Response {
+        let msg = match self {
+            AdminErrorResponse::UnexpectedResponse { component } => {
+                format!("Unexpected response from {component}")
+            }
+            Self::MessageError(err) => err,
+            AdminErrorResponse::GenServerError(err) => err.to_string(),
+        };
+
+        let body = Json::from(Value::String(msg));
+
+        (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+    }
 }
 
 pub async fn start_api(
@@ -47,34 +71,37 @@ pub async fn start_api(
     Ok(http_server)
 }
 
-async fn start_committer_default(State(admin): State<Admin>) -> Result<Json<Value>, StatusCode> {
+async fn start_committer_default(
+    State(admin): State<Admin>,
+) -> Result<Json<Value>, AdminErrorResponse> {
     start_committer(State(admin), Path(0)).await
 }
 
 async fn start_committer(
     State(mut admin): State<Admin>,
     Path(delay): Path<u64>,
-) -> Result<Json<Value>, StatusCode> {
-    let response = match admin.l1_committer.call(CallMessage::Start(delay)).await {
+) -> Result<Json<Value>, AdminErrorResponse> {
+    match admin.l1_committer.call(CallMessage::Start(delay)).await {
         Ok(ok) => match ok {
-            OutMessage::Started => "ok".to_string(),
-            OutMessage::Error(err) => err,
-            _ => "unexpected response from l1 committer".to_string(),
+            OutMessage::Started => Ok(Json::from(Value::String("ok".into()))),
+            OutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
+            _ => Err(AdminErrorResponse::UnexpectedResponse {
+                component: "l1_committer".into(),
+            }),
         },
-        Err(err) => err.to_string(),
-    };
-    Ok(axum::Json::from(serde_json::Value::String(response)))
+        Err(err) => Err(AdminErrorResponse::GenServerError(err)),
+    }
 }
 
-async fn stop_committer(State(mut admin): State<Admin>) -> Result<Json<Value>, StatusCode> {
-    let response = match admin.l1_committer.call(CallMessage::Stop).await {
+async fn stop_committer(State(mut admin): State<Admin>) -> Result<Json<Value>, AdminErrorResponse> {
+    match admin.l1_committer.call(CallMessage::Stop).await {
         Ok(ok) => match ok {
-            OutMessage::Stopped => "ok".to_string(),
-            OutMessage::Error(err) => err,
-            _ => "unexpected response from l1 committer".to_string(),
+            OutMessage::Stopped => Ok(Json::from(Value::String("ok".into()))),
+            OutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
+            _ => Err(AdminErrorResponse::UnexpectedResponse {
+                component: "l1_committer".into(),
+            }),
         },
-        Err(err) => err.to_string(),
-    };
-
-    Ok(axum::Json::from(serde_json::Value::String(response)))
+        Err(err) => Err(AdminErrorResponse::GenServerError(err)),
+    }
 }
