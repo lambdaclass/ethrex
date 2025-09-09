@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
 use crate::monitor::EthrexMonitor;
+use crate::sequencer::admin_server::start_api;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
@@ -19,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
 
+mod admin_server;
 pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
@@ -85,7 +87,7 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting Watcher: {err}");
     });
-    let _ = L1Committer::spawn(
+    let l1_committer = L1Committer::spawn(
         store.clone(),
         blockchain.clone(),
         rollup_store.clone(),
@@ -181,18 +183,27 @@ pub async fn start_l2(
         .await?;
     }
 
-    let Some(handle) = verifier_handle else {
-        return Ok(());
-    };
+    let admin_server = start_api(l1_committer?)
+        .await
+        .map_err(errors::SequencerError::Admin)?
+        .into_future();
 
-    match handle.await {
-        Ok(Ok(_)) => {}
-        Ok(Err(err)) => {
-            error!("Error running verifier: {err}");
+    if let Some(handle) = verifier_handle {
+        let (server_res, verifier_res) = tokio::join!(admin_server, handle);
+        match verifier_res {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                error!("Error running verifier: {err}");
+            }
+            Err(err) => {
+                error!("Task error: {err}");
+            }
+        };
+        if let Err(e) = server_res {
+            error!("Admin server task error: {e}");
         }
-        Err(err) => {
-            error!("Task error: {err}");
-        }
+    } else if let Err(e) = admin_server.await {
+        error!("Admin server task error: {e}");
     };
 
     Ok(())

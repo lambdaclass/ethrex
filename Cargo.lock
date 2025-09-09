@@ -4042,6 +4042,7 @@ name = "ethrex-l2"
 version = "0.1.0"
 dependencies = [
  "aligned-sdk",
+ "axum 0.8.4",
  "bincode",
  "bytes",
  "cfg-if 1.0.3",
@@ -4087,6 +4088,7 @@ dependencies = [
  "thiserror 2.0.16",
  "tokio",
  "tokio-util",
+ "tower-http 0.6.6",
  "tracing",
  "tui-big-text",
  "tui-logger",
