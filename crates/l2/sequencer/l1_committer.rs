@@ -375,7 +375,8 @@ impl L1Committer {
                 .parent_hash;
             let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
 
-            if acc_privileged_txs.len() as u64 > PRIVILEGED_TX_BUDGET {
+            let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
+            if acc_privileged_txs_len > PRIVILEGED_TX_BUDGET {
                 warn!(
                     "Privileged transactions budget exceeded. Any remaining blocks will be processed in the next batch."
                 );

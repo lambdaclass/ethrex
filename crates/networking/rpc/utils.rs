@@ -39,8 +39,6 @@ pub enum RpcErr {
     InvalidPayloadAttributes(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
-    #[error("Custom error: {0}")]
-    Custom(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -141,11 +139,6 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
-            },
-            RpcErr::Custom(context) => RpcErrorMetadata {
-                code: -32000,
-                data: None,
-                message: format!("Custom error: {context}"),
             },
         }
     }
@@ -280,7 +273,7 @@ impl From<EvmError> for RpcErr {
 
 pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError> {
     if data == "0x" {
-        Ok("unknown error".to_owned())
+        Ok("Execution reverted without a reason string.".to_owned())
     // 4 byte function signature 0xXXXXXXXX
     } else if data.len() == 10 {
         Ok(data.to_owned())
