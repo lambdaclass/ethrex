@@ -1077,6 +1077,9 @@ impl Syncer {
         //     if block_is_stale(&pivot_header) {
         //         pivot_header =
         //             update_pivot(pivot_header.number, &self.peers, block_sync_state).await?;
+        //  // TODO: JM if headers is none, return call function bellow
+        // sync_state.process_incoming_headers(block_headers).await?;
+        //
         //     }
         //     healing_done = heal_state_trie_wrap(
         //         pivot_header.state_root,
@@ -1230,66 +1233,6 @@ fn compute_storage_roots(
     }
 
     Ok((account_hash, changes))
-}
-
-pub async fn update_pivot(
-    block_number: u64,
-    peers: &PeerHandler,
-    block_sync_state: &mut BlockSyncState,
-) -> Result<BlockHeader, SyncError> {
-    // We ask for a pivot which is slightly behind the limit. This is because our peers may not have the
-    // latest one, or a slot was missed
-    let new_pivot_block_number = block_number + SNAP_LIMIT as u64 - 11;
-    loop {
-        let mut peers_info = peers.peers_info.lock().await;
-
-        let (peer_id, mut peer_channel) = peers
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut peers_info)
-            .await
-            .map_err(SyncError::PeerHandler)?
-            .ok_or(SyncError::NoPeers)?;
-
-        let peer_score = match peers_info.get(&peer_id) {
-            Some(peer_info) => peer_info.score,
-            None => 0,
-        };
-        info!(
-            "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
-        );
-        let Some(pivot) = peers
-            .get_block_header(&mut peer_channel, new_pivot_block_number)
-            .await
-            .map_err(SyncError::PeerHandler)?
-        else {
-            // Penalize peer
-            if let Some(peer_info) = peers_info.get_mut(&peer_id) {
-                peer_info.score -= 1;
-                warn!(
-                    "Received None pivot from peer {peer_id} (score after penalizing: {}). Retrying",
-                    peer_info.score
-                );
-            }
-            continue;
-        };
-
-        // Reward peer
-        peers_info.entry(peer_id).and_modify(|peer_info| {
-            if peer_info.score < 10 {
-                peer_info.score += 1;
-            }
-        });
-        info!("Succesfully updated pivot");
-        if let BlockSyncState::Snap(sync_state) = block_sync_state {
-            let block_headers = peers
-                .request_block_headers(block_number + 1, pivot.hash())
-                .await
-                .ok_or(SyncError::NoBlockHeaders)?;
-            sync_state.process_incoming_headers(block_headers).await?;
-        } else {
-            return Err(SyncError::NotInSnapSync);
-        }
-        return Ok(pivot.clone());
-    }
 }
 
 pub fn block_is_stale(block_header: &BlockHeader) -> bool {

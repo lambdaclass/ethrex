@@ -9,7 +9,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Node, verify_range};
 use keccak_hash::H256;
 use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
-use tokio::sync::mpsc::Sender;
 
 use crate::{
     kademlia::PeerChannels,
@@ -25,8 +24,8 @@ use crate::{
             receipts::GetReceipts,
         },
         snap::{
-            AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
-            GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
+            AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
+            StorageRanges, TrieNodes,
         },
     },
     snap::encodable_to_proof,
@@ -55,15 +54,6 @@ impl Downloader {
         Downloader {
             peer_id,
             peer_channels,
-        }
-    }
-
-    async fn send_through_response_channel<T>(&self, response_channel: Sender<T>, msg: T)
-    where
-        T: Send + 'static,
-    {
-        if response_channel.send(msg).await.is_err() {
-            error!("[SYNCING] Failed to send response though response channel"); // TODO: Irrecoverable?
         }
     }
 
@@ -106,56 +96,19 @@ pub enum DownloaderCallResponse {
 
 #[derive(Clone)]
 pub enum DownloaderCastRequest {
-    HeadersNew {
-        response_handle: GenServerHandle<PeerHandler>,
-        start_block: u64,
-        chunk_limit: u64,
-    },
-    AccountRangeNew {
-        response_handle: GenServerHandle<PeerHandler>,
-        root_hash: H256,
-        starting_hash: H256,
-        limit_hash: H256,
-    },
-    StorageRangeNew {
-        response_handle: GenServerHandle<PeerHandler>,
-        start_index: usize,
-        end_index: usize,
-        start_hash: H256,
-        // end_hash is None if the task is for the first big storage request
-        end_hash: Option<H256>,
-        state_root: H256,
-        chunk_account_hashes: Vec<H256>,
-        chunk_storage_roots: Vec<H256>,
-    },
-    ByteCodeNew {
-        response_handle: GenServerHandle<PeerHandler>,
-        hashes_to_request: Vec<H256>,
-        chunk_start: usize,
-        chunk_end: usize,
-    },
-    //
-    // OLD METHODS, REMOVE EVENTUALLY
-    //
     Headers {
-        task_sender: Sender<(Vec<BlockHeader>, H256, u64, u64)>,
+        response_handle: GenServerHandle<PeerHandler>,
         start_block: u64,
         chunk_limit: u64,
     },
     AccountRange {
-        task_sender: Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
+        response_handle: GenServerHandle<PeerHandler>,
         root_hash: H256,
         starting_hash: H256,
         limit_hash: H256,
     },
-    ByteCode {
-        task_sender: Sender<BytecodeTaskResult>,
-        hashes_to_request: Vec<H256>,
-        chunk_start: usize,
-        chunk_end: usize,
-    },
-    StorageRanges {
-        task_sender: Sender<StorageTaskResult>,
+    StorageRange {
+        response_handle: GenServerHandle<PeerHandler>,
         start_index: usize,
         end_index: usize,
         start_hash: H256,
@@ -164,6 +117,12 @@ pub enum DownloaderCastRequest {
         state_root: H256,
         chunk_account_hashes: Vec<H256>,
         chunk_storage_roots: Vec<H256>,
+    },
+    ByteCode {
+        response_handle: GenServerHandle<PeerHandler>,
+        hashes_to_request: Vec<H256>,
+        chunk_start: usize,
+        chunk_end: usize,
     },
 }
 
@@ -444,7 +403,7 @@ impl GenServer for Downloader {
         _handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            DownloaderCastRequest::HeadersNew {
+            DownloaderCastRequest::Headers {
                 mut response_handle,
                 start_block,
                 chunk_limit,
@@ -531,7 +490,7 @@ impl GenServer for Downloader {
                 }
                 CastResponse::Stop
             }
-            DownloaderCastRequest::AccountRangeNew {
+            DownloaderCastRequest::AccountRange {
                 mut response_handle,
                 root_hash,
                 starting_hash,
@@ -681,7 +640,7 @@ impl GenServer for Downloader {
                 }
                 CastResponse::Stop
             }
-            DownloaderCastRequest::StorageRangeNew {
+            DownloaderCastRequest::StorageRange {
                 mut response_handle,
                 start_index,
                 end_index,
@@ -923,7 +882,7 @@ impl GenServer for Downloader {
 
                 CastResponse::Stop
             }
-            DownloaderCastRequest::ByteCodeNew {
+            DownloaderCastRequest::ByteCode {
                 mut response_handle,
                 hashes_to_request,
                 chunk_start,
@@ -1020,454 +979,6 @@ impl GenServer for Downloader {
                         .await
                         .unwrap(); // TODO: handle unwrap
                 }
-
-                CastResponse::Stop
-            }
-            //
-            // OLD METHODS, REMOVE EVENTUALLY
-            //
-            DownloaderCastRequest::Headers {
-                task_sender,
-                start_block,
-                chunk_limit,
-            } => {
-                debug!("Requesting block headers from peer {}", self.peer_id);
-                let request_id = rand::random();
-                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                    id: request_id,
-                    startblock: HashOrNumber::Number(start_block),
-                    limit: chunk_limit,
-                    skip: 0,
-                    reverse: false,
-                });
-                let mut receiver = self.peer_channels.receiver.lock().await;
-
-                // FIXME! modify the cast and wait for a `call` version
-                if let Err(err) = self
-                    .peer_channels
-                    .connection
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    warn!("Failed to send message to peer: {err:?}");
-                    let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
-                    self.send_through_response_channel(task_sender, msg).await;
-                    return CastResponse::Stop;
-                };
-
-                let block_headers =
-                    match tokio::time::timeout(BLOCK_HEADERS_REPLY_TIMEOUT, async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::BlockHeaders(BlockHeaders {
-                                    id,
-                                    block_headers,
-                                })) if id == request_id => {
-                                    return Some(block_headers);
-                                }
-                                // Ignore replies that don't match the expected id (such as late responses)
-                                Some(_) => continue,
-                                None => return None, // EOF
-                            }
-                        }
-                    })
-                    .await
-                    {
-                        Ok(Some(headers)) => headers,
-                        _ => {
-                            let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
-                            self.send_through_response_channel(task_sender, msg).await;
-                            return CastResponse::Stop;
-                        }
-                    };
-
-                if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
-                    let msg = (
-                        block_headers.clone(),
-                        self.peer_id,
-                        start_block,
-                        chunk_limit,
-                    );
-                    self.send_through_response_channel(task_sender, msg).await;
-                } else {
-                    warn!(
-                        "[SYNCING] Received invalid headers from peer: {}",
-                        self.peer_id
-                    );
-                    let msg = (Vec::new(), self.peer_id, start_block, chunk_limit);
-                    self.send_through_response_channel(task_sender, msg).await;
-                }
-                CastResponse::Stop
-            }
-            DownloaderCastRequest::AccountRange {
-                task_sender,
-                root_hash,
-                starting_hash,
-                limit_hash,
-            } => {
-                let request_id = rand::random();
-                let request = RLPxMessage::GetAccountRange(GetAccountRange {
-                    id: request_id,
-                    root_hash,
-                    starting_hash,
-                    limit_hash,
-                    response_bytes: MAX_RESPONSE_BYTES,
-                });
-
-                let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Err(err) = self
-                    .peer_channels
-                    .connection
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
-                    self.send_through_response_channel(task_sender, msg).await;
-                    return CastResponse::Stop;
-                }
-                if let Some((accounts, proof)) =
-                    tokio::time::timeout(ACCOUNT_RANGE_REPLY_TIMEOUT, async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::AccountRange(AccountRange {
-                                    id,
-                                    accounts,
-                                    proof,
-                                })) if id == request_id => return Some((accounts, proof)),
-                                Some(_) => continue,
-                                None => return None,
-                            }
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                {
-                    if accounts.is_empty() {
-                        let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
-                        self.send_through_response_channel(task_sender, msg).await;
-                        return CastResponse::Stop;
-                    }
-                    // Unzip & validate response
-                    let proof = encodable_to_proof(&proof);
-                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                        .clone()
-                        .into_iter()
-                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                        .unzip();
-                    let encoded_accounts = account_states
-                        .iter()
-                        .map(|acc| acc.encode_to_vec())
-                        .collect::<Vec<_>>();
-
-                    let Ok(should_continue) = verify_range(
-                        root_hash,
-                        &starting_hash,
-                        &account_hashes,
-                        &encoded_accounts,
-                        &proof,
-                    ) else {
-                        let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
-                        self.send_through_response_channel(task_sender, msg).await;
-                        return CastResponse::Stop;
-                    };
-
-                    // If the range has more accounts to fetch, we send the new chunk
-                    let chunk_left = if should_continue {
-                        let last_hash = match account_hashes.last() {
-                            Some(last_hash) => last_hash,
-                            None => {
-                                let msg =
-                                    (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
-                                self.send_through_response_channel(task_sender, msg).await;
-                                error!("Account hashes last failed, this shouldn't happen");
-                                return CastResponse::Stop;
-                            }
-                        };
-                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-                        let new_start = H256::from_uint(&new_start_u256);
-                        Some((new_start, limit_hash))
-                    } else {
-                        None
-                    };
-
-                    let accounts = accounts
-                        .into_iter()
-                        .filter(|unit| unit.hash <= limit_hash)
-                        .collect();
-                    let msg = (accounts, self.peer_id, chunk_left);
-                    self.send_through_response_channel(task_sender, msg).await;
-                } else {
-                    tracing::debug!("Failed to get account range");
-                    let msg = (Vec::new(), self.peer_id, Some((starting_hash, limit_hash)));
-                    self.send_through_response_channel(task_sender, msg).await;
-                }
-                CastResponse::Stop
-            }
-            DownloaderCastRequest::ByteCode {
-                task_sender,
-                hashes_to_request,
-                chunk_start,
-                chunk_end,
-            } => {
-                let empty_task_result = BytecodeTaskResult {
-                    start_index: chunk_start,
-                    bytecodes: vec![],
-                    peer_id: self.peer_id,
-                    remaining_start: chunk_start,
-                    remaining_end: chunk_end,
-                };
-                debug!(
-                    "Requesting bytecode from peer {}, chunk: {chunk_start:?} - {chunk_end:?}",
-                    self.peer_id
-                );
-                let request_id = rand::random();
-                let request = RLPxMessage::GetByteCodes(GetByteCodes {
-                    id: request_id,
-                    hashes: hashes_to_request.clone(),
-                    bytes: MAX_RESPONSE_BYTES,
-                });
-                let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Err(err) = (self.peer_channels.connection)
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    self.send_through_response_channel(task_sender, empty_task_result)
-                        .await;
-                    return CastResponse::Stop;
-                }
-
-                if let Some(codes) = tokio::time::timeout(BYTECODE_REPLY_TIMEOUT, async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
-                                if id == request_id =>
-                            {
-                                return Some(codes);
-                            }
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
-                {
-                    if codes.is_empty() {
-                        self.send_through_response_channel(task_sender, empty_task_result)
-                            .await;
-                        return CastResponse::Stop;
-                    }
-                    // Validate response by hashing bytecodes
-                    let validated_codes: Vec<Bytes> = codes
-                        .into_iter()
-                        .zip(hashes_to_request)
-                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
-                        .map(|(b, _hash)| b)
-                        .collect();
-                    let msg = BytecodeTaskResult {
-                        start_index: chunk_start,
-                        remaining_start: chunk_start + validated_codes.len(),
-                        bytecodes: validated_codes,
-                        peer_id: self.peer_id,
-                        remaining_end: chunk_end,
-                    };
-                    self.send_through_response_channel(task_sender, msg).await;
-                } else {
-                    tracing::debug!("Failed to get bytecode");
-                    self.send_through_response_channel(task_sender, empty_task_result)
-                        .await;
-                }
-
-                CastResponse::Stop
-            }
-            DownloaderCastRequest::StorageRanges {
-                task_sender,
-                start_index,
-                end_index,
-                start_hash,
-                end_hash,
-                state_root,
-                chunk_account_hashes,
-                chunk_storage_roots,
-            } => {
-                let empty_task_result = StorageTaskResult {
-                    start_index,
-                    account_storages: Vec::new(),
-                    peer_id: self.peer_id,
-                    remaining_start: start_index,
-                    remaining_end: end_index,
-                    remaining_hash_range: (start_hash, end_hash),
-                };
-                let request_id = rand::random();
-                let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
-                    id: request_id,
-                    root_hash: state_root,
-                    account_hashes: chunk_account_hashes,
-                    starting_hash: start_hash,
-                    limit_hash: end_hash.unwrap_or(HASH_MAX),
-                    response_bytes: MAX_RESPONSE_BYTES,
-                });
-                let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Err(err) = (self.peer_channels.connection)
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    error!("Failed to send message to peer: {err:?}");
-                    self.send_through_response_channel(task_sender, empty_task_result)
-                        .await;
-                    return CastResponse::Stop;
-                }
-                let request_result =
-                    tokio::time::timeout(STORAGE_RANGE_REPLY_TIMEOUT, async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::StorageRanges(StorageRanges {
-                                    id,
-                                    slots,
-                                    proof,
-                                })) if id == request_id => return Some((slots, proof)),
-                                Some(_) => continue,
-                                None => return None,
-                            }
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten();
-                let Some((slots, proof)) = request_result else {
-                    tracing::debug!("Failed to get storage range");
-                    self.send_through_response_channel(task_sender, empty_task_result)
-                        .await;
-                    return CastResponse::Stop;
-                };
-                if slots.is_empty() && proof.is_empty() {
-                    tracing::debug!("Received empty account range");
-                    self.send_through_response_channel(task_sender, empty_task_result)
-                        .await;
-                    return CastResponse::Stop;
-                }
-                // Check we got some data and no more than the requested amount
-                if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
-                    self.send_through_response_channel(task_sender, empty_task_result)
-                        .await;
-                    return CastResponse::Stop;
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
-                let mut should_continue = false;
-                // Validate each storage range
-                let mut storage_roots = chunk_storage_roots.into_iter();
-                let last_slot_index = slots.len() - 1;
-                for (i, next_account_slots) in slots.into_iter().enumerate() {
-                    // We won't accept empty storage ranges
-                    if next_account_slots.is_empty() {
-                        // This shouldn't happen
-                        error!("Received empty storage range, skipping");
-                        self.send_through_response_channel(task_sender, empty_task_result)
-                            .await;
-                        return CastResponse::Stop;
-                    }
-                    let encoded_values = next_account_slots
-                        .iter()
-                        .map(|slot| slot.data.encode_to_vec())
-                        .collect::<Vec<_>>();
-                    let hashed_keys: Vec<_> =
-                        next_account_slots.iter().map(|slot| slot.hash).collect();
-
-                    let storage_root = match storage_roots.next() {
-                        Some(root) => root,
-                        None => {
-                            error!("No storage root for account {i}");
-                            self.send_through_response_channel(task_sender, empty_task_result)
-                                .await;
-                            return CastResponse::Stop;
-                        }
-                    };
-
-                    // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-                    if i == last_slot_index && !proof.is_empty() {
-                        let Ok(sc) = verify_range(
-                            storage_root,
-                            &start_hash,
-                            &hashed_keys,
-                            &encoded_values,
-                            &proof,
-                        ) else {
-                            self.send_through_response_channel(task_sender, empty_task_result)
-                                .await;
-                            return CastResponse::Stop;
-                        };
-                        should_continue = sc;
-                    } else if verify_range(
-                        storage_root,
-                        &start_hash,
-                        &hashed_keys,
-                        &encoded_values,
-                        &[],
-                    )
-                    .is_err()
-                    {
-                        self.send_through_response_channel(task_sender, empty_task_result)
-                            .await;
-                        return CastResponse::Stop;
-                    }
-
-                    account_storages.push(
-                        next_account_slots
-                            .iter()
-                            .map(|slot| (slot.hash, slot.data))
-                            .collect(),
-                    );
-                }
-                let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
-                    let last_account_storage = match account_storages.last() {
-                        Some(storage) => storage,
-                        None => {
-                            self.send_through_response_channel(task_sender, empty_task_result)
-                                .await;
-                            error!("No account storage found, this shouldn't happen");
-                            return CastResponse::Stop;
-                        }
-                    };
-                    let (last_hash, _) = match last_account_storage.last() {
-                        Some(last_hash) => last_hash,
-                        None => {
-                            self.send_through_response_channel(task_sender, empty_task_result)
-                                .await;
-                            error!("No last hash found, this shouldn't happen");
-                            return CastResponse::Stop;
-                        }
-                    };
-                    let next_hash_u256 =
-                        U256::from_big_endian(&last_hash.0).saturating_add(1.into());
-                    let next_hash = H256::from_uint(&next_hash_u256);
-                    (
-                        start_index + account_storages.len() - 1,
-                        end_index,
-                        next_hash,
-                    )
-                } else {
-                    (
-                        start_index + account_storages.len(),
-                        end_index,
-                        H256::zero(),
-                    )
-                };
-                let task_result = StorageTaskResult {
-                    start_index,
-                    account_storages,
-                    peer_id: self.peer_id,
-                    remaining_start,
-                    remaining_end,
-                    remaining_hash_range: (remaining_start_hash, end_hash),
-                };
-                self.send_through_response_channel(task_sender, task_result)
-                    .await;
 
                 CastResponse::Stop
             }
