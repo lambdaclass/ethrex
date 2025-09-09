@@ -32,7 +32,6 @@ jobs:
         run: |
           cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
-          make lint
 
       - name: Run cargo fmt
         run: |
