@@ -18,6 +18,7 @@ use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block, BlockHash, BlockHeader},
 };
+use std::sync::LazyLock;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{NodeHash, Trie, TrieError};
@@ -51,21 +52,21 @@ const BYTECODE_CHUNK_SIZE: usize = 50_000;
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
 
 #[cfg(feature = "sync-test")]
-static EXECUTE_BATCH_SIZE: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT));
+static EXECUTE_BATCH_SIZE: LazyLock<usize> = LazyLock::new(|| std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT));
 
 #[cfg(not(feature = "sync-test"))]
-static EXECUTE_BATCH_SIZE: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| EXECUTE_BATCH_SIZE_DEFAULT);
+static EXECUTE_BATCH_SIZE: LazyLock<usize> = LazyLock::new(|| EXECUTE_BATCH_SIZE_DEFAULT);
 
 // Size of each state trie segment
-static STATE_TRIE_SEGMENT_SIZE: std::sync::LazyLock<U256> = std::sync::LazyLock::new(|| HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS);
+static STATE_TRIE_SEGMENT_SIZE: LazyLock<U256> = LazyLock::new(|| HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS);
 
 // Starting hash of each state trie segment
-static STATE_TRIE_SEGMENTS_START: std::sync::LazyLock<[H256; STATE_TRIE_SEGMENTS]> = std::sync::LazyLock::new(|| {
+static STATE_TRIE_SEGMENTS_START: LazyLock<[H256; STATE_TRIE_SEGMENTS]> = LazyLock::new(|| {
         array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * i)))
 });
 
 // Ending hash of each state trie segment
-static STATE_TRIE_SEGMENTS_END: std::sync::LazyLock<[H256; STATE_TRIE_SEGMENTS]> = std::sync::LazyLock::new(|| {
+static STATE_TRIE_SEGMENTS_END: LazyLock<[H256; STATE_TRIE_SEGMENTS]> = LazyLock::new(|| {
         array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
 });
 
