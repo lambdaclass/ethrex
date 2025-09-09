@@ -186,9 +186,6 @@ impl Store {
                     block_opts.set_cache_index_and_filter_blocks(true);
                     block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
-
-                    // Prefix extractor
-                    cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(8));
                 }
                 CF_RECEIPTS | CF_ACCOUNT_CODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
