@@ -53,6 +53,7 @@ use crate::{
                 handle_l2_broadcast,
             },
         },
+        message::EthCapVersion,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
@@ -66,8 +67,6 @@ use crate::{
     tx_broadcaster::send_tx_hashes,
     types::Node,
 };
-
-use super::codec::EthCapVersion;
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);

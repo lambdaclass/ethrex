@@ -7,7 +7,6 @@ use crate::rlpx::snap::{
     StorageRanges, TrieNodes,
 };
 
-use super::connection::codec::EthCapVersion;
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
@@ -20,6 +19,39 @@ use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 
 use ethrex_rlp::encode::RLPEncode;
+
+const ETH_CAPABILITY_OFFSET: u8 = 0x10;
+const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
+const SNAP_CAPABILITY_OFFSET_ETH_69: u8 = 0x22;
+const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
+const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum EthCapVersion {
+    #[default]
+    V68,
+    V69,
+}
+
+impl EthCapVersion {
+    pub const fn eth_capability_offset(&self) -> u8 {
+        ETH_CAPABILITY_OFFSET
+    }
+
+    pub const fn snap_capability_offset(&self) -> u8 {
+        match self {
+            EthCapVersion::V68 => SNAP_CAPABILITY_OFFSET_ETH_68,
+            EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
+        }
+    }
+
+    pub const fn based_capability_offset(&self) -> u8 {
+        match self {
+            EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
+            EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
+        }
+    }
+}
 
 pub trait RLPxMessage: Sized {
     const CODE: u8;

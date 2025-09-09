@@ -1,3 +1,3 @@
-pub(crate) mod codec;
+mod codec;
 mod handshake;
 pub mod server;

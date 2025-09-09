@@ -1,6 +1,10 @@
 use std::sync::{Arc, RwLock};
 
-use crate::rlpx::{error::RLPxError, message as rlpx, utils::ecdh_xchng};
+use crate::rlpx::{
+    error::RLPxError,
+    message::{self as rlpx, EthCapVersion},
+    utils::ecdh_xchng,
+};
 
 use super::handshake::{LocalState, RemoteState};
 use aes::{
@@ -20,38 +24,6 @@ const MAX_MESSAGE_SIZE: u32 = 0xFFFFFF;
 
 type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
-const ETH_CAPABILITY_OFFSET: u8 = 0x10;
-const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
-const SNAP_CAPABILITY_OFFSET_ETH_69: u8 = 0x22;
-const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
-const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
-
-#[derive(Debug, Clone, Copy, Default)]
-pub enum EthCapVersion {
-    #[default]
-    V68,
-    V69,
-}
-
-impl EthCapVersion {
-    pub const fn eth_capability_offset(&self) -> u8 {
-        ETH_CAPABILITY_OFFSET
-    }
-
-    pub const fn snap_capability_offset(&self) -> u8 {
-        match self {
-            EthCapVersion::V68 => SNAP_CAPABILITY_OFFSET_ETH_68,
-            EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
-        }
-    }
-
-    pub const fn based_capability_offset(&self) -> u8 {
-        match self {
-            EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
-            EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
-        }
-    }
-}
 pub struct RLPxCodec {
     pub(crate) mac_key: H256,
     pub(crate) ingress_mac: Keccak256,

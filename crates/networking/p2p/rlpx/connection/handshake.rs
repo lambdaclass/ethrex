@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::{
-    codec::{EthCapVersion, RLPxCodec},
+    codec::RLPxCodec,
     server::{Initiator, Receiver},
 };
 use crate::{
@@ -13,6 +13,7 @@ use crate::{
         connection::server::{Established, InnerState},
         error::RLPxError,
         l2::l2_connection::L2ConnState,
+        message::EthCapVersion,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
