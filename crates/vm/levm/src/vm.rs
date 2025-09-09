@@ -81,27 +81,35 @@ impl Substate {
     }
 
     /// Pop and merge with the last backup.
+    ///
+    /// Does nothing if the substate has no backup.
     pub fn commit_backup(&mut self) {
-        let mut delta = *mem::take(&mut self.parent).expect("no backup found");
-        mem::swap(self, &mut delta);
+        if let Some(parent) = self.parent.as_mut() {
+            let mut delta = mem::take(parent);
+            mem::swap(self, &mut delta);
 
-        self.selfdestruct_set.extend(delta.selfdestruct_set);
-        self.accessed_addresses.extend(delta.accessed_addresses);
-        for (address, slot_set) in delta.accessed_storage_slots {
-            self.accessed_storage_slots
-                .entry(address)
-                .or_default()
-                .extend(slot_set);
+            self.selfdestruct_set.extend(delta.selfdestruct_set);
+            self.accessed_addresses.extend(delta.accessed_addresses);
+            for (address, slot_set) in delta.accessed_storage_slots {
+                self.accessed_storage_slots
+                    .entry(address)
+                    .or_default()
+                    .extend(slot_set);
+            }
+            self.created_accounts.extend(delta.created_accounts);
+            self.refunded_gas = delta.refunded_gas;
+            self.transient_storage.extend(delta.transient_storage);
+            self.logs.extend(delta.logs);
         }
-        self.created_accounts.extend(delta.created_accounts);
-        self.refunded_gas = delta.refunded_gas;
-        self.transient_storage.extend(delta.transient_storage);
-        self.logs.extend(delta.logs);
     }
 
     /// Discard current changes and revert to last backup.
+    ///
+    /// Does nothing if the substate has no backup.
     pub fn revert_backup(&mut self) {
-        *self = *mem::take(&mut self.parent).expect("no backup found");
+        if let Some(parent) = self.parent.as_mut() {
+            *self = mem::take(parent);
+        }
     }
 
     /// Return an iterator over all selfdestruct addresses.
