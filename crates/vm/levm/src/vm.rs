@@ -76,6 +76,7 @@ impl Substate {
     /// still accessible.
     pub fn push_backup(&mut self) {
         let parent = mem::take(self);
+        self.refunded_gas = parent.refunded_gas;
         self.parent = Some(Box::new(parent));
     }
 
