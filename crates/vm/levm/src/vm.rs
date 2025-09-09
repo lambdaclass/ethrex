@@ -9,7 +9,6 @@ use crate::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
-    l2_precompiles,
     memory::Memory,
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
@@ -443,12 +442,14 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
-        if self.is_precompile(&self.current_call_frame.to) {
-            let vm_type = self.vm_type;
+        if precompiles::is_precompile(
+            &self.current_call_frame.to,
+            self.env.config.fork,
+            self.vm_type,
+        ) {
             let call_frame = &mut self.current_call_frame;
 
             return Self::execute_precompile(
-                vm_type,
                 call_frame.code_address,
                 &call_frame.calldata,
                 call_frame.gas_limit,
@@ -488,17 +489,13 @@ impl<'a> VM<'a> {
 
     /// Executes precompile and handles the output that it returns, generating a report.
     pub fn execute_precompile(
-        vm_type: VMType,
         code_address: H160,
         calldata: &Bytes,
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
     ) -> Result<ContextResult, VMError> {
-        let execute_precompile = match vm_type {
-            VMType::L1 => precompiles::execute_precompile,
-            VMType::L2 => l2_precompiles::execute_precompile,
-        };
+        let execute_precompile = precompiles::execute_precompile;
 
         Self::handle_precompile_result(
             execute_precompile(code_address, calldata, gas_remaining, fork),
@@ -575,8 +572,14 @@ impl Substate {
             spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
             _ => return Err(InternalError::InvalidFork.into()),
         };
+
         for i in 1..=max_precompile_address {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));
+        }
+
+        // Add the address for the P256 verify precompile post-Osaka
+        if env.config.fork >= Fork::Osaka {
+            initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
         }
 
         // Add access lists contents to accessed accounts and accessed storage slots.

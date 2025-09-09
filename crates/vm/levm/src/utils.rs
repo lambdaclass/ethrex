@@ -10,12 +10,8 @@ use crate::{
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
-    l2_precompiles,
     opcodes::Opcode,
-    precompiles::{
-        self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
-    },
-    vm::{Substate, VM, VMType},
+    vm::{Substate, VM},
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::{Bytes, buf::IntoIter};
@@ -34,10 +30,7 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    iter::Enumerate,
-};
+use std::{collections::HashMap, iter::Enumerate};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -560,54 +553,6 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         Ok(min_gas_used)
-    }
-
-    pub fn is_precompile(&self, address: &Address) -> bool {
-        match self.vm_type {
-            VMType::L1 => precompiles::is_precompile(address, self.env.config.fork),
-            VMType::L2 => l2_precompiles::is_precompile(address, self.env.config.fork),
-        }
-    }
-
-    /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
-    pub fn initialize_substate(&mut self) -> Result<(), VMError> {
-        // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = HashSet::new();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
-
-        // Add Tx sender to accessed accounts
-        initial_accessed_addresses.insert(self.env.origin);
-
-        // [EIP-3651] - Add coinbase to accessed accounts after Shanghai
-        if self.env.config.fork >= Fork::Shanghai {
-            initial_accessed_addresses.insert(self.env.coinbase);
-        }
-
-        // Add precompiled contracts addresses to accessed accounts.
-        let max_precompile_address = match self.env.config.fork {
-            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
-            _ => return Err(InternalError::InvalidFork.into()),
-        };
-        for i in 1..=max_precompile_address {
-            initial_accessed_addresses.insert(Address::from_low_u64_be(i));
-        }
-
-        // Add access lists contents to accessed accounts and accessed storage slots.
-        for (address, keys) in self.tx.access_list().clone() {
-            initial_accessed_addresses.insert(address);
-            let mut warm_slots = BTreeSet::new();
-            for slot in keys {
-                warm_slots.insert(slot);
-            }
-            initial_accessed_storage_slots.insert(address, warm_slots);
-        }
-
-        self.substate =
-            Substate::from_accesses(initial_accessed_addresses, initial_accessed_storage_slots);
-
-        Ok(())
     }
 
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.

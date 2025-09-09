@@ -4,6 +4,7 @@ use crate::{
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::calculate_memory_size,
+    precompiles,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -751,10 +752,11 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        if self.is_precompile(&code_address) && !is_delegation_7702 {
+        if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
+            && !is_delegation_7702
+        {
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
-                self.vm_type,
                 code_address,
                 &calldata,
                 gas_limit,
