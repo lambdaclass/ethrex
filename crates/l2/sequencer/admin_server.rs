@@ -20,6 +20,7 @@ pub struct Admin {
 }
 
 pub async fn start_api(
+    http_addr: String,
     l1_committer: GenServerHandle<L1Committer>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
@@ -37,7 +38,7 @@ pub async fn start_api(
         .route("/committer/stop", get(stop_committer))
         .layer(cors)
         .with_state(admin.clone());
-    let http_listener = TcpListener::bind("0.0.0.0:5555")
+    let http_listener = TcpListener::bind(http_addr)
         .await
         .map_err(|error| AdminError::Internal(error.to_string()))?;
     let http_server = axum::serve(http_listener, http_router)

@@ -183,10 +183,16 @@ pub async fn start_l2(
         .await?;
     }
 
-    let admin_server = start_api(l1_committer?)
-        .await
-        .map_err(errors::SequencerError::Admin)?
-        .into_future();
+    let admin_server = start_api(
+        format!(
+            "{}:{}",
+            cfg.admin_server.listen_ip, cfg.admin_server.listen_port
+        ),
+        l1_committer?,
+    )
+    .await
+    .map_err(errors::SequencerError::Admin)?
+    .into_future();
 
     if let Some(handle) = verifier_handle {
         let (server_res, verifier_res) = tokio::join!(admin_server, handle);
