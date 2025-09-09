@@ -433,17 +433,11 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     // Apply cache level rules
     match opts.cache_level {
+        CacheLevel::All => write_cache(&cache, l2)?,
         CacheLevel::Failed => {
             if block_run_failed {
-                let file_name = format!("cache_{network}_{}.bin", cache.blocks[0].header.number);
-
-                write_cache(&cache, &file_name).expect("failed to write cache");
+                write_cache(&cache, l2)?;
             }
-        }
-        CacheLevel::All => {
-            let file_name = format!("cache_{network}_{}.bin", cache.blocks[0].header.number);
-
-            write_cache(&cache, &file_name).expect("failed to write cache");
         }
         CacheLevel::Off => {}
     }
@@ -466,7 +460,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
+pub(crate) fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     match chain_id {
         MAINNET_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Mainnet),
         HOLESKY_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Holesky),
