@@ -9,7 +9,7 @@ use crate::rlpx::snap::{
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts68, Receipts69};
-use super::eth::status::StatusMessage;
+use super::eth::status::{StatusMessage68, StatusMessage69};
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
@@ -66,7 +66,8 @@ pub enum Message {
     Disconnect(DisconnectMessage),
     Ping(PingMessage),
     Pong(PongMessage),
-    Status(StatusMessage),
+    Status68(StatusMessage68),
+    Status69(StatusMessage69),
     // eth capability
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md
     GetBlockHeaders(GetBlockHeaders),
@@ -104,7 +105,8 @@ impl Message {
             Message::Pong(_) => PongMessage::CODE,
 
             // eth capability
-            Message::Status(_) => eth_version.eth_capability_offset() + StatusMessage::CODE,
+            Message::Status68(_) => eth_version.eth_capability_offset() + StatusMessage68::CODE,
+            Message::Status69(_) => eth_version.eth_capability_offset() + StatusMessage69::CODE,
             Message::Transactions(_) => eth_version.eth_capability_offset() + Transactions::CODE,
             Message::GetBlockHeaders(_) => {
                 eth_version.eth_capability_offset() + GetBlockHeaders::CODE
@@ -172,7 +174,12 @@ impl Message {
         } else if msg_id < eth_version.snap_capability_offset() {
             // eth capability
             match msg_id - eth_version.eth_capability_offset() {
-                StatusMessage::CODE => Ok(Message::Status(StatusMessage::decode(data)?)),
+                StatusMessage68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                    Ok(Message::Status68(StatusMessage68::decode(data)?))
+                }
+                StatusMessage69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                    Ok(Message::Status69(StatusMessage69::decode(data)?))
+                }
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
                 GetBlockHeaders::CODE => {
                     Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
@@ -247,7 +254,8 @@ impl Message {
             Message::Disconnect(msg) => msg.encode(buf),
             Message::Ping(msg) => msg.encode(buf),
             Message::Pong(msg) => msg.encode(buf),
-            Message::Status(msg) => msg.encode(buf),
+            Message::Status68(msg) => msg.encode(buf),
+            Message::Status69(msg) => msg.encode(buf),
             Message::Transactions(msg) => msg.encode(buf),
             Message::GetBlockHeaders(msg) => msg.encode(buf),
             Message::BlockHeaders(msg) => msg.encode(buf),
@@ -283,7 +291,8 @@ impl Display for Message {
             Message::Disconnect(_) => "p2p:Disconnect".fmt(f),
             Message::Ping(_) => "p2p:Ping".fmt(f),
             Message::Pong(_) => "p2p:Pong".fmt(f),
-            Message::Status(_) => "eth:Status".fmt(f),
+            Message::Status68(_) => "eth:Status(68)".fmt(f),
+            Message::Status69(_) => "eth:Status(69)".fmt(f),
             Message::GetBlockHeaders(_) => "eth:getBlockHeaders".fmt(f),
             Message::BlockHeaders(_) => "eth:BlockHeaders".fmt(f),
             Message::BlockBodies(_) => "eth:BlockBodies".fmt(f),

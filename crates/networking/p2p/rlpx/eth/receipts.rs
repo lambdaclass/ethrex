@@ -6,7 +6,7 @@ use crate::rlpx::{
 };
 
 use bytes::BufMut;
-use ethrex_common::types::{BlockHash, Receipt};
+use ethrex_common::types::BlockHash;
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -53,6 +53,8 @@ impl RLPxMessage for GetReceipts {
 
 #[cfg(test)]
 mod tests {
+    use ethrex_common::types::Receipt;
+
     use super::*;
 
     #[test]
