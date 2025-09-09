@@ -39,7 +39,8 @@ pub async fn get_blockdata(
 
     let l2 = matches!(network, Network::LocalDevnetL2);
 
-    let file_name = get_block_cache_file_name(chain_config.chain_id, latest_block_number, None, l2);
+    let file_name =
+        get_block_cache_file_name(chain_config.chain_id, requested_block_number, None, l2);
 
     if let Ok(cache) = load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
         info!("Getting block {requested_block_number} data from cache");
