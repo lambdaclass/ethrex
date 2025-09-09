@@ -347,6 +347,10 @@ impl StoreEngineRollup for Store {
         inner.batch_proofs.remove(&(proof_type, batch_number));
         Ok(())
     }
+
+    async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self.inner()?.state_roots.keys().max().cloned())
+    }
 }
 
 impl Debug for Store {

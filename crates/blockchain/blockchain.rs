@@ -28,7 +28,7 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use sha3::{Digest, Keccak256};
@@ -61,7 +61,6 @@ pub enum BlockchainType {
 
 #[derive(Debug)]
 pub struct Blockchain {
-    pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
@@ -95,14 +94,8 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(
-        evm_engine: EvmEngine,
-        store: Store,
-        blockchain_type: BlockchainType,
-        perf_logs_enabled: bool,
-    ) -> Self {
+    pub fn new(store: Store, blockchain_type: BlockchainType, perf_logs_enabled: bool) -> Self {
         Self {
-            evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
@@ -114,7 +107,6 @@ impl Blockchain {
 
     pub fn default_with_store(store: Store) -> Self {
         Self {
-            evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
@@ -344,11 +336,14 @@ impl Blockchain {
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
         needed_block_numbers.sort();
+
+        // Last needed block header for the witness is the parent of the last block we need to execute
         let last_needed_block_number = blocks
             .last()
             .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
             .header
-            .number;
+            .number
+            .saturating_sub(1);
         // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
         let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
         if let Some(block_number_from_logger) = needed_block_numbers.first() {
@@ -882,8 +877,8 @@ impl Blockchain {
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
         let evm = match self.r#type {
-            BlockchainType::L1 => Evm::new_for_l1(self.evm_engine, vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(self.evm_engine, vm_db)?,
+            BlockchainType::L1 => Evm::new_for_l1(vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
         };
         Ok(evm)
     }

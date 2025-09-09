@@ -1,9 +1,11 @@
+#[cfg(feature = "revm")]
+use ethrex_common::{Address, H256};
+#[cfg(feature = "revm")]
+use revm::primitives::{ExecutionResult as RevmExecutionResult, result::Output as RevmOutput};
+
 use bytes::Bytes;
-use ethrex_common::Address;
-use ethrex_common::{H256, types::Log};
+use ethrex_common::types::Log;
 use ethrex_levm::errors::{ExecutionReport as LevmExecutionReport, TxResult};
-use revm::primitives::ExecutionResult as RevmExecutionResult;
-use revm::primitives::result::Output as RevmOutput;
 
 #[derive(Debug)]
 pub enum ExecutionResult {
@@ -56,6 +58,7 @@ impl ExecutionResult {
     }
 }
 
+#[cfg(feature = "revm")]
 impl From<RevmExecutionResult> for ExecutionResult {
     fn from(val: RevmExecutionResult) -> Self {
         match val {
@@ -96,19 +99,29 @@ impl From<RevmExecutionResult> for ExecutionResult {
         }
     }
 }
+
 impl From<LevmExecutionReport> for ExecutionResult {
     fn from(val: LevmExecutionReport) -> Self {
         match val.result {
             TxResult::Success => ExecutionResult::Success {
-                gas_used: val.gas_used - val.gas_refunded,
+                gas_used: val.gas_used,
                 gas_refunded: val.gas_refunded,
                 logs: val.logs,
                 output: val.output,
             },
-            TxResult::Revert(_error) => ExecutionResult::Revert {
-                gas_used: val.gas_used - val.gas_refunded,
-                output: val.output,
-            },
+            TxResult::Revert(error) => {
+                if error.is_revert_opcode() {
+                    ExecutionResult::Revert {
+                        gas_used: val.gas_used,
+                        output: val.output,
+                    }
+                } else {
+                    ExecutionResult::Halt {
+                        reason: error.to_string(),
+                        gas_used: val.gas_used,
+                    }
+                }
+            }
         }
     }
 }
