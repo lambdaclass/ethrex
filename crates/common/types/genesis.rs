@@ -9,6 +9,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     io::{BufReader, Error},
     path::Path,
+    sync::LazyLock,
 };
 use tracing::warn;
 
@@ -209,18 +210,16 @@ pub struct ChainConfig {
     pub enable_verkle_at_genesis: bool,
 }
 
-lazy_static::lazy_static! {
-    pub static ref NETWORK_NAMES: HashMap<u64, &'static str> = {
-        HashMap::from([
-            (1, "mainnet"),
-            (11155111, "sepolia"),
-            (17000, "holesky"),
-            (560048, "hoodi"),
-            (9, "L1 local devnet"),
-            (65536999, "L2 local devnet"),
-        ])
-    };
-}
+pub static NETWORK_NAMES: LazyLock<HashMap<u64, &'static str>> = LazyLock::new(|| {
+    HashMap::from([
+        (1, "mainnet"),
+        (11155111, "sepolia"),
+        (17000, "holesky"),
+        (560048, "hoodi"),
+        (9, "L1 local devnet"),
+        (65536999, "L2 local devnet"),
+    ])
+});
 
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Default, Hash, Clone, Copy, Serialize, Deserialize)]
