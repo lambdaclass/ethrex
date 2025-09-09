@@ -4,7 +4,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountInfo, AccountUpdate, Block, BlockHeader, ChainConfig,
-        block_execution_witness::{GuestProgramStateError, GuestProgramState},
+        block_execution_witness::{GuestProgramState, GuestProgramStateError},
     },
 };
 use std::sync::{Arc, Mutex, MutexGuard};

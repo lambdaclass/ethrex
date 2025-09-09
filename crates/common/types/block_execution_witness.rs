@@ -482,19 +482,29 @@ impl GuestProgramState {
         &self,
         blocks: &[Block],
     ) -> Result<(), GuestProgramStateError> {
-        for block in blocks {
-            let header = self
-                .block_headers
-                .get(&block.header.number)
-                .unwrap_or(&block.header);
-
-            // headers hash should happen in the stateless execution
+        // First we need to ensure that the block headers are initialized not before the guest program is executed
+        for header in self.block_headers.values() {
             if header.hash.get().is_some() {
+                return Err(GuestProgramStateError::Custom(format!(
+                    "Block header hash is already set for {}",
+                    header.number
+                )));
+            }
+        }
+
+        // Now we initialize the block_headers hashes and check the remaining blocks hashes
+        for block in blocks {
+            // Verify each block's header hash is uninitialized
+            if block.header.hash.get().is_some() {
                 return Err(GuestProgramStateError::Custom(format!(
                     "Block header hash is already set for {}",
                     block.header.number
                 )));
             }
+            let header = self
+                .block_headers
+                .get(&block.header.number)
+                .unwrap_or(&block.header);
 
             let hash = header.hash();
             // this returns err if it's already set, so we drop the Result as we don't

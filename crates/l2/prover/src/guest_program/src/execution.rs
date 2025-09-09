@@ -238,6 +238,10 @@ struct StatelessResult {
     last_block_header: BlockHeader,
     last_block_hash: H256,
     non_privileged_count: U256,
+
+    // These fields are only used in L2 to validate state diff blobs.
+    // We return them to avoid recomputing when comparing the initial state
+    // with the final state after block execution.
     #[cfg(feature = "l2")]
     nodes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
@@ -255,6 +259,9 @@ fn execute_stateless(
         .try_into()
         .map_err(StatelessExecutionError::GuestProgramState)?;
 
+    // Cache these L2-specific state fields for later state diff blob validation
+    // to avoid expensive recomputation after the guest_program_state is moved
+    // to the wrapper
     #[cfg(feature = "l2")]
     let nodes_hashed = guest_program_state.nodes_hashed.clone();
     #[cfg(feature = "l2")]

@@ -7,7 +7,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
-use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
