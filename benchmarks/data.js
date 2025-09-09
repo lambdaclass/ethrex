@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757446601886,
+  "lastUpdate": 1757453764604,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13345,6 +13345,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171048774640,
             "range": "± 1248498167",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d75dc988eb75b31b35a8ef439f60d07bf914e362",
+          "message": "refactor(l1):  remove unneeded usize casts (#4342)\n\n**Motivation**\nRemove cases where we using `as usize` to cast `u64` values when not\nneeded\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nContributes to #4081",
+          "timestamp": "2025-09-09T20:42:37Z",
+          "tree_id": "aade0876f2427f91ee458a62c39cfefc116fb6c7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d75dc988eb75b31b35a8ef439f60d07bf914e362"
+        },
+        "date": 1757453741601,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169344039416,
+            "range": "± 529984252",
             "unit": "ns/iter"
           }
         ]
