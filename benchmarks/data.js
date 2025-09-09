@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757430213564,
+  "lastUpdate": 1757432340951,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13135,6 +13135,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166577666818,
             "range": "± 197097527",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d8c0614ac60bb1ba696632966913e6d1bc26d841",
+          "message": "ci(l1, l2): improve sending of slack messages to appropriate channels (#4345)\n\n**Motivation**\nSend failure notifications to appropriate channels based on which\nworkflow failed.\n\n**Description**\n- Sends to L1 or L2 channel depending on workflow\n- Removes printing repo or actor",
+          "timestamp": "2025-09-09T14:43:16Z",
+          "tree_id": "c76d9a9dd73eb858c3fc795ad1a8737f3ab9ccab",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d8c0614ac60bb1ba696632966913e6d1bc26d841"
+        },
+        "date": 1757432321316,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166550891334,
+            "range": "± 297495985",
             "unit": "ns/iter"
           }
         ]
