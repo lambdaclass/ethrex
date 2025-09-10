@@ -78,7 +78,7 @@ pub async fn start_l2(
         return Ok(());
     }
 
-    let _ = L1Watcher::spawn(
+    let l1_watcher = L1Watcher::spawn(
         store.clone(),
         blockchain.clone(),
         cfg.clone(),
@@ -189,7 +189,8 @@ pub async fn start_l2(
             "{}:{}",
             cfg.admin_server.listen_ip, cfg.admin_server.listen_port
         ),
-        l1_committer?,
+        l1_committer.ok(),
+        l1_watcher.ok(),
     )
     .await
     .inspect_err(|err| {

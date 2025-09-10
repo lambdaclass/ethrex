@@ -1,6 +1,9 @@
 use crate::sequencer::l1_committer::{
     CallMessage as CommitterCallMessage, L1Committer, OutMessage as CommitterOutMessage,
 };
+use crate::sequencer::l1_watcher::{
+    CallMessage as WatcherCallMessage, L1Watcher, OutMessage as WatcherOutMessage,
+};
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
@@ -21,6 +24,7 @@ pub enum AdminError {
 #[derive(Clone)]
 pub struct Admin {
     pub l1_committer: Option<GenServerHandle<L1Committer>>,
+    pub l1_watcher: Option<GenServerHandle<L1Watcher>>,
 }
 
 pub enum AdminErrorResponse {
@@ -52,9 +56,13 @@ impl IntoResponse for AdminErrorResponse {
 pub async fn start_api(
     http_addr: String,
     l1_committer: Option<GenServerHandle<L1Committer>>,
+    l1_watcher: Option<GenServerHandle<L1Watcher>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
-    let admin = Admin { l1_committer };
+    let admin = Admin {
+        l1_committer,
+        l1_watcher,
+    };
 
     // All request headers allowed.
     // All methods allowed.
@@ -144,6 +152,25 @@ async fn health(
         )
     };
     response.insert("l1_committer".to_string(), l1_committer_response);
+
+    let l1_watcher_response = if let Some(mut l1_watcher) = admin.l1_watcher {
+        let l1_watcher_health = l1_watcher.call(WatcherCallMessage::Health).await;
+
+        match l1_watcher_health {
+            Ok(WatcherOutMessage::Health(health)) => {
+                serde_json::to_value(health).unwrap_or_else(|err| {
+                    Value::String(format!("Failed to serialize health message {err}"))
+                })
+            }
+            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
+            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
+        }
+    } else {
+        Value::String(
+            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
+        )
+    };
+    response.insert("l1_watcher".to_string(), l1_watcher_response);
 
     Ok(Json::from(response))
 }
