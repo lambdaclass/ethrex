@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757537201042,
+  "lastUpdate": 1757538102840,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13525,6 +13525,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171243743646,
             "range": "± 747942037",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "15d58446a569fc82e132014cbc00ce568366258f",
+          "message": "refactor(l1): clean up discv4 code (#4257)\n\n**Motivation**\n\nDiscv4 server was migrated to `spawned` `GenServer` in a quick and dirty\nfashion. It needs a rework in order to improve performance, and code\nquality.\n\n**Description**\n\n- Uses `spawned` `spawn_listener` function to listen the udp socket and\nforward messages to the discv4 server.\n- Creates a Discv4Codec for transparent handling of incoming and\noutgoing discv4 messages.\n- Replaces unnecessary tasks or `GenServer`s spawning with a single\n`GenServer` to handle all udp traffic.\n- Merges `DiscoverySideCar` with `DiscoveryServer` to remove code\nredundancy.\n\nCloses #3389\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Pablo Deymonnaz <deymonnaz@gmail.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: ricomateo <mrico@fi.uba.ar>\nCo-authored-by: Gianbelinche <39842759+gianbelinche@users.noreply.github.com>\nCo-authored-by: Francisco Xavier Gauna <francisco.gauna@lambdaclass.com>\nCo-authored-by: Mateo Rico <89949621+ricomateo@users.noreply.github.com>\nCo-authored-by: Juan Munoz <juanmunoz890@gmail.com>\nCo-authored-by: Pablo Deymonnaz <pdeymon@fi.uba.ar>\nCo-authored-by: juan518munoz <62400508+juan518munoz@users.noreply.github.com>",
+          "timestamp": "2025-09-10T19:56:46Z",
+          "tree_id": "c04bc87b4781092262e67487ba6c30c8b4c9b4ab",
+          "url": "https://github.com/lambdaclass/ethrex/commit/15d58446a569fc82e132014cbc00ce568366258f"
+        },
+        "date": 1757538083016,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170962901044,
+            "range": "± 988758604",
             "unit": "ns/iter"
           }
         ]
