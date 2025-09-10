@@ -8,7 +8,10 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Node, verify_range};
 use keccak_hash::H256;
-use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle},
+};
 use tokio::sync::mpsc::Sender;
 
 use crate::{
@@ -70,38 +73,6 @@ impl Downloader {
 }
 
 #[derive(Clone)]
-pub enum DownloaderCallRequest {
-    // Snap sync calls
-    CurrentHead {
-        sync_head: H256,
-    },
-    Receipts {
-        block_hashes: Vec<H256>,
-    },
-    // Full sync calls
-    BlockBodies {
-        block_hashes: Vec<H256>,
-    },
-    TrieNodes {
-        root_hash: H256,
-        paths: Vec<Vec<Bytes>>,
-    },
-    BlockHeader {
-        block_number: u64,
-    },
-}
-
-#[derive(Clone)]
-pub enum DownloaderCallResponse {
-    NotFound,                            // Whatever we were looking for was not found
-    CurrentHead(u64),                    // The sync head block number
-    Receipts(Option<Vec<Vec<Receipt>>>), // Requested receipts to a given block hash
-    BlockBodies(Vec<BlockBody>),         // Requested block bodies to given block hashes
-    TrieNodes(Vec<Node>),                // Requested trie nodes
-    BlockHeader(BlockHeader),            // Header of a specific block
-}
-
-#[derive(Clone)]
 pub enum DownloaderCastRequest {
     Headers {
         task_sender: Sender<(Vec<BlockHeader>, H256, u64, u64)>,
@@ -131,278 +102,35 @@ pub enum DownloaderCastRequest {
         chunk_account_hashes: Vec<H256>,
         chunk_storage_roots: Vec<H256>,
     },
+    CurrentHead {
+        response_channel: Sender<Option<u64>>,
+        sync_head: H256,
+    },
+    Receipts {
+        response_channel: Sender<Option<Vec<Vec<Receipt>>>>,
+        block_hashes: Vec<H256>,
+    },
+    // Full sync calls
+    BlockBodies {
+        response_channel: Sender<Option<Vec<BlockBody>>>,
+        block_hashes: Vec<H256>,
+    },
+    TrieNodes {
+        response_channel: Sender<Option<Vec<Node>>>,
+        root_hash: H256,
+        paths: Vec<Vec<Bytes>>,
+    },
+    BlockHeader {
+        response_channel: Sender<Option<BlockHeader>>,
+        block_number: u64,
+    },
 }
 
 impl GenServer for Downloader {
     type Error = ();
-    type CallMsg = DownloaderCallRequest;
+    type CallMsg = Unused;
     type CastMsg = DownloaderCastRequest;
-    type OutMsg = DownloaderCallResponse;
-
-    async fn handle_call(
-        &mut self,
-        message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CallResponse<Self> {
-        match message {
-            DownloaderCallRequest::CurrentHead { sync_head } => {
-                let request_id = rand::random();
-                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                    id: request_id,
-                    startblock: HashOrNumber::Hash(sync_head),
-                    limit: 1,
-                    skip: 0,
-                    reverse: false,
-                });
-
-                if self
-                    .peer_channels
-                    .connection
-                    .cast(CastMessage::BackendMessage(request.clone()))
-                    .await
-                    .is_err()
-                {
-                    error!("Failed sending backend message to peer");
-                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
-                }
-
-                let peer_id = self.peer_id;
-                match tokio::time::timeout(CURRENT_HEAD_REPLY_TIMEOUT, async move {
-                    self.peer_channels.receiver.lock().await.recv().await
-                })
-                .await
-                {
-                    Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
-                        if id == request_id && !block_headers.is_empty() {
-                            if let Some(header) = block_headers.last() {
-                                let sync_head_number = header.number;
-                                debug!(
-                                    "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}",
-                                );
-                                return CallResponse::Stop(DownloaderCallResponse::CurrentHead(
-                                    sync_head_number,
-                                ));
-                            }
-                        } else {
-                            debug!("Received unexpected response from peer {peer_id}");
-                        }
-                    }
-                    Ok(None) => {
-                        debug!("Error receiving message from peer {peer_id}")
-                    }
-                    Ok(_other_msgs) => {
-                        debug!("Received unexpected message from peer {peer_id}")
-                    }
-                    Err(_err) => {
-                        debug!("Timeout while waiting for sync head from {peer_id}")
-                    }
-                }
-
-                CallResponse::Stop(DownloaderCallResponse::NotFound)
-            }
-            DownloaderCallRequest::Receipts { block_hashes } => {
-                let block_hashes_len = block_hashes.len();
-
-                let request_id = rand::random();
-                let request = RLPxMessage::GetReceipts(GetReceipts {
-                    id: request_id,
-                    block_hashes,
-                });
-
-                if let Err(err) = self
-                    .peer_channels
-                    .connection
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    debug!("Failed to send message to peer: {err:?}");
-                    return CallResponse::Stop(DownloaderCallResponse::Receipts(None));
-                }
-
-                let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Some(receipts) = tokio::time::timeout(RECEIPTS_REPLY_TIMEOUT, async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::Receipts(receipts)) => {
-                                if receipts.get_id() == request_id {
-                                    return Some(receipts.get_receipts());
-                                }
-                                return None;
-                            }
-                            // Ignore replies that don't match the expected id (such as late responses)
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
-                .and_then(|receipts|
-                    // Check that the response is not empty and does not contain more bodies than the ones requested
-                    (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
-                {
-                    return CallResponse::Stop(DownloaderCallResponse::Receipts(
-                        Some(receipts),
-                    ));
-                }
-
-                CallResponse::Stop(DownloaderCallResponse::Receipts(None))
-            }
-            DownloaderCallRequest::BlockBodies { block_hashes } => {
-                let request_id = rand::random();
-                let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
-                    id: request_id,
-                    block_hashes: block_hashes.clone(),
-                });
-                let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Err(err) = self
-                    .peer_channels
-                    .connection
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    debug!("Failed to send message to peer: {err:?}");
-                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
-                }
-
-                if let Some(block_bodies) =
-                    tokio::time::timeout(BLOCK_BODIES_REPLY_TIMEOUT, async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::BlockBodies(BlockBodies {
-                                    id,
-                                    block_bodies,
-                                })) if id == request_id => {
-                                    return Some(block_bodies);
-                                }
-                                // Ignore replies that don't match the expected id (such as late responses)
-                                Some(_) => continue,
-                                None => return None,
-                            }
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|bodies| {
-                        // Check that the response is not empty and does not contain more bodies than the ones requested
-                        (!bodies.is_empty() && bodies.len() <= block_hashes.len()).then_some(bodies)
-                    })
-                {
-                    return CallResponse::Stop(DownloaderCallResponse::BlockBodies(block_bodies));
-                }
-
-                CallResponse::Stop(DownloaderCallResponse::NotFound)
-            }
-            DownloaderCallRequest::TrieNodes { root_hash, paths } => {
-                let request_id = rand::random();
-                let expected_nodes = paths.len();
-                let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
-                    id: request_id,
-                    root_hash,
-                    // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
-                    paths,
-                    bytes: MAX_RESPONSE_BYTES,
-                });
-                let mut receiver = self.peer_channels.receiver.lock().await;
-                if let Err(err) = self
-                    .peer_channels
-                    .connection
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
-                    debug!("Failed to send message to peer: {err:?}");
-                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
-                }
-                if let Some(nodes) = tokio::time::timeout(TRIE_NODE_REPLY_TIMEOUT, async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                                if id == request_id =>
-                            {
-                                return Some(nodes);
-                            }
-                            // Ignore replies that don't match the expected id (such as late responses)
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
-                .and_then(|nodes| {
-                    (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                        .then(|| {
-                            nodes
-                                .iter()
-                                .map(|node| Node::decode_raw(node))
-                                .collect::<Result<Vec<_>, _>>()
-                                .ok()
-                        })
-                        .flatten()
-                }) {
-                    return CallResponse::Stop(DownloaderCallResponse::TrieNodes(nodes));
-                }
-                CallResponse::Stop(DownloaderCallResponse::NotFound)
-            }
-            DownloaderCallRequest::BlockHeader { block_number } => {
-                let request_id = rand::random();
-                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                    id: request_id,
-                    startblock: HashOrNumber::Number(block_number),
-                    limit: 1,
-                    skip: 0,
-                    reverse: false,
-                });
-                debug!("get_block_header: requesting header with number {block_number}");
-
-                let mut receiver = self.peer_channels.receiver.lock().await;
-                if self
-                    .peer_channels
-                    .connection
-                    .cast(CastMessage::BackendMessage(request.clone()))
-                    .await
-                    .is_err()
-                {
-                    debug!("Failed sending cast request to peer channel");
-                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
-                }
-
-                let response = tokio::time::timeout(BLOCK_HEADERS_REPLY_TIMEOUT, async move {
-                    receiver.recv().await
-                })
-                .await;
-
-                // TODO: we need to check, this seems a scenario where the peer channel does teardown
-                // after we sent the backend message
-                let Some(Ok(response)) = response
-                    .inspect_err(|_err| debug!("Timeout while waiting for sync head from peer"))
-                    .transpose()
-                else {
-                    warn!("The RLPxConnection closed the backend channel");
-                    return CallResponse::Stop(DownloaderCallResponse::NotFound);
-                };
-
-                match response {
-                    RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
-                        if id == request_id && !block_headers.is_empty() {
-                            let block_header =
-                                block_headers.last().expect("vec can't be empty").clone();
-                            CallResponse::Stop(DownloaderCallResponse::BlockHeader(block_header))
-                        } else {
-                            CallResponse::Stop(DownloaderCallResponse::NotFound)
-                        }
-                    }
-                    _other_msgs => {
-                        debug!("Received unexpected message from peer");
-                        CallResponse::Stop(DownloaderCallResponse::NotFound)
-                    }
-                }
-            }
-        }
-    }
+    type OutMsg = Unused;
 
     async fn handle_cast(
         &mut self,
@@ -854,6 +582,315 @@ impl GenServer for Downloader {
                     .await;
 
                 CastResponse::Stop
+            }
+            DownloaderCastRequest::CurrentHead {
+                response_channel,
+                sync_head,
+            } => {
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Hash(sync_head),
+                    limit: 1,
+                    skip: 0,
+                    reverse: false,
+                });
+
+                if self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request.clone()))
+                    .await
+                    .is_err()
+                {
+                    error!("Failed sending backend message to peer");
+                    self.send_through_response_channel(response_channel, None)
+                        .await;
+                    return CastResponse::Stop;
+                }
+
+                let peer_id = self.peer_id;
+                let receiver = self.peer_channels.receiver.clone();
+                match tokio::time::timeout(CURRENT_HEAD_REPLY_TIMEOUT, async move {
+                    receiver.lock().await.recv().await
+                })
+                .await
+                {
+                    Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
+                        if id == request_id && !block_headers.is_empty() {
+                            if let Some(header) = block_headers.last() {
+                                let sync_head_number = header.number;
+                                debug!(
+                                    "Sync Log 12: Received sync head block headers from peer {peer_id}, sync head number {sync_head_number}",
+                                );
+                                self.send_through_response_channel(
+                                    response_channel,
+                                    Some(sync_head_number),
+                                )
+                                .await;
+                                return CastResponse::Stop;
+                            }
+                        } else {
+                            debug!("Received unexpected response from peer {peer_id}");
+                        }
+                    }
+                    Ok(None) => {
+                        debug!("Error receiving message from peer {peer_id}")
+                    }
+                    Ok(_other_msgs) => {
+                        debug!("Received unexpected message from peer {peer_id}")
+                    }
+                    Err(_err) => {
+                        debug!("Timeout while waiting for sync head from {peer_id}")
+                    }
+                }
+
+                self.send_through_response_channel(response_channel, None)
+                    .await;
+                return CastResponse::Stop;
+            }
+            DownloaderCastRequest::Receipts {
+                response_channel,
+                block_hashes,
+            } => {
+                let block_hashes_len = block_hashes.len();
+
+                let request_id = rand::random();
+                let request = RLPxMessage::GetReceipts(GetReceipts {
+                    id: request_id,
+                    block_hashes,
+                });
+
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    debug!("Failed to send message to peer: {err:?}");
+                    self.send_through_response_channel(response_channel, None)
+                        .await;
+                    return CastResponse::Stop;
+                }
+
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Some(receipts) = tokio::time::timeout(RECEIPTS_REPLY_TIMEOUT, async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::Receipts(receipts)) => {
+                                if receipts.get_id() == request_id {
+                                    return Some(receipts.get_receipts());
+                                }
+                                return None;
+                            }
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None,
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+                .and_then(|receipts|
+                    // Check that the response is not empty and does not contain more bodies than the ones requested
+                    (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
+                {
+                    self.send_through_response_channel(response_channel, Some(receipts)).await;
+                    return CastResponse::Stop;
+                }
+
+                self.send_through_response_channel(response_channel, None)
+                    .await;
+                CastResponse::Stop
+            }
+            DownloaderCastRequest::BlockBodies {
+                response_channel,
+                block_hashes,
+            } => {
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+                    id: request_id,
+                    block_hashes: block_hashes.clone(),
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    debug!("Failed to send message to peer: {err:?}");
+                    self.send_through_response_channel(response_channel, None)
+                        .await;
+                    return CastResponse::Stop;
+                }
+
+                if let Some(block_bodies) =
+                    tokio::time::timeout(BLOCK_BODIES_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::BlockBodies(BlockBodies {
+                                    id,
+                                    block_bodies,
+                                })) if id == request_id => {
+                                    return Some(block_bodies);
+                                }
+                                // Ignore replies that don't match the expected id (such as late responses)
+                                Some(_) => continue,
+                                None => return None,
+                            }
+                        }
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|bodies| {
+                        // Check that the response is not empty and does not contain more bodies than the ones requested
+                        (!bodies.is_empty() && bodies.len() <= block_hashes.len()).then_some(bodies)
+                    })
+                {
+                    self.send_through_response_channel(response_channel, Some(block_bodies))
+                        .await;
+                    return CastResponse::Stop;
+                }
+
+                self.send_through_response_channel(response_channel, None)
+                    .await;
+                return CastResponse::Stop;
+            }
+            DownloaderCastRequest::TrieNodes {
+                response_channel,
+                root_hash,
+                paths,
+            } => {
+                let request_id = rand::random();
+                let expected_nodes = paths.len();
+                let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
+                    id: request_id,
+                    root_hash,
+                    // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
+                    paths,
+                    bytes: MAX_RESPONSE_BYTES,
+                });
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if let Err(err) = self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    debug!("Failed to send message to peer: {err:?}");
+                    self.send_through_response_channel(response_channel, None)
+                        .await;
+                    return CastResponse::Stop;
+                }
+                if let Some(nodes) = tokio::time::timeout(TRIE_NODE_REPLY_TIMEOUT, async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
+                                if id == request_id =>
+                            {
+                                return Some(nodes);
+                            }
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None,
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+                .and_then(|nodes| {
+                    (!nodes.is_empty() && nodes.len() <= expected_nodes)
+                        .then(|| {
+                            nodes
+                                .iter()
+                                .map(|node| Node::decode_raw(node))
+                                .collect::<Result<Vec<_>, _>>()
+                                .ok()
+                        })
+                        .flatten()
+                }) {
+                    self.send_through_response_channel(response_channel, Some(nodes))
+                        .await;
+                    return CastResponse::Stop;
+                }
+
+                self.send_through_response_channel(response_channel, None)
+                    .await;
+                CastResponse::Stop
+            }
+            DownloaderCastRequest::BlockHeader {
+                response_channel,
+                block_number,
+            } => {
+                let request_id = rand::random();
+                let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                    id: request_id,
+                    startblock: HashOrNumber::Number(block_number),
+                    limit: 1,
+                    skip: 0,
+                    reverse: false,
+                });
+                debug!("get_block_header: requesting header with number {block_number}");
+
+                let mut receiver = self.peer_channels.receiver.lock().await;
+                if self
+                    .peer_channels
+                    .connection
+                    .cast(CastMessage::BackendMessage(request.clone()))
+                    .await
+                    .is_err()
+                {
+                    debug!("Failed sending cast request to peer channel");
+                    self.send_through_response_channel(response_channel, None)
+                        .await;
+                    return CastResponse::Stop;
+                }
+
+                let response = tokio::time::timeout(BLOCK_HEADERS_REPLY_TIMEOUT, async move {
+                    receiver.recv().await
+                })
+                .await;
+
+                // TODO: we need to check, this seems a scenario where the peer channel does teardown
+                // after we sent the backend message
+                let Some(Ok(response)) = response
+                    .inspect_err(|_err| debug!("Timeout while waiting for sync head from peer"))
+                    .transpose()
+                else {
+                    warn!("The RLPxConnection closed the backend channel");
+                    self.send_through_response_channel(response_channel, None)
+                        .await;
+                    return CastResponse::Stop;
+                };
+
+                match response {
+                    RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
+                        if id == request_id && !block_headers.is_empty() {
+                            let block_header =
+                                block_headers.last().expect("vec can't be empty").clone();
+                            self.send_through_response_channel(
+                                response_channel,
+                                Some(block_header),
+                            )
+                            .await;
+                            CastResponse::Stop
+                        } else {
+                            self.send_through_response_channel(response_channel, None)
+                                .await;
+                            CastResponse::Stop
+                        }
+                    }
+                    _other_msgs => {
+                        debug!("Received unexpected message from peer");
+                        self.send_through_response_channel(response_channel, None)
+                            .await;
+                        CastResponse::Stop
+                    }
+                }
             }
         }
     }

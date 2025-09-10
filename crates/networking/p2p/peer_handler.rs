@@ -22,9 +22,7 @@ use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
     metrics::METRICS,
     rlpx::{
-        downloader::{
-            Downloader, DownloaderCallRequest, DownloaderCallResponse, DownloaderCastRequest,
-        },
+        downloader::{Downloader, DownloaderCastRequest},
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
     },
@@ -106,18 +104,32 @@ async fn ask_peer_head_number(
     trace!("Sync Log 11: Requesting sync head block number from peer {peer_id}");
 
     let mut downloader = Downloader::new(peer_id, peer_channels).start();
+    let (response_channel, mut response_reader) = tokio::sync::mpsc::channel(1);
     match downloader
-        .call(DownloaderCallRequest::CurrentHead { sync_head })
+        .cast(DownloaderCastRequest::CurrentHead {
+            response_channel,
+            sync_head,
+        })
         .await
     {
-        Ok(DownloaderCallResponse::CurrentHead(number)) => {
-            if number != 0 {
-                Ok(number)
-            } else {
-                debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
+        Ok(()) => match response_reader.recv().await {
+            Some(Some(number)) => {
+                if number != 0 {
+                    Ok(number)
+                } else {
+                    debug!(
+                        "(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}"
+                    );
+                    Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
+                }
+            }
+            _ => {
+                debug!(
+                    "Sync Log 12: Failed to retrieve sync head block number from peer {peer_id}"
+                );
                 Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
             }
-        }
+        },
         _ => {
             debug!("Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}");
             Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
@@ -433,15 +445,28 @@ impl PeerHandler {
             .await?;
         let available_downloader = Downloader::new(peer_id, peer_channel.clone());
         let peer_id = available_downloader.peer_id();
+        let (response_channel, mut response_reader) = tokio::sync::mpsc::channel(1);
         match available_downloader
             .start()
-            .call(DownloaderCallRequest::BlockBodies { block_hashes })
+            .cast(DownloaderCastRequest::BlockBodies {
+                response_channel,
+                block_hashes,
+            })
             .await
         {
-            Ok(DownloaderCallResponse::BlockBodies(block_bodies)) => {
-                self.peer_scores.lock().await.record_success(peer_id);
-                Some((block_bodies, peer_id))
-            }
+            Ok(()) => match response_reader.recv().await {
+                Some(Some(block_bodies)) => {
+                    self.peer_scores.lock().await.record_success(peer_id);
+                    Some((block_bodies, peer_id))
+                }
+                _ => {
+                    warn!(
+                        "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
+                    );
+                    self.peer_scores.lock().await.record_failure(peer_id);
+                    return None;
+                }
+            },
             _ => {
                 warn!(
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
@@ -519,13 +544,17 @@ impl PeerHandler {
                 .await?;
             let available_downloader = Downloader::new(peer_id, peer_channel.clone());
 
-            if let Ok(DownloaderCallResponse::Receipts(Some(receipts))) = available_downloader
+            let (response_channel, mut response_reader) = tokio::sync::mpsc::channel(1);
+            available_downloader
                 .start()
-                .call(DownloaderCallRequest::Receipts {
+                .cast(DownloaderCastRequest::Receipts {
+                    response_channel,
                     block_hashes: block_hashes.clone(),
                 })
                 .await
-            {
+                .ok()?;
+
+            if let Some(Some(receipts)) = response_reader.recv().await {
                 return Some(receipts);
             }
         }
@@ -1322,27 +1351,33 @@ impl PeerHandler {
             .map(|vec| vec![Bytes::from(vec.path.encode_compact())])
             .collect();
         let available_downloader = Downloader::new(peer_id, peer_channel.clone());
+        let (response_channel, mut response_reader) = tokio::sync::mpsc::channel(1);
+
         match available_downloader
             .start()
-            .call(DownloaderCallRequest::TrieNodes {
+            .cast(DownloaderCastRequest::TrieNodes {
+                response_channel,
                 root_hash: state_root,
                 paths: paths_bytes,
             })
             .await
         {
-            Ok(DownloaderCallResponse::TrieNodes(nodes)) => {
-                for (index, node) in nodes.iter().enumerate() {
-                    if node.compute_hash().finalize() != paths[index].hash {
-                        error!(
-                            "A peer is sending wrong data for the state trie node {:?}",
-                            paths[index].path
-                        );
-                        return Err(RequestStateTrieNodesError::InvalidHash);
+            Ok(()) => match response_reader.recv().await {
+                Some(Some(nodes)) => {
+                    for (index, node) in nodes.iter().enumerate() {
+                        if node.compute_hash().finalize() != paths[index].hash {
+                            error!(
+                                "A peer is sending wrong data for the state trie node {:?}",
+                                paths[index].path
+                            );
+                            return Err(RequestStateTrieNodesError::InvalidHash);
+                        }
                     }
-                }
 
-                Ok(nodes)
-            }
+                    Ok(nodes)
+                }
+                _ => Err(RequestStateTrieNodesError::InvalidData),
+            },
             _ => Err(RequestStateTrieNodesError::InvalidData),
         }
     }
@@ -1361,15 +1396,20 @@ impl PeerHandler {
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
         let available_downloader = Downloader::new(peer_id, peer_channel.clone());
-        match available_downloader
+        let (response_channel, mut response_reader) = tokio::sync::mpsc::channel(1);
+        available_downloader
             .start()
-            .call(DownloaderCallRequest::TrieNodes {
+            .cast(DownloaderCastRequest::TrieNodes {
+                response_channel,
                 root_hash: get_trie_nodes.root_hash,
                 paths: get_trie_nodes.paths,
             })
             .await
-        {
-            Ok(DownloaderCallResponse::TrieNodes(nodes)) => {
+            .map_err(|_| {
+                RequestStorageTrieNodes::SendMessageError(id, SendMessageError::PeerDisconnected)
+            })?;
+        match response_reader.recv().await {
+            Some(Some(nodes)) => {
                 let nodes = nodes
                     .iter()
                     .map(|node| Bytes::from(node.encode_raw()))
@@ -1409,12 +1449,18 @@ impl PeerHandler {
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
         let available_downloader = Downloader::new(peer_id, peer_channel.clone());
-        match available_downloader
+        let (response_channel, mut response_reader) = tokio::sync::mpsc::channel(1);
+        available_downloader
             .start()
-            .call(DownloaderCallRequest::BlockHeader { block_number })
+            .cast(DownloaderCastRequest::BlockHeader {
+                response_channel,
+                block_number,
+            })
             .await
-        {
-            Ok(DownloaderCallResponse::BlockHeader(block_header)) => Ok(Some(block_header)),
+            .map_err(|_| PeerHandlerError::NoResponseFromPeer)?;
+
+        match response_reader.recv().await {
+            Some(Some(block_header)) => Ok(Some(block_header)),
             _ => Ok(None),
         }
     }
