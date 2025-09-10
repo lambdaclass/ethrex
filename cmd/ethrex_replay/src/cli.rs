@@ -491,17 +491,8 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     // let store = Store::new("testing", EngineType::InMemory).unwrap();
     let in_memory_store = InMemoryStore::new();
     {
+        // This will be just get_traversed_nodes(all_nodes, root_hash) and this calls inner and returns BTreeMap<NodeHash, NodeRLP>. I wonder if we can get the embedded root with this though...
         let mut inner_store = in_memory_store.inner().unwrap();
-
-        // Witness -> state_nodes: BTreeMap<H256, NodeRLP>,
-        // In Memory DB -> state_trie_nodes: Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>,
-        // I wonder if they are RLP encoded as well. I don't know :D
-
-        // let state_nodes: BTreeMap<NodeHash, NodeRLP> = witness
-        //     .state_nodes
-        //     .iter()
-        //     .map(|(hash, rlp)| (NodeHash::Hashed(*hash), rlp.clone()))
-        //     .collect();
 
         let root_hash = NodeHash::Hashed(guest_program.parent_block_header.state_root);
         let root_rlp = guest_program
@@ -554,13 +545,12 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         }
 
         let mut necessary_nodes = BTreeMap::new();
-        let root: NodeRef = inner(
+        inner(
             &guest_program.nodes_hashed,
             &root_hash,
             root_rlp,
             &mut necessary_nodes,
-        )?
-        .into();
+        )?;
 
         let in_memory_trie = Arc::new(Mutex::new(necessary_nodes));
 
@@ -598,32 +588,15 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
 
             let Some(storage_root_rlp) = guest_program.nodes_hashed.get(&storage_root.finalize())
             else {
-                // println!("Storage for this address is not important");
                 continue;
             };
 
-            // println!(
-            //     "Storage root: {:#x}. Root RLP: {}",
-            //     storage_root.finalize(),
-            //     hex::encode(storage_root_rlp)
-            // );
-
-            let root: NodeRef = inner(
+            inner(
                 &guest_program.nodes_hashed,
                 &storage_root,
                 storage_root_rlp,
                 &mut necessary_nodes_storage,
-            )?
-            .into();
-
-            // println!(
-            //     "Necessary nodes for this are {}",
-            //     necessary_nodes_storage.len()
-            // );
-            // for (a, b) in &necessary_nodes_storage {
-            //     let (hash, rlp) = (a.finalize(), hex::encode(b));
-            //     println!("Hash {:#x}, rlp {}", hash, rlp);
-            // }
+            )?;
 
             inner_store.storage_trie_nodes.insert(
                 hash_address_fixed(address),
@@ -639,8 +612,8 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     };
 
     // Adding initial state after having filled the previous state is dangerous, it should be done before
-    let genesis = network.get_genesis()?;
-    store.add_initial_state(genesis).await.unwrap();
+    let chain_config = network.get_genesis()?.config;
+    store.set_chain_config(&chain_config).await.unwrap();
 
     // Add codes to the db
     for (code_hash, code) in guest_program.codes_hashed.clone() {
