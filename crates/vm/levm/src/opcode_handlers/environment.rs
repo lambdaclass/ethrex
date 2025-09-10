@@ -29,7 +29,7 @@ impl<'a> VM<'a> {
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
 
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account_balance = self.db.get_account(address)?.info.balance;
 
         let current_call_frame = &mut self.current_call_frame;
@@ -278,7 +278,7 @@ impl<'a> VM<'a> {
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account_code_length = self.db.get_account_code(address)?.len().into();
 
         let current_call_frame = &mut self.current_call_frame;
@@ -300,7 +300,7 @@ impl<'a> VM<'a> {
         let offset = u256_to_usize(offset).unwrap_or(usize::MAX);
 
         let current_memory_size = call_frame.memory.len();
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         self.current_call_frame
@@ -409,7 +409,7 @@ impl<'a> VM<'a> {
     // EXTCODEHASH operation
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account = self.db.get_account(address)?;
         let account_is_empty = account.is_empty();
         let account_code_hash = account.info.code_hash.0;
