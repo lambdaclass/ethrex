@@ -104,21 +104,22 @@ fn build_openvm_program() {
     use openvm_build::GuestOptions;
     use openvm_sdk::Sdk;
 
-    let sdk = Sdk::standard();
+    // let sdk = Sdk::standard();
 
-    let guest_opts = GuestOptions::default();
-    let target_path = "./src/openvm/";
-    let _elf = sdk
-        .build(guest_opts, target_path, &None, None)
-        .expect("could not build OpenVM program");
+    // let guest_opts = GuestOptions::default();
+    // let target_path = "./src/openvm/";
+    // let elf = sdk
+    //     .build(guest_opts, target_path, &None, None)
+    //     .expect("could not build OpenVM program");
+    // TODO: how to serialize in bytes
+    // std::fs::write("./src/openvm/out/riscv32im-openvm-elf", elf).expect("failed to write OpenVM program")
 
-    let (_app_pk, app_vk) = sdk.app_keygen();
+    // let (_app_pk, app_vk) = sdk.app_keygen();
+    // let vk = bincode::serialize(&app_vk).expect("could not serialize OpenVM vk");
 
-    let vk = bincode::serialize(&app_vk).expect("could not serialize OpenVM vk");
-
-    std::fs::write(
-        "./src/openvm/out/riscv32im-openvm-vk",
-        format!("0x{}\n", hex::encode(vk)),
-    )
-    .expect("could not write OpenVM vk to file");
+    // std::fs::write(
+    //     "./src/openvm/out/riscv32im-openvm-vk",
+    //     format!("0x{}\n", hex::encode(vk)),
+    // )
+    // .expect("could not write OpenVM vk to file");
 }

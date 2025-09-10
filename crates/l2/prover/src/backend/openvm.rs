@@ -3,7 +3,7 @@ use openvm_sdk::{Sdk, StdIn};
 
 pub struct ProgramOutput(pub [u8; 32]);
 
-static PROGRAM_ELF: &[u8] = include_bytes!("../guest_program/src/openvm/out/riscv32im-openvm-elf");
+static PROGRAM_ELF: &[u8] = include_bytes!("../guest_program/src/openvm/target/riscv32im-risc0-zkvm-elf/release/zkvm-openvm-program");
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let sdk = Sdk::standard();
