@@ -183,9 +183,7 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-        nodes_hashed,
-        codes_hashed,
-        parent_block_header,
+        initial_computed_state,
     } = match pre_execution_state {
         PreExecutionState::Witness(db) => {
             execute_stateless_with_witness(blocks, *db, elasticity_multiplier)?
@@ -211,19 +209,17 @@ pub fn stateless_validation_l2(
     let blob_versioned_hash = if !validium {
         match initial_db {
             PreExecutionState::Witness(initial_db) => {
-                let (Some(nodes_hashed), Some(codes_hashed), Some(parent_block_header)) =
-                    (nodes_hashed, codes_hashed, parent_block_header)
-                else {
+                let Some(initial_computed_state) = initial_computed_state else {
                     return Err(StatelessExecutionError::Unreachable(
                         "Missing cached state from witness execution".to_string(),
                     ));
                 };
                 let mut guest_program_state = GuestProgramState {
-                    codes_hashed,
-                    parent_block_header,
+                    codes_hashed: initial_computed_state.codes_hashed,
+                    parent_block_header: initial_computed_state.parent_block_header,
                     first_block_number: initial_db.first_block_number,
                     chain_config: initial_db.chain_config,
-                    nodes_hashed,
+                    nodes_hashed: initial_computed_state.nodes_hashed,
                     state_trie: None,
                     // The following fields are not needed for blob validation.
                     storage_tries: BTreeMap::new(),
@@ -283,15 +279,23 @@ struct StatelessResult {
     last_block_hash: H256,
     non_privileged_count: U256,
 
-    // These fields are only used in L2 to validate state diff blobs.
-    // We return them to avoid recomputing when comparing the initial state
-    // with the final state after block execution.
+    // Cached initial state used for blob validation in L2
     #[cfg(feature = "l2")]
-    nodes_hashed: Option<BTreeMap<H256, Vec<u8>>>,
-    #[cfg(feature = "l2")]
-    codes_hashed: Option<BTreeMap<H256, Vec<u8>>>,
-    #[cfg(feature = "l2")]
-    parent_block_header: Option<BlockHeader>,
+    initial_computed_state: Option<InitialComputedState>,
+}
+
+// These fields are only used in L2 to validate state diff blobs.
+// We return them to avoid recomputing when comparing the initial state
+// with the final state after block execution.
+#[cfg(feature = "l2")]
+#[derive(Clone, Debug, Default)]
+pub struct InitialComputedState {
+    /// Map of state node hashes to their RLP encoded data
+    pub nodes_hashed: BTreeMap<H256, Vec<u8>>,
+    /// Map of code hashes to their bytecode
+    pub codes_hashed: BTreeMap<H256, Vec<u8>>,
+    /// The parent block header of the first block in the batch
+    pub parent_block_header: BlockHeader,
 }
 
 fn execute_stateless_with_witness(
@@ -427,11 +431,11 @@ fn execute_stateless_with_witness(
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
         #[cfg(feature = "l2")]
-        nodes_hashed: Some(nodes_hashed),
-        #[cfg(feature = "l2")]
-        codes_hashed: Some(codes_hashed),
-        #[cfg(feature = "l2")]
-        parent_block_header: Some(parent_block_header_clone),
+        initial_computed_state: Some(InitialComputedState {
+            nodes_hashed,
+            codes_hashed,
+            parent_block_header: parent_block_header_clone,
+        }),
     })
 }
 
@@ -552,11 +556,7 @@ fn execute_stateless_with_prover_db(
 
         // This fields are only used for the witness.
         #[cfg(feature = "l2")]
-        nodes_hashed: None,
-        #[cfg(feature = "l2")]
-        codes_hashed: None,
-        #[cfg(feature = "l2")]
-        parent_block_header: None,
+        initial_computed_state: None,
     })
 }
 
