@@ -440,15 +440,25 @@ where
 
     spawn_listener(
         handle.clone(),
-        |msg: Message| CastMessage::PeerMessage(msg),
-        stream,
+        stream.filter_map(|result| match result {
+            Ok(msg) => Some(CastMessage::PeerMessage(msg)),
+            Err(e) => {
+                debug!(error=?e, "Error receiving RLPx message");
+                // Skipping invalid data
+                None
+            }
+        }),
     );
 
     if state.negotiated_eth_capability.is_some() {
-        let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
-        let message_builder =
-            |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
-        spawn_listener(handle.clone(), message_builder, stream);
+        let stream: BroadcastStream<(Id, Arc<Message>)> =
+            BroadcastStream::new(state.connection_broadcast_send.subscribe());
+        let message_stream = stream.filter_map(|result| {
+            result
+                .ok()
+                .map(|(id, msg)| CastMessage::BroadcastMessage(id, msg))
+        });
+        spawn_listener(handle.clone(), message_stream);
     }
 
     Ok(())
