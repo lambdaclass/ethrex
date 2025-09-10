@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757538102840,
+  "lastUpdate": 1757539095685,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13555,6 +13555,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170962901044,
             "range": "± 988758604",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4166ab85f33b388f1b1aa91350a3b8531baec2e6",
+          "message": "chore(l1): increase ulimit on sync-server makefile target (#4430)\n\n**Motivation**\n\n\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-10T20:18:31Z",
+          "tree_id": "36ba9f91cd7568eed083280de7e004ada023c0af",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4166ab85f33b388f1b1aa91350a3b8531baec2e6"
+        },
+        "date": 1757539076160,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 171250928641,
+            "range": "± 589153864",
             "unit": "ns/iter"
           }
         ]
