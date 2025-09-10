@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757493278702,
+  "lastUpdate": 1757502541187,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -27674,6 +27674,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0010714285714285715,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8b2f2f3dc10fb956959eb1acaef5e3621681d98b",
+          "message": "feat(l1): add `--checkpoint` flag to `archive_sync` tool (#4231)\n\n**Motivation**\nCurrenlty, we have no way of resuming an archive sync if it crashes/ we\nneed to stop it. Our only option is to begin from the start, which can\nmake us lose precious time in the case of unexpected crashes during long\narchive syncs.\nThis PR proposes adding a `--checkpoint` flag which will periodically\nwrite the current archive sync's checkpoint data (current root, last\nhash, current file, etc) to a file. And which can later be used to\nresume archive sync from that same checkpoint\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: cdiielsi <49721261+cdiielsi@users.noreply.github.com>",
+          "timestamp": "2025-09-09T15:30:59Z",
+          "tree_id": "6b2ad54cb64d76476c98bcc001a262b52b2b78ba",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8b2f2f3dc10fb956959eb1acaef5e3621681d98b"
+        },
+        "date": 1757502540103,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0011170212765957447,
             "unit": "Mgas/s"
           }
         ]
