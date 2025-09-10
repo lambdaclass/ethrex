@@ -440,15 +440,25 @@ where
 
     spawn_listener(
         handle.clone(),
-        |msg: Message| CastMessage::PeerMessage(msg),
-        stream,
+        stream.filter_map(|result| match result {
+            Ok(msg) => Some(CastMessage::PeerMessage(msg)),
+            Err(e) => {
+                debug!(error=?e, "Error receiving RLPx message");
+                // Skipping invalid data
+                None
+            }
+        }),
     );
 
     if state.negotiated_eth_capability.is_some() {
-        let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
-        let message_builder =
-            |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
-        spawn_listener(handle.clone(), message_builder, stream);
+        let stream: BroadcastStream<(Id, Arc<Message>)> =
+            BroadcastStream::new(state.connection_broadcast_send.subscribe());
+        let message_stream = stream.filter_map(|result| {
+            result
+                .ok()
+                .map(|(id, msg)| CastMessage::BroadcastMessage(id, msg))
+        });
+        spawn_listener(handle.clone(), message_stream);
     }
 
     Ok(())
@@ -742,7 +752,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             };
         }
         Message::GetAccountRange(req) => {
-            let response = process_account_range_request(req, state.storage.clone())?;
+            let response = process_account_range_request(req, state.storage.clone()).await?;
             send(state, Message::AccountRange(response)).await?
         }
         Message::Transactions(txs) if peer_supports_eth => {
@@ -827,7 +837,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             }
         }
         Message::GetStorageRanges(req) => {
-            let response = process_storage_ranges_request(req, state.storage.clone())?;
+            let response = process_storage_ranges_request(req, state.storage.clone()).await?;
             send(state, Message::StorageRanges(response)).await?
         }
         Message::GetByteCodes(req) => {
@@ -835,7 +845,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
-            let response = process_trie_nodes_request(req, state.storage.clone())?;
+            let response = process_trie_nodes_request(req, state.storage.clone()).await?;
             send(state, Message::TrieNodes(response)).await?
         }
         Message::L2(req) if peer_supports_l2 => {
