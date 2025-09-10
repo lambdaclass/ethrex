@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757502541187,
+  "lastUpdate": 1757505901002,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -27703,6 +27703,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0011170212765957447,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "leanrafa@gmail.com",
+            "name": "Leandro Ferrigno",
+            "username": "lferrigno"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "085f6831d9c74da1219f7cf72ff8ba192dc533c8",
+          "message": "docs(l1,l2,levm): add contributing docs (#4387)\n\n**Motivation**\n\nImprove contributor onboarding and project maintainability by providing\nclear, up-to-date guidelines for contributing\n\n**Description**\n\nAdded a new file CONTRIBUTING.md with different sections\n\nUpdated main README to easly find contribution outlines",
+          "timestamp": "2025-09-09T17:36:07Z",
+          "tree_id": "4c7881aea5bf94ccecaa48ab4b2372c0836aff45",
+          "url": "https://github.com/lambdaclass/ethrex/commit/085f6831d9c74da1219f7cf72ff8ba192dc533c8"
+        },
+        "date": 1757505900231,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0010714285714285715,
             "unit": "Mgas/s"
           }
         ]
