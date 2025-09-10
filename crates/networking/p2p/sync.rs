@@ -1189,7 +1189,7 @@ pub async fn update_pivot(
             .await
             .update_peers(&peers.peer_table)
             .await;
-        let (peer_id, mut peer_channel) = peers
+        let (peer_id, peer_channel) = peers
             .peer_scores
             .lock()
             .await
@@ -1202,7 +1202,7 @@ pub async fn update_pivot(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
         let Some(pivot) = peers
-            .get_block_header(peer_id, &mut peer_channel, new_pivot_block_number)
+            .get_block_header(peer_id, peer_channel, new_pivot_block_number)
             .await
             .map_err(SyncError::PeerHandler)?
         else {

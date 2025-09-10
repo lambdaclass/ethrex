@@ -1310,7 +1310,7 @@ impl PeerHandler {
 
     pub async fn request_state_trienodes(
         peer_id: H256,
-        peer_channel: &mut PeerChannels,
+        peer_channel: PeerChannels,
         state_root: H256,
         paths: Vec<RequestMetadata>,
     ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
@@ -1354,7 +1354,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_trienodes(
         peer_id: H256,
-        peer_channel: &mut PeerChannels,
+        peer_channel: PeerChannels,
         get_trie_nodes: GetTrieNodes,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
@@ -1405,7 +1405,7 @@ impl PeerHandler {
     pub async fn get_block_header(
         &self,
         peer_id: H256,
-        peer_channel: &mut PeerChannels,
+        peer_channel: PeerChannels,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
         let available_downloader = Downloader::new(peer_id, peer_channel.clone());

@@ -31,7 +31,8 @@ use crate::{
 
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 
-pub const RECEIPTS_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub const RECEIPTS_REPLY_TIMEOUT: Duration = Duration::from_secs(7);
+pub const TRIE_NODE_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const BLOCK_BODIES_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 pub const BLOCK_HEADERS_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const BYTECODE_REPLY_TIMEOUT: Duration = Duration::from_secs(4);
@@ -314,7 +315,7 @@ impl GenServer for Downloader {
                     debug!("Failed to send message to peer: {err:?}");
                     return CallResponse::Stop(DownloaderCallResponse::NotFound);
                 }
-                if let Some(nodes) = tokio::time::timeout(RECEIPTS_REPLY_TIMEOUT, async move {
+                if let Some(nodes) = tokio::time::timeout(TRIE_NODE_REPLY_TIMEOUT, async move {
                     loop {
                         match receiver.recv().await {
                             Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
@@ -852,7 +853,7 @@ impl GenServer for Downloader {
                 self.send_through_response_channel(task_sender, task_result)
                     .await;
 
-                CastResponse::NoReply
+                CastResponse::Stop
             }
         }
     }
