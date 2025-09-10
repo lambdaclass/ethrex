@@ -21,7 +21,7 @@ pub enum Signer {
     Remote(RemoteSigner),
 }
 
-#[derive(Clone, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq, Default)]
 pub struct SignerHealth {
     signer: String,
     address: Address,
@@ -53,9 +53,7 @@ impl Signer {
             Signer::Local(local) => SignerHealth {
                 address: local.address,
                 signer: "local".to_string(),
-                public_key: None,
-                url: None,
-                remote_signer_healthcheck: None,
+                ..Default::default()
             },
             Signer::Remote(remote) => SignerHealth {
                 address: remote.address,
