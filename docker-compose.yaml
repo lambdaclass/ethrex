@@ -37,8 +37,6 @@ services:
     volumes:
       - secrets:/secrets
       - ethrex:/data
-    environment:
-      - RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,ethrex_p2p::discv4=off,spawned_concurrency::tasks::gen_server=off,ethrex_p2p::peer_handler=debug
     command: >
       --http.addr 0.0.0.0
       --network ${ETHREX_NETWORK:-mainnet}
