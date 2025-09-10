@@ -151,7 +151,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     /// Thread-safe
     test_aliasing(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
-    /// Not thread-safe (fee vault checks).
+    /// Not thread-safe (uses test_deploy).
     test_erc20_roundtrip(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
     /// Thread-safe
@@ -402,7 +402,15 @@ async fn find_withdrawal_with_widget(
         .cloned()
 }
 
-/// Not thread-safe (fee vault checks).
+/// Tests the full roundtrip of an ERC20 token from L1 to L2 and back
+/// 1. Deploys an ERC20 token on L1
+/// 2. Deploys an ERC20 token on L2 that points to the L1 token
+/// 3. Mints some tokens on L1
+/// 4. Deposits the tokens to L2
+/// 5. Withdraws the tokens back to L1
+/// 6. Checks that the balances are correct at each step
+/// 7. Checks that the withdrawal is correctly recorded in the L2ToL1MessagesTable widget
+/// Not thread-safe (uses test_deploy).
 async fn test_erc20_roundtrip(
     l1_client: &EthClient,
     l2_client: &EthClient,
