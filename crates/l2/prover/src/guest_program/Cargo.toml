@@ -28,7 +28,7 @@ openvm-build = { git = "https://github.com/openvm-org/openvm.git", package = "op
 openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk", features = [
     "evm-prove",
     "parallel",
-    "tco",
+    "jemalloc",
 ] }
 bincode = "1.3"
 serde.workspace = true
