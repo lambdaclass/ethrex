@@ -13,7 +13,6 @@ use ethrex_common::{
 };
 use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use k256::elliptic_curve::Field;
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     elliptic_curve::{
@@ -332,8 +331,9 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     // k256 enforces canonical low-S for recovery.
     // If S is high, normalize s := n - s and flip the recovery parity bit.
-    if let Some(low_s) = sig.normalize_s() {
-        sig = low_s;
+    let normalized_sig = sig.normalize_s();
+    if sig != normalized_sig {
+        sig = normalized_sig;
         recid_byte ^= 1;
     }
 
@@ -344,7 +344,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     };
 
     // Recover the verifying key from the prehash (32-byte digest).
-    let vk = match VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) {
+    let vk = match VerifyingKey::recover_from_prehash_noverify(raw_hash, &sig, recid) {
         Ok(k) => k,
         Err(_) => return Ok(Bytes::new()),
     };
@@ -1147,7 +1147,7 @@ pub fn bls12_g1msm(
         let point = parse_g1_point(&calldata[point_offset..scalar_offset], false)?;
         let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
 
-        if !bool::from(scalar.is_zero()) {
+        if scalar != Scalar::zero() {
             let scaled_point: G1Projective = point * scalar;
             result += scaled_point;
         }
