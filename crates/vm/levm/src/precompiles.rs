@@ -8,8 +8,7 @@ use bls12_381::{
 use bytes::{Buf, Bytes};
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
-    utils::u256_from_big_endian,
+    Address, H160, H256, U256, serde_utils::bool, types::Fork, utils::u256_from_big_endian,
 };
 use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
@@ -957,6 +956,18 @@ fn point_evaluation(
     if kzg_commitment_to_versioned_hash(&commitment) != H256::from(versioned_hash) {
         return Err(PrecompileError::ParsingInputError.into());
     }
+
+    // Different implementations exist for different targets:
+    // - Host (any)
+    // - SP1 Guest (kzg-rs)
+    // - Risc0 Guest (c-kzg patched)
+    // - OpenVM Guest (openvm-kzg)
+    #[cfg(feature = "c-kzg")]
+    use ethrex_common::kzg::verify_kzg_proof_c_kzg as verify_kzg_proof;
+    #[cfg(feature = "kzg-rs")]
+    use ethrex_common::kzg::verify_kzg_proof_kzg_rs as verify_kzg_proof;
+    #[cfg(feature = "openvm-kzg")]
+    use ethrex_common::kzg::verify_kzg_proof_openvm_kzg as verify_kzg_proof;
 
     // This verifies the proof from a point (x, y) and a commitment
     if !verify_kzg_proof(commitment, x, y, proof).unwrap_or(false) {

@@ -39,6 +39,8 @@ sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
 openvm = []
 l2 = []
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
+kzg-rs = ["ethrex-vm/kzg-rs", "ethrex-common/kzg-rs"]
+openvm-kzg = ["ethrex-vm/openvm-kzg", "ethrex-common/openvm-kzg"]
 
 [lib]
 path = "./src/lib.rs"

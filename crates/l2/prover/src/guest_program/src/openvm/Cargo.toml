@@ -15,11 +15,7 @@ openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v1
 openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.0" }
 rkyv = "0.8.10"
 
-guest_program = { path = "../.." }
-
-[patch.crates-io]
-secp256k1 = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.0", package = "k256" }
-#secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
+guest_program = { path = "../..", features = ["openvm-kzg"]}
 
 [features]
 l2 = ["guest_program/l2"]
