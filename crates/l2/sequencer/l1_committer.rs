@@ -117,6 +117,7 @@ pub struct L1CommitterHealth {
     last_committed_batch: u64,
     signer_status: SignerHealth,
     running: bool,
+    on_chain_proposer_address: String,
 }
 
 impl L1Committer {
@@ -675,6 +676,7 @@ impl L1Committer {
             last_committed_batch: self.last_committed_batch,
             signer_status,
             running: self.cancellation_token.is_some(),
+            on_chain_proposer_address: hex::encode(self.on_chain_proposer_address),
         })))
     }
 }
