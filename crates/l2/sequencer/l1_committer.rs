@@ -25,7 +25,7 @@ use ethrex_l2_common::{
     },
     state_diff::{StateDiff, prepare_state_diff},
 };
-use ethrex_l2_rpc::signer::Signer;
+use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, get_last_committed_batch,
     send_tx_bump_gas_exponential_backoff,
@@ -40,7 +40,11 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use std::{collections::HashMap, sync::Arc};
+use serde::Serialize;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -60,6 +64,7 @@ pub enum CallMessage {
     Stop,
     /// time to wait in ms before sending commit
     Start(u64),
+    Health,
 }
 
 #[derive(Clone)]
@@ -68,12 +73,13 @@ pub enum InMessage {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum OutMessage {
     Done,
     Error(String),
     Stopped,
     Started,
+    Health(Box<L1CommitterHealth>),
 }
 
 pub struct L1Committer {
@@ -96,6 +102,21 @@ pub struct L1Committer {
     last_committed_batch: u64,
     /// Cancellation token for the next inbound InMessage::Commit
     cancellation_token: Option<CancellationToken>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct L1CommitterHealth {
+    rpc_urls: BTreeMap<String, serde_json::Value>,
+    commit_time_ms: u64,
+    arbitrary_base_blob_gas_price: u64,
+    validium: bool,
+    based: bool,
+    sequencer_state: String,
+    committer_wake_up_ms: u64,
+    last_committed_batch_timestamp: u128,
+    last_committed_batch: u64,
+    signer_status: SignerHealth,
+    running: bool,
 }
 
 impl L1Committer {
@@ -610,7 +631,7 @@ impl L1Committer {
         Ok(commit_tx_hash)
     }
 
-    async fn stop_sequencer(&mut self) -> CallResponse<Self> {
+    fn stop_sequencer(&mut self) -> CallResponse<Self> {
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
             info!("L1 committer stopped");
@@ -621,11 +642,7 @@ impl L1Committer {
         }
     }
 
-    async fn start_sequencer(
-        &mut self,
-        handle: GenServerHandle<Self>,
-        delay: u64,
-    ) -> CallResponse<Self> {
+    fn start_sequencer(&mut self, handle: GenServerHandle<Self>, delay: u64) -> CallResponse<Self> {
         if self.cancellation_token.is_none() {
             self.schedule_commit(delay, handle);
             info!("L1 committer restarted next commit will be sent in {delay}ms");
@@ -640,6 +657,25 @@ impl L1Committer {
         let check_interval = random_duration(delay);
         let handle = send_after(check_interval, handle, InMessage::Commit);
         self.cancellation_token = Some(handle.cancellation_token);
+    }
+
+    async fn health(&mut self) -> CallResponse<Self> {
+        let rpc_urls = self.eth_client.test_urls().await;
+        let signer_status = self.signer.health().await;
+
+        CallResponse::Reply(OutMessage::Health(Box::new(L1CommitterHealth {
+            rpc_urls,
+            commit_time_ms: self.commit_time_ms,
+            arbitrary_base_blob_gas_price: self.arbitrary_base_blob_gas_price,
+            validium: self.validium,
+            based: self.based,
+            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            committer_wake_up_ms: self.committer_wake_up_ms,
+            last_committed_batch_timestamp: self.last_committed_batch_timestamp,
+            last_committed_batch: self.last_committed_batch,
+            signer_status,
+            running: self.cancellation_token.is_some(),
+        })))
     }
 }
 
@@ -700,8 +736,9 @@ impl GenServer for L1Committer {
         handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
         match message {
-            CallMessage::Stop => self.stop_sequencer().await,
-            CallMessage::Start(delay) => self.start_sequencer(handle.clone(), delay).await,
+            CallMessage::Stop => self.stop_sequencer(),
+            CallMessage::Start(delay) => self.start_sequencer(handle.clone(), delay),
+            CallMessage::Health => self.health().await,
         }
     }
 }
