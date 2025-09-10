@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757520719472,
+  "lastUpdate": 1757524054511,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13435,6 +13435,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170324943329,
             "range": "± 415562097",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6637776a15427389236d7af14c07703c6ba7ebe",
+          "message": "chore(l2): add scope for `ethrex-replay` (#4416)\n\n**Motivation**\n\n`ethrex-replay` has become big enough to have its own scope for PRs,\nseparate from the current ones (`l1`, `l2`, and `levm`).",
+          "timestamp": "2025-09-10T16:13:54Z",
+          "tree_id": "282d3de7cb12d486470209564880d40c8728a904",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b6637776a15427389236d7af14c07703c6ba7ebe"
+        },
+        "date": 1757524036071,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165732431186,
+            "range": "± 695319628",
             "unit": "ns/iter"
           }
         ]
