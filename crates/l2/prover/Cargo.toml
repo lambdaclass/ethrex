@@ -45,8 +45,6 @@ sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk", optional = true, features = [
     "evm-prove",
     "parallel",
-    "jemalloc",
-    "nightly-features"
 ] }
 
 [dev-dependencies]
