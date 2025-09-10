@@ -626,7 +626,7 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
             }
 
             inner_store.storage_trie_nodes.insert(
-                storage_root.finalize(),
+                hash_address_fixed(address),
                 Arc::new(Mutex::new(necessary_nodes_storage)),
             );
         }
@@ -639,8 +639,8 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     };
 
     // Adding initial state after having filled the previous state is dangerous, it should be done before
-    let genesis = network.get_genesis()?;
-    store.add_initial_state(genesis).await.unwrap();
+    // let genesis = network.get_genesis()?;
+    // store.add_initial_state(genesis).await.unwrap();
 
     // Add codes to the db
     for (code_hash, code) in guest_program.codes_hashed.clone() {
@@ -658,14 +658,22 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     let blockchain = Blockchain::default_with_store(store);
 
     //TODO: remove this, it is for testing particular stuff.
-    let address = Address::from_str("79c0bb4ee51d7557e012f2f52db4a4ff85ca3196")
-        .expect("Failed to get address from string");
     let block_hash =
-        H256::from_str("0x77ababe3f02226a1ed951ffff4c14a35683a56a9e8389e1439824d840e1bd820")
+        H256::from_str("0x2121cb76560598fd62e2db157b9e3d897459619df43031e807ef0c7fb9bc0d1a")
             .unwrap();
-    blockchain
+    // blockchain
+    //     .storage
+    //     .get_account_info_by_hash(block_hash, address)
+    //     .unwrap();
+    let address = Address::from_str("000f3df6d732807ef1319fb7b8bb8522d0beac02")
+        .expect("Failed to parse address");
+    let storage_key =
+        H256::from_str("0x0000000000000000000000000000000000000000000000000000000000001c97")
+            .expect("Failed to parse storage key");
+
+    let s = blockchain
         .storage
-        .get_account_info_by_hash(block_hash, address)
+        .get_storage_at_hash(block_hash, address, storage_key)
         .unwrap();
 
     // blockchain.add_block(&block).await.unwrap();

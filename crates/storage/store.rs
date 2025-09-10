@@ -717,7 +717,7 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        println!("Inside storage at hash");
+        println!("Inside storage at hash. block hash {:#x}", block_hash);
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             println!("There was no storage trie");
             return Ok(None);

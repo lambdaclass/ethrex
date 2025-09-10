@@ -411,6 +411,12 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
         let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
+        println!(
+            "Trie nodes len inside storage trie opened: {} for hashed address {:#x} and storage root {:#x}",
+            trie_backend.lock().unwrap().len(),
+            hashed_address,
+            storage_root
+        );
         let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
         Ok(Trie::open(db, storage_root))
     }
