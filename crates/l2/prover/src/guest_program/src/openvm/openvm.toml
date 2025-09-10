@@ -1,10 +1,12 @@
 [app_vm_config.rv32i]
 [app_vm_config.rv32m]
+range_tuple_checker_sizes = [256, 8192]
 [app_vm_config.io]
 
 [app_vm_config.keccak]
 [app_vm_config.sha256]
 [app_vm_config.bigint]
+range_tuple_checker_sizes = [256, 8192]
 
 [app_vm_config.modular]
 supported_moduli = [
