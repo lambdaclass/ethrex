@@ -38,8 +38,8 @@ impl TrieIterator {
         // right children of traversed branches.
         fn first_ge(
             db: &dyn TrieDB,
-            stacked_nibbles: Nibbles,
-            mut nibbles: Nibbles,
+            prefix_nibbles: Nibbles,
+            mut target_nibbles: Nibbles,
             node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
@@ -47,15 +47,15 @@ impl TrieIterator {
             match &next_node {
                 Node::Branch(branch_node) => {
                     // Add all children to the stack (in reverse order so we process first child frist)
-                    let choice = nibbles.next_choice().expect("not empty");
+                    let choice = target_nibbles.next_choice().expect("not empty");
                     let child = &branch_node.choices[choice];
                     // If a prefix of `key` exists under this branch, we recur to the child node, skipping
                     // the branch itself to avoid iterating lesser keys.
                     if child.is_valid() {
                         first_ge(
                             db,
-                            stacked_nibbles.append_new(choice as u8),
-                            nibbles,
+                            prefix_nibbles.append_new(choice as u8),
+                            target_nibbles,
                             child.clone(),
                             new_stack,
                         )?;
@@ -64,7 +64,7 @@ impl TrieIterator {
                     for i in choice + 1..16 {
                         let child = &branch_node.choices[i];
                         if child.is_valid() {
-                            new_stack.push((stacked_nibbles.append_new(i as u8), child.clone()));
+                            new_stack.push((prefix_nibbles.append_new(i as u8), child.clone()));
                         }
                     }
                     Ok(())
@@ -72,11 +72,11 @@ impl TrieIterator {
                 Node::Extension(extension_node) => {
                     // Update path
                     let prefix = &extension_node.prefix;
-                    match nibbles.compare_prefix(prefix) {
+                    match target_nibbles.compare_prefix(prefix) {
                         Ordering::Greater => Ok(()), // Path is lesser than `key`
                         Ordering::Less => {
                             // Path is greater than `key`, we need to iterate its child
-                            let mut new_stacked = stacked_nibbles.clone();
+                            let mut new_stacked = prefix_nibbles.clone();
                             new_stacked.extend(&extension_node.prefix);
                             new_stack.push((new_stacked, extension_node.child.clone()));
                             Ok(())
@@ -84,13 +84,13 @@ impl TrieIterator {
                         Ordering::Equal => {
                             // This is a prefix of `key`, we'll need to check the child,
                             // but not iterate the node itself again.
-                            nibbles = nibbles.offset(prefix.len());
-                            let mut new_stacked = stacked_nibbles.clone();
+                            target_nibbles = target_nibbles.offset(prefix.len());
+                            let mut new_stacked = prefix_nibbles.clone();
                             new_stacked.extend(&extension_node.prefix);
                             first_ge(
                                 db,
                                 new_stacked,
-                                nibbles.clone(),
+                                target_nibbles.clone(),
                                 extension_node.child.clone(),
                                 new_stack,
                             )
@@ -99,12 +99,12 @@ impl TrieIterator {
                 }
                 Node::Leaf(leaf) => {
                     let prefix = &leaf.partial;
-                    match nibbles.compare_prefix(prefix) {
+                    match target_nibbles.compare_prefix(prefix) {
                         Ordering::Greater => Ok(()), // Leaf is less than `key`, ignore it
                         _ => {
                             // Leaf is greater than or equal to `key`, so it's in range for
                             // iteration.
-                            new_stack.push((stacked_nibbles.clone(), node.clone()));
+                            new_stack.push((prefix_nibbles.clone(), node.clone()));
                             Ok(())
                         }
                     }
@@ -113,11 +113,11 @@ impl TrieIterator {
         }
 
         // Fetch the last node in the stack
-        let nibbles = Nibbles::from_bytes(&key);
+        let target_nibbles = Nibbles::from_bytes(&key);
         first_ge(
             self.db.as_ref(),
             root_path,
-            nibbles,
+            target_nibbles,
             root_ref,
             &mut self.stack,
         )?;
