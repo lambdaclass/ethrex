@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757539095685,
+  "lastUpdate": 1757541263024,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13585,6 +13585,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171250928641,
             "range": "± 589153864",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "871873f211106dcfe435653ad47962053d3be2aa",
+          "message": "chore(l1,l2): use IPs instead of localhost as default RPC address (#4429)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nUsing \"localhost\" as default bind address can cause some problems.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nChanged default to `0.0.0.0` for ETH RPC and `127.0.0.1` for EngineAPI\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-09-10T21:01:44Z",
+          "tree_id": "4191182ca400b113e3230201e3916e36e6a1669a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/871873f211106dcfe435653ad47962053d3be2aa"
+        },
+        "date": 1757541242838,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169305818945,
+            "range": "± 340591507",
             "unit": "ns/iter"
           }
         ]
