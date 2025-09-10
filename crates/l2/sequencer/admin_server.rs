@@ -3,7 +3,7 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
 use axum::{Json, Router, http::StatusCode, routing::get};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use spawned_concurrency::error::GenServerError;
 use spawned_concurrency::tasks::GenServerHandle;
 use thiserror::Error;
@@ -107,6 +107,19 @@ async fn stop_committer(State(mut admin): State<Admin>) -> Result<Json<Value>, A
     }
 }
 
-async fn health(State(mut _admin): State<Admin>) -> Result<Json<Value>, AdminErrorResponse> {
-    Ok(Json::from(Value::String("ok".into())))
+async fn health(
+    State(mut admin): State<Admin>,
+) -> Result<Json<Map<String, Value>>, AdminErrorResponse> {
+    let l1_committer_health = admin.l1_committer.call(CallMessage::Health).await;
+
+    let mut response = serde_json::Map::new();
+
+    let committer_health = if let Ok(OutMessage::Health(health)) = l1_committer_health {
+        serde_json::to_value(health).unwrap_or_default()
+    } else {
+        Value::String("L1committer health returned an error".into())
+    };
+    response.insert("l1_committer".to_string(), committer_health);
+
+    Ok(Json::from(response))
 }
