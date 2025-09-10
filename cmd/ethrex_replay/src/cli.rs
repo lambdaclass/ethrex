@@ -41,6 +41,7 @@ use ethrex_config::networks::{
 
 #[cfg(feature = "l2")]
 use crate::fetcher::get_batchdata;
+use std::time::Instant;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -650,7 +651,11 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     //     .get_storage_at_hash(block_hash, address, storage_key)
     //     .unwrap();
 
+    info!("Starting to execute block");
+    let start_time = Instant::now();
     blockchain.add_block(&block).await.unwrap();
+    let duration = start_time.elapsed();
+    info!("add_block execution time: {:.2?}", duration);
 
     // let start = SystemTime::now();
 
