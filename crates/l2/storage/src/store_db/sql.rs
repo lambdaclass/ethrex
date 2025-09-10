@@ -58,12 +58,13 @@ impl SQLStore {
                 write_conn: Arc::new(Mutex::new(write_conn)),
             };
 
-            let current_version = store.get_version().await?;
-            if current_version != MIGRATION_VERSION {
-                return Err(RollupStoreError::VersionMismatch {
-                    current: current_version,
-                    expected: MIGRATION_VERSION,
-                });
+            if let Ok(current_version) = store.get_version().await {
+                if current_version != MIGRATION_VERSION {
+                    return Err(RollupStoreError::VersionMismatch {
+                        current: current_version,
+                        expected: MIGRATION_VERSION,
+                    });
+                }
             }
 
             store.init_db().await?;
@@ -87,12 +88,14 @@ impl SQLStore {
         // https://sqlite.org/wal.html#concurrency
         // still a limit of only 1 writer is imposed by sqlite databases
         self.query("PRAGMA journal_mode=WAL;", ()).await?;
+
         let mut rows = self
             .query(
-                "SELECT name FROM sqlite_schema WHERE type='table' AND name='batches'",
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name='migrations'",
                 (),
             )
             .await?;
+
         if rows.next().await?.is_none() {
             let empty_param = ().into_params()?;
             let queries = DB_SCHEMA
