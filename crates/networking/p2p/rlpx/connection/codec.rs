@@ -304,26 +304,19 @@ impl Encoder<rlpx::Message> for RLPxCodec {
                 .map_err(|_| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?;
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
-            H128(seed.into())
-                ^ H128(
-                    header
-                        .get(..16)
-                        .ok_or_else(|| {
-                            RLPxError::CryptographyError("Invalid header length".to_owned())
-                        })?
-                        .try_into()
-                        .map_err(|_| {
-                            RLPxError::CryptographyError("Invalid header length".to_owned())
-                        })?,
-                )
+            let header_data = header
+                .get(..16)
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid header length".to_owned()))?
+                .try_into()
+                .map_err(|_| RLPxError::CryptographyError("Invalid header length".to_owned()))?;
+            H128(seed.into()) ^ H128(header_data)
         };
         self.egress_mac.update(header_mac_seed);
         let header_mac = self.egress_mac.clone().finalize();
-        header.extend_from_slice(
-            header_mac
-                .get(..16)
-                .ok_or_else(|| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
-        );
+        let header_mac_data = header_mac
+            .get(..16)
+            .ok_or_else(|| RLPxError::CryptographyError("Invalid header mac".to_owned()))?;
+        header.extend_from_slice(header_mac_data);
 
         // Write header
         buffer.extend_from_slice(&header);
