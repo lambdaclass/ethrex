@@ -314,6 +314,7 @@ async fn replay_latest_block(
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    no_backend: false,
                 },
             })
             .run()
@@ -329,6 +330,7 @@ async fn replay_latest_block(
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    no_backend: false,
                 },
             })
             .run()
