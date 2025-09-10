@@ -124,7 +124,7 @@ impl DiscoveryServer {
 
         for bootnode in &bootnodes {
             let _ = discovery_server.send_ping(bootnode).await.inspect_err(|e| {
-                error!(error=?e, "Failed to ping bootnode");
+                error!(sent = "Ping", to = %format!("{:#x}", bootnode.public_key), err = ?e, "Error sending message to bootnode");
             });
             table.insert(bootnode.node_id(), bootnode.clone().into());
         }
@@ -163,7 +163,7 @@ impl DiscoveryServer {
                 );
 
                 let _ = self.handle_ping(hash, node).await.inspect_err(|e| {
-                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
+                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
                 });
             }
             Message::Pong(pong_message) => {
@@ -230,7 +230,7 @@ impl DiscoveryServer {
                     contact.record_sent_ping(ping_hash);
                 }
                 Err(err) => {
-                    error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+                    error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err, "Error sending message");
 
                     contact.disposable = true;
 
@@ -247,7 +247,7 @@ impl DiscoveryServer {
             }
 
             if let Err(err) = self.send_find_node(&contact.node).await {
-                error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+                error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err, "Error sending message");
                 contact.disposable = true;
                 METRICS.record_new_discarded_node().await;
             }
@@ -461,7 +461,7 @@ impl DiscoveryServer {
                 .send_neighbors(chunk.to_vec(), &node)
                 .await
                 .inspect_err(|e| {
-                    error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
+                    error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e, "Error sending message");
                 });
         }
     }
@@ -489,7 +489,7 @@ impl DiscoveryServer {
         let mut table = self.kademlia.table.lock().await;
 
         let Some(contact) = table.get(&node_id) else {
-            debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
+            debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
             return;
         };
         if !contact.was_validated() {
@@ -498,7 +498,7 @@ impl DiscoveryServer {
         }
 
         if let Err(err) = self.send_enr_response(hash, from).await {
-            error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
+            error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err, "Error sending message");
             return;
         }
 
@@ -616,8 +616,6 @@ pub enum ConnectionHandlerOutMessage {
     Done,
 }
 
-// TODO: SNAP SYNC: REIMPL TESTS
-
 /// Returns the nodes closest to the given `node_id`.
 pub fn get_closest_nodes(node_id: H256, table: BTreeMap<H256, Contact>) -> Vec<Node> {
     let mut nodes: Vec<(Node, usize)> = vec![];
@@ -643,3 +641,6 @@ pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
     let distance = U256::from_big_endian(xor.as_bytes());
     distance.bits().saturating_sub(1)
 }
+
+// TODO: Reimplement tests removed during snap sync refactor
+//       https://github.com/lambdaclass/ethrex/issues/4423
