@@ -3,6 +3,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use ethers::providers::StreamExt;
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -123,8 +124,7 @@ impl GenServer for EthrexMonitor {
         // Event handling
         spawn_listener(
             handle.clone(),
-            |event: Event| Self::CastMsg::Event(event),
-            EventStream::new(),
+            EventStream::new().filter_map(|r| async move { r.ok().map(Self::CastMsg::Event) }),
         );
         Ok(Success(self))
     }

@@ -19,7 +19,7 @@ use spawned_rt::tasks::{BroadcastStream, mpsc};
 use tokio::{
     net::TcpStream,
     sync::{Mutex, broadcast},
-    task::{self, Id},
+    task,
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -440,15 +440,18 @@ where
 
     spawn_listener(
         handle.clone(),
-        |msg: Message| CastMessage::PeerMessage(msg),
-        stream,
+        stream.filter_map(|r| r.ok().map(CastMessage::PeerMessage)),
     );
 
     if state.negotiated_eth_capability.is_some() {
         let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
-        let message_builder =
-            |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
-        spawn_listener(handle.clone(), message_builder, stream);
+        spawn_listener(
+            handle.clone(),
+            stream.filter_map(|r| {
+                r.ok()
+                    .map(|(id, msg)| CastMessage::BroadcastMessage(id, msg))
+            }),
+        );
     }
 
     Ok(())

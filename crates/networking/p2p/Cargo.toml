@@ -57,5 +57,8 @@ default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
 
+[target.'cfg(debug)'.dependencies]
+spawned-concurrency = { workspace = true, features = ["warn-on-block"] }
+
 [lints.clippy]
 unwrap_used = "deny"
