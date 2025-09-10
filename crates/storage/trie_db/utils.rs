@@ -7,7 +7,7 @@ pub fn nibbles_to_fixed_size(nibbles: ethrex_trie::Nibbles) -> [u8; 33] {
     let mut buffer = [0u8; 33];
 
     // Encode the node as [original_len, node_hash...]
-    buffer[0] = nibbles.len() as u8;
-    buffer[1..(original_len + 1)].copy_from_slice(&node_hash_ref);
+    buffer[32] = nibbles.len() as u8;
+    buffer[..original_len].copy_from_slice(&node_hash_ref);
     buffer
 }
