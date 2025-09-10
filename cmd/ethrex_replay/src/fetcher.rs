@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use ethrex_common::types::ChainConfig;
+use ethrex_common::types::{ChainConfig, block_execution_witness::ExecutionWitness};
 use ethrex_config::networks::Network;
 use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
@@ -109,6 +109,9 @@ pub async fn get_blockdata(
                     panic!("SystemTime::elapsed failed: {e}");
                 });
 
+            let mut witness: ExecutionWitness = db.into();
+            witness.first_block_number = requested_block_number;
+
             debug!(
                 "Got prover db for block {requested_block_number} in {}",
                 format_duration(prover_db_retrieval_duration)
@@ -118,7 +121,7 @@ pub async fn get_blockdata(
 
             let block_cache_start_time = SystemTime::now();
 
-            let cache = Cache::new(vec![block], PreExecutionState::DB(Box::new(db)));
+            let cache = Cache::new(vec![block], PreExecutionState::Witness(Box::new(witness)));
 
             write_cache(&cache, &file_name).expect("failed to write cache");
 

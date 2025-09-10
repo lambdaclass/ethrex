@@ -6,6 +6,7 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountInfo, AccountUpdate, ChainConfig},
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,44 @@ pub struct ProverDB {
     /// Root node is stored separately from the rest as the first tuple member.
     #[rkyv(with=rkyv::with::MapKV<H160Wrapper, EncodedTrieWrapper>)]
     pub storage_proofs: HashMap<Address, (Option<NodeRLP>, Vec<NodeRLP>)>,
+}
+
+impl From<ProverDB> for ExecutionWitness {
+    fn from(value: ProverDB) -> Self {
+        // Collect all nodes into a single Vec<Vec<u8>>
+        let mut all_nodes = Vec::new();
+
+        // Add state trie nodes
+        if let Some(root) = &value.state_proofs.0 {
+            all_nodes.push(root.clone());
+        }
+        all_nodes.extend(value.state_proofs.1.clone());
+
+        // Add storage trie nodes
+        for (root_opt, nodes) in value.storage_proofs.values() {
+            if let Some(root) = root_opt {
+                all_nodes.push(root.clone());
+            }
+            all_nodes.extend(nodes.clone());
+        }
+
+        ExecutionWitness {
+            codes: value.code.values().map(|code| code.to_vec()).collect(),
+            block_headers_bytes: value
+                .block_headers
+                .values()
+                .map(|header| header.encode_to_vec())
+                .collect(),
+            first_block_number: *value.block_headers.keys().next().unwrap_or(&0),
+            chain_config: value.chain_config,
+            nodes: all_nodes,
+            keys: value
+                .storage
+                .values()
+                .flat_map(|storage| storage.keys().cloned().map(|k| k.as_bytes().to_vec()))
+                .collect(),
+        }
+    }
 }
 
 impl ProverDB {
