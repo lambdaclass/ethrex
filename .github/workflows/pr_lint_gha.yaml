@@ -26,5 +26,7 @@ jobs:
       - name: actionlint
         uses: reviewdog/action-actionlint@v1
         with:
+          bla: "bla"
           github_token: ${{ secrets.GITHUB_TOKEN }}
           actionlint_flags: "-ignore SC2086 -ignore SC2006 -ignore SC2046 -no-color"
+          fail_level: "any"
