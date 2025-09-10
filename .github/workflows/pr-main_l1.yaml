@@ -232,30 +232,6 @@ jobs:
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
 
-  run-replay:
-    name: Execute an L1 block
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-
-      - name: Build
-        run: |
-          cd cmd/ethrex_replay
-          cargo b -r
-
-      - name: Run
-        env:
-          # TODO(): use RPC
-          # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
-          RPC_URL: "http://45.76.185.153:8545"
-        run: |
-          cp fixtures/cache/rpc_prover/cache_hoodi_1145479.bin cmd/ethrex_replay
-          cd cmd/ethrex_replay
-          make execute BLOCK_NUMBER=1145479 NETWORK=hoodi
-
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
