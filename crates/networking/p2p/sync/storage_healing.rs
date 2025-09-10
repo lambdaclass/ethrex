@@ -591,6 +591,8 @@ pub fn determine_missing_children(
     node_response: &NodeResponse,
     store: Store,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
+        todo!();
+    /*
     let mut paths = Vec::new();
     let mut count = 0;
     let node = node_response.node.clone();
@@ -603,6 +605,7 @@ pub fn determine_missing_children(
             error!("Malformed data when opening the storage trie in determine missing children")
         })?;
     let trie_state = trie.db();
+
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
@@ -654,6 +657,7 @@ pub fn determine_missing_children(
         _ => {}
     }
     Ok((paths, count))
+    */
 }
 
 fn commit_node(

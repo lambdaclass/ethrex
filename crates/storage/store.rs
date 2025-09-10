@@ -61,11 +61,11 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
-    pub state_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub state_updates: Vec<(Nibbles, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Bytes)>,
 }
@@ -1106,7 +1106,7 @@ impl Store {
         Ok(self
             .open_state_trie(*EMPTY_TRIE_HASH)?
             .db()
-            .get(node_hash.into())?
+            .get(Nibbles::from_bytes(&node_hash.0))?
             .is_some())
     }
 
@@ -1120,7 +1120,7 @@ impl Store {
         Ok(self
             .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?
             .db()
-            .get(node_hash.into())?
+            .get(Nibbles::from_bytes(&node_hash.0))?
             .is_some())
     }
 

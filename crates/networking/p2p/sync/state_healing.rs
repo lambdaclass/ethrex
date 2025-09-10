@@ -89,6 +89,8 @@ async fn heal_state_trie(
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
 ) -> Result<bool, SyncError> {
+    todo!();
+    /*
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
         hash: state_root,
@@ -302,6 +304,7 @@ async fn heal_state_trie(
                 })
             });
         }
+        
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if is_done {
@@ -328,6 +331,7 @@ async fn heal_state_trie(
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;
     Ok(paths.is_empty())
+    */
 }
 
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,
@@ -402,6 +406,8 @@ pub fn node_missing_children(
     path: &Nibbles,
     trie_state: &dyn TrieDB,
 ) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
+    todo!()
+    /*
     let mut paths: Vec<RequestMetadata> = Vec::new();
     let mut missing_children_count = 0_u64;
     match &node {
@@ -431,4 +437,5 @@ pub fn node_missing_children(
         _ => {}
     }
     Ok((missing_children_count, paths))
+    */
 }

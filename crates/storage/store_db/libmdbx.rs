@@ -10,7 +10,7 @@ use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::libmdbx_dupsort_locked::LibmdbxLockedDupsortTrieDB;
 use crate::trie_db::libmdbx_locked::LibmdbxLockedTrieDB;
-use crate::trie_db::utils::node_hash_to_fixed_size;
+use crate::trie_db::utils::nibbles_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -135,7 +135,7 @@ impl StoreEngine for Store {
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                tx.upsert::<StateTrieNodes>(nibbles_to_fixed_size(node_hash), node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
@@ -148,7 +148,7 @@ impl StoreEngine for Store {
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
+                    let key_2 = nibbles_to_fixed_size(node_hash);
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
@@ -986,6 +986,8 @@ impl StoreEngine for Store {
         &self,
         storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
+        todo!();
+        /*
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
@@ -993,7 +995,7 @@ impl StoreEngine for Store {
             for (hashed_address, nodes) in storage_trie_nodes {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
+                    let key_2 = nibbles_to_fixed_size(node_hash);
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
@@ -1004,6 +1006,7 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        */
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
@@ -1205,7 +1208,7 @@ table!(
 
 table!(
     /// state trie nodes
-    ( StateTrieNodes ) NodeHash => Vec<u8>
+    ( StateTrieNodes ) [u8; 33] => Vec<u8>
 );
 
 table!(

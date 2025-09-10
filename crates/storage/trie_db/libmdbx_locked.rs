@@ -1,4 +1,4 @@
-use ethrex_trie::{NodeHash, error::TrieError};
+use ethrex_trie::{Nibbles, error::TrieError};
 use libmdbx::{
     RO,
     orm::{Database, Table, Transaction},
@@ -13,9 +13,11 @@ pub struct LibmdbxLockedTrieDB<T: Table> {
 
 use ethrex_trie::TrieDB;
 
+use crate::trie_db::utils::nibbles_to_fixed_size;
+
 impl<T> LibmdbxLockedTrieDB<T>
 where
-    T: Table<Key = NodeHash, Value = Vec<u8>>,
+    T: Table<Key = [u8; 33], Value = Vec<u8>>,
 {
     pub fn new(db: Arc<Database>) -> Result<Self, TrieError> {
         let db = Box::leak(Box::new(db));
@@ -44,13 +46,13 @@ where
 
 impl<T> TrieDB for LibmdbxLockedTrieDB<T>
 where
-    T: Table<Key = NodeHash, Value = Vec<u8>>,
+    T: Table<Key = [u8; 33], Value = Vec<u8>>,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        self.txn.get::<T>(key).map_err(TrieError::DbError)
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        self.txn.get::<T>(nibbles_to_fixed_size(key)).map_err(TrieError::DbError)
     }
 
-    fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!(
             "LockedTrie is read-only"
         )))

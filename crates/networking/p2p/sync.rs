@@ -1164,8 +1164,8 @@ fn compute_storage_roots(
             .map_err(|_| SyncError::MaybeBigAccount)?
             .insert(account_hash, computed_storage_root);
     }
-
-    Ok((account_hash, changes))
+todo!()
+//    Ok((account_hash, changes))
 }
 
 pub async fn update_pivot(

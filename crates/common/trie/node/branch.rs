@@ -44,7 +44,7 @@ impl BranchNode {
             // Delegate to children if present
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child_node = child_ref.get_node(db, path.current())?.unwrap();
                 child_node.get(db, path)
             } else {
                 Ok(None)
@@ -74,13 +74,18 @@ impl BranchNode {
                 // Insert into existing child and then update it
                 (choice_ref, ValueOrHash::Value(value)) => {
                     let child_node = choice_ref
-                        .get_node(db)?
-                        .ok_or(TrieError::InconsistentTree)?;
+                        .get_node(db, path.current())?
+                        .or_else(|| {
+                            panic!("{:?} not found ref {choice_ref:?}", path)
+                        })
+                        .unwrap();
 
                     *choice_ref = child_node.insert(db, path, value)?.into();
                 }
                 // Insert external node hash if there are no overrides.
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
+                    todo!();
+                    /*
                     if !choice_ref.is_valid() {
                         *choice_ref = hash.into();
                     } else if path.is_empty() {
@@ -89,16 +94,18 @@ impl BranchNode {
                         ));
                     } else {
                         *choice_ref = choice_ref
-                            .get_node(db)?
-                            .ok_or(TrieError::InconsistentTree)?
+                            .get_node(db, path.current())?
+                            .unwrap()
                             .insert(db, path, value)?
                             .into();
                     }
+                    */
                 }
             }
         } else if let ValueOrHash::Value(value) = value {
             // Insert into self
-            self.update(value);
+            todo!()
+            //self.update(value);
         } else {
             todo!("handle override case (error?)")
         }
@@ -136,8 +143,8 @@ impl BranchNode {
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
                 let child_node = self.choices[choice_index]
-                    .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)?;
+                    .get_node(db, path.current())?
+                    .unwrap();
                 // Remove value from child node
                 let (child_node, old_value) = child_node.remove(db, path.clone())?;
                 if let Some(child_node) = child_node {
@@ -176,7 +183,7 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
-                let child = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child = child_ref.get_node(db, path.current())?.unwrap();
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
@@ -243,7 +250,7 @@ impl BranchNode {
             // Continue to child
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child_node = child_ref.get_node(db, path.current())?.unwrap();
                 child_node.get_path(db, path, node_path)?;
             }
         }

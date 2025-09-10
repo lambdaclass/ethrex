@@ -15,7 +15,7 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-pub type NodeMap = Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<BTreeMap<Nibbles, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -34,7 +34,7 @@ struct StoreInner {
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
     state_trie_nodes: NodeMap,
     // A storage trie for each hashed account address
-    storage_trie_nodes: HashMap<H256, NodeMap>,
+    storage_trie_nodes: HashMap<Nibbles, NodeMap>,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores invalid blocks and their latest valid ancestor
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
@@ -101,7 +101,7 @@ impl StoreEngine for Store {
         for (hashed_address, nodes) in update_batch.storage_updates {
             let mut addr_store = store
                 .storage_trie_nodes
-                .entry(hashed_address)
+                .entry(Nibbles::from_bytes(&hashed_address.0))
                 .or_default()
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
@@ -410,7 +410,7 @@ impl StoreEngine for Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
-        let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
+        let trie_backend = store.storage_trie_nodes.entry(Nibbles::from_bytes(&hashed_address.0)).or_default();
         let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
         Ok(Trie::open(db, storage_root))
     }
@@ -671,12 +671,14 @@ impl StoreEngine for Store {
         &self,
         storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
+        todo!();
+        /*
         let mut store = self.inner()?;
 
         for (hashed_address, nodes) in storage_trie_nodes {
             let mut addr_store = store
                 .storage_trie_nodes
-                .entry(hashed_address)
+                .entry(Nibbles::from_bytes(&hashed_address.0))
                 .or_default()
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
@@ -686,6 +688,7 @@ impl StoreEngine for Store {
         }
 
         Ok(())
+        */
     }
 
     async fn write_account_code_batch(
