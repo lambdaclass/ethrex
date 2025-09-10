@@ -206,6 +206,7 @@ impl DiscoveryServer {
             Message::ENRResponse(enrresponse_message) => {
                 /*
                     TODO
+                    https://github.com/lambdaclass/ethrex/issues/4412
                     - Look up in kademlia the peer associated with this message
                     - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
                     - Check that the seq number matches the one we have in our table (this requires setting it).
