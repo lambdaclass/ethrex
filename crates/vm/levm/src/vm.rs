@@ -39,7 +39,7 @@ pub enum VMType {
 
 /// Information that changes during transaction execution.
 // Most fields are private by design. The backup mechanism (`parent` field) will only work properly
-// if data is append-only, therefore
+// if data is append-only.
 #[derive(Debug, Default)]
 pub struct Substate {
     parent: Option<Box<Self>>,
@@ -280,7 +280,7 @@ impl Substate {
         self.transient_storage.insert((*to, *key), value);
     }
 
-    /// Iterate over all logs.
+    /// Extract all logs in order.
     pub fn extract_logs(&self) -> Vec<Log> {
         fn inner(substrate: &Substate, target: &mut Vec<Log>) {
             if let Some(parent) = substrate.parent.as_deref() {
