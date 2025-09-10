@@ -1422,6 +1422,7 @@ mod tests {
         run_test(test_chain_config_storage, engine_type).await;
         run_test(test_genesis_block, engine_type).await;
         run_test(test_iter_accounts, engine_type).await;
+        run_test(test_iter_storage, engine_type).await;
     }
 
     async fn test_iter_accounts(store: Store) {
@@ -1445,10 +1446,50 @@ mod tests {
                 .unwrap();
         }
         let state_root = trie.hash().unwrap();
-        let account_iter = store
-            .iter_accounts_from(state_root, accounts[500].0)
+        let pivot = H256::random();
+        let pos = accounts.partition_point(|(key, _)| key < &pivot);
+        let account_iter = store.iter_accounts_from(state_root, pivot).unwrap();
+        for (expected, actual) in std::iter::zip(accounts.drain(pos..), account_iter) {
+            assert_eq!(expected, actual);
+        }
+    }
+
+    async fn test_iter_storage(store: Store) {
+        let address = H256(Keccak256::digest(12345u64.to_be_bytes()).into());
+        let mut slots: Vec<_> = (0u64..1_000)
+            .map(|i| {
+                (
+                    H256(Keccak256::digest(i.to_be_bytes()).into()),
+                    U256::from(2 * i),
+                )
+            })
+            .collect();
+        slots.sort_by_key(|a| a.0);
+        let mut trie = store.open_storage_trie(address, *EMPTY_TRIE_HASH).unwrap();
+        for (slot, value) in &slots {
+            trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
+        }
+        let storage_root = trie.hash().unwrap();
+        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        trie.insert(
+            address.0.to_vec(),
+            AccountState {
+                nonce: 1,
+                balance: U256::zero(),
+                storage_root,
+                code_hash: *EMPTY_KECCACK_HASH,
+            }
+            .encode_to_vec(),
+        )
+        .unwrap();
+        let state_root = trie.hash().unwrap();
+        let pivot = H256::random();
+        let pos = slots.partition_point(|(key, _)| key < &pivot);
+        let storage_iter = store
+            .iter_storage_from(state_root, address, pivot)
+            .unwrap()
             .unwrap();
-        for (expected, actual) in std::iter::zip(accounts.drain(500..), account_iter) {
+        for (expected, actual) in std::iter::zip(slots.drain(pos..), storage_iter) {
             assert_eq!(expected, actual);
         }
     }
