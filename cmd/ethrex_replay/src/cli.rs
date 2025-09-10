@@ -577,7 +577,7 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         for address in &addresses {
             let hashed_address = hash_address(address);
 
-            println!("Setting up storage for address {:#x}", address);
+            // println!("Setting up storage for address {:#x}", address);
             let mut necessary_nodes_storage = BTreeMap::new();
             let account_state_rlp_opt = guest_program
                 .state_trie
@@ -602,11 +602,11 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
                 continue;
             };
 
-            println!(
-                "Storage root: {:#x}. Root RLP: {}",
-                storage_root.finalize(),
-                hex::encode(storage_root_rlp)
-            );
+            // println!(
+            //     "Storage root: {:#x}. Root RLP: {}",
+            //     storage_root.finalize(),
+            //     hex::encode(storage_root_rlp)
+            // );
 
             let root: NodeRef = inner(
                 &guest_program.nodes_hashed,
@@ -616,14 +616,14 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
             )?
             .into();
 
-            println!(
-                "Necessary nodes for this are {}",
-                necessary_nodes_storage.len()
-            );
-            for (a, b) in &necessary_nodes_storage {
-                let (hash, rlp) = (a.finalize(), hex::encode(b));
-                println!("Hash {:#x}, rlp {}", hash, rlp);
-            }
+            // println!(
+            //     "Necessary nodes for this are {}",
+            //     necessary_nodes_storage.len()
+            // );
+            // for (a, b) in &necessary_nodes_storage {
+            //     let (hash, rlp) = (a.finalize(), hex::encode(b));
+            //     println!("Hash {:#x}, rlp {}", hash, rlp);
+            // }
 
             inner_store.storage_trie_nodes.insert(
                 hash_address_fixed(address),
@@ -639,8 +639,8 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     };
 
     // Adding initial state after having filled the previous state is dangerous, it should be done before
-    // let genesis = network.get_genesis()?;
-    // store.add_initial_state(genesis).await.unwrap();
+    let genesis = network.get_genesis()?;
+    store.add_initial_state(genesis).await.unwrap();
 
     // Add codes to the db
     for (code_hash, code) in guest_program.codes_hashed.clone() {
@@ -658,25 +658,26 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     let blockchain = Blockchain::default_with_store(store);
 
     //TODO: remove this, it is for testing particular stuff.
-    let block_hash =
-        H256::from_str("0x2121cb76560598fd62e2db157b9e3d897459619df43031e807ef0c7fb9bc0d1a")
-            .unwrap();
+    // let block_hash =
+    //     H256::from_str("0x2121cb76560598fd62e2db157b9e3d897459619df43031e807ef0c7fb9bc0d1a")
+    //         .unwrap();
+    // let address = Address::from_str("000f3df6d732807ef1319fb7b8bb8522d0beac02")
+    //     .expect("Failed to parse address");
+    // let storage_key =
+    //     H256::from_str("0x0000000000000000000000000000000000000000000000000000000000001c97")
+    //         .expect("Failed to parse storage key");
+
     // blockchain
     //     .storage
     //     .get_account_info_by_hash(block_hash, address)
     //     .unwrap();
-    let address = Address::from_str("000f3df6d732807ef1319fb7b8bb8522d0beac02")
-        .expect("Failed to parse address");
-    let storage_key =
-        H256::from_str("0x0000000000000000000000000000000000000000000000000000000000001c97")
-            .expect("Failed to parse storage key");
 
-    let s = blockchain
-        .storage
-        .get_storage_at_hash(block_hash, address, storage_key)
-        .unwrap();
+    // let s = blockchain
+    //     .storage
+    //     .get_storage_at_hash(block_hash, address, storage_key)
+    //     .unwrap();
 
-    // blockchain.add_block(&block).await.unwrap();
+    blockchain.add_block(&block).await.unwrap();
 
     // let start = SystemTime::now();
 

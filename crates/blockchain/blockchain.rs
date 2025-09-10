@@ -121,32 +121,23 @@ impl Blockchain {
         &self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
-        println!("Execute Block: 1");
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
             self.storage.add_pending_block(block.clone()).await?;
             return Err(ChainError::ParentNotFound);
         };
-        println!("Execute Block: 2");
 
         let chain_config = self.storage.get_chain_config()?;
 
-        println!("Execute Block: 3");
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
-
-        println!("Execute Block: 4");
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
 
-        println!("Execute Block: 5");
-
         let execution_result = vm.execute_block(block)?;
-        println!("Execute Block: 6");
         let account_updates = vm.get_state_transitions()?;
-        println!("Execute Block: 7");
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
@@ -417,9 +408,9 @@ impl Blockchain {
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        println!("Add block: before execute");
+        // println!("Add block: before execute");
         let (res, updates) = self.execute_block(block).await?;
-        println!("Add block: after execute");
+        // println!("Add block: after execute");
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root

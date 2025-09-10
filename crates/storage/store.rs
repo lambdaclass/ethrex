@@ -125,24 +125,24 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        println!("Get account info by hash yeah");
+        // println!("Get account info by hash yeah");
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        println!("State trie root {:#?}", state_trie.root);
-        println!("Get account info by hash yeah 2. Address {:#x}", address);
+        // println!("State trie root {:#?}", state_trie.root);
+        // println!("Get account info by hash yeah 2. Address {:#x}", address);
         let hashed_address = hash_address(&address);
-        println!("Hashed address {}", hex::encode(&hashed_address));
+        // println!("Hashed address {}", hex::encode(&hashed_address));
 
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
-        println!(
-            "Get account info by hash yeah 3. Encoded state: {}",
-            hex::encode(&encoded_state)
-        );
+        // println!(
+        //     "Get account info by hash yeah 3. Encoded state: {}",
+        //     hex::encode(&encoded_state)
+        // );
         let account_state = AccountState::decode(&encoded_state)?;
-        println!("Get account info by hash yeah 4");
+        // println!("Get account info by hash yeah 4");
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
             balance: account_state.balance,
@@ -717,12 +717,12 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        println!("Inside storage at hash. block hash {:#x}", block_hash);
+        // println!("Inside storage at hash. block hash {:#x}", block_hash);
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
-            println!("There was no storage trie");
+            // println!("There was no storage trie");
             return Ok(None);
         };
-        println!("There was storage trie");
+        // println!("There was storage trie");
         let hashed_key = hash_key(&storage_key);
         storage_trie
             .get(&hashed_key)?

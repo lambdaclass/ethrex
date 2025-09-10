@@ -95,13 +95,13 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                println!(
-                    "Before rlp to decode for path {} and hash {:#x}",
-                    hex::encode(path),
-                    hash.finalize()
-                );
+                // println!(
+                //     "Before rlp to decode for path {} and hash {:#x}",
+                //     hex::encode(path),
+                //     hash.finalize()
+                // );
                 let rlp_to_decode = self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?;
-                println!("RLP To decode: {}", hex::encode(&rlp_to_decode));
+                // println!("RLP To decode: {}", hex::encode(&rlp_to_decode));
                 Node::decode(&rlp_to_decode)
                     .map_err(TrieError::RLPDecode)?
                     .get(self.db.as_ref(), Nibbles::from_bytes(path))?
@@ -320,8 +320,8 @@ impl Trie {
 
         let mut necessary_nodes = BTreeMap::new();
         let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
-        println!("All nodes: {}", state_nodes.len());
-        println!("necessary nodes len: {}", necessary_nodes.len());
+        // println!("All nodes: {}", state_nodes.len());
+        // println!("necessary nodes len: {}", necessary_nodes.len());
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
