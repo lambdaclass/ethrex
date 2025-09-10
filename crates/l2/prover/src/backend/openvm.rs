@@ -12,6 +12,8 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     stdin.write(&input);
 
     sdk.execute(PROGRAM_ELF.clone(), stdin.clone())?;
+
+    Ok(())
 }
 
 pub fn prove(
