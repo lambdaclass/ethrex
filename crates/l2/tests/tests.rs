@@ -950,7 +950,7 @@ async fn test_privileged_spammer(l1_client: &EthClient) -> Result<(), Box<dyn st
         "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
     )?)?;
     let caller_l1 = test_deploy_l1(l1_client, &init_code_l1, &rich_wallet_private_key).await?;
-    for _ in 0..10 {
+    for _ in 0..50 {
         test_send(
             l1_client,
             &rich_wallet_private_key,
