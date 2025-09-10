@@ -1,6 +1,9 @@
 use crate::sequencer::l1_committer::{
     CallMessage as CommitterCallMessage, L1Committer, OutMessage as CommitterOutMessage,
 };
+use crate::sequencer::l1_proof_sender::{
+    CallMessage as ProofSenderCallMessage, L1ProofSender, OutMessage as ProofSenderOutMessage,
+};
 use crate::sequencer::l1_watcher::{
     CallMessage as WatcherCallMessage, L1Watcher, OutMessage as WatcherOutMessage,
 };
@@ -25,6 +28,7 @@ pub enum AdminError {
 pub struct Admin {
     pub l1_committer: Option<GenServerHandle<L1Committer>>,
     pub l1_watcher: Option<GenServerHandle<L1Watcher>>,
+    pub l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
 }
 
 pub enum AdminErrorResponse {
@@ -57,11 +61,13 @@ pub async fn start_api(
     http_addr: String,
     l1_committer: Option<GenServerHandle<L1Committer>>,
     l1_watcher: Option<GenServerHandle<L1Watcher>>,
+    l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
     let admin = Admin {
         l1_committer,
         l1_watcher,
+        l1_proof_sender,
     };
 
     // All request headers allowed.
@@ -171,6 +177,24 @@ async fn health(
         )
     };
     response.insert("l1_watcher".to_string(), l1_watcher_response);
+
+    let l1_proof_sender_response = if let Some(mut l1_proof_sender) = admin.l1_proof_sender {
+        let l1_proof_sender_health = l1_proof_sender.call(ProofSenderCallMessage::Health).await;
+
+        match l1_proof_sender_health {
+            Ok(ProofSenderOutMessage::Health(health)) => serde_json::to_value(health)
+                .unwrap_or_else(|err| {
+                    Value::String(format!("Failed to serialize health message {err}"))
+                }),
+            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
+            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
+        }
+    } else {
+        Value::String(
+            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
+        )
+    };
+    response.insert("l1_proof_sender".to_string(), l1_proof_sender_response);
 
     Ok(Json::from(response))
 }

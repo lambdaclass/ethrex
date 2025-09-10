@@ -111,7 +111,7 @@ pub async fn start_l2(
         error!("Error starting Proof Coordinator: {err}");
     });
 
-    let _ = L1ProofSender::spawn(
+    let l1_proof_sender = L1ProofSender::spawn(
         cfg.clone(),
         shared_state.clone(),
         rollup_store.clone(),
@@ -191,6 +191,7 @@ pub async fn start_l2(
         ),
         l1_committer.ok(),
         l1_watcher.ok(),
+        l1_proof_sender.ok(),
     )
     .await
     .inspect_err(|err| {
