@@ -445,21 +445,27 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
 
 pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
     if execute {
-        #[cfg(feature = "sp1")]
-        return Ok(ReplayerMode::ExecuteSP1);
-        #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return Ok(ReplayerMode::ExecuteRISC0);
-        #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return Ok(ReplayerMode::Execute);
+        if cfg!(feature = "sp1") {
+            return Ok(ReplayerMode::ExecuteSP1);
+        } else if cfg!(feature = "risc0") {
+            return Ok(ReplayerMode::ExecuteRISC0);
+        } else if cfg!(feature = "openvm") {
+            return Ok(ReplayerMode::ExecuteOpenVM);
+        } else {
+            return Ok(ReplayerMode::Execute);
+        }
     } else {
-        #[cfg(feature = "sp1")]
-        return Ok(ReplayerMode::ProveSP1);
-        #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return Ok(ReplayerMode::ProveRISC0);
-        #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return Err(eyre::Error::msg(
-            "proving mode is not supported without SP1 or RISC0 features",
-        ));
+        if cfg!(feature = "sp1") {
+            return Ok(ReplayerMode::ProveSP1);
+        } else if cfg!(feature = "risc0") {
+            return Ok(ReplayerMode::ProveRISC0);
+        } else if cfg!(feature = "openvm") {
+            return Ok(ReplayerMode::ProveOpenVM);
+        } else {
+            return Err(eyre::Error::msg(
+                "proving mode is not supported without `sp1`, `risc0` or `openvm` features",
+            ));
+        }
     }
 }
 
