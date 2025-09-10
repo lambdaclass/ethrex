@@ -1,11 +1,12 @@
 name: Replay proving
 on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["**"]
-    paths:
-      - ".github/workflows/main_prover_l1.yaml"
+  # push:
+  #   branches: ["main"]
+  # pull_request:
+  #   branches: ["**"]
+  #   paths:
+  #     - ".github/workflows/main_prover_l1.yaml"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -27,7 +28,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        backend: ["sp1"] # removed "risc0" for now until it is stable
+        backend: ["sp1", "risc0"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
