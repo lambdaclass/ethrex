@@ -7,7 +7,7 @@ use tracing::{error, info};
 use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest};
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Enum variants may be used conditionally
 pub enum ReplayerMode {
     Execute,
     ExecuteSP1,

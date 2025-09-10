@@ -29,6 +29,14 @@ use crate::{
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
 
+// These interval times are arbitrary numbers, maybe we should read them from a cfg or a cli param
+const REVALIDATION_INTERVAL_IN_SECONDS: u64 = 30;
+const PEERS_RANDOM_LOOKUP_TIME_IN_MIN: u64 = 30;
+
+#[derive(Debug)]
+pub enum DiscoveryError {
+    BindSocket(std::io::Error),
+}
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
     #[error(transparent)]
