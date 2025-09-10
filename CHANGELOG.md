@@ -4,7 +4,7 @@
 
 ### 2025-09-10
 
-- Implement fast partition of `TrieIterator` and use it for quickly responding `GetTrieNodes` [#4404](https://github.com/lambdaclass/ethrex/pull/4404)
+- Implement fast partition of `TrieIterator` and use it for quickly responding `GetAccountRanges` and `GetStorageRanges` [#4404](https://github.com/lambdaclass/ethrex/pull/4404)
 
 ### 2025-09-09
 
