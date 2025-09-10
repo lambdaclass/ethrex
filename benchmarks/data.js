@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757491131044,
+  "lastUpdate": 1757493278702,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -27645,6 +27645,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0010824742268041236,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d8c0614ac60bb1ba696632966913e6d1bc26d841",
+          "message": "ci(l1, l2): improve sending of slack messages to appropriate channels (#4345)\n\n**Motivation**\nSend failure notifications to appropriate channels based on which\nworkflow failed.\n\n**Description**\n- Sends to L1 or L2 channel depending on workflow\n- Removes printing repo or actor",
+          "timestamp": "2025-09-09T14:43:16Z",
+          "tree_id": "c76d9a9dd73eb858c3fc795ad1a8737f3ab9ccab",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d8c0614ac60bb1ba696632966913e6d1bc26d841"
+        },
+        "date": 1757493277651,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0010714285714285715,
             "unit": "Mgas/s"
           }
         ]
