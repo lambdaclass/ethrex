@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757526550031,
+  "lastUpdate": 1757537201042,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13495,6 +13495,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169772408090,
             "range": "± 288026009",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "37075e13cea3cd67ffb54002dac40d0448a7a349",
+          "message": "perf(l1): implement fast skip for TrieIter (#4404)\n\n**Motivation**\n\nThere's been stalls in sync'd nodes due to receiving requests for\n`GetAccountRanges` and `GetStorageRanges`.\nThe cause was that we iterate the whole state/storage trie from the root\nto the leaves, manually skipping the irrelevant ones, which takes\nminutes.\nAt the time, the operation was also blocking, freezing the runtime.\n\n**Description**\n\nAdds an `advance` method to avoid having to traverse the whole state\ntrie when requested account and storage ranges.\nAdds methods to `Store` receiving the initial keys.\nUses those methods for snap capability handlers.",
+          "timestamp": "2025-09-10T19:42:54Z",
+          "tree_id": "33ac0156ea3ea173b36c454409ebe6305847ae97",
+          "url": "https://github.com/lambdaclass/ethrex/commit/37075e13cea3cd67ffb54002dac40d0448a7a349"
+        },
+        "date": 1757537180276,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 171243743646,
+            "range": "± 747942037",
             "unit": "ns/iter"
           }
         ]
