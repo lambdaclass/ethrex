@@ -120,6 +120,7 @@ impl DiscoveryServer {
 
         info!(count = bootnodes.len(), "Adding bootnodes");
 
+        info!("Locking kademlia table");
         let mut table = kademlia.table.lock().await;
 
         for bootnode in &bootnodes {
@@ -130,6 +131,7 @@ impl DiscoveryServer {
         }
 
         discovery_server.start();
+        info!("Release lock");
         Ok(())
     }
 
@@ -219,6 +221,7 @@ impl DiscoveryServer {
     }
 
     async fn revalidate(&self) {
+        info!("Locking kademlia table revalidate");
         for contact in self.kademlia.table.lock().await.values_mut() {
             if contact.disposable || !self.is_validation_needed(contact) {
                 continue;
@@ -238,9 +241,11 @@ impl DiscoveryServer {
                 }
             }
         }
+        info!("releasing lock ");
     }
 
     async fn lookup(&self) {
+        info!("Locking kademlia table lookup");
         for contact in self.kademlia.table.lock().await.values_mut() {
             if contact.n_find_node_sent == 20 || contact.disposable {
                 continue;
@@ -254,9 +259,11 @@ impl DiscoveryServer {
 
             contact.n_find_node_sent += 1;
         }
+        info!("releaseing lookup");
     }
 
     async fn prune(&self) {
+        info!("Locking kademlia table prune");
         let mut contacts = self.kademlia.table.lock().await;
         let mut discarded_contacts = self.kademlia.discarded_contacts.lock().await;
 
@@ -269,6 +276,7 @@ impl DiscoveryServer {
             contacts.remove(&contact_to_discard_id);
             discarded_contacts.insert(contact_to_discard_id);
         }
+        info!("releaseing prune");
     }
 
     fn is_validation_needed(&self, contact: &Contact) -> bool {
@@ -289,12 +297,15 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&self) -> Duration {
+        info!("Locking kademlia table get_lookup_interval");
         let number_of_contacts = self.kademlia.table.lock().await.len() as u64;
         let number_of_peers = self.kademlia.peers.lock().await.len() as u64;
         if number_of_peers < TARGET_PEERS && number_of_contacts < TARGET_CONTACTS {
+            info!("releasing get_lookup_interval");
             INITIAL_LOOKUP_INTERVAL
         } else {
             trace!("Reached target number of peers or contacts. Using longer lookup interval.");
+            info!("releasing get_lookup_interval");
             LOOKUP_INTERVAL
         }
     }
@@ -382,16 +393,19 @@ impl DiscoveryServer {
         request_hash: H256,
         from: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        info!("Locking kademlia table send_enr_response");
         let node_record = self.local_node_record.lock().await;
 
         let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.clone()));
 
         self.send(msg, from).await?;
+        info!("release send_enr_response");
 
         Ok(())
     }
 
     async fn handle_ping(&self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
+        info!("Locking kademlia table handle_ping");
         self.send_pong(hash, &node).await?;
 
         let mut table = self.kademlia.table.lock().await;
@@ -405,10 +419,12 @@ impl DiscoveryServer {
             }
         }
 
+        info!("release kademlia table handle_ping");
         Ok(())
     }
 
     async fn handle_pong(&self, message: PongMessage, node_id: H256) {
+        info!("Locking kademlia table handle_pong");
         let mut contacts = self.kademlia.table.lock().await;
 
         // Received a pong from a node we don't know about
@@ -424,9 +440,11 @@ impl DiscoveryServer {
             return;
         }
         contact.ping_hash = None;
+        info!("releasing kademlia table handle_pong");
     }
 
     async fn handle_find_node(&self, sender_public_key: H512, from: SocketAddr) {
+        info!("Locking kademlia table handle_find_node");
         let table = self.kademlia.table.lock().await;
 
         let node_id = node_id(&sender_public_key);
@@ -452,6 +470,7 @@ impl DiscoveryServer {
 
         let neighbors = get_closest_nodes(node_id, table.clone());
 
+        info!("releasing kademlia table handle_find_node");
         drop(table);
 
         // we are sending the neighbors in 2 different messages to avoid exceeding the
@@ -469,6 +488,7 @@ impl DiscoveryServer {
     async fn handle_neighbors(&self, neighbors_message: NeighborsMessage) {
         // TODO(#3746): check that we requested neighbors from the node
 
+        info!("Locking kademlia table handle_neighbors");
         let mut contacts = self.kademlia.table.lock().await;
         let discarded_contacts = self.kademlia.discarded_contacts.lock().await;
 
@@ -481,11 +501,13 @@ impl DiscoveryServer {
                 }
             };
         }
+        info!("releasing kademlia table handle_neighbors");
     }
 
     async fn handle_enr_request(&self, sender_public_key: H512, from: SocketAddr, hash: H256) {
         let node_id = node_id(&sender_public_key);
 
+        info!("Locking kademlia table handle_enr_request");
         let mut table = self.kademlia.table.lock().await;
 
         let Some(contact) = table.get(&node_id) else {
@@ -503,6 +525,7 @@ impl DiscoveryServer {
         }
 
         table.entry(node_id).and_modify(|c| c.knows_us = true);
+        info!("releasing kademlia table handle_enr_request");
     }
 
     async fn send(&self, message: Message, addr: SocketAddr) -> Result<(), DiscoveryServerError> {
