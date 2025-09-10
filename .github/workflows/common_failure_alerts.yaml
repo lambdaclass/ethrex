@@ -1,37 +1,25 @@
-name: Workflow Failure Alerts
+name: Job Failure Alerts
 
 on:
-  workflow_run:
-    workflows:
-      - L1
-      - L2 (SP1 Backend)
-      - L2 (without proving)
-      - L2 Prover
-      - L2 Prover (TDX)
-      - L2 TDX build
-      - LEVM
-      - Publish Docker
-      - Replay proving
-    branches:
-      - main
-    types:
-      - completed
+  workflow_job:
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
-  notify-on-failure:
-    name: Notify Slack on failure (main)
+  notify-on-job-failure:
+    name: Notify Slack on job failure
     runs-on: ubuntu-latest
     if: >-
-      ${{ github.event.workflow_run.conclusion != 'success' &&
-          github.event.workflow_run.event == 'push' }}
+      (github.event.workflow_job.conclusion == 'failure' ||
+       github.event.workflow_job.conclusion == 'timed_out') &&
+      github.event.workflow_job.head_branch == 'main'
     steps:
       - name: Select Slack webhook
         id: select_webhook
         run: |
-          WF_NAME="${{ github.event.workflow_run.name }}"
+          WF_NAME="${{ github.event.workflow_job.workflow_name }}"
           if echo "$WF_NAME" | grep -Eiq 'L2|Replay'; then
             echo "webhook=${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
           else
@@ -41,13 +29,17 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Post failure to Slack
+      - name: Post job failure to Slack
         env:
           REPO: ${{ github.repository }}
-          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
-          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          RUN_HTML_URL: ${{ github.event.workflow_run.html_url }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_NAME: ${{ github.event.workflow_job.workflow_name }}
+          CONCLUSION: ${{ github.event.workflow_job.conclusion }}
+          RUN_ID: ${{ github.event.workflow_job.run_id }}
+          HEAD_SHA: ${{ github.event.workflow_job.head_sha }}
+          JOB_NAME: ${{ github.event.workflow_job.name }}
+          JOB_HTML_URL: ${{ github.event.workflow_job.html_url }}
+          JOB_STARTED_AT: ${{ github.event.workflow_job.started_at }}
+          JOB_COMPLETED_AT: ${{ github.event.workflow_job.completed_at }}
+          TRIGGER_EVENT: ${{ github.event.workflow_job.workflow_run.event }}
         run: |
-          bash .github/scripts/notify_workflow_failure.sh "${{ steps.select_webhook.outputs.webhook }}"
+          bash .github/scripts/notify_job_failure.sh "${{ steps.select_webhook.outputs.webhook }}"
