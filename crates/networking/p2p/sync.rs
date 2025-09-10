@@ -21,7 +21,6 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{NodeHash, Trie, TrieError};
-use ethrex_vm::EvmError;
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -667,7 +666,7 @@ impl FullBlockSyncState {
         // Run the batch
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
-            block_batch.clone(),
+            block_batch,
             found_sync_head,
             cancel_token.clone(),
         )
@@ -677,11 +676,7 @@ impl FullBlockSyncState {
                 warn!("Failed to add block during FullSync: {err}");
                 // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
                 match err {
-                    ChainError::InvalidBlock(_)
-                    | ChainError::InvalidTransaction(_)
-                    | ChainError::EvmError(EvmError::Transaction(_))
-                    | ChainError::EvmError(EvmError::Header(_))
-                    | ChainError::EvmError(EvmError::InvalidDepositRequest) => {
+                    ChainError::InvalidBlock(_) => {
                         let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
                         if let Some(index) = block_batch_hashes
                             .iter()

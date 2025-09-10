@@ -136,7 +136,25 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
 
-        let execution_result = vm.execute_block(block)?;
+        let execution_result = match vm.execute_block(block) {
+            Err(error) => match error {
+                EvmError::Transaction(err) => {
+                    return Err(ChainError::InvalidBlock(
+                        InvalidBlockError::InvalidTransaction(err),
+                    ));
+                }
+                EvmError::InvalidDepositRequest => {
+                    return Err(ChainError::InvalidBlock(
+                        InvalidBlockError::InvalidTransaction(
+                            "Invalid deposit request layout".to_string(),
+                        ),
+                    ));
+                }
+                other_errors => return Err(ChainError::EvmError(other_errors)),
+            },
+            Ok(result) => result,
+        };
+
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
