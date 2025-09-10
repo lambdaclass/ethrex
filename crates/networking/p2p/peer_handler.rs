@@ -341,7 +341,7 @@ impl PeerHandler {
                 trace!("We didn't get a peer from the table");
                 continue;
             };
-            let available_downloader = Downloader::new(peer_id, peer_channel.clone());
+            let available_downloader = Downloader::new(peer_id, peer_channel);
 
             let Some((start_block, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 self.peer_scores.lock().await.free_peer(peer_id);
