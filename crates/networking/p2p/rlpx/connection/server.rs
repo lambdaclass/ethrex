@@ -752,7 +752,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             };
         }
         Message::GetAccountRange(req) => {
-            let response = process_account_range_request(req, state.storage.clone())?;
+            let response = process_account_range_request(req, state.storage.clone()).await?;
             send(state, Message::AccountRange(response)).await?
         }
         Message::Transactions(txs) if peer_supports_eth => {
@@ -837,7 +837,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             }
         }
         Message::GetStorageRanges(req) => {
-            let response = process_storage_ranges_request(req, state.storage.clone())?;
+            let response = process_storage_ranges_request(req, state.storage.clone()).await?;
             send(state, Message::StorageRanges(response)).await?
         }
         Message::GetByteCodes(req) => {
@@ -845,7 +845,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
-            let response = process_trie_nodes_request(req, state.storage.clone())?;
+            let response = process_trie_nodes_request(req, state.storage.clone()).await?;
             send(state, Message::TrieNodes(response)).await?
         }
         Message::L2(req) if peer_supports_l2 => {
