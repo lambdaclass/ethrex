@@ -29,6 +29,7 @@ openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "open
     "evm-prove",
     "parallel",
     "jemalloc",
+    "nightly-features"
 ] }
 bincode = "1.3"
 serde.workspace = true
