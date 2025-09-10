@@ -173,6 +173,20 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             )
         })?;
 
+        // Rebuild all storage tries
+
+        let addresses: Vec<Address> = value
+            .keys
+            .iter()
+            .filter(|k| k.len() == Address::len_bytes())
+            .map(|k| Address::from_slice(k))
+            .collect();
+        for address in addresses {
+            if let Some(trie) = guest_program_state.rebuild_storage_trie(&address) {
+                guest_program_state.storage_tries.insert(address, trie);
+            }
+        }
+
         Ok(guest_program_state)
     }
 }
@@ -417,35 +431,18 @@ impl GuestProgramState {
         address: Address,
         key: H256,
     ) -> Result<Option<U256>, GuestProgramStateError> {
-        let storage_trie = if let Some(storage_trie) = self.storage_tries.get(&address) {
-            storage_trie
-        } else {
-            if self.state_trie.is_none() {
-                return Err(GuestProgramStateError::Database(
-                    "ExecutionWitness: Tried to get storage slot before rebuilding state trie."
-                        .to_string(),
-                ));
-            };
-
-            let Some(storage_trie) = self.rebuild_storage_trie(&address) else {
-                return Ok(None);
-            };
-
-            self.storage_tries.entry(address).or_insert(storage_trie)
+        let Some(storage_trie) = self.storage_tries.get(&address) else {
+            return Ok(None);
         };
+
         let hashed_key = hash_key(&key);
-        if let Some(encoded_key) = storage_trie
+        storage_trie
             .get(&hashed_key)
             .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
-        {
-            U256::decode(&encoded_key)
-                .map_err(|_| {
-                    GuestProgramStateError::Database("failed to read storage from trie".to_string())
-                })
-                .map(Some)
-        } else {
-            Ok(None)
-        }
+            .map(|encoded| {
+                U256::decode(&encoded).map_err(|e| GuestProgramStateError::Database(e.to_string()))
+            })
+            .transpose()
     }
 
     /// Retrieves the chain configuration for the execution witness.
