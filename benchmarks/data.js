@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757524054511,
+  "lastUpdate": 1757526550031,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13465,6 +13465,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 165732431186,
             "range": "± 695319628",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ea1e8a713c60a098de8dd33e76f9045bf19cf2cb",
+          "message": "ci(l1): move replay job to a different workflow. (#4413)\n\n**Motivation**\nMoving Replay stuff to a different workflow from L1\n\n**Description**\n- Moved Replay to a different workflow\n- Disabled Replace job since it's broken",
+          "timestamp": "2025-09-10T16:56:26Z",
+          "tree_id": "9f20ed687f4b7c2822a0a480c97546d6539c3747",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ea1e8a713c60a098de8dd33e76f9045bf19cf2cb"
+        },
+        "date": 1757526529893,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169772408090,
+            "range": "± 288026009",
             "unit": "ns/iter"
           }
         ]
