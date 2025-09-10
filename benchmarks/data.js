@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757541263024,
+  "lastUpdate": 1757542910154,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13615,6 +13615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169305818945,
             "range": "± 340591507",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "24504d9d655b8b5e3bd4a1731293ad217fb49528",
+          "message": "fix(l1): handshake and codec panics (#4399)\n\n**Motivation**\nThere are several possible sources of panic in `handshake.rs` and\n`codec.rs`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nSolves the possible panics\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4314",
+          "timestamp": "2025-09-10T21:28:41Z",
+          "tree_id": "46af7bd3c7114b7f0a40f04eb2e64b4868833aca",
+          "url": "https://github.com/lambdaclass/ethrex/commit/24504d9d655b8b5e3bd4a1731293ad217fb49528"
+        },
+        "date": 1757542889431,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167145630222,
+            "range": "± 223314205",
             "unit": "ns/iter"
           }
         ]
