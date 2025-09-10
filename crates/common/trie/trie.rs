@@ -91,8 +91,16 @@ impl Trie {
     }
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
-    pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        let path = Nibbles::from_bytes(path);
+    pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+        let path = Nibbles::from_bytes(pathrlp);
+        if pathrlp.len() == 32 {
+            let node = Node::decode(&self.db.get(path)?.ok_or(TrieError::InconsistentTree)?);
+            if let Node::Leaf(leaf) = node? {
+                return Ok(Some(leaf.value))
+            } else {
+                return Ok(None)
+            }
+        }
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
