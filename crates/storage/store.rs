@@ -1421,6 +1421,36 @@ mod tests {
         run_test(test_store_block_tags, engine_type).await;
         run_test(test_chain_config_storage, engine_type).await;
         run_test(test_genesis_block, engine_type).await;
+        run_test(test_iter_accounts, engine_type).await;
+    }
+
+    async fn test_iter_accounts(store: Store) {
+        let mut accounts: Vec<_> = (0u64..1_000)
+            .map(|i| {
+                (
+                    H256(Keccak256::digest(i.to_be_bytes()).into()),
+                    AccountState {
+                        nonce: 2 * i,
+                        balance: U256::from(3 * i),
+                        code_hash: *EMPTY_KECCACK_HASH,
+                        storage_root: *EMPTY_TRIE_HASH,
+                    },
+                )
+            })
+            .collect();
+        accounts.sort_by_key(|a| a.0);
+        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        for (address, state) in &accounts {
+            trie.insert(address.0.to_vec(), state.encode_to_vec())
+                .unwrap();
+        }
+        let state_root = trie.hash().unwrap();
+        let account_iter = store
+            .iter_accounts_from(state_root, accounts[500].0)
+            .unwrap();
+        for (expected, actual) in std::iter::zip(accounts.drain(500..), account_iter) {
+            assert_eq!(expected, actual);
+        }
     }
 
     async fn test_genesis_block(store: Store) {
