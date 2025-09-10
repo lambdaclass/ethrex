@@ -2,7 +2,9 @@ use clap::{ArgGroup, Parser, Subcommand};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     Address, H256,
-    types::{AccountUpdate, Block, BlockHeader, Receipt},
+    types::{
+        AccountUpdate, Block, BlockHeader, Receipt, block_execution_witness::GuestProgramState,
+    },
 };
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rlp::encode::RLPEncode;
@@ -479,9 +481,11 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         })?;
 
     let witness = &mut cache.witness;
-    witness.rebuild_state_trie().unwrap();
-    let root = witness.state_trie.as_ref().unwrap().hash_no_commit();
-    println!("Oldroot: {}", hex::encode(root));
+
+    let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
+    // witness.rebuild_state_trie().unwrap();
+    // let root = witness.state_trie.as_ref().unwrap().hash_no_commit();
+    // println!("Oldroot: {}", hex::encode(root));
 
     // let store = Store::new("testing", EngineType::InMemory).unwrap();
     let in_memory_store = InMemoryStore::new();
@@ -498,8 +502,11 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         //     .map(|(hash, rlp)| (NodeHash::Hashed(*hash), rlp.clone()))
         //     .collect();
 
-        let root_hash = NodeHash::Hashed(witness.parent_block_header.state_root);
-        let root_rlp = witness.state_nodes.get(&root_hash.finalize()).unwrap();
+        let root_hash = NodeHash::Hashed(guest_program.parent_block_header.state_root);
+        let root_rlp = guest_program
+            .nodes_hashed
+            .get(&root_hash.finalize())
+            .unwrap();
 
         fn inner(
             all_nodes: &BTreeMap<H256, Vec<u8>>,
@@ -547,7 +554,7 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
 
         let mut necessary_nodes = BTreeMap::new();
         let root: NodeRef = inner(
-            &witness.state_nodes,
+            &guest_program.nodes_hashed,
             &root_hash,
             root_rlp,
             &mut necessary_nodes,
@@ -560,8 +567,6 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         let in_memory_trie = Arc::new(Mutex::new(necessary_nodes));
 
         inner_store.state_trie_nodes = in_memory_trie;
-
-        
     }
 
     let store = Store {
@@ -575,12 +580,15 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     store.add_initial_state(genesis).await.unwrap();
 
     // Add codes to the db
-    for (code_hash, code) in witness.codes.clone() {
-        store.add_account_code(code_hash, code).await.unwrap();
+    for (code_hash, code) in guest_program.codes_hashed.clone() {
+        store
+            .add_account_code(code_hash, code.into())
+            .await
+            .unwrap();
     }
 
     // Add block headers
-    for (_n, header) in witness.block_headers.clone() {
+    for (_n, header) in guest_program.block_headers.clone() {
         store.add_block_header(header.hash(), header).await.unwrap();
     }
 
