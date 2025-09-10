@@ -19,12 +19,11 @@ pub async fn process_account_range_request(
     tokio::task::spawn_blocking(move || {
         let mut accounts = vec![];
         let mut bytes_used = 0;
-        for (hash, account) in store.iter_accounts(request.root_hash)? {
-            if hash >= request.starting_hash {
-                let account = AccountStateSlim::from(account);
-                bytes_used += 32 + account.length() as u64;
-                accounts.push(AccountRangeUnit { hash, account });
-            }
+        for (hash, account) in store.iter_accounts_from(request.root_hash, request.starting_hash)? {
+            debug_assert!(hash >= request.starting_hash);
+            let account = AccountStateSlim::from(account);
+            bytes_used += 32 + account.length() as u64;
+            accounts.push(AccountRangeUnit { hash, account });
             if hash >= request.limit_hash || bytes_used >= request.response_bytes {
                 break;
             }
@@ -57,12 +56,13 @@ pub async fn process_storage_ranges_request(
             let mut account_slots = vec![];
             let mut res_capped = false;
 
-            if let Some(storage_iter) = store.iter_storage(request.root_hash, hashed_address)? {
+            if let Some(storage_iter) =
+                store.iter_storage_from(request.root_hash, hashed_address, request.starting_hash)?
+            {
                 for (hash, data) in storage_iter {
-                    if hash >= request.starting_hash {
-                        bytes_used += 64_u64; // slot size
-                        account_slots.push(StorageSlot { hash, data });
-                    }
+                    debug_assert!(hash >= request.starting_hash);
+                    bytes_used += 64_u64; // slot size
+                    account_slots.push(StorageSlot { hash, data });
                     if hash >= request.limit_hash || bytes_used >= request.response_bytes {
                         if bytes_used >= request.response_bytes {
                             res_capped = true;
