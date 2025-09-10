@@ -1,15 +1,19 @@
 use guest_program::input::ProgramInput;
 use openvm_sdk::{Sdk, StdIn};
+use rkyv::rancor::Error;
 
 pub struct ProgramOutput(pub [u8; 32]);
 
-static PROGRAM_ELF: &[u8] = include_bytes!("../guest_program/src/openvm/target/riscv32im-risc0-zkvm-elf/release/zkvm-openvm-program");
+static PROGRAM_ELF: &[u8] = include_bytes!(
+    "../guest_program/src/openvm/target/riscv32im-risc0-zkvm-elf/release/zkvm-openvm-program"
+);
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let sdk = Sdk::standard();
 
     let mut stdin = StdIn::default();
-    stdin.write(&input);
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_bytes(bytes.as_slice());
 
     sdk.execute(PROGRAM_ELF.clone(), stdin.clone())?;
 
