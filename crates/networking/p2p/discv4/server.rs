@@ -74,7 +74,7 @@ impl DiscoveryServer {
         loop {
             let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
             let Ok(packet) = Packet::decode(&buf[..read])
-                .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
+                .inspect_err(|e| debug!(err = ?e, "Failed to decode packet"))
             else {
                 continue;
             };
