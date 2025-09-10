@@ -86,11 +86,11 @@ mod tests {
     use super::*;
     use ethrex_trie::NodeHash;
     use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options};
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     #[test]
     fn test_trie_db_basic_operations() {
-        let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test_db");
 
         // Setup RocksDB with column family
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_trie_db_with_address_prefix() {
-        let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test_db");
 
         // Setup RocksDB with column family
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_trie_db_batch_operations() {
-        let temp_dir = TempDir::new("rocksdb_trie_test").unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test_db");
 
         // Setup RocksDB with column family
