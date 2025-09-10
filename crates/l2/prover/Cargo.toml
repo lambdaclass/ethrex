@@ -42,7 +42,7 @@ risc0-zkp = { version = "=2.0.2", optional = true }
 sp1-sdk = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 
-openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk" , optional = true }
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk" , optional = true, features = ["evm-prove"]}
 
 [dev-dependencies]
 ethrex-storage.workspace = true

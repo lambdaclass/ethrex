@@ -1,5 +1,5 @@
 use guest_program::input::ProgramInput;
-use openvm_sdk::{Sdk, StdIn};
+use openvm_sdk::{Sdk, StdIn, types::EvmProof};
 use rkyv::rancor::Error;
 
 pub struct ProgramOutput(pub [u8; 32]);
@@ -21,10 +21,16 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn prove(
-    _input: ProgramInput,
+    input: ProgramInput,
     _aligned_mode: bool,
-) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
-    unimplemented!("OpenVM prove is not implemented yet");
+) -> Result<EvmProof, Box<dyn std::error::Error>> {
+    let sdk = Sdk::standard();
+
+    let mut stdin = StdIn::default();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_bytes(bytes.as_slice());
+
+    Ok(sdk.prove_evm(PROGRAM_ELF.clone(), stdin.clone())?)
 }
 
 pub fn to_batch_proof(

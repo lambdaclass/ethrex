@@ -25,7 +25,7 @@ risc0-zkvm = { version = "=2.3.1", optional = true }
 sp1-build = { version = "=5.0.8", optional = true }
 sp1-sdk = { version = "=5.0.8", optional = true }
 openvm-build = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-build" }
-openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk" }
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk", features = ["evm-prove"]}
 bincode = "1.3"
 serde.workspace = true
 

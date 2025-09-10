@@ -52,5 +52,5 @@ pub enum ProveOutput {
     #[cfg(feature = "risc0")]
     RISC0(risc0_zkvm::Receipt),
     #[cfg(feature = "openvm")]
-    OpenVM(openvm::ProgramOutput),
+    OpenVM(openvm_sdk::types::EvmProof),
 }
