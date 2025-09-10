@@ -4,7 +4,7 @@ module.exports = async ({ github, context }) => {
 
   // Work internally with lowercase labels for consistency
   const desired = new Set(); // lowercase names
-  const managed = new Set(["l1", "l2", "levm", "performance"]);
+  const managed = new Set(["l1", "l2", "levm", "performance", "replay"]);
 
   // Extract type and scopes: type(scope[, scope2, ...]): subject
   const match = titleLc.match(/^([a-z]+)\(([^)]+)\):/);
@@ -23,6 +23,7 @@ module.exports = async ({ github, context }) => {
       if (s === 'l1') desired.add('l1');
       if (s === 'l2') desired.add('l2');
       if (s === 'levm') desired.add('levm');
+      if (s === 'replay') desired.add('replay');
     }
   }
 

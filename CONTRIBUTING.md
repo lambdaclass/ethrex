@@ -17,7 +17,7 @@ All PR titles must follow the enforced semantic format:
 `<type>(<scope>[,<scope2>,...]): <subject>`
 
 - **Allowed types:** `feat`, `fix`, `perf`, `refactor`, `revert`, `deps`, `build`, `ci`, `test`, `style`, `chore`, `docs`
-- **Allowed scopes:** `l1`, `l2`, `levm` (multiple scopes can be used, separated by commas)
+- **Allowed scopes:** `l1`, `l2`, `levm`, `replay` (multiple scopes can be used, separated by commas)
 - **Scope(s) are required**
 - **Subject must not start with an uppercase character**
 
