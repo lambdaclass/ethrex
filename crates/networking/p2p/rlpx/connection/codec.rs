@@ -102,11 +102,9 @@ impl Decoder for RLPxCodec {
 
         // Both are padded to the block's size (16 bytes)
         let (header_ciphertext, header_mac) =
-            frame_header
-                .split_at_mut_checked(16)
-                .ok_or(RLPxError::CryptographyError(
-                    "Invalid frame header length".to_owned(),
-                ))?;
+            frame_header.split_at_mut_checked(16).ok_or_else(|| {
+                RLPxError::CryptographyError("Invalid frame header length".to_owned())
+            })?;
 
         // Validate MAC header
         // header-mac-seed = aes(mac-secret, keccak256.digest(egress-mac)[:16]) ^ header-ciphertext
@@ -116,9 +114,7 @@ impl Decoder for RLPxCodec {
                 .clone()
                 .finalize()
                 .get(..16)
-                .ok_or(RLPxError::CryptographyError(
-                    "Invalid mac digest".to_owned(),
-                ))?
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?
                 .try_into()
                 .map_err(|_| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?;
             let mut seed = mac_digest.into();
@@ -141,9 +137,7 @@ impl Decoder for RLPxCodec {
                 .clone()
                 .finalize()
                 .get(..16)
-                .ok_or(RLPxError::CryptographyError(
-                    "Invalid header mac".to_owned(),
-                ))?
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid header mac".to_owned()))?
                 .try_into()
                 .map_err(|_| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
         );
@@ -193,9 +187,7 @@ impl Decoder for RLPxCodec {
         // this frame.
         let mut frame_data = src
             .get(32..total_message_size)
-            .ok_or(RLPxError::CryptographyError(
-                "Invalid frame data length".to_owned(),
-            ))?
+            .ok_or_else(|| RLPxError::CryptographyError("Invalid frame data length".to_owned()))?
             .to_vec();
         src.advance(total_message_size);
 
@@ -205,9 +197,9 @@ impl Decoder for RLPxCodec {
 
         let (frame_ciphertext, frame_mac) = frame_data
             .split_at_mut_checked(padded_size as usize)
-            .ok_or(RLPxError::CryptographyError(
-            "Invalid frame data length".to_owned(),
-        ))?;
+            .ok_or_else(|| {
+            RLPxError::CryptographyError("Invalid frame data length".to_owned())
+        })?;
 
         // check MAC
         self.ingress_mac.update(&frame_ciphertext);
@@ -217,9 +209,7 @@ impl Decoder for RLPxCodec {
                 .clone()
                 .finalize()
                 .get(..16)
-                .ok_or(RLPxError::CryptographyError(
-                    "Invalid mac digest".to_owned(),
-                ))?
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?
                 .try_into()
                 .map_err(|_| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?;
             let mut seed = mac_digest.into();
@@ -232,7 +222,7 @@ impl Decoder for RLPxCodec {
             .clone()
             .finalize()
             .get(..16)
-            .ok_or(RLPxError::CryptographyError("Invalid frame mac".to_owned()))?
+            .ok_or_else(|| RLPxError::CryptographyError("Invalid frame mac".to_owned()))?
             .try_into()
             .map_err(|_| RLPxError::CryptographyError("Invalid frame mac".to_owned()))?;
 
@@ -247,9 +237,7 @@ impl Decoder for RLPxCodec {
 
         let (frame_data, _padding) = frame_ciphertext
             .split_at_checked(frame_size as usize)
-            .ok_or(RLPxError::CryptographyError(
-                "Invalid frame size".to_owned(),
-            ))?;
+            .ok_or_else(|| RLPxError::CryptographyError("Invalid frame size".to_owned()))?;
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
         Ok(Some(rlpx::Message::decode(msg_id, msg_data)?))
@@ -288,19 +276,22 @@ impl Encoder<rlpx::Message> for RLPxCodec {
         // header = frame-size || header-data || header-padding
         let mut header = Vec::with_capacity(32);
         let frame_size = frame_data.len().to_be_bytes();
-        header.extend_from_slice(frame_size.get(5..8).ok_or(RLPxError::CryptographyError(
-            "Invalid frame size".to_owned(),
-        ))?);
+        header.extend_from_slice(
+            frame_size
+                .get(5..8)
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid frame size".to_owned()))?,
+        );
 
         // header-data = [capability-id, context-id]  (both always zero)
         let header_data = (0_u8, 0_u8);
         header_data.encode(&mut header);
 
         header.resize(16, 0);
-        self.egress_aes
-            .try_apply_keystream(header.get_mut(..16).ok_or(RLPxError::CryptographyError(
-                "Invalid header length".to_owned(),
-            ))?)?;
+        self.egress_aes.try_apply_keystream(
+            header
+                .get_mut(..16)
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid header length".to_owned()))?,
+        )?;
 
         let header_mac_seed = {
             let mac_digest: [u8; 16] = self
@@ -308,9 +299,7 @@ impl Encoder<rlpx::Message> for RLPxCodec {
                 .clone()
                 .finalize()
                 .get(..16)
-                .ok_or(RLPxError::CryptographyError(
-                    "Invalid mac digest".to_owned(),
-                ))?
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?
                 .try_into()
                 .map_err(|_| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?;
             let mut seed = mac_digest.into();
@@ -319,9 +308,9 @@ impl Encoder<rlpx::Message> for RLPxCodec {
                 ^ H128(
                     header
                         .get(..16)
-                        .ok_or(RLPxError::CryptographyError(
-                            "Invalid header length".to_owned(),
-                        ))?
+                        .ok_or_else(|| {
+                            RLPxError::CryptographyError("Invalid header length".to_owned())
+                        })?
                         .try_into()
                         .map_err(|_| {
                             RLPxError::CryptographyError("Invalid header length".to_owned())
@@ -330,9 +319,11 @@ impl Encoder<rlpx::Message> for RLPxCodec {
         };
         self.egress_mac.update(header_mac_seed);
         let header_mac = self.egress_mac.clone().finalize();
-        header.extend_from_slice(header_mac.get(..16).ok_or(RLPxError::CryptographyError(
-            "Invalid header mac".to_owned(),
-        ))?);
+        header.extend_from_slice(
+            header_mac
+                .get(..16)
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
+        );
 
         // Write header
         buffer.extend_from_slice(&header);
@@ -355,9 +346,7 @@ impl Encoder<rlpx::Message> for RLPxCodec {
                 .clone()
                 .finalize()
                 .get(..16)
-                .ok_or(RLPxError::CryptographyError(
-                    "Invalid mac digest".to_owned(),
-                ))?
+                .ok_or_else(|| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?
                 .try_into()
                 .map_err(|_| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?;
             let mut seed = mac_digest.into();
