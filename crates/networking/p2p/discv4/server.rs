@@ -12,7 +12,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, GenServerHandle},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 
 use crate::utils::{is_msg_expired, unmap_ipv4in6_address};
 use crate::{
