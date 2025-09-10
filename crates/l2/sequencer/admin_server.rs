@@ -1,4 +1,6 @@
-use crate::sequencer::l1_committer::{CallMessage, L1Committer, OutMessage};
+use crate::sequencer::l1_committer::{
+    CallMessage as CommitterCallMessage, L1Committer, OutMessage as CommitterOutMessage,
+};
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
@@ -18,13 +20,14 @@ pub enum AdminError {
 
 #[derive(Clone)]
 pub struct Admin {
-    pub l1_committer: GenServerHandle<L1Committer>,
+    pub l1_committer: Option<GenServerHandle<L1Committer>>,
 }
 
 pub enum AdminErrorResponse {
     MessageError(String),
     UnexpectedResponse { component: String },
     GenServerError(GenServerError),
+    NoHandle,
 }
 
 impl IntoResponse for AdminErrorResponse {
@@ -35,6 +38,9 @@ impl IntoResponse for AdminErrorResponse {
             }
             Self::MessageError(err) => err,
             AdminErrorResponse::GenServerError(err) => err.to_string(),
+            AdminErrorResponse::NoHandle => {
+                "Admin server does not have the genserver handle. Maybe its not running?".into()
+            }
         };
 
         let body = Json::from(Value::String(msg));
@@ -45,7 +51,7 @@ impl IntoResponse for AdminErrorResponse {
 
 pub async fn start_api(
     http_addr: String,
-    l1_committer: GenServerHandle<L1Committer>,
+    l1_committer: Option<GenServerHandle<L1Committer>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
     let admin = Admin { l1_committer };
@@ -79,13 +85,17 @@ async fn start_committer_default(
 }
 
 async fn start_committer(
-    State(mut admin): State<Admin>,
+    State(admin): State<Admin>,
     Path(delay): Path<u64>,
 ) -> Result<Json<Value>, AdminErrorResponse> {
-    match admin.l1_committer.call(CallMessage::Start(delay)).await {
+    let Some(mut l1_committer) = admin.l1_committer else {
+        return Err(AdminErrorResponse::NoHandle);
+    };
+
+    match l1_committer.call(CommitterCallMessage::Start(delay)).await {
         Ok(ok) => match ok {
-            OutMessage::Started => Ok(Json::from(Value::String("ok".into()))),
-            OutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
+            CommitterOutMessage::Started => Ok(Json::from(Value::String("ok".into()))),
+            CommitterOutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
             _ => Err(AdminErrorResponse::UnexpectedResponse {
                 component: "l1_committer".into(),
             }),
@@ -94,11 +104,15 @@ async fn start_committer(
     }
 }
 
-async fn stop_committer(State(mut admin): State<Admin>) -> Result<Json<Value>, AdminErrorResponse> {
-    match admin.l1_committer.call(CallMessage::Stop).await {
+async fn stop_committer(State(admin): State<Admin>) -> Result<Json<Value>, AdminErrorResponse> {
+    let Some(mut l1_committer) = admin.l1_committer else {
+        return Err(AdminErrorResponse::NoHandle);
+    };
+
+    match l1_committer.call(CommitterCallMessage::Stop).await {
         Ok(ok) => match ok {
-            OutMessage::Stopped => Ok(Json::from(Value::String("ok".into()))),
-            OutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
+            CommitterOutMessage::Stopped => Ok(Json::from(Value::String("ok".into()))),
+            CommitterOutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
             _ => Err(AdminErrorResponse::UnexpectedResponse {
                 component: "l1_committer".into(),
             }),
@@ -108,18 +122,28 @@ async fn stop_committer(State(mut admin): State<Admin>) -> Result<Json<Value>, A
 }
 
 async fn health(
-    State(mut admin): State<Admin>,
+    State(admin): State<Admin>,
 ) -> Result<Json<Map<String, Value>>, AdminErrorResponse> {
-    let l1_committer_health = admin.l1_committer.call(CallMessage::Health).await;
-
     let mut response = serde_json::Map::new();
 
-    let committer_health = if let Ok(OutMessage::Health(health)) = l1_committer_health {
-        serde_json::to_value(health).unwrap_or_default()
+    let l1_committer_response = if let Some(mut l1_committer) = admin.l1_committer {
+        let l1_committer_health = l1_committer.call(CommitterCallMessage::Health).await;
+
+        match l1_committer_health {
+            Ok(CommitterOutMessage::Health(health)) => {
+                serde_json::to_value(health).unwrap_or_else(|err| {
+                    Value::String(format!("Failed to serialize health message {err}"))
+                })
+            }
+            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
+            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
+        }
     } else {
-        Value::String("L1committer health returned an error".into())
+        Value::String(
+            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
+        )
     };
-    response.insert("l1_committer".to_string(), committer_health);
+    response.insert("l1_committer".to_string(), l1_committer_response);
 
     Ok(Json::from(response))
 }
