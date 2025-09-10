@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757505901002,
+  "lastUpdate": 1757520719472,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13405,6 +13405,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167525092640,
             "range": "± 698174914",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2e023fa72877be10a7142d8790c90e5940407adb",
+          "message": "ci(l1): fix fork detection. (#4382)\n\n**Motivation**\nThe previous check was not working properly\n\n**Description**\n- Fixes the fork detection",
+          "timestamp": "2025-09-10T15:17:13Z",
+          "tree_id": "b3c028ab569d9f8bca47d5ac0f5dd585055883d9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2e023fa72877be10a7142d8790c90e5940407adb"
+        },
+        "date": 1757520613252,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170324943329,
+            "range": "± 415562097",
             "unit": "ns/iter"
           }
         ]
