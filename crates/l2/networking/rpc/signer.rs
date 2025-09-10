@@ -25,8 +25,11 @@ pub enum Signer {
 pub struct SignerHealth {
     signer: String,
     address: Address,
+    #[serde(skip_serializing_if = "Option::is_none")]
     public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     remote_signer_healthcheck: Option<serde_json::Value>,
 }
 
