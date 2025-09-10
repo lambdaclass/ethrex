@@ -156,6 +156,7 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
 
@@ -247,6 +248,7 @@ jobs:
 
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
