@@ -241,6 +241,7 @@ async fn heal_state_trie(
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
+                        peer_id,
                         &mut peer_channel,
                         state_root,
                         batch.clone(),

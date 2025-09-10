@@ -356,7 +356,8 @@ async fn ask_peers_for_nodes(
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
-            let response = PeerHandler::request_storage_trienodes(&mut peer_channel, gtn).await;
+            let response =
+                PeerHandler::request_storage_trienodes(peer_id, &mut peer_channel, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
