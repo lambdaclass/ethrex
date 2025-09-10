@@ -345,7 +345,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers_full_sync(current_head, BlockRequestOrder::OldToNew)
+                .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -401,7 +401,7 @@ impl Syncer {
             if !block_headers.is_empty() {
                 let mut finished = false;
                 while !finished {
-                    finished = block_sync_state
+                    (finished, sync_head_found) = block_sync_state
                         .process_incoming_headers(
                             block_headers.clone(),
                             sync_head,
@@ -577,14 +577,15 @@ impl FullBlockSyncState {
         &mut self,
         block_headers: Vec<BlockHeader>,
         sync_head: H256,
-        mut sync_head_found: bool,
+        sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
-    ) -> Result<bool, SyncError> {
+    ) -> Result<(bool, bool), SyncError> {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
 
+        let mut found_sync_head = sync_head_found;
         let finished = self.current_headers.len() <= MAX_BLOCK_BODIES_TO_REQUEST;
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
         //     // We don't have enough headers to fill up a batch, lets request more
@@ -616,7 +617,7 @@ impl FullBlockSyncState {
             if let Some(last_block) = self.current_blocks.last() {
                 if last_block.hash() == block.header.parent_hash {
                     self.current_blocks.push(block);
-                    sync_head_found = true;
+                    found_sync_head = true;
                 }
             }
         }
@@ -639,7 +640,7 @@ impl FullBlockSyncState {
                 .hash()
         );
         let execution_start = Instant::now();
-        let mut block_batch: Vec<Block> = self
+        let block_batch: Vec<Block> = self
             .current_blocks
             .drain(..min(*EXECUTE_BATCH_SIZE, self.current_blocks.len()))
             .collect();
@@ -667,7 +668,7 @@ impl FullBlockSyncState {
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
             block_batch.clone(),
-            sync_head_found,
+            found_sync_head,
             cancel_token.clone(),
         )
         .await
@@ -738,7 +739,7 @@ impl FullBlockSyncState {
             blocks_per_second
         );
         // }
-        Ok(finished)
+        Ok((finished, found_sync_head))
     }
 }
 
@@ -1082,7 +1083,7 @@ impl Syncer {
             healing_done = heal_storage_trie(
                 pivot_header.state_root,
                 &storage_accounts,
-                self.peers.clone(),
+                &mut self.peers,
                 store.clone(),
                 HashMap::new(),
                 calculate_staleness_timestamp(pivot_header.timestamp),
@@ -1158,13 +1159,13 @@ impl Syncer {
 type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
 
 fn compute_storage_roots(
-    maybe_big_account_storage_state_roots_clone: Arc<Mutex<HashMap<H256, H256>>>,
+    maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
     account_hash: H256,
     key_value_pairs: Vec<(H256, U256)>,
     pivot_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
-    let account_storage_root = match maybe_big_account_storage_state_roots_clone
+    let account_storage_root = match maybe_big_account_storage_state_roots
         .lock()
         .map_err(|_| SyncError::MaybeBigAccount)?
         .entry(account_hash)
@@ -1183,18 +1184,18 @@ fn compute_storage_roots(
         }
     }
 
-    let (computed_state_root, changes) = storage_trie.collect_changes_since_last_hash();
-
-    maybe_big_account_storage_state_roots_clone
-        .lock()
-        .map_err(|_| SyncError::MaybeBigAccount)?
-        .insert(account_hash, computed_state_root);
+    let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
 
     let account_state = store
         .get_account_state_by_acc_hash(pivot_hash, account_hash)?
         .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
-    if computed_state_root == account_state.storage_root {
+    if computed_storage_root == account_state.storage_root {
         METRICS.storage_tries_state_roots_computed.inc();
+    } else {
+        maybe_big_account_storage_state_roots
+            .lock()
+            .map_err(|_| SyncError::MaybeBigAccount)?
+            .insert(account_hash, computed_storage_root);
     }
 
     Ok((account_hash, changes))
@@ -1215,15 +1216,21 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        let mut scores = peers.peer_scores.lock().await;
-
-        let (peer_id, mut peer_channel) = peers
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, &mut scores)
+        peers
+            .peer_scores
+            .lock()
             .await
-            .map_err(SyncError::PeerHandler)?
+            .update_peers(&peers.peer_table)
+            .await;
+        let (peer_id, mut peer_channel) = peers
+            .peer_scores
+            .lock()
+            .await
+            .get_peer_channel_with_highest_score(&peers.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+            .await
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+        let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1233,8 +1240,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            scores.entry(peer_id).and_modify(|score| *score -= 1);
-            let peer_score = scores.get(&peer_id).unwrap_or(&i64::MIN);
+            peers.peer_scores.lock().await.record_failure(peer_id);
+            let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1242,11 +1249,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        scores.entry(peer_id).and_modify(|score| {
-            if *score < 10 {
-                *score += 1;
-            }
-        });
+        peers.peer_scores.lock().await.record_success(peer_id);
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers

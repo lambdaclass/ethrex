@@ -158,7 +158,7 @@ impl EngineClient {
         // Header
         let header = jsonwebtoken::Header::default();
         // Claims
-        let valid_iat = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as usize;
+        let valid_iat = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let claims = json!({"iat": valid_iat});
         let encoding_key = jsonwebtoken::EncodingKey::from_secret(&self.secret);
         // JWT Token

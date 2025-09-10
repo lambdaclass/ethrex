@@ -14,6 +14,8 @@ ethrex-trie.workspace = true
 ethrex-storage-rollup.workspace = true
 ethereum-types.workspace = true
 ethrex-vm.workspace = true
+
+async-trait.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec"] }
