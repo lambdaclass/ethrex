@@ -43,11 +43,15 @@ impl TrieIterator {
             node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
-            let next_node = node.get_node(db).ok().flatten().expect("must exist");
+            let Some(next_node) = node.get_node(db).ok().flatten() else {
+                return Ok(());
+            };
             match &next_node {
                 Node::Branch(branch_node) => {
                     // Add all children to the stack (in reverse order so we process first child frist)
-                    let choice = target_nibbles.next_choice().expect("not empty");
+                    let Some(choice) = target_nibbles.next_choice() else {
+                        return Ok(());
+                    };
                     let child = &branch_node.choices[choice];
                     // If a prefix of `key` exists under this branch, we recur to the child node, skipping
                     // the branch itself to avoid iterating lesser keys.
