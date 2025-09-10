@@ -2260,6 +2260,7 @@ name = "ethrex-p2p"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "async-trait",
  "bytes",
  "concat-kdf",
  "ctr",
