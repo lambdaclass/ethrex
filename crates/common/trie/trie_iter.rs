@@ -32,100 +32,81 @@ impl TrieIterator {
             return Ok(());
         };
 
-        // Pushes the first nodes that are equal or greater than the prefixes
-        // of the `key`, recursively, skipping non-leaf nodes and manually adding
-        // right children of traversed branches.
-        fn first_ge(
-            db: &dyn TrieDB,
-            prefix_nibbles: Nibbles,
-            mut target_nibbles: Nibbles,
-            node: NodeRef,
-            new_stack: &mut Vec<(Nibbles, NodeRef)>,
-        ) -> Result<(), TrieError> {
-            let Some(next_node) = node.get_node(db).ok().flatten() else {
-                return Ok(());
+        let mut node_ref = root_ref;
+        let mut prefix_nibbles = root_path;
+        let mut target_nibbles = Nibbles::from_bytes(&key);
+        let db = self.db.as_ref();
+
+        loop {
+            if target_nibbles.is_empty() || target_nibbles.at(0) == 16 || !node_ref.is_valid() {
+                break;
+            }
+            let Some(next_node) = node_ref.get_node(db).ok().flatten() else {
+                self.stack.clear();
+                break;
             };
             match &next_node {
                 Node::Branch(branch_node) => {
-                    // Add all children to the stack (in reverse order so we process first child frist)
+                    // We need to skip the branch node itself to avoid iterating over left
+                    // uncles of our key. Instead, we add explicitly the children that can't
+                    // lead to our leaf but are greater lexicographically, and then explore,
+                    // if valid, the child that leads to a prefix of `key`.
                     let Some(choice) = target_nibbles.next_choice() else {
-                        return Ok(());
+                        self.stack.clear();
+                        break;
                     };
                     let child = &branch_node.choices[choice];
-                    // If a prefix of `key` exists under this branch, we recur to the child node, skipping
-                    // the branch itself to avoid iterating lesser keys.
-                    if child.is_valid() {
-                        first_ge(
-                            db,
-                            prefix_nibbles.append_new(choice as u8),
-                            target_nibbles,
-                            child.clone(),
-                            new_stack,
-                        )?;
-                    }
                     // Because we can't add the branch, we need to add the valid greater children.
-                    for i in choice + 1..16 {
+                    for i in (choice + 1..16).rev() {
                         let child = &branch_node.choices[i];
                         if child.is_valid() {
-                            new_stack.push((prefix_nibbles.append_new(i as u8), child.clone()));
+                            self.stack
+                                .push((prefix_nibbles.append_new(i as u8), child.clone()));
                         }
                     }
-                    Ok(())
+                    // If a prefix of `key` exists under this branch, we recur to the child node, skipping
+                    // the branch itself to avoid iterating lesser keys.
+                    node_ref = child.clone();
+                    prefix_nibbles = prefix_nibbles.append_new(choice as u8);
                 }
                 Node::Extension(extension_node) => {
                     // Update path
                     let prefix = &extension_node.prefix;
                     match target_nibbles.compare_prefix(prefix) {
-                        Ordering::Greater => Ok(()), // Path is lesser than `key`
+                        Ordering::Greater => {
+                            // Path is lesser than `key`, ignore it and finish iteration.
+                            break;
+                        }
                         Ordering::Less => {
-                            // Path is greater than `key`, we need to iterate its child
-                            let mut new_stacked = prefix_nibbles.clone();
-                            new_stacked.extend(&extension_node.prefix);
-                            new_stack.push((new_stacked, extension_node.child.clone()));
-                            Ok(())
+                            // Path is greater than `key`, we need to iterate it.
+                            self.stack.push((prefix_nibbles.clone(), node_ref));
+                            break;
                         }
                         Ordering::Equal => {
                             // This is a prefix of `key`, we'll need to check the child,
                             // but not iterate the node itself again.
                             target_nibbles = target_nibbles.offset(prefix.len());
-                            let mut new_stacked = prefix_nibbles.clone();
-                            new_stacked.extend(&extension_node.prefix);
-                            first_ge(
-                                db,
-                                new_stacked,
-                                target_nibbles.clone(),
-                                extension_node.child.clone(),
-                                new_stack,
-                            )
+                            prefix_nibbles.extend(&extension_node.prefix);
+                            node_ref = extension_node.child.clone();
                         }
                     }
                 }
                 Node::Leaf(leaf) => {
                     let prefix = &leaf.partial;
                     match target_nibbles.compare_prefix(prefix) {
-                        Ordering::Greater => Ok(()), // Leaf is less than `key`, ignore it
+                        Ordering::Greater => {} // Leaf is less than `key`, ignore it.
                         _ => {
                             // Leaf is greater than or equal to `key`, so it's in range for
                             // iteration.
-                            new_stack.push((prefix_nibbles.clone(), node.clone()));
-                            Ok(())
+                            self.stack.push((prefix_nibbles.clone(), node_ref.clone()));
                         }
                     }
+                    // We reached the bottom, so every other path has to be covered.
+                    break;
                 }
             }
         }
 
-        // Fetch the last node in the stack
-        let target_nibbles = Nibbles::from_bytes(&key);
-        first_ge(
-            self.db.as_ref(),
-            root_path,
-            target_nibbles,
-            root_ref,
-            &mut self.stack,
-        )?;
-        // We add nodes before recursing, so they're backwards.
-        self.stack.reverse();
         Ok(())
     }
 }
