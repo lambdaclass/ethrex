@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use crate::{
     clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
@@ -660,6 +660,27 @@ impl EthClient {
                 Err(TxPoolContentError::RPCError(error_response.error.message).into())
             }
         }
+    }
+
+    /// Smoke test the all the urls by calling eth_blockNumber
+    pub async fn test_urls(&self) -> BTreeMap<String, serde_json::Value> {
+        let mut map = BTreeMap::new();
+        for url in self.urls.iter() {
+            let response = match self
+                .send_request_to_url(url, &RpcRequest::new("eth_blockNumber", None))
+                .await
+            {
+                Ok(RpcResponse::Success(ok)) => serde_json::to_value(ok).unwrap_or_else(|e| {
+                    serde_json::Value::String(format!("Failed to serialize success response: {e}"))
+                }),
+                Ok(RpcResponse::Error(e)) => serde_json::to_value(e).unwrap_or_else(|e| {
+                    serde_json::Value::String(format!("Failed to serialize error response: {e}"))
+                }),
+                Err(e) => serde_json::Value::String(format!("Request error: {e}")),
+            };
+            map.insert(url.to_string(), response);
+        }
+        map
     }
 }
 
