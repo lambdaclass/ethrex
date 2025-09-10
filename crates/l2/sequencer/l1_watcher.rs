@@ -60,9 +60,8 @@ pub struct L1Watcher {
 pub struct L1WatcherHealth {
     pub l1_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
     pub l2_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
-    pub address: Address,
-    pub max_block_step: U256,
-    pub last_block_fetched: U256,
+    pub max_block_step: String,
+    pub last_block_fetched: String,
     pub check_interval: u64,
     pub l1_block_delay: u64,
     pub sequencer_state: String,
@@ -288,9 +287,8 @@ impl L1Watcher {
         CallResponse::Reply(OutMessage::Health(L1WatcherHealth {
             l1_rpc_healthcheck,
             l2_rpc_healthcheck,
-            address: self.address,
-            max_block_step: self.max_block_step,
-            last_block_fetched: self.last_block_fetched,
+            max_block_step: self.max_block_step.to_string(),
+            last_block_fetched: self.last_block_fetched.to_string(),
             check_interval: self.check_interval,
             l1_block_delay: self.l1_block_delay,
             sequencer_state: format!("{:?}", self.sequencer_state.status().await),
