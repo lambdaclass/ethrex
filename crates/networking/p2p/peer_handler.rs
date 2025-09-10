@@ -797,7 +797,7 @@ impl GenServer for PeerHandler {
         );
 
         let _task_assigner = send_interval(
-            Duration::from_millis(10),
+            Duration::from_secs(5),
             handle.clone(),
             PeerHandlerCastMessage::AssignTasks,
         );
@@ -1032,7 +1032,13 @@ impl GenServer for PeerHandler {
                 }
             }
             PeerHandlerCastMessage::TaskFinished { peer_id, response } => {
+                handle
+                    .clone()
+                    .cast(PeerHandlerCastMessage::AssignTasks)
+                    .await
+                    .unwrap();
                 self.mark_peer_as_free(peer_id).await;
+
                 let Some((_, (requested_task, _))) = self.started_tasks.remove_entry(&peer_id)
                 else {
                     // Should never happen
@@ -1540,7 +1546,7 @@ impl GenServer for PeerHandler {
     async fn handle_call(
         &mut self,
         message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
+        handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
         match message {
             PeerHandlerCallMessage::PivotHeader => {
@@ -1556,6 +1562,12 @@ impl GenServer for PeerHandler {
                 PeerHandlerCallResponse::CurrentState((&self.sync_state).into()), // TODO: CLONING STATE HERE IS COSTLY WITHOUT A GOOD REASON
             ),
             PeerHandlerCallMessage::DownloadHeaders(start, sync_head) => {
+                handle
+                    .clone()
+                    .cast(PeerHandlerCastMessage::AssignTasks)
+                    .await
+                    .unwrap();
+
                 // Retrieve sync head number
                 let sync_head_number_retrieval_start = SystemTime::now();
                 info!("Retrieving sync head block number from peers");
@@ -1682,6 +1694,12 @@ impl GenServer for PeerHandler {
                 account_state_snapshots_dir,
                 block_sync_state,
             } => {
+                handle
+                    .clone()
+                    .cast(PeerHandlerCastMessage::AssignTasks)
+                    .await
+                    .unwrap();
+
                 // Create used directory if it doesn't exist
                 if !std::fs::exists(&account_state_snapshots_dir).unwrap()
                 // TODO: handle unwrap
@@ -1741,6 +1759,12 @@ impl GenServer for PeerHandler {
                 account_storages_snapshot_dir: account_storages_snapshots_dir,
                 chunk_index,
             } => {
+                handle
+                    .clone()
+                    .cast(PeerHandlerCastMessage::AssignTasks)
+                    .await
+                    .unwrap();
+
                 if !std::fs::exists(&account_storages_snapshots_dir).unwrap() {
                     std::fs::create_dir_all(&account_storages_snapshots_dir).unwrap();
                 }
@@ -1795,6 +1819,12 @@ impl GenServer for PeerHandler {
                 CallResponse::Reply(PeerHandlerCallResponse::InProgress)
             }
             PeerHandlerCallMessage::DownloadBytecode(bytecode_hashes) => {
+                handle
+                    .clone()
+                    .cast(PeerHandlerCastMessage::AssignTasks)
+                    .await
+                    .unwrap();
+
                 // 1) split the range in chunks of same length
                 let chunk_count = 800;
                 let chunk_size = bytecode_hashes.len() / chunk_count;
@@ -1836,6 +1866,12 @@ impl GenServer for PeerHandler {
                 CallResponse::Reply(PeerHandlerCallResponse::InProgress)
             }
             PeerHandlerCallMessage::DownloadBlockBodies(block_hashes) => {
+                handle
+                    .clone()
+                    .cast(PeerHandlerCastMessage::AssignTasks)
+                    .await
+                    .unwrap();
+
                 for _ in 0..REQUEST_RETRY_ATTEMPTS {
                     let available_downloader = loop {
                         self.reset_timed_out_busy_peers().await;
