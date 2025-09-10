@@ -40,3 +40,18 @@ To sync with hoodi
 ```
 ethrex --network hoodi
 ```
+
+## Running an Ethereum node with Docker
+
+You can simply start a node with a Consensus client and ethrex as Execution client with Docker using the [docker-compose.yaml](https://github.com/lambdaclass/ethrex/blob/main/docker-compose.yaml)
+
+```sh
+curl -L -o docker-compose.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/docker-compose.yaml
+docker compose up
+```
+
+Or you can set a different network:
+
+```sh
+ETHREX_NETWORK=hoodi docker compose up
+```
