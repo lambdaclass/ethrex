@@ -24,7 +24,7 @@ services:
       --http-address 0.0.0.0
       --execution-endpoint http://ethrex:8551
       --execution-jwt /secrets/jwt.hex
-      --checkpoint-sync-url https://hoodi-checkpoint-sync.attestant.io
+      --checkpoint-sync-url https://${ETHREX_NETWORK:-mainnet}-checkpoint-sync.attestant.io
     depends_on:
       setup_jwt:
         condition: service_completed_successfully
