@@ -28,14 +28,7 @@ use crate::fetcher::get_batchdata;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(feature = "sp1")]
-pub const BACKEND: Backend = Backend::SP1;
-#[cfg(all(feature = "risc0", not(feature = "sp1")))]
-pub const BACKEND: Backend = Backend::RISC0;
-#[cfg(all(feature = "openvm", not(any(feature = "sp1", feature = "risc0"))))]
 pub const BACKEND: Backend = Backend::OpenVM;
-#[cfg(not(any(feature = "sp1", feature = "risc0")))]
-pub const BACKEND: Backend = Backend::Exec;
 
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
