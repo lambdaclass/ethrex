@@ -95,8 +95,13 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
+                println!(
+                    "Before rlp to decode for path {} and hash {:#x}",
+                    hex::encode(path),
+                    hash.finalize()
+                );
                 let rlp_to_decode = self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?;
-                // println!("RLP To decode: {}", hex::encode(&rlp_to_decode));
+                println!("RLP To decode: {}", hex::encode(&rlp_to_decode));
                 Node::decode(&rlp_to_decode)
                     .map_err(TrieError::RLPDecode)?
                     .get(self.db.as_ref(), Nibbles::from_bytes(path))?

@@ -3,15 +3,18 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     Address, H256,
     types::{
-        AccountUpdate, Block, BlockHeader, Receipt, block_execution_witness::GuestProgramState,
+        AccountState, AccountUpdate, Block, BlockHeader, Receipt,
+        block_execution_witness::GuestProgramState,
     },
 };
 use ethrex_prover_lib::backend::Backend;
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
-use ethrex_storage::store_db::in_memory::Store as InMemoryStore;
 use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{
+    hash_address, hash_address_fixed, store_db::in_memory::Store as InMemoryStore,
+};
 use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRLP, NodeRef, Trie, TrieError};
 use reqwest::Url;
 use std::str::FromStr;
@@ -480,8 +483,6 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
-    let witness = &mut cache.witness;
-
     let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
     // witness.rebuild_state_trie().unwrap();
     // let root = witness.state_trie.as_ref().unwrap().hash_no_commit();
@@ -560,13 +561,75 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
             &mut necessary_nodes,
         )?
         .into();
-        println!(
-            "Necessary nodes outside of that thang {}",
-            necessary_nodes.len()
-        );
+
         let in_memory_trie = Arc::new(Mutex::new(necessary_nodes));
 
         inner_store.state_trie_nodes = in_memory_trie;
+
+        let addresses: Vec<Address> = cache
+            .witness
+            .keys
+            .iter()
+            .filter(|k| k.len() == Address::len_bytes())
+            .map(|k| Address::from_slice(k))
+            .collect();
+
+        for address in &addresses {
+            let hashed_address = hash_address(address);
+
+            println!("Setting up storage for address {:#x}", address);
+            let mut necessary_nodes_storage = BTreeMap::new();
+            let account_state_rlp_opt = guest_program
+                .state_trie
+                .as_ref()
+                .unwrap()
+                .get(&hashed_address)
+                .unwrap();
+
+            let Some(account_state_rlp) = account_state_rlp_opt else {
+                continue;
+            };
+
+            let storage_root = NodeHash::Hashed(
+                AccountState::decode(&account_state_rlp)
+                    .unwrap()
+                    .storage_root,
+            );
+
+            let Some(storage_root_rlp) = guest_program.nodes_hashed.get(&storage_root.finalize())
+            else {
+                // println!("Storage for this address is not important");
+                continue;
+            };
+
+            println!(
+                "Storage root: {:#x}. Root RLP: {}",
+                storage_root.finalize(),
+                hex::encode(storage_root_rlp)
+            );
+
+            let root: NodeRef = inner(
+                &guest_program.nodes_hashed,
+                &storage_root,
+                storage_root_rlp,
+                &mut necessary_nodes_storage,
+            )?
+            .into();
+
+            println!(
+                "Necessary nodes for this are {}",
+                necessary_nodes_storage.len()
+            );
+            for (a, b) in &necessary_nodes_storage {
+                let (hash, rlp) = (a.finalize(), hex::encode(b));
+                println!("Hash {:#x}, rlp {}", hash, rlp);
+            }
+
+            inner_store.storage_trie_nodes.insert(
+                storage_root.finalize(),
+                Arc::new(Mutex::new(necessary_nodes_storage)),
+            );
+        }
     }
 
     let store = Store {
@@ -595,17 +658,17 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     let blockchain = Blockchain::default_with_store(store);
 
     //TODO: remove this, it is for testing particular stuff.
-    // let address = Address::from_str("79c0bb4ee51d7557e012f2f52db4a4ff85ca3196")
-    //     .expect("Failed to get address from string");
-    // let block_hash =
-    //     H256::from_str("0x77ababe3f02226a1ed951ffff4c14a35683a56a9e8389e1439824d840e1bd820")
-    //         .unwrap();
-    // blockchain
-    //     .storage
-    //     .get_account_info_by_hash(block_hash, address)
-    //     .unwrap();
+    let address = Address::from_str("79c0bb4ee51d7557e012f2f52db4a4ff85ca3196")
+        .expect("Failed to get address from string");
+    let block_hash =
+        H256::from_str("0x77ababe3f02226a1ed951ffff4c14a35683a56a9e8389e1439824d840e1bd820")
+            .unwrap();
+    blockchain
+        .storage
+        .get_account_info_by_hash(block_hash, address)
+        .unwrap();
 
-    blockchain.add_block(&block).await.unwrap();
+    // blockchain.add_block(&block).await.unwrap();
 
     // let start = SystemTime::now();
 

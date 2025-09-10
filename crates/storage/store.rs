@@ -717,9 +717,12 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        println!("Inside storage at hash");
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
+            println!("There was no storage trie");
             return Ok(None);
         };
+        println!("There was storage trie");
         let hashed_key = hash_key(&storage_key);
         storage_trie
             .get(&hashed_key)?
@@ -1345,7 +1348,8 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
-fn hash_address_fixed(address: &Address) -> H256 {
+
+pub fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
             .finalize()

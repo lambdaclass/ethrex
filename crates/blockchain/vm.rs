@@ -55,7 +55,10 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        println!("Gonna get storage slot");
+        println!(
+            "Gonna get storage slot of addr {:#x} key {:#x}",
+            address, key
+        );
         self.store
             .get_storage_at_hash(self.block_hash, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
