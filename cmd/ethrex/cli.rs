@@ -109,7 +109,7 @@ pub struct Options {
     pub log_level: Level,
     #[arg(
         long = "http.addr",
-        default_value = "localhost",
+        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
         help_heading = "RPC options",
@@ -127,7 +127,7 @@ pub struct Options {
     pub http_port: String,
     #[arg(
         long = "authrpc.addr",
-        default_value = "localhost",
+        default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the authenticated rpc server.",
         help_heading = "RPC options"
