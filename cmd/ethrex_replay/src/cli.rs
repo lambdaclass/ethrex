@@ -5,6 +5,7 @@ use ethrex_common::{
     types::{AccountUpdate, Block, BlockHeader, Receipt},
 };
 use ethrex_prover_lib::backend::Backend;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use ethrex_storage::store_db::in_memory::Store as InMemoryStore;
@@ -507,7 +508,9 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
             traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
         ) -> Result<Node, TrieError> {
             let node = Node::decode_raw(cur_node_rlp)?;
-            traversed_nodes.insert(*cur_node_hash, cur_node_rlp.to_vec());
+
+            let encoded = node.encode_to_vec();
+            traversed_nodes.insert(*cur_node_hash, encoded);
 
             Ok(match node {
                 Node::Branch(mut node) => {
@@ -557,6 +560,8 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         let in_memory_trie = Arc::new(Mutex::new(necessary_nodes));
 
         inner_store.state_trie_nodes = in_memory_trie;
+
+        
     }
 
     let store = Store {
@@ -565,13 +570,14 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
     };
 
-    // let genesis = network.get_genesis()?;
-    // store.add_initial_state(genesis).await.unwrap();
+    // Adding initial state after having filled the previous state is dangerous, it should be done before
+    let genesis = network.get_genesis()?;
+    store.add_initial_state(genesis).await.unwrap();
 
-    // // Add codes to the db
-    // for (code_hash, code) in witness.codes.clone() {
-    //     store.add_account_code(code_hash, code).await.unwrap();
-    // }
+    // Add codes to the db
+    for (code_hash, code) in witness.codes.clone() {
+        store.add_account_code(code_hash, code).await.unwrap();
+    }
 
     // Add block headers
     for (_n, header) in witness.block_headers.clone() {
@@ -580,17 +586,18 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let blockchain = Blockchain::default_with_store(store);
 
-    let address = Address::from_str("79c0bb4ee51d7557e012f2f52db4a4ff85ca3196")
-        .expect("Failed to get address from string");
-    let block_hash =
-        H256::from_str("0x77ababe3f02226a1ed951ffff4c14a35683a56a9e8389e1439824d840e1bd820")
-            .unwrap();
-    blockchain
-        .storage
-        .get_account_info_by_hash(block_hash, address)
-        .unwrap();
+    //TODO: remove this, it is for testing particular stuff.
+    // let address = Address::from_str("79c0bb4ee51d7557e012f2f52db4a4ff85ca3196")
+    //     .expect("Failed to get address from string");
+    // let block_hash =
+    //     H256::from_str("0x77ababe3f02226a1ed951ffff4c14a35683a56a9e8389e1439824d840e1bd820")
+    //         .unwrap();
+    // blockchain
+    //     .storage
+    //     .get_account_info_by_hash(block_hash, address)
+    //     .unwrap();
 
-    // blockchain.add_block(&block).await.unwrap();
+    blockchain.add_block(&block).await.unwrap();
 
     // let start = SystemTime::now();
 
