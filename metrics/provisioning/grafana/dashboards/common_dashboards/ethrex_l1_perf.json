@@ -695,6 +695,14 @@
               {
                 "id": "custom.axisLabel",
                 "value": "Gas Used %"
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": false,
+                  "viz": false
+                }
               }
             ]
           },
@@ -1504,6 +1512,14 @@
                   "mode": "continuous-greens",
                   "seriesBy": "last"
                 }
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": false,
+                  "viz": false
+                }
               }
             ]
           }
@@ -1520,7 +1536,8 @@
         "legend": {
           "calcs": [
             "mean",
-            "max"
+            "max",
+            "last"
           ],
           "displayMode": "list",
           "placement": "bottom",
