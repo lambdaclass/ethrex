@@ -31,6 +31,13 @@ jobs:
       matrix:
         backend: ["sp1", "risc0"]
     steps:
+      - name: Free Disk Space (Ubuntu)
+        if: ${{ matrix.os == 'linux' }}
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+          
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Setup Rust Environment
@@ -84,9 +91,6 @@ jobs:
           auto-push: true
           comment-on-alert: true
 
-      - name: Ensure admin permissions in _work
-        if: always()
-        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
       # - name: Report Status
       #   if: always()
       #   uses: ravsamhq/notify-slack-action@v2
