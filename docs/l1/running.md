@@ -55,6 +55,3 @@ Or you can set a different network:
 ```sh
 ETHREX_NETWORK=hoodi docker compose up
 ```
-
-> [!NOTE]
-> This method is currently supported only on Linux.
