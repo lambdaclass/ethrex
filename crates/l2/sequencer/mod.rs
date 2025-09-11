@@ -193,6 +193,7 @@ pub async fn start_l2(
         l1_watcher.ok(),
         l1_proof_sender.ok(),
         block_producer.ok(),
+        #[cfg(feature = "metrics")]
         metrics_gatherer.ok(),
     )
     .await
