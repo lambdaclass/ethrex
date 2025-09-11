@@ -319,14 +319,24 @@ async fn setup(opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<(EthClient,
 
 async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     let gas_used = get_total_gas_used(&cache.blocks);
-    let backend = if cfg!(feature = "sp1") {
-        Backend::SP1
-    } else if cfg!(feature = "risc0") {
-        Backend::RISC0
-    } else if cfg!(feature = "openvm") {
-        Backend::OpenVM
-    } else {
-        Backend::Exec
+
+    let backend = {
+        #[cfg(feature = "sp1")]
+        {
+            Backend::SP1
+        }
+        #[cfg(all(not(feature = "sp1"), feature = "risc0"))]
+        {
+            Backend::RISC0
+        }
+        #[cfg(all(not(feature = "sp1"), not(feature = "risc0"), feature = "openvm"))]
+        {
+            Backend::OpenVm
+        }
+        #[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "openvm")))]
+        {
+            Backend::Exec
+        }
     };
 
     if opts.execute {
@@ -453,26 +463,24 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
 pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
     if execute {
         if cfg!(feature = "sp1") {
-            return Ok(ReplayerMode::ExecuteSP1);
+            Ok(ReplayerMode::ExecuteSP1)
         } else if cfg!(feature = "risc0") {
-            return Ok(ReplayerMode::ExecuteRISC0);
+            Ok(ReplayerMode::ExecuteRISC0)
         } else if cfg!(feature = "openvm") {
-            return Ok(ReplayerMode::ExecuteOpenVM);
+            Ok(ReplayerMode::ExecuteOpenVM)
         } else {
-            return Ok(ReplayerMode::Execute);
+            Ok(ReplayerMode::Execute)
         }
+    } else if cfg!(feature = "sp1") {
+        Ok(ReplayerMode::ProveSP1)
+    } else if cfg!(feature = "risc0") {
+        Ok(ReplayerMode::ProveRISC0)
+    } else if cfg!(feature = "openvm") {
+        Ok(ReplayerMode::ProveOpenVM)
     } else {
-        if cfg!(feature = "sp1") {
-            return Ok(ReplayerMode::ProveSP1);
-        } else if cfg!(feature = "risc0") {
-            return Ok(ReplayerMode::ProveRISC0);
-        } else if cfg!(feature = "openvm") {
-            return Ok(ReplayerMode::ProveOpenVM);
-        } else {
-            return Err(eyre::Error::msg(
-                "proving mode is not supported without `sp1`, `risc0` or `openvm` features",
-            ));
-        }
+        Err(eyre::Error::msg(
+            "proving mode is not supported without `sp1`, `risc0` or `openvm` features",
+        ))
     }
 }
 
