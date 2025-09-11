@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757556072470,
+  "lastUpdate": 1757599044430,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13675,6 +13675,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168698945348,
             "range": "± 710407508",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c211d3a8db979316c82af92c4af10f6543638a3b",
+          "message": "fix(l1): remove incorrect debug_assert on trie iteration (#4434)\n\n**Motivation**\n\nWhen adding support for trie iteration from a given starting point, we\nadded a `debug_assert!` that checks that the internal stack isn't empty,\nbut this is incorrect; it is entirely possible that the stack is empty\nif the trie is empty, in that case we simply return an empty iterator,\nwhich is fine.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-11T13:04:13Z",
+          "tree_id": "7a343f2b260ece7fb423e41b474ce754a7f2c04c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c211d3a8db979316c82af92c4af10f6543638a3b"
+        },
+        "date": 1757599025203,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169976084356,
+            "range": "± 4228750827",
             "unit": "ns/iter"
           }
         ]
