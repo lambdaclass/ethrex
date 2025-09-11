@@ -149,9 +149,9 @@ impl BlobsBundle {
             .zip(self.commitments.iter())
             .zip(self.proofs.iter())
         {
-            use crate::kzg::verify_blob_kzg_proof;
+            use crate::kzg::verify_blob_kzg_proof_c_kzg;
 
-            if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
+            if !verify_blob_kzg_proof_c_kzg(*blob, *commitment, *proof)? {
                 return Err(BlobsBundleError::BlobToCommitmentAndProofError);
             }
         }

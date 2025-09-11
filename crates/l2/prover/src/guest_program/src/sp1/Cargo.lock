@@ -910,7 +910,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
- "secp256k1",
+ "k256",
  "sha3",
  "thiserror",
  "tokio",
@@ -928,13 +928,13 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
+ "k256",
  "keccak-hash",
  "kzg-rs",
  "lazy_static",
  "once_cell",
  "rayon",
  "rkyv",
- "secp256k1",
  "serde",
  "serde_json",
  "sha2",
@@ -960,9 +960,9 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "k256",
  "keccak-hash",
  "lambdaworks-crypto",
- "secp256k1",
  "serde",
  "sha3",
  "thiserror",
@@ -989,7 +989,6 @@ dependencies = [
  "malachite",
  "p256",
  "ripemd",
- "secp256k1",
  "serde",
  "serde_json",
  "sha2",
@@ -1248,7 +1247,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
- "wasi 0.14.4+wasi-0.2.4",
+ "wasi 0.14.5+wasi-0.2.4",
 ]
 
 [[package]]
@@ -1272,6 +1271,7 @@ dependencies = [
 name = "guest_program"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "bytes",
  "ethrex-blockchain",
  "ethrex-common",
@@ -1523,9 +1523,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.11.0"
+version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2481980430f9f78649238835720ddccc57e52df14ffce1c6f37391d61b563e9"
+checksum = "206a8042aec68fa4a62e8d3f7aa4ceb508177d9324faf261e1959e495b7a1921"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.5",
@@ -2328,7 +2328,7 @@ dependencies = [
  "bytecheck",
  "bytes",
  "hashbrown 0.15.5",
- "indexmap 2.11.0",
+ "indexmap 2.11.1",
  "munge",
  "ptr_meta",
  "rancor",
@@ -2452,25 +2452,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "secp256k1"
-version = "0.29.1"
-source = "git+https://github.com/sp1-patches/rust-secp256k1?tag=patch-0.29.1-sp1-5.0.0#14136bdd2fafe651e3d0ce680f930473e848cf56"
-dependencies = [
- "cfg-if",
- "k256",
- "rand",
- "secp256k1-sys",
-]
-
-[[package]]
-name = "secp256k1-sys"
-version = "0.10.0"
-source = "git+https://github.com/sp1-patches/rust-secp256k1?tag=patch-0.29.1-sp1-5.0.0#14136bdd2fafe651e3d0ce680f930473e848cf56"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2521,7 +2502,7 @@ dependencies = [
  "chrono",
  "hex",
  "indexmap 1.9.3",
- "indexmap 2.11.0",
+ "indexmap 2.11.1",
  "schemars 0.9.0",
  "schemars 1.0.4",
  "serde",
@@ -2923,7 +2904,7 @@ version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
- "indexmap 2.11.0",
+ "indexmap 2.11.1",
  "toml_datetime",
  "winnow",
 ]
@@ -3010,9 +2991,9 @@ dependencies = [
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.18"
+version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
+checksum = "f63a545481291138910575129486daeaf8ac54aee4387fe7906919f7830c7d9d"
 
 [[package]]
 name = "unicode-segmentation"
@@ -3096,9 +3077,18 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasi"
-version = "0.14.4+wasi-0.2.4"
+version = "0.14.5+wasi-0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88a5f4a424faf49c3c2c344f166f0662341d470ea185e939657aaff130f0ec4a"
+checksum = "a4494f6290a82f5fe584817a676a34b9d6763e8d9d18204009fb31dceca98fd4"
+dependencies = [
+ "wasip2",
+]
+
+[[package]]
+name = "wasip2"
+version = "1.0.0+wasi-0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03fa2761397e5bd52002cd7e73110c71af2109aca4e521a9f40473fe685b0a24"
 dependencies = [
  "wit-bindgen",
 ]
@@ -3588,6 +3578,11 @@ source = "git+https://github.com/sp1-patches/curve25519-dalek-ng?tag=patch-4.1.1
 name = "rsa"
 version = "0.9.6"
 source = "git+https://github.com/sp1-patches/RustCrypto-RSA?tag=patch-0.9.6-sp1-5.0.0#ecd3092f39acbf69752bbb009a52340c0fdf470c"
+
+[[patch.unused]]
+name = "secp256k1"
+version = "0.29.1"
+source = "git+https://github.com/sp1-patches/rust-secp256k1?tag=patch-0.29.1-sp1-5.0.0#14136bdd2fafe651e3d0ce680f930473e848cf56"
 
 [[patch.unused]]
 name = "substrate-bn"
