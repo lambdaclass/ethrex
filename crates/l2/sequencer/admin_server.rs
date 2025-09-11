@@ -10,6 +10,7 @@ use crate::sequencer::l1_proof_sender::{
 use crate::sequencer::l1_watcher::{
     CallMessage as WatcherCallMessage, L1Watcher, OutMessage as WatcherOutMessage,
 };
+#[cfg(feature = "metrics")]
 use crate::sequencer::metrics::{
     CallMessage as MetricsCallMessage, MetricsGatherer, OutMessage as MetricsOutMessage,
 };
@@ -36,6 +37,7 @@ pub struct Admin {
     pub l1_watcher: Option<GenServerHandle<L1Watcher>>,
     pub l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
     pub block_producer: Option<GenServerHandle<BlockProducer>>,
+    #[cfg(feature = "metrics")]
     pub metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
 }
 
@@ -71,7 +73,7 @@ pub async fn start_api(
     l1_watcher: Option<GenServerHandle<L1Watcher>>,
     l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
     block_producer: Option<GenServerHandle<BlockProducer>>,
-    metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
+    #[cfg(feature = "metrics")] metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
     let admin = Admin {
@@ -79,6 +81,7 @@ pub async fn start_api(
         l1_watcher,
         l1_proof_sender,
         block_producer,
+        #[cfg(feature = "metrics")]
         metrics_gatherer,
     };
 
@@ -225,25 +228,26 @@ async fn health(
         )
     };
     response.insert("block_producer".to_string(), block_producer_response);
+    #[cfg(feature = "metrics")]
+    {
+        let metrics_gatherer_response = if let Some(mut metrics_gatherer) = admin.metrics_gatherer {
+            let metrics_gatherer_health = metrics_gatherer.call(MetricsCallMessage::Health).await;
 
-    let metrics_gatherer_response = if let Some(mut metrics_gatherer) = admin.metrics_gatherer {
-        let metrics_gatherer_health = metrics_gatherer.call(MetricsCallMessage::Health).await;
-
-        match metrics_gatherer_health {
-            Ok(MetricsOutMessage::Health(health)) => {
-                serde_json::to_value(health).unwrap_or_else(|err| {
-                    Value::String(format!("Failed to serialize health message {err}"))
-                })
+            match metrics_gatherer_health {
+                Ok(MetricsOutMessage::Health(health)) => serde_json::to_value(health)
+                    .unwrap_or_else(|err| {
+                        Value::String(format!("Failed to serialize health message {err}"))
+                    }),
+                Ok(_) => Value::String("Genserver returned an unexpected message".into()),
+                Err(err) => Value::String(format!("Genserver health returned an error {err}")),
             }
-            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
-            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
-        }
-    } else {
-        Value::String(
-            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
-        )
-    };
-    response.insert("metrics_gatherer".to_string(), metrics_gatherer_response);
-
+        } else {
+            Value::String(
+                "Admin server does not have the genserver handle. Maybe its not running?"
+                    .to_string(),
+            )
+        };
+        response.insert("metrics_gatherer".to_string(), metrics_gatherer_response);
+    }
     Ok(Json::from(response))
 }
