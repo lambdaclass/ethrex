@@ -1393,8 +1393,10 @@
       "pluginVersion": "12.2.0",
       "targets": [
         {
+          "editorMode": "code",
           "expr": "100 * sum by (instance) (rate(node_cpu_seconds_total{mode!=\"idle\"}[1m])) / sum by (instance) (rate(node_cpu_seconds_total[1m]))",
-          "legendFormat": "{{instance}}",
+          "legendFormat": "CPU Utilization %",
+          "range": true,
           "refId": "A"
         }
       ],
@@ -1422,7 +1424,7 @@
             "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 20,
-            "gradientMode": "none",
+            "gradientMode": "opacity",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
@@ -1430,7 +1432,7 @@
             },
             "insertNulls": false,
             "lineInterpolation": "linear",
-            "lineWidth": 2,
+            "lineWidth": 3,
             "pointSize": 5,
             "scaleDistribution": {
               "type": "linear"
@@ -1462,7 +1464,38 @@
           },
           "unit": "none"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory Used"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-BlYlRd",
+                  "seriesBy": "last"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory Total"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-greens",
+                  "seriesBy": "last"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -1473,7 +1506,9 @@
       "id": 42,
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": [
+            "last"
+          ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -1487,13 +1522,17 @@
       "pluginVersion": "12.2.0",
       "targets": [
         {
+          "editorMode": "code",
           "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / (1024*1024*1024)",
-          "legendFormat": "{{instance}} Used",
+          "legendFormat": "Memory Used",
+          "range": true,
           "refId": "A"
         },
         {
+          "editorMode": "code",
           "expr": "node_memory_MemTotal_bytes / (1024*1024*1024)",
-          "legendFormat": "{{instance}} Total",
+          "legendFormat": "Memory Total",
+          "range": true,
           "refId": "B"
         }
       ],
