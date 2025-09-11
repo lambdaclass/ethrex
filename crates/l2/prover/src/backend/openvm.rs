@@ -4,9 +4,8 @@ use rkyv::rancor::Error;
 
 pub struct ProgramOutput(pub [u8; 32]);
 
-static PROGRAM_ELF: &[u8] = include_bytes!(
-    "../guest_program/src/openvm/out/riscv32im-openvm-zkvm-elf"
-);
+static PROGRAM_ELF: &[u8] =
+    include_bytes!("../guest_program/src/openvm/out/riscv32im-openvm-zkvm-elf");
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let sdk = Sdk::standard();

@@ -101,7 +101,11 @@ fn build_sp1_program() {
 
 #[cfg(all(not(clippy), feature = "openvm"))]
 fn build_openvm_program() {
-    use std::{process::{Command, Stdio}, path::Path, fs};
+    use std::{
+        fs,
+        path::Path,
+        process::{Command, Stdio},
+    };
 
     let status = Command::new("cargo")
         .arg("openvm")
@@ -117,7 +121,8 @@ fn build_openvm_program() {
         panic!("cargo openvm build failed with exit status: {}", status);
     }
 
-    let elf_src = Path::new("./src/openvm/target/riscv32im-risc0-zkvm-elf/release/zkvm-openvm-program");
+    let elf_src =
+        Path::new("./src/openvm/target/riscv32im-risc0-zkvm-elf/release/zkvm-openvm-program");
     let elf_dst = Path::new("./src/openvm/out/riscv32im-openvm-zkvm-elf");
 
     if let Some(parent) = elf_dst.parent() {
