@@ -13,7 +13,7 @@ use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
     OptimisticTransactionDB, Options, WriteBatchWithTransaction,
 };
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 use tracing::info;
 
 use crate::{
@@ -119,6 +119,7 @@ pub struct Store {
 
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
+        // TODO: Review all the config values
         let mut db_options = Options::default();
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
@@ -156,15 +157,8 @@ impl Store {
         db_options.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         db_options.set_advise_random_on_open(false);
 
-        // Maintain write buffer history for conflict detection for OptimisticTransactionDB
-        // This is critical for OptimisticTransactionDB to detect write conflicts
-        db_options.set_max_write_buffer_size_to_maintain(256 * 1024 * 1024); // 256MB
-
-        // db_options.enable_statistics();
-        // db_options.set_stats_dump_period_sec(600);
-
         // Current column families that the code expects
-        let expected_column_families = vec![
+        const EXPECTED_CFS: [&str; 14] = [
             CF_CANONICAL_BLOCK_HASHES,
             CF_BLOCK_NUMBERS,
             CF_HEADERS,
@@ -181,45 +175,16 @@ impl Store {
             CF_INVALID_ANCESTORS,
         ];
 
-        // Get existing column families to know which ones to drop later
-        let existing_cfs =
-            match OptimisticTransactionDB::<MultiThreaded>::list_cf(&db_options, path) {
-                Ok(cfs) => {
-                    info!("Found existing column families: {:?}", cfs);
-                    cfs
-                }
-                Err(_) => {
-                    // Database doesn't exist yet
-                    info!("Database doesn't exist, will create with expected column families");
-                    vec!["default".to_string()]
-                }
-            };
-
-        // Create descriptors for ALL existing CFs + expected ones (RocksDB requires opening all existing CFs)
-        let mut all_cfs_to_open = HashSet::new();
-
-        // Add all expected CFs
-        for cf in &expected_column_families {
-            all_cfs_to_open.insert(cf.to_string());
-        }
-
-        // Add all existing CFs (we must open them to be able to drop obsolete ones later)
-        for cf in &existing_cfs {
-            if cf != "default" {
-                // default is handled automatically
-                all_cfs_to_open.insert(cf.clone());
-            }
-        }
-
         let mut cf_descriptors = Vec::new();
-        for cf_name in &all_cfs_to_open {
+        for cf_name in EXPECTED_CFS {
+            // TODO: Review all the config values
             let mut cf_opts = Options::default();
 
             cf_opts.set_level_zero_file_num_compaction_trigger(4);
             cf_opts.set_level_zero_slowdown_writes_trigger(20);
             cf_opts.set_level_zero_stop_writes_trigger(36);
 
-            match cf_name.as_str() {
+            match cf_name {
                 CF_HEADERS | CF_BODIES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
@@ -295,34 +260,9 @@ impl Store {
             path,
             cf_descriptors,
         )
-        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
-
-        // Clean up obsolete column families
-        for cf_name in &existing_cfs {
-            if cf_name != "default" && !expected_column_families.contains(&cf_name.as_str()) {
-                info!("Dropping obsolete column family: {}", cf_name);
-                match db.drop_cf(cf_name) {
-                    Ok(_) => info!("Successfully dropped column family: {}", cf_name),
-                    Err(e) => {
-                        // Log error but don't fail initialization - the database is still usable
-                        tracing::warn!(
-                            "Failed to drop obsolete column family '{}': {}",
-                            cf_name,
-                            e
-                        );
-                    }
-                }
-            }
-        }
+        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {e}")))?;
 
         Ok(Self { db: Arc::new(db) })
-    }
-
-    // Helper method to get column family handle
-    fn cf_handle(&self, cf_name: &str) -> Result<std::sync::Arc<BoundColumnFamily>, StoreError> {
-        self.db
-            .cf_handle(cf_name)
-            .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
     }
 
     // Helper method for async writes
@@ -369,7 +309,13 @@ impl Store {
     where
         K: AsRef<[u8]>,
     {
-        let cf = self.cf_handle(cf_name)?;
+        let cf = self
+            .db
+            .cf_handle(cf_name)
+            .ok_or(StoreError::Custom(format!(
+                "Column family not found: {}",
+                cf_name
+            )))?;
         self.db
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
