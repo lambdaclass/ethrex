@@ -37,9 +37,20 @@ impl NodeRef {
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
-            NodeRef::Hash(_) => db
+            NodeRef::Hash(hash) => db
                 .get(path)?
-                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                .and_then(|rlp| {
+                    match Node::decode(&rlp) {
+                        Ok(node) => {
+                            if node.compute_hash() == hash {
+                                Some(Ok(node))
+                            } else {
+                                None
+                            }
+                        },
+                        Err(err) => Some(Err(TrieError::RLPDecode(err)))
+                    }
+                })
                 .transpose(),
         }
     }
