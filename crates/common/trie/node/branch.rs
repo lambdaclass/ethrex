@@ -104,8 +104,8 @@ impl BranchNode {
             }
         } else if let ValueOrHash::Value(value) = value {
             // Insert into self
-            todo!()
-            //self.update(value);
+            
+            self.update(value);
         } else {
             todo!("handle override case (error?)")
         }
@@ -137,6 +137,7 @@ impl BranchNode {
                 [+1 children]
                 Branch { [childA, childB, ... ], None } ->   Branch { [childA, childB, ... ], None }
         */
+        let base_path = path.clone();
 
         // Step 1: Remove value
         // Check if the value is located in a child subtrie
@@ -183,7 +184,7 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
-                let child = child_ref.get_node(db, path.current())?.unwrap();
+                let child = child_ref.get_node(db, base_path.current().append_new(choice_index as u8))?.unwrap();
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(

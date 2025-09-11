@@ -14,11 +14,11 @@ pub trait TrieDB: Send + Sync {
 
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 pub struct InMemoryTrieDB {
-    inner: Arc<Mutex<BTreeMap<Nibbles, Vec<u8>>>>,
+    inner: Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>,
 }
 
 impl InMemoryTrieDB {
-    pub const fn new(map: Arc<Mutex<BTreeMap<Nibbles, Vec<u8>>>>) -> Self {
+    pub const fn new(map: Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>) -> Self {
         Self { inner: map }
     }
     pub fn new_empty() -> Self {
@@ -34,7 +34,7 @@ impl TrieDB for InMemoryTrieDB {
             .inner
             .lock()
             .map_err(|_| TrieError::LockError)?
-            .get(&key)
+            .get(&nibbles_to_fixed_size(key))
             .cloned())
     }
 
@@ -42,9 +42,21 @@ impl TrieDB for InMemoryTrieDB {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
         for (key, value) in key_values {
-            db.insert(key, value);
+            db.insert(nibbles_to_fixed_size(key), value);
         }
 
         Ok(())
     }
+}
+
+pub fn nibbles_to_fixed_size(nibbles: Nibbles) -> [u8; 33] {
+    let node_hash_ref = nibbles.to_bytes();
+    let original_len = node_hash_ref.len();
+
+    let mut buffer = [0u8; 33];
+
+    // Encode the node as [original_len, node_hash...]
+    buffer[32] = nibbles.len() as u8;
+    buffer[..original_len].copy_from_slice(&node_hash_ref);
+    buffer
 }

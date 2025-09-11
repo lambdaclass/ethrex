@@ -53,6 +53,7 @@ pub type TrieNode = (Nibbles, NodeRLP);
 pub struct Trie {
     db: Box<dyn TrieDB>,
     root: NodeRef,
+    pending_removal: HashSet<Nibbles>,
 }
 
 impl Default for Trie {
@@ -67,6 +68,7 @@ impl Trie {
         Self {
             db,
             root: NodeRef::default(),
+            pending_removal: HashSet::new(),
         }
     }
 
@@ -79,6 +81,7 @@ impl Trie {
             } else {
                 Default::default()
             },
+            pending_removal: HashSet::new(),
         }
     }
 
@@ -93,12 +96,16 @@ impl Trie {
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
-        if pathrlp.len() == 32 {
-            let node = Node::decode(&self.db.get(path)?.ok_or(TrieError::InconsistentTree)?);
-            if let Node::Leaf(leaf) = node? {
-                return Ok(Some(leaf.value))
+
+        if pathrlp.len() == 32 && !self.pending_removal.contains(&path) {
+            let Some(node_rlp) = self.db.get(path)? else {
+                return Ok(None);
+            };
+            let node = Node::decode(&node_rlp);
+            if let Ok(Node::Leaf(leaf)) = node {
+                return Ok(Some(leaf.value));
             } else {
-                return Ok(None)
+                return Ok(None);
             }
         }
         Ok(match self.root {
@@ -136,6 +143,9 @@ impl Trie {
     pub fn remove(&mut self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         if !self.root.is_valid() {
             return Ok(None);
+        }
+        if path.len() == 32 {
+            self.pending_removal.insert(Nibbles::from_bytes(path));
         }
 
         // If the trie is not empty, call the root node's removal logic.
@@ -186,6 +196,7 @@ impl Trie {
         if self.root.is_valid() {
             let mut acc = Vec::new();
             self.root.commit(Nibbles::default(), &mut acc);
+            acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
             // println!("{:?}", acc.iter().map(|(nib, node)| {
             //     (nib, Node::decode(node))
             // }).collect::<Vec<_>>());
@@ -201,6 +212,7 @@ impl Trie {
         let mut acc = Vec::new();
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc);
+            acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
         }
 
         acc
@@ -452,7 +464,7 @@ impl Trie {
         use std::sync::Arc;
         use std::sync::Mutex;
 
-        let hmap: BTreeMap<Nibbles, Vec<u8>> = BTreeMap::new();
+        let hmap: BTreeMap<[u8; 33], Vec<u8>> = BTreeMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))

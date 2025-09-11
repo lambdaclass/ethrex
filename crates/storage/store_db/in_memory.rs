@@ -1,8 +1,5 @@
 use crate::{
-    UpdateBatch,
-    api::StoreEngine,
-    error::StoreError,
-    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    api::StoreEngine, error::StoreError, store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS}, trie_db::utils::nibbles_to_fixed_size, UpdateBatch
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -15,7 +12,7 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-pub type NodeMap = Arc<Mutex<BTreeMap<Nibbles, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -89,7 +86,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in update_batch.account_updates {
-                state_trie_store.insert(node_hash, node_data);
+                state_trie_store.insert(nibbles_to_fixed_size(node_hash), node_data);
             }
         }
 
@@ -106,7 +103,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
+                addr_store.insert(nibbles_to_fixed_size(node_hash), node_data);
             }
         }
 
