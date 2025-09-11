@@ -10,7 +10,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  run-replay:
+  test:
+    name: Execute an L1 block with ${{ matrix.backend }} backend
+    strategy:
+      fail-fast: true
+      matrix:
+        backend: ["sp1", "risc0"]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+      
+      - name: RISC-V Risc0 toolchain install
+        if: matrix.backend == 'risc0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # should be able to specify a version for `rzup install rust` (toolchain version)
+        # but it throws a "error decoding response body" in that case
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
+          ~/.risc0/bin/rzup install rust
+      - name: RISC-V SP1 toolchain install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: matrix.backend == 'sp1'
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 5.0.8
+
+      - name: Build
+        run: |
+          cd cmd/ethrex_replay
+          cargo b -r --features ${{ matrix.backend }}
+      
+      - name: Run
+        env:
+          # TODO(): use RPC
+          # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
+          RPC_URL: "http://eth-testnet-rpc:8547"
+        run: |
+          cp fixtures/cache/rpc_prover/cache_hoodi_1191706.bin cmd/ethrex_replay
+          cd cmd/ethrex_replay
+          make execute-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=1191706 NETWORK=hoodi
+      
+      - name: Ensure admin permissions in _work
+        if: always()
+        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
+
+
+  run-replay-no-backend:
     # "Test" is a required check, don't change the name
     name: Test
     # It is not working properly, skipping for now
