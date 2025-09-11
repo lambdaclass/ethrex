@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757542910154,
+  "lastUpdate": 1757556072470,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13645,6 +13645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167145630222,
             "range": "± 223314205",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c008bfc692f61e0db083b020ff03e7047c6f2427",
+          "message": "ci(replay): disable proving job with `ethrex_replay` until stable (#4410)\n\n**Motivation**\n\nThis job is failing consistently: proving with risc0 fails to compile,\nand with sp1 the cache is outdated.\n\n**Description**\n\nRemove the CI workflow triggers by temporarily commenting them in\n`.github/workflows/main_prover_l1.yaml` until it becomes stable.\n\nI opened issue #4411 to re-enable it.",
+          "timestamp": "2025-09-11T01:06:44Z",
+          "tree_id": "172e4ea08b497f84c9df21a0c2ae9b224eb05253",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c008bfc692f61e0db083b020ff03e7047c6f2427"
+        },
+        "date": 1757556052512,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168698945348,
+            "range": "± 710407508",
             "unit": "ns/iter"
           }
         ]
