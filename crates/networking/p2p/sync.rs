@@ -20,7 +20,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{NodeHash, Trie, TrieError};
+use ethrex_trie::{Nibbles, NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -830,7 +830,7 @@ impl Syncer {
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
-            let mut computed_state_root = *EMPTY_TRIE_HASH;
+            let mut computed_state_root = H256::zero();
             for entry in std::fs::read_dir(&account_state_snapshots_dir)
                 .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
             {
@@ -1123,7 +1123,7 @@ impl Syncer {
     }
 }
 
-type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
+type StorageRoots = (H256, Vec<(Nibbles, Vec<u8>)>);
 
 fn compute_storage_roots(
     maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
@@ -1164,8 +1164,7 @@ fn compute_storage_roots(
             .map_err(|_| SyncError::MaybeBigAccount)?
             .insert(account_hash, computed_storage_root);
     }
-todo!()
-//    Ok((account_hash, changes))
+    Ok((account_hash, changes))
 }
 
 pub async fn update_pivot(

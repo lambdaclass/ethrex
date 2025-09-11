@@ -110,11 +110,14 @@ impl Trie {
         }
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
-            NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(Nibbles::default())?.ok_or(TrieError::InconsistentTree)?)
-                    .map_err(TrieError::RLPDecode)?
-                    .get(self.db.as_ref(), path)?
-            }
+            NodeRef::Hash(hash) if hash.is_valid() => Node::decode(
+                &self
+                    .db
+                    .get(Nibbles::default())?
+                    .ok_or(TrieError::InconsistentTree)?,
+            )
+            .map_err(TrieError::RLPDecode)?
+            .get(self.db.as_ref(), path)?,
             _ => None,
         })
     }

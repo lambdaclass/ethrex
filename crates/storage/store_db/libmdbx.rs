@@ -150,7 +150,8 @@ impl StoreEngine for Store {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = nibbles_to_fixed_size(node_hash);
                     let key = (key_1, key_2);
-                    tx.delete::<StorageTriesNodes>(key.clone(), None).map_err(StoreError::LibmdbxError)?;
+                    tx.delete::<StorageTriesNodes>(key.clone(), None)
+                        .map_err(StoreError::LibmdbxError)?;
 
                     tx.upsert::<StorageTriesNodes>(key, node_data)
                         .map_err(StoreError::LibmdbxError)?;
@@ -986,10 +987,8 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        todo!();
-        /*
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
@@ -1008,7 +1007,6 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-        */
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {

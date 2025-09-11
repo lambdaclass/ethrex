@@ -38,7 +38,7 @@ pub struct Store {
     latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
-pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

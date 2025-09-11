@@ -374,7 +374,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError>;
 
     async fn write_account_code_batch(

@@ -89,8 +89,6 @@ async fn heal_state_trie(
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
 ) -> Result<bool, SyncError> {
-    todo!();
-    /*
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
         hash: state_root,
@@ -105,7 +103,7 @@ async fn heal_state_trie(
     let mut downloads_fail = 0;
     let mut leafs_healed = 0;
     let mut empty_try_recv: u64 = 0;
-    let mut nodes_to_write: Vec<Node> = Vec::new();
+    let mut nodes_to_write: Vec<(Nibbles, Vec<u8>)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -288,23 +286,14 @@ async fn heal_state_trie(
                 spawned_rt::tasks::block_on(async move {
                     // TODO: replace put batch with the async version
                     let trie_db = store
-                        .open_state_trie(*EMPTY_TRIE_HASH)
+                        .open_state_trie(H256::zero())
                         .expect("Store should open");
                     let db = trie_db.db();
-                    db.put_batch(
-                        to_write
-                            .into_iter()
-                            .filter_map(|node| match node.compute_hash() {
-                                hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                                NodeHash::Inline(_) => None,
-                            })
-                            .collect(),
-                    )
-                    .expect("The put batch on the store failed");
+                    db.put_batch(to_write)
+                        .expect("The put batch on the store failed");
                 })
             });
         }
-        
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if is_done {
@@ -331,7 +320,6 @@ async fn heal_state_trie(
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;
     Ok(paths.is_empty())
-    */
 }
 
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,
@@ -341,9 +329,9 @@ async fn heal_state_batch(
     nodes: Vec<Node>,
     store: Store,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut Vec<Node>, // TODO: change tuple to struct
+    nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_state_trie(H256::zero())?;
     for node in nodes.into_iter() {
         let path = batch.remove(0);
         let (missing_children_count, missing_children) =
@@ -374,9 +362,9 @@ fn commit_node(
     path: &Nibbles,
     parent_path: &Nibbles,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut Vec<Node>,
+    nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
 ) {
-    nodes_to_write.push(node);
+    nodes_to_write.push((path.clone(), node.encode_to_vec()));
 
     if parent_path == path {
         return; // Case where we're saving the root
@@ -406,30 +394,30 @@ pub fn node_missing_children(
     path: &Nibbles,
     trie_state: &dyn TrieDB,
 ) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
-    todo!()
-    /*
     let mut paths: Vec<RequestMetadata> = Vec::new();
     let mut missing_children_count = 0_u64;
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
+                let child_path = path.clone().append_new(index as u8);
+                if child.is_valid() && child.get_node(trie_state, path.clone())?.is_none() {
                     missing_children_count += 1;
                     paths.extend(vec![RequestMetadata {
                         hash: child.compute_hash().finalize(),
-                        path: path.clone().append_new(index as u8),
+                        path: child_path,
                         parent_path: path.clone(),
                     }]);
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
+            let child_path = path.concat(node.prefix.clone());
+            if node.child.is_valid() && node.child.get_node(trie_state, path.clone())?.is_none() {
                 missing_children_count += 1;
 
                 paths.extend(vec![RequestMetadata {
                     hash: node.child.compute_hash().finalize(),
-                    path: path.concat(node.prefix.clone()),
+                    path: child_path,
                     parent_path: path.clone(),
                 }]);
             }
@@ -437,5 +425,4 @@ pub fn node_missing_children(
         _ => {}
     }
     Ok((missing_children_count, paths))
-    */
 }

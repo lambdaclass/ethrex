@@ -157,7 +157,7 @@ pub async fn heal_storage_trie(
         Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
     > = JoinSet::new();
 
-    let mut nodes_to_write: HashMap<H256, Vec<(NodeHash, Vec<u8>)>> = HashMap::new();
+    let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Vec<u8>)>> = HashMap::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -482,7 +482,7 @@ fn process_node_responses(
     global_leafs_healed: &mut u64,
     roots_healed: &mut usize,
     maximum_length_seen: &mut usize,
-    to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Vec<u8>)>>,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
@@ -591,15 +591,13 @@ pub fn determine_missing_children(
     node_response: &NodeResponse,
     store: Store,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
-        todo!();
-    /*
     let mut paths = Vec::new();
     let mut count = 0;
     let node = node_response.node.clone();
     let trie = store
         .open_storage_trie(
             H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
-            *EMPTY_TRIE_HASH,
+            H256::zero(),
         )
         .inspect_err(|_| {
             error!("Malformed data when opening the storage trie in determine missing children")
@@ -609,9 +607,13 @@ pub fn determine_missing_children(
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
+                let child_path = node_response
+                    .node_request
+                    .storage_path
+                    .append_new(index as u8);
                 if child.is_valid()
                     && child
-                        .get_node(trie_state)
+                        .get_node(trie_state, child_path.clone())
                         .inspect_err(|_| {
                             error!("Malformed data when doing get child of a branch node")
                         })?
@@ -621,10 +623,7 @@ pub fn determine_missing_children(
 
                     paths.extend(vec![NodeRequest {
                         acc_path: node_response.node_request.acc_path.clone(),
-                        storage_path: node_response
-                            .node_request
-                            .storage_path
-                            .append_new(index as u8),
+                        storage_path: child_path,
                         parent: node_response.node_request.storage_path.clone(),
                         hash: child.compute_hash().finalize(),
                     }]);
@@ -632,10 +631,14 @@ pub fn determine_missing_children(
             }
         }
         Node::Extension(node) => {
+            let child_path = node_response
+                .node_request
+                .storage_path
+                .concat(node.prefix.clone());
             if node.child.is_valid()
                 && node
                     .child
-                    .get_node(trie_state)
+                    .get_node(trie_state, child_path.clone())
                     .inspect_err(|_| {
                         error!("Malformed data when doing get child of an extension node")
                     })?
@@ -645,10 +648,7 @@ pub fn determine_missing_children(
 
                 paths.extend(vec![NodeRequest {
                     acc_path: node_response.node_request.acc_path.clone(),
-                    storage_path: node_response
-                        .node_request
-                        .storage_path
-                        .concat(node.prefix.clone()),
+                    storage_path: child_path,
                     parent: node_response.node_request.storage_path.clone(),
                     hash: node.child.compute_hash().finalize(),
                 }]);
@@ -657,20 +657,19 @@ pub fn determine_missing_children(
         _ => {}
     }
     Ok((paths, count))
-    */
 }
 
 fn commit_node(
     node: &NodeResponse,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
-    to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Vec<u8>)>>,
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
-    to_write
-        .entry(hashed_account)
-        .or_default()
-        .push((node.node.compute_hash(), node.node.encode_to_vec()));
+    to_write.entry(hashed_account).or_default().push((
+        node.node_request.storage_path.clone(),
+        node.node.encode_to_vec(),
+    ));
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {

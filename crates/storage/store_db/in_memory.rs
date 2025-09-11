@@ -1,5 +1,9 @@
 use crate::{
-    api::StoreEngine, error::StoreError, store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS}, trie_db::utils::nibbles_to_fixed_size, UpdateBatch
+    UpdateBatch,
+    api::StoreEngine,
+    error::StoreError,
+    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    trie_db::utils::nibbles_to_fixed_size,
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -407,7 +411,10 @@ impl StoreEngine for Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
-        let trie_backend = store.storage_trie_nodes.entry(Nibbles::from_bytes(&hashed_address.0)).or_default();
+        let trie_backend = store
+            .storage_trie_nodes
+            .entry(Nibbles::from_bytes(&hashed_address.0))
+            .or_default();
         let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
         Ok(Trie::open(db, storage_root))
     }
@@ -666,10 +673,8 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        todo!();
-        /*
         let mut store = self.inner()?;
 
         for (hashed_address, nodes) in storage_trie_nodes {
@@ -680,12 +685,11 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
+                addr_store.insert(nibbles_to_fixed_size(node_hash), node_data);
             }
         }
 
         Ok(())
-        */
     }
 
     async fn write_account_code_batch(

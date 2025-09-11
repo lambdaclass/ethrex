@@ -26,10 +26,7 @@ impl ExtensionNode {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .unwrap();
+            let child_node = self.child.get_node(db, path.current())?.unwrap();
 
             child_node.get(db, path)
         } else {
@@ -58,10 +55,7 @@ impl ExtensionNode {
         if match_index == self.prefix.len() {
             let path = path.offset(match_index);
             // Insert into child node
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .unwrap();
+            let child_node = self.child.get_node(db, path.current())?.unwrap();
             let new_child_node = child_node.insert(db, path, value)?;
             self.child = new_child_node.into();
             Ok(self.into())
@@ -107,10 +101,7 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .unwrap();
+            let child_node = self.child.get_node(db, path.current())?.unwrap();
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(db, path)?;
             // Restructure node based on removal
@@ -174,10 +165,7 @@ impl ExtensionNode {
         };
         // Continue to child
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db, path.current())?
-                .unwrap();
+            let child_node = self.child.get_node(db, path.current())?.unwrap();
             child_node.get_path(db, path, node_path)?;
         }
         Ok(())

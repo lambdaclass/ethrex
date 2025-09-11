@@ -75,9 +75,7 @@ impl BranchNode {
                 (choice_ref, ValueOrHash::Value(value)) => {
                     let child_node = choice_ref
                         .get_node(db, path.current())?
-                        .or_else(|| {
-                            panic!("{:?} not found ref {choice_ref:?}", path)
-                        })
+                        .or_else(|| panic!("{:?} not found ref {choice_ref:?}", path))
                         .unwrap();
 
                     *choice_ref = child_node.insert(db, path, value)?.into();
@@ -104,7 +102,7 @@ impl BranchNode {
             }
         } else if let ValueOrHash::Value(value) = value {
             // Insert into self
-            
+
             self.update(value);
         } else {
             todo!("handle override case (error?)")
@@ -184,7 +182,9 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
-                let child = child_ref.get_node(db, base_path.current().append_new(choice_index as u8))?.unwrap();
+                let child = child_ref
+                    .get_node(db, base_path.current().append_new(choice_index as u8))?
+                    .unwrap();
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(

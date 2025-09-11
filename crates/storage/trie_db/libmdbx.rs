@@ -1,4 +1,4 @@
-use ethrex_trie::{error::TrieError, Nibbles, NodeHash};
+use ethrex_trie::{Nibbles, NodeHash, error::TrieError};
 use libmdbx::orm::{Database, Table};
 use std::{marker::PhantomData, sync::Arc};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
@@ -29,13 +29,15 @@ where
 {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>(nibbles_to_fixed_size(key)).map_err(TrieError::DbError)
+        txn.get::<T>(nibbles_to_fixed_size(key))
+            .map_err(TrieError::DbError)
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
-            txn.upsert::<T>(nibbles_to_fixed_size(key), value).map_err(TrieError::DbError)?;
+            txn.upsert::<T>(nibbles_to_fixed_size(key), value)
+                .map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
     }

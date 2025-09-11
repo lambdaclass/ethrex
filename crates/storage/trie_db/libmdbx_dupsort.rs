@@ -47,9 +47,9 @@ where
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
             let key = (self.fixed_key.clone(), nibbles_to_fixed_size(key));
-            txn.delete::<T>(key.clone(), None).map_err(TrieError::DbError)?;
-            txn.upsert::<T>(key, value)
+            txn.delete::<T>(key.clone(), None)
                 .map_err(TrieError::DbError)?;
+            txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
     }

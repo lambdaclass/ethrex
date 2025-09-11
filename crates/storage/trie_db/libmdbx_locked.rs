@@ -49,7 +49,9 @@ where
     T: Table<Key = [u8; 33], Value = Vec<u8>>,
 {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        self.txn.get::<T>(nibbles_to_fixed_size(key)).map_err(TrieError::DbError)
+        self.txn
+            .get::<T>(nibbles_to_fixed_size(key))
+            .map_err(TrieError::DbError)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
