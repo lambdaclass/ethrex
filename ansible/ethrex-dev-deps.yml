@@ -23,6 +23,7 @@
           User=admin
           WorkingDirectory=/home/admin/ethrex/tooling/sync
           KillMode=process
+          LimitNOFILE=1000000
       become: true
 
     - name: Install Clang and related tools
