@@ -4069,6 +4069,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
+ "futures",
  "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
@@ -4197,6 +4198,7 @@ name = "ethrex-p2p"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "async-trait",
  "bytes",
  "concat-kdf",
  "ctr",
@@ -5175,6 +5177,7 @@ dependencies = [
 name = "guest_program"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
@@ -5183,6 +5186,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
+ "keccak-hash",
  "risc0-build",
  "risc0-zkvm",
  "rkyv",
@@ -11431,9 +11435,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0807232f6f44b0352bcef6218f34e0be66b97486f63fe3e075bc23fbfc146b90"
+checksum = "92e46fce4cdece99f2f07c125e902629ee25e4487d80cae6e3d6e891d5906b00"
 dependencies = [
  "futures",
  "spawned-rt",
@@ -11443,9 +11447,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c31ef7a19f49a842b84dcdde52d88eabbe28f48a2b9a4669180fe17a556c2dc1"
+checksum = "76347472cc448d47dbf9f67541fde19dbb054793e8e0546ce8917bfb695e1b56"
 dependencies = [
  "crossbeam",
  "tokio",
