@@ -493,7 +493,7 @@ impl StoreEngineRollup for SQLStore {
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         let queries = vec![
             (
-                "DELETE FROM batches WHERE batch > ?1",
+                "DELETE FROM batches WHERE number > ?1",
                 [batch_number].into_params()?,
             ),
             (
@@ -641,7 +641,7 @@ impl StoreEngineRollup for SQLStore {
         signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         self.execute(
-            "UPDATE batches SET signature=?1 WHERE batch = ?2)",
+            "UPDATE batches SET signature=?1 WHERE number = ?2)",
             (Vec::from(signature.to_fixed_bytes()), batch_number).into_params()?,
         )
         .await
@@ -653,7 +653,7 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT signature FROM batches WHERE batch = ?1",
+                "SELECT signature FROM batches WHERE number = ?1",
                 vec![batch_number],
             )
             .await?;
