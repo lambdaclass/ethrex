@@ -22,6 +22,7 @@ use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
     metrics::METRICS,
     rlpx::{
+        message::Message as RLPxMessage,
         downloader::{Downloader, DownloaderCastRequest},
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{AccountRangeUnit, GetTrieNodes, TrieNodes},
@@ -1389,38 +1390,14 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_trienodes(
         peer_id: H256,
-        peer_channel: PeerChannels,
+        peer_channel: &mut PeerChannels,
         get_trie_nodes: GetTrieNodes,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
-        let available_downloader = Downloader::new(peer_id, peer_channel.clone());
-        let (response_channel, mut response_reader) = tokio::sync::mpsc::channel(1);
-        available_downloader
-            .start()
-            .cast(DownloaderCastRequest::TrieNodes {
-                response_channel,
-                root_hash: get_trie_nodes.root_hash,
-                paths: get_trie_nodes.paths,
-            })
-            .await
-            .map_err(|_| {
-                RequestStorageTrieNodes::SendMessageError(id, SendMessageError::PeerDisconnected)
-            })?;
-        match response_reader.recv().await {
-            Some(Some(nodes)) => {
-                let nodes = nodes
-                    .iter()
-                    .map(|node| Bytes::from(node.encode_raw()))
-                    .collect();
-                Ok(TrieNodes { id, nodes })
-            }
-            _ => Err(RequestStorageTrieNodes::SendMessageError(
-                id,
-                SendMessageError::InvalidResponse,
-            )),
-        }
+        let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
+        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id).await.map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
     }
 
     /// Returns the PeerData for each connected Peer
