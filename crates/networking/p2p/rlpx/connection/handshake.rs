@@ -140,6 +140,7 @@ pub(crate) async fn perform(
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
+            tx_broadcaster: context.tx_broadcaster.clone(),
         },
         stream,
     ))
@@ -157,7 +158,7 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, RLPxError> {
-    let peer_pk = compress_pubkey(remote_public_key).ok_or(RLPxError::InvalidPeerId())?;
+    let peer_pk = compress_pubkey(remote_public_key).ok_or_else(RLPxError::InvalidPeerId)?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
@@ -176,7 +177,7 @@ async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, RLPxError> {
-    let peer_pk = compress_pubkey(remote_public_key).ok_or(RLPxError::InvalidPeerId())?;
+    let peer_pk = compress_pubkey(remote_public_key).ok_or_else(RLPxError::InvalidPeerId)?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
@@ -198,10 +199,10 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
-        .ok_or(RLPxError::InvalidMessageLength())?;
+        .ok_or_else(RLPxError::InvalidMessageLength)?;
     let msg = &msg_bytes
         .get(2..)
-        .ok_or(RLPxError::InvalidMessageLength())?;
+        .ok_or_else(RLPxError::InvalidMessageLength)?;
     let (auth, remote_ephemeral_key) = decode_auth_message(signer, msg, size_data)?;
 
     Ok(RemoteState {
@@ -220,14 +221,14 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
-        .ok_or(RLPxError::InvalidMessageLength())?;
+        .ok_or_else(RLPxError::InvalidMessageLength)?;
     let msg = &msg_bytes
         .get(2..)
-        .ok_or(RLPxError::InvalidMessageLength())?;
+        .ok_or_else(RLPxError::InvalidMessageLength)?;
     let ack = decode_ack_message(signer, msg, size_data)?;
     let remote_ephemeral_key = ack
         .get_ephemeral_pubkey()
-        .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
+        .ok_or_else(|| RLPxError::NotFound("Remote ephemeral key".to_string()))?;
 
     Ok(RemoteState {
         public_key: remote_public_key,
@@ -303,7 +304,7 @@ fn decode_auth_message(
     let (auth, _padding) = AuthMessage::decode_unfinished(&payload)?;
 
     // Derive a shared secret from the static keys.
-    let peer_pk = compress_pubkey(auth.public_key).ok_or(RLPxError::InvalidPeerId())?;
+    let peer_pk = compress_pubkey(auth.public_key).ok_or_else(RLPxError::InvalidPeerId)?;
     let static_shared_secret = ecdh_xchng(static_key, &peer_pk).map_err(|error| {
         RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
     })?;
@@ -351,9 +352,15 @@ fn decrypt_message(
 ) -> Result<Vec<u8>, RLPxError> {
     // Split the message into its components. General layout is:
     // public-key (65) || iv (16) || ciphertext || mac (32)
-    let (pk, rest) = msg.split_at(65);
-    let (iv, rest) = rest.split_at(16);
-    let (c, d) = rest.split_at(rest.len() - 32);
+    let (pk, rest) = msg
+        .split_at_checked(65)
+        .ok_or_else(RLPxError::InvalidMessageLength)?;
+    let (iv, rest) = rest
+        .split_at_checked(16)
+        .ok_or_else(RLPxError::InvalidMessageLength)?;
+    let (c, d) = rest
+        .split_at_checked(rest.len() - 32)
+        .ok_or_else(RLPxError::InvalidMessageLength)?;
 
     // Derive the message shared secret.
     let shared_secret = ecdh_xchng(static_key, &PublicKey::from_slice(pk)?).map_err(|error| {
