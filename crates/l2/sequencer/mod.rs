@@ -121,7 +121,7 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting L1 Proof Sender: {err}");
     });
-    let _ = BlockProducer::spawn(
+    let block_producer = BlockProducer::spawn(
         store.clone(),
         rollup_store.clone(),
         blockchain.clone(),
@@ -192,6 +192,7 @@ pub async fn start_l2(
         l1_committer.ok(),
         l1_watcher.ok(),
         l1_proof_sender.ok(),
+        block_producer.ok(),
     )
     .await
     .inspect_err(|err| {

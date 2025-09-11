@@ -1,3 +1,6 @@
+use crate::sequencer::block_producer::{
+    BlockProducer, CallMessage as BlockProducerCallMessage, OutMessage as BlockProducerOutMessage,
+};
 use crate::sequencer::l1_committer::{
     CallMessage as CommitterCallMessage, L1Committer, OutMessage as CommitterOutMessage,
 };
@@ -29,6 +32,7 @@ pub struct Admin {
     pub l1_committer: Option<GenServerHandle<L1Committer>>,
     pub l1_watcher: Option<GenServerHandle<L1Watcher>>,
     pub l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
+    pub block_producer: Option<GenServerHandle<BlockProducer>>,
 }
 
 pub enum AdminErrorResponse {
@@ -62,12 +66,14 @@ pub async fn start_api(
     l1_committer: Option<GenServerHandle<L1Committer>>,
     l1_watcher: Option<GenServerHandle<L1Watcher>>,
     l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
+    block_producer: Option<GenServerHandle<BlockProducer>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
     let admin = Admin {
         l1_committer,
         l1_watcher,
         l1_proof_sender,
+        block_producer,
     };
 
     // All request headers allowed.
@@ -195,6 +201,24 @@ async fn health(
         )
     };
     response.insert("l1_proof_sender".to_string(), l1_proof_sender_response);
+
+    let block_producer_response = if let Some(mut block_producer) = admin.block_producer {
+        let block_producer_health = block_producer.call(BlockProducerCallMessage::Health).await;
+
+        match block_producer_health {
+            Ok(BlockProducerOutMessage::Health(health)) => serde_json::to_value(health)
+                .unwrap_or_else(|err| {
+                    Value::String(format!("Failed to serialize health message {err}"))
+                }),
+            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
+            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
+        }
+    } else {
+        Value::String(
+            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
+        )
+    };
+    response.insert("block_producer".to_string(), block_producer_response);
 
     Ok(Json::from(response))
 }
