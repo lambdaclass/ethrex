@@ -25,10 +25,10 @@ use std::{
 };
 use tracing::info;
 
+use crate::bench::run_and_measure;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
-use crate::{bench::run_and_measure, block_run_report::format_duration};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
@@ -520,6 +520,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     let start = SystemTime::now();
 
     let block_run_result = if opts.no_backend {
+        //TODO: Is it possible that Instant is more accurate for measuring these kind of things?
         run_and_measure(replay_no_backend(cache, &opts), opts.bench).await
     } else {
         run_and_measure(replay(cache, &opts), opts.bench).await
