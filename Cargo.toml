@@ -119,5 +119,7 @@ rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 
+rocksdb = "0.24.0"
+
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
