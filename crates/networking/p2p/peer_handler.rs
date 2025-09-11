@@ -231,6 +231,7 @@ impl PeerHandler {
             .unwrap_or_default();
 
         info!("Sync head block number retrieved");
+        let block_count = sync_head_number + 1 - start;
 
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
@@ -239,10 +240,9 @@ impl PeerHandler {
             .store(sync_head_number, Ordering::Relaxed);
         METRICS
             .headers_to_download
-            .store(sync_head_number + 1, Ordering::Relaxed);
+            .store(block_count, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
-        let block_count = sync_head_number + 1 - start;
         let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
         // 2) partition the amount of headers in `K` tasks
