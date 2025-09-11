@@ -18,8 +18,8 @@ use ethrex_levm::vm::VMType;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
-use ethrex_vm::ProverDBError;
 use ethrex_vm::backends::levm::LEVM;
+use eyre::Context;
 use futures_util::future::join_all;
 use sha3::{Digest, Keccak256};
 use tokio_utils::RateLimiter;
@@ -256,7 +256,7 @@ impl RpcDB {
         tokio::task::block_in_place(|| handle.block_on(self.fetch_accounts(index, from_child)))
     }
 
-    pub fn to_execution_witness(&self, block: &Block) -> Result<ExecutionWitness, ProverDBError> {
+    pub fn to_execution_witness(&self, block: &Block) -> eyre::Result<ExecutionWitness> {
         let chain_config = self.chain_config;
 
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
@@ -359,13 +359,13 @@ impl RpcDB {
             .unwrap_or(block.header.number - 1);
         for number in oldest_required_block_number..block.header.number {
             let handle = tokio::runtime::Handle::current();
-            let number_usize: usize = number.try_into().map_err(|_| {
-                ProverDBError::Custom("failed to convert block number into usize".to_string())
-            })?;
+            let number_usize: usize = number
+                .try_into()
+                .wrap_err("failed to convert block number into usize")?;
             let header = tokio::task::block_in_place(|| {
                 handle.block_on(get_block(&self.rpc_url, number_usize, false))
             })
-            .map_err(|err| ProverDBError::Store(err.to_string()))?
+            .wrap_err("failed to fetch block header")?
             .header;
             block_headers_bytes.push(header.encode_to_vec());
         }
@@ -523,7 +523,13 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
         let hash = Keccak256::digest(node);
         state_nodes.insert(H256::from_slice(&hash), node.clone());
     }
-    let trie = Trie::from_nodes(None, proof.first(), &state_nodes).ok()?;
+
+    let hash = if let Some(root) = proof.first() {
+        H256::from_slice(&Keccak256::digest(root))
+    } else {
+        *EMPTY_KECCACK_HASH
+    };
+    let trie = Trie::from_nodes(hash.into(), &state_nodes).ok()?;
 
     // return some only if this is a proof of exclusion
     if trie.get(key).ok()?.is_none() {

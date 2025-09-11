@@ -171,7 +171,9 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-        initial_computed_state,
+        nodes_hashed,
+        codes_hashed,
+        parent_block_header,
     } = execute_stateless_with_witness(blocks, execution_witness, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
@@ -188,17 +190,12 @@ pub fn stateless_validation_l2(
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
-        let Some(initial_computed_state) = initial_computed_state else {
-            return Err(StatelessExecutionError::Unreachable(
-                "Missing cached state from witness execution".to_string(),
-            ));
-        };
         let mut guest_program_state = GuestProgramState {
-            codes_hashed: initial_computed_state.codes_hashed,
-            parent_block_header: initial_computed_state.parent_block_header,
+            codes_hashed,
+            parent_block_header,
             first_block_number: initial_db.first_block_number,
             chain_config: initial_db.chain_config,
-            nodes_hashed: initial_computed_state.nodes_hashed,
+            nodes_hashed,
             state_trie: None,
             // The following fields are not needed for blob validation.
             storage_tries: BTreeMap::new(),
@@ -246,22 +243,14 @@ struct StatelessResult {
     last_block_hash: H256,
     non_privileged_count: U256,
 
-    // Cached initial state used for blob validation in L2
+    // These fields are only used in L2 to validate state diff blobs.
+    // We return them to avoid recomputing when comparing the initial state
+    // with the final state after block execution.
     #[cfg(feature = "l2")]
-    initial_computed_state: Option<InitialComputedState>,
-}
-
-// These fields are only used in L2 to validate state diff blobs.
-// We return them to avoid recomputing when comparing the initial state
-// with the final state after block execution.
-#[cfg(feature = "l2")]
-#[derive(Clone, Debug, Default)]
-pub struct InitialComputedState {
-    /// Map of state node hashes to their RLP encoded data
     pub nodes_hashed: BTreeMap<H256, Vec<u8>>,
-    /// Map of code hashes to their bytecode
+    #[cfg(feature = "l2")]
     pub codes_hashed: BTreeMap<H256, Vec<u8>>,
-    /// The parent block header of the first block in the batch
+    #[cfg(feature = "l2")]
     pub parent_block_header: BlockHeader,
 }
 
@@ -398,11 +387,11 @@ fn execute_stateless_with_witness(
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
         #[cfg(feature = "l2")]
-        initial_computed_state: Some(InitialComputedState {
-            nodes_hashed,
-            codes_hashed,
-            parent_block_header: parent_block_header_clone,
-        }),
+        nodes_hashed,
+        #[cfg(feature = "l2")]
+        codes_hashed,
+        #[cfg(feature = "l2")]
+        parent_block_header: parent_block_header_clone,
     })
 }
 

@@ -263,34 +263,12 @@ impl Trie {
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
     pub fn from_nodes(
-        root_hash: Option<NodeHash>,
-        root: Option<&NodeRLP>,
+        root_hash: NodeHash,
         state_nodes: &BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
-        let (root_rlp, root_hash) = match (root, root_hash) {
-            (Some(root), None) => (
-                root,
-                NodeHash::Hashed(H256::from_slice(&Keccak256::digest(root))),
-            ),
-            (None, Some(root_hash)) => (
-                state_nodes
-                    .get(&root_hash.finalize())
-                    .ok_or(TrieError::InconsistentTree)?,
-                root_hash,
-            ),
-            (None, None) => {
-                let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-                    state_nodes
-                        .iter()
-                        .map(|(k, v)| (NodeHash::from(*k), v.clone()))
-                        .collect(),
-                ))));
-                return Ok(Trie::new(in_memory_trie));
-            }
-            (Some(_), Some(_)) => {
-                return Err(TrieError::InvalidInput)?;
-            }
-        };
+        let root_rlp = state_nodes
+            .get(&root_hash.finalize())
+            .ok_or(TrieError::InconsistentTree)?;
 
         fn inner(
             all_nodes: &BTreeMap<H256, Vec<u8>>,

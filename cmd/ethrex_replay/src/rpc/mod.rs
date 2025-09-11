@@ -154,7 +154,8 @@ pub async fn get_account(
         state_nodes.insert(H256::from_slice(&hash), node.clone());
     }
 
-    let trie = Trie::from_nodes(None, Some(root), &state_nodes)?;
+    let hash = H256::from_slice(&sha3::Keccak256::digest(root));
+    let trie = Trie::from_nodes(hash.into(), &state_nodes)?;
     if trie.get(&hash_address(address))?.is_none() {
         return Ok(Account::NonExisting {
             account_proof,
