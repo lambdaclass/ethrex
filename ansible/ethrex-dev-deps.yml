@@ -22,7 +22,7 @@
           Restart=no
           User=admin
           WorkingDirectory=/home/admin/ethrex/tooling/sync
-          KillMode=none
+          KillMode=process
       become: true
 
     - name: Install Clang and related tools
