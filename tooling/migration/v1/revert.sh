@@ -5,12 +5,12 @@ if [ $# -ne 1 ]; then
     exit 1
 fi
 
-if [ ! -f "$1" ]; then
+db_file="$1"
+
+if [ ! -f "$db_file" ]; then
     echo "Database '$db_file' doesn't exist" > /dev/stderr
     exit 1
 fi
-
-db_file="$1"
 
 version=$(sqlite3 $db_file 'SELECT MAX(version) from migrations' 2>/dev/null || echo 0)
 if [ "$version" -ne 1 ]; then
