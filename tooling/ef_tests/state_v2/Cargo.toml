@@ -29,9 +29,8 @@ alloy-rlp = "0.3.12"
 hex = "0.4.3"
 
 [features]
-default = ["c-kzg", "blst"]
+default = ["c-kzg"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 kzg-rs = ["ethrex-vm/kzg-rs", "ethrex-levm/kzg-rs", "ethrex-common/kzg-rs"]
 openvm-kzg = ["ethrex-vm/openvm-kzg", "ethrex-levm/openvm-kzg", "ethrex-common/openvm-kzg"]
-blst = ["ethrex-vm/blst"]
 block = []

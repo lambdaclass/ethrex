@@ -42,11 +42,12 @@ hex = "0.4.3"
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg", "blst"]
+default = ["c-kzg", "revm"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 kzg-rs = ["ethrex-vm/kzg-rs", "ethrex-levm/kzg-rs", "ethrex-common/kzg-rs"]
 openvm-kzg = ["ethrex-vm/openvm-kzg", "ethrex-levm/openvm-kzg", "ethrex-common/openvm-kzg"]
 blst = ["ethrex-vm/blst"]
+revm = ["ethrex-vm/revm"]
 
 [[test]]
 name = "all"

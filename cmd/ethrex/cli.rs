@@ -12,7 +12,6 @@ use ethrex_p2p::sync::SyncMode;
 use ethrex_p2p::types::Node;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
-use ethrex_vm::EvmEngine;
 use tracing::{Level, info, warn};
 
 use crate::{
@@ -101,15 +100,6 @@ pub struct Options {
     )]
     pub dev: bool,
     #[arg(
-        long = "evm",
-        default_value_t = EvmEngine::default(),
-        value_name = "EVM_BACKEND",
-        help = "Has to be `levm` or `revm`",
-        value_parser = utils::parse_evm_engine,
-        help_heading = "Node options",
-        env = "ETHREX_EVM")]
-    pub evm: EvmEngine,
-    #[arg(
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
@@ -119,7 +109,7 @@ pub struct Options {
     pub log_level: Level,
     #[arg(
         long = "http.addr",
-        default_value = "localhost",
+        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
         help_heading = "RPC options",
@@ -137,7 +127,7 @@ pub struct Options {
     pub http_port: String,
     #[arg(
         long = "authrpc.addr",
-        default_value = "localhost",
+        default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the authenticated rpc server.",
         help_heading = "RPC options"
@@ -238,7 +228,6 @@ impl Default for Options {
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
             dev: Default::default(),
-            evm: Default::default(),
             force: false,
         }
     }
@@ -333,7 +322,7 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
+                import_blocks(&path, &opts.datadir, genesis, blockchain_type).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -381,13 +370,12 @@ pub async fn import_blocks(
     path: &str,
     data_dir: &str,
     genesis: Genesis,
-    evm: EvmEngine,
     blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     let data_dir = init_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    let blockchain = init_blockchain(evm, store.clone(), blockchain_type, false);
+    let blockchain = init_blockchain(store.clone(), blockchain_type, false);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
