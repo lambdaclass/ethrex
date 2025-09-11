@@ -939,8 +939,42 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
           },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "GiB",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -951,54 +985,49 @@
               },
               {
                 "color": "red",
-                "value": 86400
+                "value": 80
               }
             ]
           },
-          "unit": "s"
+          "unit": "none"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
+        "h": 8,
         "w": 12,
         "x": 0,
         "y": 23
       },
-      "id": 34,
+      "id": 42,
       "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "showPercentChange": false,
-        "textMode": "value",
-        "wideLayout": true
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "pluginVersion": "12.2.0",
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "time() - process_start_time_seconds{job=\"$job\"}",
-          "legendFormat": "uptime_s",
-          "range": true,
+          "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / (1024*1024*1024)",
+          "legendFormat": "{{instance}} Used",
           "refId": "A"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes / (1024*1024*1024)",
+          "legendFormat": "{{instance}} Total",
+          "refId": "B"
         }
       ],
-      "title": "Uptime (seconds)",
-      "type": "stat"
+      "title": "Host Ram (GiB) — Used vs Total",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -1100,7 +1129,7 @@
         "h": 4,
         "w": 5,
         "x": 0,
-        "y": 27
+        "y": 31
       },
       "id": 33,
       "options": {
@@ -1172,7 +1201,7 @@
         "h": 4,
         "w": 7,
         "x": 5,
-        "y": 27
+        "y": 31
       },
       "id": 32,
       "options": {
@@ -1207,6 +1236,75 @@
         }
       ],
       "title": "Open FDs",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 86400
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "id": 34,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "time() - process_start_time_seconds{job=\"$job\"}",
+          "legendFormat": "uptime_s",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Uptime (seconds)",
       "type": "stat"
     },
     {
@@ -1274,7 +1372,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 35
       },
       "id": 30,
       "options": {
@@ -1397,7 +1495,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 35
       },
       "id": 31,
       "options": {
@@ -1429,43 +1527,6 @@
       ],
       "title": "Memory (RSS)",
       "type": "timeseries"
-    },
-    {
-      "type": "timeseries",
-      "title": "RAM (GiB) — Used vs Total",
-      "id": 42,
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "decimals": 2,
-          "custom": {
-            "axisLabel": "GiB",
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 20,
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "single" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / (1024*1024*1024)",
-          "legendFormat": "{{instance}} Used"
-        },
-        {
-          "refId": "B",
-          "expr": "node_memory_MemTotal_bytes / (1024*1024*1024)",
-          "legendFormat": "{{instance}} Total"
-        }
-      ],
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
     }
   ],
   "preload": false,
@@ -1548,5 +1609,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 5
+  "version": 6
 }
