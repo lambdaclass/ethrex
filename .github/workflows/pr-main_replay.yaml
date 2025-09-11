@@ -34,6 +34,6 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "http://45.76.185.153:8545"
         run: |
-          cp fixtures/cache/rpc_prover/cache_hoodi_1145479.bin cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_hoodi_1190744.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make execute BLOCK_NUMBER=1145479 NETWORK=hoodi
+          make execute BLOCK_NUMBER=1190744 NETWORK=hoodi
