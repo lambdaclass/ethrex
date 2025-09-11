@@ -54,9 +54,9 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "http://eth-testnet-rpc:8547"
         run: |
-          cp fixtures/cache/rpc_prover/cache_hoodi_1191706.bin cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_hoodi_1192723.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make execute-${{ matrix.backend }}-ci BLOCK_NUMBER=1191706 NETWORK=hoodi
+          make execute-${{ matrix.backend }}-ci BLOCK_NUMBER=1192723 NETWORK=hoodi
       
       - name: Ensure admin permissions in _work
         if: always()
@@ -87,6 +87,6 @@ jobs:
           RPC_URL: "http://45.76.185.153:8545"
         run: |
           # IMPORTANT: If you change the cache block number, remember to also change it in `main_prover_l1.yaml`
-          cp fixtures/cache/rpc_prover/cache_hoodi_1191706.bin cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_hoodi_1192723.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make execute BLOCK_NUMBER=1191706 NETWORK=hoodi
+          make execute BLOCK_NUMBER=1192723 NETWORK=hoodi
