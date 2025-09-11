@@ -25,6 +25,7 @@ services:
       --execution-endpoint http://ethrex:8551
       --execution-jwt /secrets/jwt.hex
       --checkpoint-sync-url https://${ETHREX_NETWORK:-mainnet}-checkpoint-sync.attestant.io
+      --checkpoint-sync-url-timeout 600
     depends_on:
       setup_jwt:
         condition: service_completed_successfully
@@ -46,6 +47,8 @@ services:
       --authrpc.jwtsecret /secrets/jwt.hex
       --syncmode snap
       --datadir /data
+    ulimits:
+      nofile: 1000000
     depends_on:
       setup_jwt:
         condition: service_completed_successfully
