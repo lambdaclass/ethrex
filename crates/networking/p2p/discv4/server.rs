@@ -320,7 +320,10 @@ impl DiscoveryServer {
             .try_into()
             .expect("first 32 bytes are the message hash");
         // We do not use the Sink/Codec here, as we already encoded the message to calculate hash.
-        self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+        self.udp_socket
+            .send_to(&buf, node.udp_addr())
+            .await
+            .inspect_err(|_| error!("Failed sending to peer {}", node.udp_addr()))?;
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
         Ok(H256::from(ping_hash))
     }
