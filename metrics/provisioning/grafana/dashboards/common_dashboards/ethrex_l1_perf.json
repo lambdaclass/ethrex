@@ -1724,6 +1724,37 @@
       ],
       "title": "Node Memory (RSS)",
       "type": "timeseries"
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU Utilization (%)",
+      "id": 44,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "custom": {
+            "axisLabel": "% Utilization",
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum by (instance) (rate(node_cpu_seconds_total{mode!=\"idle\"}[1m])) / sum by (instance) (rate(node_cpu_seconds_total[1m]))",
+          "legendFormat": "{{instance}}"
+        }
+      ]
     }
   ],
   "preload": false,
