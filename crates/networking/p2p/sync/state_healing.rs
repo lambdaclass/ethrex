@@ -400,7 +400,7 @@ pub fn node_missing_children(
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
                 let child_path = path.clone().append_new(index as u8);
-                if child.is_valid() && child.get_node(trie_state, path.clone())?.is_none() {
+                if child.is_valid() && child.get_node(trie_state, child_path.clone())?.is_none() {
                     missing_children_count += 1;
                     paths.extend(vec![RequestMetadata {
                         hash: child.compute_hash().finalize(),
@@ -412,7 +412,7 @@ pub fn node_missing_children(
         }
         Node::Extension(node) => {
             let child_path = path.concat(node.prefix.clone());
-            if node.child.is_valid() && node.child.get_node(trie_state, path.clone())?.is_none() {
+            if node.child.is_valid() && node.child.get_node(trie_state, child_path.clone())?.is_none() {
                 missing_children_count += 1;
 
                 paths.extend(vec![RequestMetadata {
