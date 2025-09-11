@@ -597,7 +597,7 @@ pub fn determine_missing_children(
     let trie = store
         .open_storage_trie(
             H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
-            H256::zero(),
+            *EMPTY_TRIE_HASH,
         )
         .inspect_err(|_| {
             error!("Malformed data when opening the storage trie in determine missing children")

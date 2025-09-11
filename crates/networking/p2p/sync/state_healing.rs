@@ -286,7 +286,7 @@ async fn heal_state_trie(
                 spawned_rt::tasks::block_on(async move {
                     // TODO: replace put batch with the async version
                     let trie_db = store
-                        .open_state_trie(H256::zero())
+                        .open_state_trie(*EMPTY_TRIE_HASH)
                         .expect("Store should open");
                     let db = trie_db.db();
                     db.put_batch(to_write)
@@ -331,7 +331,7 @@ async fn heal_state_batch(
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
     nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
-    let trie = store.open_state_trie(H256::zero())?;
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
         let path = batch.remove(0);
         let (missing_children_count, missing_children) =
