@@ -936,6 +936,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "This is the RAM (used vs Total) of the host machine where the node is running. This was extracted from node_exporter and converted from bytes to GiB",
       "fieldConfig": {
         "defaults": {
           "color": {
