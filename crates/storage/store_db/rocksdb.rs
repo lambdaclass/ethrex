@@ -51,18 +51,13 @@ const CF_BODIES: &str = "bodies";
 /// - Value: `AccountCodeRLP::from(code)` (RLP-encoded bytecode, variable size)
 const CF_ACCOUNT_CODES: &str = "account_codes";
 
-/// Receipts column family: [`(BlockHash, u64)`] => [`Receipt`]
+/// Receipts column family: ([`BlockHash`], [`u64`]) => [`Receipt`]
 /// - Key: `(block_hash, index).encode_to_vec()` (~40 bytes, RLP-encoded tuple)
 /// - Value: `receipt.encode_to_vec()` (RLP-encoded Receipt, ~100-200 bytes)
 const CF_RECEIPTS: &str = "receipts";
 
-/// Transaction locations column family: [`H256 + H256`] => [`(BlockNumber, BlockHash, u64)`]
-/// - Key: Composite key (64 bytes):
-///   ```rust,no_run
-///   let mut composite_key = Vec::with_capacity(64);
-///   composite_key.extend_from_slice(transaction_hash.as_bytes()); // 32 bytes
-///   composite_key.extend_from_slice(block_hash.as_bytes());       // 32 bytes
-///   ```
+/// Transaction locations column family: ([`H256`] + [`H256`]) => ([`BlockNumber`], [`BlockHash`], [`u64`])
+/// - Key: Composite key (64 bytes): `composite_key_64(&tx_hash, block_hash.as_bytes())`
 /// - Value: `(block_number, block_hash, index).encode_to_vec()` (RLP-encoded tuple, ~48 bytes)
 const CF_TRANSACTION_LOCATIONS: &str = "transaction_locations";
 
@@ -87,12 +82,8 @@ const CF_SNAP_STATE: &str = "snap_state";
 const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
 
 /// Storage tries nodes column family: ([`H256`] + [`NodeHash`]) => [`Vec<u8>`]
-/// - Key: Composite key (64 bytes):
-///   ```rust,no_run
-///   let mut key = Vec::with_capacity(64);
-///   key.extend_from_slice(address_hash.as_bytes()); // 32 bytes (account hash)
-///   key.extend_from_slice(node_hash.as_ref());      // 32 bytes (storage node hash)
-///   ```
+/// Stores Merkle Patricia Trie nodes for individual account storage tries
+/// - Key: Composite key (64 bytes): `composite_key_64(&address_hash, node_hash.as_ref())`
 /// - Value: `node_data` (RLP-encoded trie node, variable size 32-2KB typically)
 const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
 
@@ -102,12 +93,8 @@ const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
 const CF_PENDING_BLOCKS: &str = "pending_blocks";
 
 /// Storage snapshot column family: [`H256 + H256`] => [`U256`]
-/// - Key: Composite key (64 bytes):
-///   ```rust,no_run
-///   let mut composite_key = Vec::with_capacity(64);
-///   composite_key.extend_from_slice(account_hash.as_bytes()); // 32 bytes (account hash)
-///   composite_key.extend_from_slice(storage_key.as_bytes());  // 32 bytes (storage slot hash)
-///   ```
+/// Stores account storage key-value pairs for snap sync
+/// - Key: Composite key (64 bytes): `composite_key_64(&account_hash, storage_key.as_bytes())`
 /// - Value: `u256_to_big_endian(value).to_vec()` (32 bytes, U256 in big-endian format)
 const CF_STORAGE_SNAPSHOT: &str = "storage_snapshot";
 
@@ -429,9 +416,7 @@ impl StoreEngine for Store {
             for (address_hash, storage_updates) in update_batch.storage_updates {
                 for (node_hash, node_data) in storage_updates {
                     // Key: address_hash + node_hash
-                    let mut key = Vec::with_capacity(64);
-                    key.extend_from_slice(address_hash.as_bytes());
-                    key.extend_from_slice(node_hash.as_ref());
+                    let key = composite_key_64(&address_hash, node_hash.as_ref());
                     batch.put_cf(&cf_storage, key, node_data);
                 }
             }
@@ -452,9 +437,7 @@ impl StoreEngine for Store {
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let tx_hash = transaction.hash();
                     // Key: tx_hash + block_hash
-                    let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(tx_hash.as_bytes());
-                    composite_key.extend_from_slice(block_hash.as_bytes());
+                    let composite_key = composite_key_64(&tx_hash, block_hash.as_bytes());
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
                     batch.put_cf(&cf_tx_locations, composite_key, location_value);
                 }
@@ -516,9 +499,7 @@ impl StoreEngine for Store {
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let tx_hash = transaction.hash();
                     // Key: tx_hash + block_hash
-                    let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(tx_hash.as_bytes());
-                    composite_key.extend_from_slice(block_hash.as_bytes());
+                    let composite_key = composite_key_64(&tx_hash, block_hash.as_bytes());
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
                     batch.put_cf(&cf_tx_locations, composite_key, location_value);
                 }
@@ -752,9 +733,7 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<(), StoreError> {
         // Key: tx_hash + block_hash
-        let mut composite_key = Vec::with_capacity(64);
-        composite_key.extend_from_slice(transaction_hash.as_bytes());
-        composite_key.extend_from_slice(block_hash.as_bytes());
+        let composite_key = composite_key_64(&transaction_hash, block_hash.as_bytes());
 
         let location_value = (block_number, block_hash, index).encode_to_vec();
         self.write_async(CF_TRANSACTION_LOCATIONS, composite_key, location_value)
@@ -771,9 +750,7 @@ impl StoreEngine for Store {
 
         for (tx_hash, block_number, block_hash, index) in locations {
             // Key: tx_hash + block_hash
-            let mut composite_key = Vec::with_capacity(64);
-            composite_key.extend_from_slice(tx_hash.as_bytes());
-            composite_key.extend_from_slice(block_hash.as_bytes());
+            let composite_key = composite_key_64(&tx_hash, block_hash.as_bytes());
 
             let location_value = (block_number, block_hash, index).encode_to_vec();
             batch_ops.push((
@@ -1266,9 +1243,7 @@ impl StoreEngine for Store {
 
         for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
             // Create composite key: account_hash + storage_key
-            let mut composite_key = Vec::with_capacity(64);
-            composite_key.extend_from_slice(account_hash.as_bytes());
-            composite_key.extend_from_slice(key.as_bytes());
+            let composite_key = composite_key_64(&account_hash, key.as_bytes());
 
             // Convert U256 to bytes
             let value_bytes = u256_to_big_endian(value).to_vec();
@@ -1308,9 +1283,7 @@ impl StoreEngine for Store {
 
             for (key, value) in keys.into_iter().zip(values.into_iter()) {
                 // Create composite key: account_hash + storage_key
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(account_hash.as_bytes());
-                composite_key.extend_from_slice(key.as_bytes());
+                let composite_key = composite_key_64(&account_hash, key.as_bytes());
 
                 // Convert U256 to bytes
                 let value_bytes = u256_to_big_endian(value).to_vec();
@@ -1388,9 +1361,7 @@ impl StoreEngine for Store {
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
             // Create start key: account_hash + start
-            let mut start_key = Vec::with_capacity(64);
-            start_key.extend_from_slice(account_hash.as_bytes());
-            start_key.extend_from_slice(start.as_bytes());
+            let start_key = composite_key_64(&account_hash, start.as_bytes());
 
             let mut results = Vec::new();
             let mut iter = db.iterator_cf(
@@ -1485,9 +1456,7 @@ impl StoreEngine for Store {
         for (address_hash, nodes) in storage_trie_nodes {
             for (node_hash, node_data) in nodes {
                 // Create composite key: address_hash + node_hash
-                let mut key = Vec::with_capacity(64);
-                key.extend_from_slice(address_hash.as_bytes());
-                key.extend_from_slice(node_hash.as_ref());
+                let key = composite_key_64(&address_hash, node_hash.as_ref());
                 batch_ops.push((CF_STORAGE_TRIES_NODES.to_string(), key, node_data));
             }
         }
@@ -1528,4 +1497,12 @@ fn open_cfs<'a, const N: usize>(
     handles
         .try_into()
         .map_err(|_| StoreError::Custom("Unexpected number of column families".to_string()))
+}
+
+// Helper method to create 64-byte composite keys efficiently
+fn composite_key_64(first: &H256, second: impl AsRef<[u8]>) -> Vec<u8> {
+    let mut key = Vec::with_capacity(64);
+    key.extend_from_slice(first.as_bytes());
+    key.extend_from_slice(second.as_ref());
+    key
 }
