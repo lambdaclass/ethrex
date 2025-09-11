@@ -4387,7 +4387,6 @@ dependencies = [
  "malachite 0.6.1",
  "p256",
  "ripemd",
- "secp256k1",
  "serde",
  "serde_json",
  "sha2",

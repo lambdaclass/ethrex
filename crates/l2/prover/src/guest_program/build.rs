@@ -101,25 +101,28 @@ fn build_sp1_program() {
 
 #[cfg(all(not(clippy), feature = "openvm"))]
 fn build_openvm_program() {
-    use openvm_build::GuestOptions;
-    use openvm_sdk::Sdk;
+    use std::{process::{Command, Stdio}, path::Path, fs};
 
-    // let sdk = Sdk::standard();
+    let status = Command::new("cargo")
+        .arg("openvm")
+        .arg("build")
+        .arg("--no-transpile")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .current_dir("./src/openvm")
+        .status()
+        .expect("failed to execute cargo openvm build");
 
-    // let guest_opts = GuestOptions::default();
-    // let target_path = "./src/openvm/";
-    // let elf = sdk
-    //     .build(guest_opts, target_path, &None, None)
-    //     .expect("could not build OpenVM program");
-    // TODO: how to serialize in bytes
-    // std::fs::write("./src/openvm/out/riscv32im-openvm-elf", elf).expect("failed to write OpenVM program")
+    if !status.success() {
+        panic!("cargo openvm build failed with exit status: {}", status);
+    }
 
-    // let (_app_pk, app_vk) = sdk.app_keygen();
-    // let vk = bincode::serialize(&app_vk).expect("could not serialize OpenVM vk");
+    let elf_src = Path::new("./src/openvm/target/riscv32im-risc0-zkvm-elf/release/zkvm-openvm-program");
+    let elf_dst = Path::new("./src/openvm/out/riscv32im-openvm-zkvm-elf");
 
-    // std::fs::write(
-    //     "./src/openvm/out/riscv32im-openvm-vk",
-    //     format!("0x{}\n", hex::encode(vk)),
-    // )
-    // .expect("could not write OpenVM vk to file");
+    if let Some(parent) = elf_dst.parent() {
+        fs::create_dir_all(parent).expect("failed to create destination dir");
+    }
+
+    fs::copy(&elf_src, &elf_dst).expect("failed to copy zkvm-openvm-program");
 }
