@@ -1,6 +1,6 @@
+use guest_program::{execution::execution_program, input::ProgramInput};
 use openvm_keccak256::keccak256;
 use rkyv::rancor::Error;
-use guest_program::{execution::execution_program, input::ProgramInput};
 
 openvm::init!();
 
