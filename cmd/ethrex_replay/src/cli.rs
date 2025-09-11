@@ -8,21 +8,18 @@ use ethrex_common::{
     },
 };
 use ethrex_prover_lib::backend::Backend;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::Store;
 use ethrex_storage::{
     hash_address, hash_address_fixed, store_db::in_memory::Store as InMemoryStore,
 };
-use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRLP, NodeRef, Trie, TrieError};
+use ethrex_trie::InMemoryTrieDB;
 use reqwest::Url;
-use std::str::FromStr;
 use std::{
-    collections::BTreeMap,
-    fs::File,
     io::Write,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
     time::SystemTime,
 };
 use tracing::info;
