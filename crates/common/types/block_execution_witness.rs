@@ -186,7 +186,7 @@ impl GuestProgramState {
         }
 
         let state_trie = Trie::from_nodes(
-            NodeHash::Hashed(self.parent_block_header.state_root),
+            self.parent_block_header.state_root,
             &self.nodes_hashed,
         )
         .map_err(|e| {
@@ -212,7 +212,7 @@ impl GuestProgramState {
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
         Trie::from_nodes(
-            NodeHash::Hashed(account_state.storage_root),
+            account_state.storage_root,
             &self.nodes_hashed,
         )
         .ok()

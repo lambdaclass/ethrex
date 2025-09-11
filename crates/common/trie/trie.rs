@@ -263,7 +263,47 @@ impl Trie {
         )))))
     }
 
-    /// Builds a trie from a set of nodes with an InMemoryTrieDB as a backend.
+    /// Gets node with embedded references to child nodes, all in just one `Node`.
+    pub fn get_embedded_root(
+        all_nodes: &BTreeMap<H256, Vec<u8>>,
+        cur_node_rlp: &Vec<u8>,
+    ) -> Result<Node, TrieError> {
+        let cur_node = Node::decode_raw(cur_node_rlp)?;
+
+        Ok(match cur_node {
+            Node::Branch(mut node) => {
+                for choice in &mut node.choices {
+                    let NodeRef::Hash(hash) = *choice else {
+                        unreachable!()
+                    };
+
+                    if hash.is_valid() {
+                        *choice = match all_nodes.get(&hash.finalize()) {
+                            Some(rlp) => Self::get_embedded_root(all_nodes, rlp)?.into(),
+                            None => hash.into(),
+                        };
+                    }
+                }
+
+                (*node).into()
+            }
+            Node::Extension(mut node) => {
+                let NodeRef::Hash(hash) = node.child else {
+                    unreachable!()
+                };
+
+                node.child = match all_nodes.get(&hash.finalize()) {
+                    Some(rlp) => Self::get_embedded_root(all_nodes, rlp)?.into(),
+                    None => hash.into(),
+                };
+
+                node.into()
+            }
+            Node::Leaf(node) => node.into(),
+        })
+    }
+
+    /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.
     ///
     /// Note: This method will not ensure that all node references are valid. Invalid references
     ///   will cause other methods (including, but not limited to `Trie::get`, `Trie::insert` and
@@ -271,62 +311,18 @@ impl Trie {
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
     pub fn from_nodes(
-        root_hash: NodeHash,
+        root_hash: H256,
         state_nodes: &BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
+        // If the root RLP wasn't found it's a problem.
         let root_rlp = state_nodes
-            .get(&root_hash.finalize())
+            .get(&root_hash)
             .ok_or(TrieError::InconsistentTree)?;
 
-        fn inner(
-            all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_hash: &NodeHash,
-            cur_node_rlp: &NodeRLP,
-            traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
-        ) -> Result<Node, TrieError> {
-            let node = Node::decode_raw(cur_node_rlp)?;
+        let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
 
-            Ok(match node {
-                Node::Branch(mut node) => {
-                    for choice in &mut node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
-
-                        if hash.is_valid() {
-                            *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
-                                None => hash.into(),
-                            };
-                        }
-                    }
-
-                    (*node).into()
-                }
-                Node::Extension(mut node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
-                        None => hash.into(),
-                    };
-
-                    node.into()
-                }
-                Node::Leaf(node) => node.into(),
-            })
-        }
-
-        let mut necessary_nodes = BTreeMap::new();
-        let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
-        // println!("All nodes: {}", state_nodes.len());
-        // println!("necessary nodes len: {}", necessary_nodes.len());
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
-
-        let mut trie = Trie::new(in_memory_trie);
-        trie.root = root;
+        let root = Self::get_embedded_root(state_nodes, root_rlp)?;
+        trie.root = root.into();
 
         Ok(trie)
     }
