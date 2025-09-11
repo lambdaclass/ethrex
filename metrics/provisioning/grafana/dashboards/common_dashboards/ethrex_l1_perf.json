@@ -1500,6 +1500,43 @@
         "refresh": 1,
         "regex": "",
         "type": "query"
+      },
+      {
+        "type": "timeseries",
+        "title": "RAM (GiB) — Used vs Total",
+        "id": 42,
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none",
+            "decimals": 2,
+            "custom": {
+              "axisLabel": "GiB",
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "spanNulls": true
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+          "tooltip": { "mode": "single" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / (1024*1024*1024)",
+            "legendFormat": "{{instance}} Used"
+          },
+          {
+            "refId": "B",
+            "expr": "node_memory_MemTotal_bytes / (1024*1024*1024)",
+            "legendFormat": "{{instance}} Total"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
       }
     ]
   },
