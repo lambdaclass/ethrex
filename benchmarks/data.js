@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757599044430,
+  "lastUpdate": 1757600215860,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13705,6 +13705,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169976084356,
             "range": "± 4228750827",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8d318718cd07b7bdb4e316d7c71a0f1990b8fc33",
+          "message": "fix(l1):  use eth capability version when decoding messages + fix `BlockRangeUpdate` handling (#4360)\n\n**Motivation**\nBeing able to support eth/69 messages\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add missing validation to `BlockRangeUpdate` (latest_hash != zero)\n* Disconnect from peers if `BlockRangeUpdate` is invalid\n* Enable eth/69 as supported capability\n* Use negotiated eth capability version when decoding incoming messages\n* Enable hive tests for `BlockRangeUpdate`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses ##2785",
+          "timestamp": "2025-09-11T13:23:59Z",
+          "tree_id": "67ff66a2b1ddd496d93a91be64a93d774c28747c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8d318718cd07b7bdb4e316d7c71a0f1990b8fc33"
+        },
+        "date": 1757600196147,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168323022293,
+            "range": "± 207366521",
             "unit": "ns/iter"
           }
         ]
