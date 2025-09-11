@@ -47,6 +47,18 @@ pub async fn start_l2(
         SequencerStatus::Sequencing
     };
 
+    if let (Some(block_gas_limit), Some(batch_gas_limit)) = (
+        cfg.block_producer.max_gas_limit,
+        cfg.l1_committer.batch_gas_limit,
+    ) {
+        if batch_gas_limit < block_gas_limit {
+            error!(
+                "The block gas limit ({block_gas_limit}) cannot be greater than the batch gas limit ({batch_gas_limit})."
+            );
+            return Err(errors::SequencerError::GasLimitError);
+        }
+    }
+
     info!("Starting Sequencer in {initial_status} mode");
 
     let shared_state = SequencerState::from(initial_status);
