@@ -310,14 +310,13 @@ impl RpcDB {
             .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
             .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()));
 
-        let potential_storage_child_nodes: HashMap<_, _> = final_storage_proofs
-            .map(|(address, proofs)| {
-                let nodes: Vec<_> = proofs
+        let potential_storage_child_nodes: Vec<Vec<u8>> = final_storage_proofs
+            .flat_map(|(_, proofs)| {
+                proofs
                     .iter()
                     .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(key)))
                     .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
-                    .collect();
-                (address, nodes)
+                    .collect::<Vec<_>>()
             })
             .collect();
 
@@ -334,11 +333,11 @@ impl RpcDB {
                 None
             }
         });
-        let codes: Vec<Vec<u8>> = existing_accs
+        let codes = existing_accs
             .clone()
             .map(|(_, account)| account.code.clone().unwrap_or_default().to_vec())
             .collect();
-        let keys: Vec<Vec<u8>> = existing_accs
+        let keys = existing_accs
             .clone()
             .flat_map(|(_, account)| {
                 account
@@ -349,7 +348,7 @@ impl RpcDB {
             })
             .collect();
 
-        let mut block_headers = Vec::new();
+        let mut block_headers_bytes = Vec::new();
         let oldest_required_block_number = self
             .block_hashes
             .lock()
@@ -368,7 +367,7 @@ impl RpcDB {
             })
             .map_err(|err| ProverDBError::Store(err.to_string()))?
             .header;
-            block_headers.push(header.encode_to_vec());
+            block_headers_bytes.push(header.encode_to_vec());
         }
 
         let state_root = initial_account_proofs
@@ -389,7 +388,7 @@ impl RpcDB {
 
         all_nodes.extend(state_proofs.1.clone());
 
-        for (address, proofs) in initial_storage_proofs {
+        for (_, proofs) in initial_storage_proofs {
             if let Some(root) = proofs.iter().next().and_then(|(_, nodes)| nodes.first()) {
                 all_nodes.push(root.clone());
             }
@@ -397,15 +396,12 @@ impl RpcDB {
             for proof in proofs.values() {
                 all_nodes.extend(proof.iter().skip(1).cloned());
             }
-
-            if let Some(child_nodes) = potential_storage_child_nodes.get(&address) {
-                all_nodes.extend(child_nodes.clone());
-            }
         }
+        all_nodes.extend(potential_storage_child_nodes);
 
         Ok(ExecutionWitness {
             codes,
-            block_headers_bytes: block_headers,
+            block_headers_bytes,
             first_block_number: block.header.number,
             chain_config,
             nodes: all_nodes,
