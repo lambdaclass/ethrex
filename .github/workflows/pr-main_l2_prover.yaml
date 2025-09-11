@@ -61,7 +61,7 @@ jobs:
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |
-          git diff --exit-code -- crates/l2/prover/src/guest_program/${{ matrix.backend }}/Cargo.lock
+          git diff --exit-code -- crates/l2/prover/src/guest_program/src/${{ matrix.backend }}/Cargo.lock
 
   lint_exec:
     name: Lint exec backend
