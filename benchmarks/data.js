@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757603002030,
+  "lastUpdate": 1757612058713,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13795,6 +13795,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 172373400381,
             "range": "± 784750775",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d4fb47eba30cab87a51c6589e0f10c5005369e43",
+          "message": "feat(replay): add functionality to replay custom blocks and batches (#4339)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Motivation**\n\nUsually (mostly for L2) to benchmark the prover in a custom scenario,\nwhat we do is to spin up a localnet and spam it with a custom script\nthat sends a specific number of specific txs periodically.\n\nThis practice could take a lot of time to make just one measurement. We\nneed a tool to prepare blocks and batches, and populate them however we\nwant to make measurements fast and easy.\n\n**Description**\n\n> [!NOTE]\n> This is an initial version of the feature that only supports the\nbuilding of empty blocks and batches with empty blocks.\n\nAdds a `custom` command with `block` and `batch` subcommands.\n\n**Usage**\n\n```\n# Batches\n\n## Execute batch (exec)\ncargo r -r -p ethrex-replay --features l2 -- custom batch --n-blocks <N>\n## Execute batch (SP1)\ncargo r -r -p ethrex-replay --features sp1,l2 -- custom batch --n-blocks <N>\n## Prove batch (SP1)\nSP1_PROVER=cuda cargo r -r -p ethrex-replay --features sp1,gpu,l2 -- custom batch --n-blocks <N> --prove\n\n# Blocks\n\n## Execute block (exec) (L1)\ncargo r -r -p ethrex-replay -- custom block\n## Execute block (SP1) (L1)\ncargo r -r -p ethrex-replay --features sp1 -- custom block\n## Prove block (SP1) (L1)\nSP1_PROVER=cuda cargo r -r -p ethrex-replay --features sp1,gpu -- custom block --prove\n\n## Execute block (exec) (L2)\ncargo r -r -p ethrex-replay --features l2 -- l2 custom block\n## Execute block (SP1) (L2)\ncargo r -r -p ethrex-replay --features sp1,l2 -- l2 custom block\n## Prove block (SP1) (L2)\nSP1_PROVER=cuda cargo r -r -p ethrex-replay --features sp1,gpu,l2 -- l2 custom block --prove\n```\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-11T16:37:54Z",
+          "tree_id": "b765489d65c17cbfe3e5160ee79f849d5f318247",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d4fb47eba30cab87a51c6589e0f10c5005369e43"
+        },
+        "date": 1757612039696,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170287463439,
+            "range": "± 1180181016",
             "unit": "ns/iter"
           }
         ]
