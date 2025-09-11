@@ -12,7 +12,7 @@ use ethrex_rlp::{
 };
 use ethrex_storage::error::StoreError;
 
-use crate::rlpx::utils::log_peer_warn;
+use crate::rlpx::utils::{log_peer_debug, log_peer_warn};
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -269,9 +269,21 @@ impl PooledTransactions {
     }
 
     /// Saves every incoming pooled transaction to the mempool.
-    pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
+    pub async fn handle(
+        self,
+        node: &Node,
+        blockchain: &Blockchain,
+        is_l2_mode: bool,
+    ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
+                if is_l2_mode {
+                    log_peer_debug(
+                        node,
+                        "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                    );
+                    continue;
+                }
                 if let Err(e) = blockchain
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
