@@ -449,7 +449,6 @@ impl StoreEngine for Store {
                 batch.put_cf(&cf_codes, code_key, &code_value);
             }
 
-            // Single write operation
             db.write(batch).map_err(StoreError::from)
         })
         .await
@@ -1080,7 +1079,7 @@ impl StoreEngine for Store {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatchWithTransaction::<true>::default();
+            let mut batch = rocksdb::WriteBatchWithTransaction::<true>::default();
 
             let [cf_canonical, cf_chain_data] =
                 open_cfs(&db, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
@@ -1090,7 +1089,7 @@ impl StoreEngine for Store {
                 for (block_number, block_hash) in canonical_blocks {
                     let number_key = block_number.to_le_bytes();
                     let hash_value = BlockHashRLP::from(block_hash);
-                    batch.put_cf(&cf_canonical, number_key, &hash_value);
+                    batch.put_cf(&cf_canonical, number_key, hash_value.as_ref());
                 }
             }
 
@@ -1102,10 +1101,9 @@ impl StoreEngine for Store {
             // Make head canonical
             let head_key = head_number.to_le_bytes();
             let head_value = BlockHashRLP::from(head_hash);
-            batch.put_cf(&cf_canonical, head_key, &head_value);
+            batch.put_cf(&cf_canonical, head_key, head_value.as_ref());
 
             // Update chain data
-
             let latest_key = [ChainDataIndex::LatestBlockNumber as u8];
             batch.put_cf(&cf_chain_data, latest_key, head_number.to_le_bytes());
 
