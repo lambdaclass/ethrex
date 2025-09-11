@@ -27,80 +27,80 @@ use crate::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
 /// Canonical block hashes column family: [`[u8; 8]`] => [`BlockHashRLP`]
-/// - Key: `block_number.to_le_bytes()` (8 bytes, little-endian)
-/// - Value: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
+/// - Key: `block_number.to_le_bytes()`
+/// - Value: `BlockHashRLP::from(block_hash)`
 const CF_CANONICAL_BLOCK_HASHES: &str = "canonical_block_hashes";
 
 /// Block numbers column family: [`BlockHashRLP`] => [`[u8; 8]`]
-/// - Key: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
-/// - Value: `block_number.to_le_bytes()` (8 bytes, little-endian)
+/// - Key: `BlockHashRLP::from(block_hash)`
+/// - Value: `block_number.to_le_bytes()`
 const CF_BLOCK_NUMBERS: &str = "block_numbers";
 
 /// Block headers column family: [`BlockHashRLP`] => [`BlockHeaderRLP`]
-/// - Key: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
-/// - Value: `BlockHeaderRLP::from(block_header)` (RLP-encoded BlockHeader, ~500-600 bytes)
+/// - Key: `BlockHashRLP::from(block_hash)`
+/// - Value: `BlockHeaderRLP::from(block_header)`
 const CF_HEADERS: &str = "headers";
 
 /// Block bodies column family: [`BlockHashRLP`] => [`BlockBodyRLP`]
-/// - Key: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
-/// - Value: `BlockBodyRLP::from(block_body)` (RLP-encoded BlockBody, variable size)
+/// - Key: `BlockHashRLP::from(block_hash)`
+/// - Value: `BlockBodyRLP::from(block_body)`
 const CF_BODIES: &str = "bodies";
 
 /// Account codes column family: [`H256`] => [`AccountCodeRLP`]
-/// - Key: `code_hash.as_bytes()` (32 bytes, H256 hash)
-/// - Value: `AccountCodeRLP::from(code)` (RLP-encoded bytecode, variable size)
+/// - Key: `code_hash.as_bytes()`
+/// - Value: `AccountCodeRLP::from(code)`
 const CF_ACCOUNT_CODES: &str = "account_codes";
 
 /// Receipts column family: ([`BlockHash`], [`u64`]) => [`Receipt`]
-/// - Key: `(block_hash, index).encode_to_vec()` (~40 bytes, RLP-encoded tuple)
-/// - Value: `receipt.encode_to_vec()` (RLP-encoded Receipt, ~100-200 bytes)
+/// - Key: `(block_hash, index).encode_to_vec()`
+/// - Value: `receipt.encode_to_vec()`
 const CF_RECEIPTS: &str = "receipts";
 
 /// Transaction locations column family: ([`H256`] + [`H256`]) => ([`BlockNumber`], [`BlockHash`], [`u64`])
 /// - Key: Composite key (64 bytes): `composite_key_64(&tx_hash, block_hash.as_bytes())`
-/// - Value: `(block_number, block_hash, index).encode_to_vec()` (RLP-encoded tuple, ~48 bytes)
+/// - Value: `(block_number, block_hash, index).encode_to_vec()`
 const CF_TRANSACTION_LOCATIONS: &str = "transaction_locations";
 
 /// Chain data column family: [`ChainDataIndex`] => [`Variable`]
 /// - Key: `Self::chain_data_key(index)` (1 byte, enum as u8)
 /// - Value: Variable format depending on ChainDataIndex:
 ///   - ChainConfig: JSON string bytes
-///   - Block numbers: `block_number.to_le_bytes()` (8 bytes)
+///   - Block numbers: `block_number.to_le_bytes()`
 const CF_CHAIN_DATA: &str = "chain_data";
 
 /// Snap state column family: [`SnapStateIndex`] => [`Variable`]
 /// - Key: `Self::snap_state_key(index)` (1 byte, enum as u8)
 /// - Value: Variable format depending on SnapStateIndex:
-///   - HeaderDownloadCheckpoint: `BlockHashRLP` (~33 bytes)
-///   - StateTrieKeyCheckpoint: `Vec<H256>` (variable size)
-///   - StateHealPaths: `Vec<(Nibbles, H256)>` (variable size)
+///   - StateTrieKeyCheckpoint: [`Vec<H256>`]
+///   - HeaderDownloadCheckpoint: [`BlockHashRLP`]
+///   - StateHealPaths: [`Vec<(Nibbles, H256)>`]
 const CF_SNAP_STATE: &str = "snap_state";
 
 /// State trie nodes column family: [`NodeHash`] => [`Vec<u8>`]
-/// - Key: `node_hash.as_ref()` (32 bytes, H256 hash of the node)
-/// - Value: `node_data` (RLP-encoded trie node, variable size 32-2KB typically)
+/// - Key: `node_hash.as_ref()`
+/// - Value: `node_data`
 const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
 
 /// Storage tries nodes column family: ([`H256`] + [`NodeHash`]) => [`Vec<u8>`]
 /// Stores Merkle Patricia Trie nodes for individual account storage tries
 /// - Key: Composite key (64 bytes): `composite_key_64(&address_hash, node_hash.as_ref())`
-/// - Value: `node_data` (RLP-encoded trie node, variable size 32-2KB typically)
+/// - Value: `node_data`
 const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
 
 /// Pending blocks column family: [`BlockHashRLP`] => [`BlockRLP`]
-/// - Key: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
+/// - Key: `BlockHashRLP::from(block_hash)`
 /// - Value: `BlockRLP::from(block)` (RLP-encoded complete Block, variable size)
 const CF_PENDING_BLOCKS: &str = "pending_blocks";
 
 /// Storage snapshot column family: [`H256 + H256`] => [`U256`]
 /// Stores account storage key-value pairs for snap sync
 /// - Key: Composite key (64 bytes): `composite_key_64(&account_hash, storage_key.as_bytes())`
-/// - Value: `u256_to_big_endian(value).to_vec()` (32 bytes, U256 in big-endian format)
+/// - Value: `u256_to_big_endian(value).to_vec()`
 const CF_STORAGE_SNAPSHOT: &str = "storage_snapshot";
 
 /// Invalid ancestors column family: [`BlockHashRLP`] => [`BlockHashRLP`]
-/// - Key: `BlockHashRLP::from(bad_block)` (RLP-encoded H256, ~33 bytes)
-/// - Value: `BlockHashRLP::from(latest_valid)` (RLP-encoded H256, ~33 bytes)
+/// - Key: `BlockHashRLP::from(bad_block)`
+/// - Value: `BlockHashRLP::from(latest_valid)`
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
