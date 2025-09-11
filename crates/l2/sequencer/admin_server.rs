@@ -24,7 +24,6 @@ use spawned_concurrency::error::GenServerError;
 use spawned_concurrency::tasks::{GenServer, GenServerHandle};
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
 
 #[derive(Debug, Error)]
 pub enum AdminError {
@@ -86,19 +85,12 @@ pub async fn start_api(
         metrics_gatherer,
     };
 
-    // All request headers allowed.
-    // All methods allowed.
-    // All origins allowed.
-    // All headers exposed.
-    let cors = CorsLayer::permissive();
-
     let http_router = Router::new()
         .route("/committer/start", get(start_committer_default))
         .route("/committer/start/{delay}", get(start_committer))
         .route("/committer/stop", get(stop_committer))
         .route("/admin/health", get(admin_health))
         .route("/health", get(health))
-        .layer(cors)
         .with_state(admin.clone());
     let http_listener = TcpListener::bind(http_addr)
         .await
