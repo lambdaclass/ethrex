@@ -1,14 +1,30 @@
-use std::{io::Write, time::SystemTime};
-
 use clap::{ArgGroup, Parser, Subcommand};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
-    H256,
-    types::{AccountUpdate, Block, Receipt},
+    Address, H256,
+    types::{
+        AccountState, AccountUpdate, Block, BlockHeader, Receipt,
+        block_execution_witness::GuestProgramState,
+    },
 };
 use ethrex_prover_lib::backend::Backend;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{
+    hash_address, hash_address_fixed, store_db::in_memory::Store as InMemoryStore,
+};
+use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRLP, NodeRef, Trie, TrieError};
 use reqwest::Url;
+use std::str::FromStr;
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::Write,
+    sync::{Arc, Mutex, RwLock},
+    time::SystemTime,
+};
 use tracing::info;
 
 use crate::bench::run_and_measure;
@@ -25,6 +41,7 @@ use ethrex_config::networks::{
 
 #[cfg(feature = "l2")]
 use crate::fetcher::get_batchdata;
+use std::time::Instant;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -118,6 +135,8 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source")]
     pub cached: bool,
+    #[arg(long)]
+    pub no_backend: bool,
     #[arg(long, required = false)]
     pub bench: bool,
     #[arg(long, required = false)]
@@ -180,7 +199,13 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(block_opts) => replay_block(block_opts).await?,
+            Self::Block(block_opts) => {
+                if block_opts.opts.no_backend {
+                    replay_block_no_backend(block_opts).await?
+                } else {
+                    replay_block(block_opts).await?
+                }
+            }
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions { mut blocks, opts }) => {
                 if opts.cached {
@@ -428,6 +453,240 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
         file.flush()?;
     }
+
+    Ok(())
+}
+
+async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
+    let opts = block_opts.opts;
+
+    let block = block_opts.block;
+
+    if opts.cached {
+        unimplemented!("cached mode is not implemented yet");
+    }
+
+    let l2 = false;
+
+    let (eth_client, network) = setup(&opts, l2).await?;
+
+    #[cfg(feature = "l2")]
+    if network != Network::LocalDevnetL2 {
+        return Err(eyre::Error::msg(
+            "L2 mode is only supported on LocalDevnetL2 network",
+        ));
+    }
+
+    let mut cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+
+    let block =
+        cache.blocks.first().cloned().ok_or_else(|| {
+            eyre::Error::msg("no block found in the cache, this should never happen")
+        })?;
+
+    let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
+    // witness.rebuild_state_trie().unwrap();
+    // let root = witness.state_trie.as_ref().unwrap().hash_no_commit();
+    // println!("Oldroot: {}", hex::encode(root));
+
+    // let store = Store::new("testing", EngineType::InMemory).unwrap();
+    let in_memory_store = InMemoryStore::new();
+    {
+        // This will be just get_traversed_nodes(all_nodes, root_hash) and this calls inner and returns BTreeMap<NodeHash, NodeRLP>. I wonder if we can get the embedded root with this though...
+        let mut inner_store = in_memory_store.inner().unwrap();
+
+        let root_hash = NodeHash::Hashed(guest_program.parent_block_header.state_root);
+        let root_rlp = guest_program
+            .nodes_hashed
+            .get(&root_hash.finalize())
+            .unwrap();
+
+        fn inner(
+            all_nodes: &BTreeMap<H256, Vec<u8>>,
+            cur_node_hash: &NodeHash,
+            cur_node_rlp: &NodeRLP,
+            traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
+        ) -> Result<Node, TrieError> {
+            let node = Node::decode_raw(cur_node_rlp)?;
+
+            let encoded = node.encode_to_vec();
+            traversed_nodes.insert(*cur_node_hash, encoded);
+
+            Ok(match node {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            unreachable!()
+                        };
+
+                        if hash.is_valid() {
+                            *choice = match all_nodes.get(&hash.finalize()) {
+                                Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
+                                None => hash.into(),
+                            };
+                        }
+                    }
+
+                    (*node).into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        unreachable!()
+                    };
+
+                    node.child = match all_nodes.get(&hash.finalize()) {
+                        Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
+                        None => hash.into(),
+                    };
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            })
+        }
+
+        let mut necessary_nodes = BTreeMap::new();
+        inner(
+            &guest_program.nodes_hashed,
+            &root_hash,
+            root_rlp,
+            &mut necessary_nodes,
+        )?;
+
+        let in_memory_trie = Arc::new(Mutex::new(necessary_nodes));
+
+        inner_store.state_trie_nodes = in_memory_trie;
+
+        let addresses: Vec<Address> = cache
+            .witness
+            .keys
+            .iter()
+            .filter(|k| k.len() == Address::len_bytes())
+            .map(|k| Address::from_slice(k))
+            .collect();
+
+        for address in &addresses {
+            let hashed_address = hash_address(address);
+
+            // println!("Setting up storage for address {:#x}", address);
+            let mut necessary_nodes_storage = BTreeMap::new();
+            let account_state_rlp_opt = guest_program
+                .state_trie
+                .as_ref()
+                .unwrap()
+                .get(&hashed_address)
+                .unwrap();
+
+            let Some(account_state_rlp) = account_state_rlp_opt else {
+                continue;
+            };
+
+            let storage_root = NodeHash::Hashed(
+                AccountState::decode(&account_state_rlp)
+                    .unwrap()
+                    .storage_root,
+            );
+
+            let Some(storage_root_rlp) = guest_program.nodes_hashed.get(&storage_root.finalize())
+            else {
+                continue;
+            };
+
+            inner(
+                &guest_program.nodes_hashed,
+                &storage_root,
+                storage_root_rlp,
+                &mut necessary_nodes_storage,
+            )?;
+
+            inner_store.storage_trie_nodes.insert(
+                hash_address_fixed(address),
+                Arc::new(Mutex::new(necessary_nodes_storage)),
+            );
+        }
+    }
+
+    let store = Store {
+        engine: Arc::new(in_memory_store),
+        chain_config: Arc::new(RwLock::new(network.get_genesis().unwrap().config)),
+        latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+    };
+
+    // Adding initial state after having filled the previous state is dangerous, it should be done before
+    let chain_config = network.get_genesis()?.config;
+    store.set_chain_config(&chain_config).await.unwrap();
+
+    // Add codes to the db
+    for (code_hash, code) in guest_program.codes_hashed.clone() {
+        store
+            .add_account_code(code_hash, code.into())
+            .await
+            .unwrap();
+    }
+
+    // Add block headers
+    for (_n, header) in guest_program.block_headers.clone() {
+        store.add_block_header(header.hash(), header).await.unwrap();
+    }
+
+    let blockchain = Blockchain::default_with_store(store);
+
+    //TODO: remove this, it is for testing particular stuff.
+    // let block_hash =
+    //     H256::from_str("0x2121cb76560598fd62e2db157b9e3d897459619df43031e807ef0c7fb9bc0d1a")
+    //         .unwrap();
+    // let address = Address::from_str("000f3df6d732807ef1319fb7b8bb8522d0beac02")
+    //     .expect("Failed to parse address");
+    // let storage_key =
+    //     H256::from_str("0x0000000000000000000000000000000000000000000000000000000000001c97")
+    //         .expect("Failed to parse storage key");
+
+    // blockchain
+    //     .storage
+    //     .get_account_info_by_hash(block_hash, address)
+    //     .unwrap();
+
+    // let s = blockchain
+    //     .storage
+    //     .get_storage_at_hash(block_hash, address, storage_key)
+    //     .unwrap();
+
+    info!("Starting to execute block");
+    let start_time = Instant::now();
+    blockchain.add_block(&block).await.unwrap();
+    let duration = start_time.elapsed();
+    info!("add_block execution time: {:.2?}", duration);
+
+    // let start = SystemTime::now();
+
+    // let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+
+    // let replayer_mode = replayer_mode(opts.execute)?;
+
+    // let block_run_report = BlockRunReport::new_for(
+    //     block,
+    //     network.clone(),
+    //     block_run_result,
+    //     replayer_mode.clone(),
+    //     start.elapsed()?,
+    // );
+
+    // block_run_report.log();
+
+    // if opts.to_csv {
+    //     let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
+
+    //     let mut file = std::fs::OpenOptions::new()
+    //         .append(true)
+    //         .create(true)
+    //         .open(file_name)?;
+
+    //     file.write_all(block_run_report.to_csv().as_bytes())?;
+
+    //     file.write_all(b"\n")?;
+
+    //     file.flush()?;
+    // }
 
     Ok(())
 }

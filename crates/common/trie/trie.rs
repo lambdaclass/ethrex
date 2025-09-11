@@ -52,7 +52,7 @@ pub type TrieNode = (NodeHash, NodeRLP);
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
-    root: NodeRef,
+    pub root: NodeRef,
 }
 
 impl Default for Trie {
@@ -95,7 +95,14 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
+                // println!(
+                //     "Before rlp to decode for path {} and hash {:#x}",
+                //     hex::encode(path),
+                //     hash.finalize()
+                // );
+                let rlp_to_decode = self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?;
+                // println!("RLP To decode: {}", hex::encode(&rlp_to_decode));
+                Node::decode(&rlp_to_decode)
                     .map_err(TrieError::RLPDecode)?
                     .get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
@@ -277,7 +284,6 @@ impl Trie {
             traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
         ) -> Result<Node, TrieError> {
             let node = Node::decode_raw(cur_node_rlp)?;
-            traversed_nodes.insert(*cur_node_hash, cur_node_rlp.to_vec());
 
             Ok(match node {
                 Node::Branch(mut node) => {
@@ -314,6 +320,8 @@ impl Trie {
 
         let mut necessary_nodes = BTreeMap::new();
         let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
+        // println!("All nodes: {}", state_nodes.len());
+        // println!("necessary nodes len: {}", necessary_nodes.len());
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
