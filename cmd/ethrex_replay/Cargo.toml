@@ -38,8 +38,7 @@ charming = { version = "0.4.0", features = ["ssr"] }
 futures.workspace = true
 rkyv.workspace = true
 
-# jemallocator = { version = "0.5.4", optional = true }
-jemalloc = { version = "0.3.0", optional = true }
+jemallocator = { version = "0.5.4", optional = true }
 
 [features]
 risc0 = ["guest_program/risc0", "ethrex-prover/risc0"]
@@ -54,4 +53,4 @@ l2 = [
 ]
 profiling = ["ethrex-prover/profiling"]
 ci = []
-jemalloc = ["dep:jemalloc"]
+jemalloc = ["dep:jemallocator"]

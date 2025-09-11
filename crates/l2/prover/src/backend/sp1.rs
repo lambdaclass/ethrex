@@ -14,8 +14,7 @@ use std::time::Instant;
 use tracing::info;
 
 static PROGRAM_ELF: &[u8] =
-    //include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
-    &[];
+    include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
 
 struct ProverSetup {
     client: EnvProver,
