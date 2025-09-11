@@ -86,13 +86,31 @@ impl TryFrom<&Path> for Genesis {
             warn!("Invalid fork, only post-merge networks are supported.");
         }
 
+        if genesis.config.bpo1_time.is_some() && genesis.config.blob_schedule.bpo1.is_none()
+            || genesis.config.bpo2_time.is_some() && genesis.config.blob_schedule.bpo2.is_none()
+            || genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
+            || genesis.config.bpo4_time.is_some() && genesis.config.blob_schedule.bpo4.is_none()
+            || genesis.config.bpo5_time.is_some() && genesis.config.blob_schedule.bpo5.is_none()
+        {
+            warn!("BPO time set but no BPO BlobSchedule found in ChainConfig")
+        }
+
         Ok(genesis)
     }
 }
 
 #[allow(unused)]
 #[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    RSerialize,
+    RDeserialize,
+    Archive,
+    Default,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
@@ -111,6 +129,18 @@ pub struct BlobSchedule {
     pub cancun: ForkBlobSchedule,
     #[serde(default = "default_prague_schedule")]
     pub prague: ForkBlobSchedule,
+    #[serde(default = "default_osaka_schedule")]
+    pub osaka: ForkBlobSchedule,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo1: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo2: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo3: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo4: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo5: Option<ForkBlobSchedule>,
 }
 
 impl Default for BlobSchedule {
@@ -118,6 +148,12 @@ impl Default for BlobSchedule {
         BlobSchedule {
             cancun: default_cancun_schedule(),
             prague: default_prague_schedule(),
+            osaka: default_osaka_schedule(),
+            bpo1: None,
+            bpo2: None,
+            bpo3: None,
+            bpo4: None,
+            bpo5: None,
         }
     }
 }
@@ -131,6 +167,14 @@ fn default_cancun_schedule() -> ForkBlobSchedule {
 }
 
 fn default_prague_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 6,
+        max: 9,
+        base_fee_update_fraction: 5007716,
+    }
+}
+
+fn default_osaka_schedule() -> ForkBlobSchedule {
     ForkBlobSchedule {
         target: 6,
         max: 9,
@@ -275,6 +319,26 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
+    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo4_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
         self.osaka_time.is_some_and(|time| time <= block_timestamp)
     }
@@ -347,7 +411,19 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_prague_activated(block_timestamp) {
+        if self.is_bpo5_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo5.unwrap_or_default())
+        } else if self.is_bpo4_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo4.unwrap_or_default())
+        } else if self.is_bpo3_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo3.unwrap_or_default())
+        } else if self.is_bpo2_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo2.unwrap_or_default())
+        } else if self.is_bpo1_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo1.unwrap_or_default())
+        } else if self.is_osaka_activated(block_timestamp) {
+            Some(self.blob_schedule.osaka)
+        } else if self.is_prague_activated(block_timestamp) {
             Some(self.blob_schedule.prague)
         } else if self.is_cancun_activated(block_timestamp) {
             Some(self.blob_schedule.cancun)
@@ -558,6 +634,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 13353908,
                 },
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -733,6 +810,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 20000,
                 },
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -765,6 +843,7 @@ mod tests {
                     max: 9,
                     base_fee_update_fraction: 5007716,
                 },
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -804,6 +883,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 20000,
                 },
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -843,6 +923,7 @@ mod tests {
                     max: 9,
                     base_fee_update_fraction: 5007716,
                 },
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),

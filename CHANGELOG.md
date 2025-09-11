@@ -2,6 +2,14 @@
 
 ## Perf
 
+### 2025-09-10
+
+- Implement fast partition of `TrieIterator` and use it for quickly responding `GetAccountRanges` and `GetStorageRanges` [#4404](https://github.com/lambdaclass/ethrex/pull/4404)
+
+### 2025-09-09
+
+- Refactor substrate backup mechanism to avoid expensive clones [#4381](https://github.com/lambdaclass/ethrex/pull/4381)
+
 ### 2025-09-02
 
 - Use x86-64-v2 cpu target on linux by default, dockerfile will use it too. [#4252](https://github.com/lambdaclass/ethrex/pull/4252)

@@ -74,13 +74,16 @@ pub static OSAKA_TO_BPO1_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(||
 });
 
 pub static BPO1_TO_BPO2_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+        bpo1_time: Some(0),
         bpo2_time: Some(0x3a98),
-        ..*PRAGUE_CONFIG
+        ..*OSAKA_CONFIG
 });
 
 pub static BPO2_TO_BPO3_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
         bpo3_time: Some(0x3a98),
-        ..*PRAGUE_CONFIG
+        ..*OSAKA_CONFIG
 });
 
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
