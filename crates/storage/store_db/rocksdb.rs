@@ -1,4 +1,4 @@
-use crate::{rlp::Rlp, trie_db::rocksdb_locked::RocksDBLockedTrieDB};
+use crate::trie_db::rocksdb_locked::RocksDBLockedTrieDB;
 use bytes::Bytes;
 use ethrex_common::{
     H256, U256,
@@ -25,91 +25,95 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use std::fmt::Debug;
 
-/// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
-/// - [`u8;_`] = `block_number.to_le_bytes()`
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
+/// Canonical block hashes column family: [`[u8; 8]`] => [`BlockHashRLP`]
+/// - Key: `block_number.to_le_bytes()` (8 bytes, little-endian)
+/// - Value: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
 const CF_CANONICAL_BLOCK_HASHES: &str = "canonical_block_hashes";
 
-/// Block numbers column family: [`Vec<u8>`] => [`u8;_`]
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
-/// - [`u8;_`] = `block_number.to_le_bytes()`
+/// Block numbers column family: [`BlockHashRLP`] => [`[u8; 8]`]
+/// - Key: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
+/// - Value: `block_number.to_le_bytes()` (8 bytes, little-endian)
 const CF_BLOCK_NUMBERS: &str = "block_numbers";
 
-/// Block headers column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
-/// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
+/// Block headers column family: [`BlockHashRLP`] => [`BlockHeaderRLP`]
+/// - Key: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
+/// - Value: `BlockHeaderRLP::from(block_header)` (RLP-encoded BlockHeader, ~500-600 bytes)
 const CF_HEADERS: &str = "headers";
 
-/// Block bodies column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone();`
-/// - [`Vec<u8>`] = `BlockBodyRLP::from(block.body.clone()).bytes().clone()`
+/// Block bodies column family: [`BlockHashRLP`] => [`BlockBodyRLP`]
+/// - Key: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
+/// - Value: `BlockBodyRLP::from(block_body)` (RLP-encoded BlockBody, variable size)
 const CF_BODIES: &str = "bodies";
 
-/// Account codes column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `code_hash.as_bytes().to_vec()`
-/// - [`Vec<u8>`] = `AccountCodeRLP::from(code).bytes().clone()`
+/// Account codes column family: [`H256`] => [`AccountCodeRLP`]
+/// - Key: `code_hash.as_bytes()` (32 bytes, H256 hash)
+/// - Value: `AccountCodeRLP::from(code)` (RLP-encoded bytecode, variable size)
 const CF_ACCOUNT_CODES: &str = "account_codes";
 
-/// Receipts column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `(block_hash, index).encode_to_vec()`
-/// - [`Vec<u8>`] = `receipt.encode_to_vec()`
+/// Receipts column family: [`(BlockHash, u64)`] => [`Receipt`]
+/// - Key: `(block_hash, index).encode_to_vec()` (~40 bytes, RLP-encoded tuple)
+/// - Value: `receipt.encode_to_vec()` (RLP-encoded Receipt, ~100-200 bytes)
 const CF_RECEIPTS: &str = "receipts";
 
-/// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
-///    ```rust,no_run
-///     let mut composite_key = Vec::with_capacity(64);
-///     composite_key.extend_from_slice(transaction_hash.as_bytes());
-///     composite_key.extend_from_slice(block_hash.as_bytes());
-///    ```
-/// - [`Vec<u8>`] = `(block_number, block_hash, index).encode_to_vec()`
+/// Transaction locations column family: [`H256 + H256`] => [`(BlockNumber, BlockHash, u64)`]
+/// - Key: Composite key (64 bytes):
+///   ```rust,no_run
+///   let mut composite_key = Vec::with_capacity(64);
+///   composite_key.extend_from_slice(transaction_hash.as_bytes()); // 32 bytes
+///   composite_key.extend_from_slice(block_hash.as_bytes());       // 32 bytes
+///   ```
+/// - Value: `(block_number, block_hash, index).encode_to_vec()` (RLP-encoded tuple, ~48 bytes)
 const CF_TRANSACTION_LOCATIONS: &str = "transaction_locations";
 
-/// Chain data column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `Self::chain_data_key(ChainDataIndex::ChainConfig)`
-/// - [`Vec<u8>`] = `serde_json::to_string(chain_config)`
+/// Chain data column family: [`ChainDataIndex`] => [`Variable`]
+/// - Key: `Self::chain_data_key(index)` (1 byte, enum as u8)
+/// - Value: Variable format depending on ChainDataIndex:
+///   - ChainConfig: JSON string bytes
+///   - Block numbers: `block_number.to_le_bytes()` (8 bytes)
 const CF_CHAIN_DATA: &str = "chain_data";
 
-/// Snap state column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `Self::snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint)`
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
+/// Snap state column family: [`SnapStateIndex`] => [`Variable`]
+/// - Key: `Self::snap_state_key(index)` (1 byte, enum as u8)
+/// - Value: Variable format depending on SnapStateIndex:
+///   - HeaderDownloadCheckpoint: `BlockHashRLP` (~33 bytes)
+///   - StateTrieKeyCheckpoint: `Vec<H256>` (variable size)
+///   - StateHealPaths: `Vec<(Nibbles, H256)>` (variable size)
 const CF_SNAP_STATE: &str = "snap_state";
 
 /// State trie nodes column family: [`NodeHash`] => [`Vec<u8>`]
-/// - [`NodeHash`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
+/// - Key: `node_hash.as_ref()` (32 bytes, H256 hash of the node)
+/// - Value: `node_data` (RLP-encoded trie node, variable size 32-2KB typically)
 const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
 
-/// Storage tries nodes column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
+/// Storage tries nodes column family: ([`H256`] + [`NodeHash`]) => [`Vec<u8>`]
+/// - Key: Composite key (64 bytes):
 ///   ```rust,no_run
-///     let mut key = Vec::with_capacity(64);
-///     key.extend_from_slice(address_hash.as_bytes());
-///     key.extend_from_slice(node_hash.as_ref());
+///   let mut key = Vec::with_capacity(64);
+///   key.extend_from_slice(address_hash.as_bytes()); // 32 bytes (account hash)
+///   key.extend_from_slice(node_hash.as_ref());      // 32 bytes (storage node hash)
 ///   ```
-/// - [`Vec<u8>`] = `node_data`
+/// - Value: `node_data` (RLP-encoded trie node, variable size 32-2KB typically)
 const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
 
-/// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
-/// - [`Vec<u8>`] = `BlockRLP::from(block).bytes().clone()`
+/// Pending blocks column family: [`BlockHashRLP`] => [`BlockRLP`]
+/// - Key: `BlockHashRLP::from(block_hash)` (RLP-encoded H256, ~33 bytes)
+/// - Value: `BlockRLP::from(block)` (RLP-encoded complete Block, variable size)
 const CF_PENDING_BLOCKS: &str = "pending_blocks";
 
-/// Storage snapshot column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
+/// Storage snapshot column family: [`H256 + H256`] => [`U256`]
+/// - Key: Composite key (64 bytes):
 ///   ```rust,no_run
-///     let mut composite_key = Vec::with_capacity(64);
-///     composite_key.extend_from_slice(account_hash.as_bytes());
-///     composite_key.extend_from_slice(key.as_bytes());
+///   let mut composite_key = Vec::with_capacity(64);
+///   composite_key.extend_from_slice(account_hash.as_bytes()); // 32 bytes (account hash)
+///   composite_key.extend_from_slice(storage_key.as_bytes());  // 32 bytes (storage slot hash)
 ///   ```
-/// - [`Vec<u8>`] = `u256_to_big_endian(value).to_vec()`
+/// - Value: `u256_to_big_endian(value).to_vec()` (32 bytes, U256 in big-endian format)
 const CF_STORAGE_SNAPSHOT: &str = "storage_snapshot";
 
-/// Invalid ancestors column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `BlockHashRLP::from(bad_block).bytes().clone()`
-/// - [`Vec<u8>`] = `BlockHashRLP::from(latest_valid).bytes().clone()`
+/// Invalid ancestors column family: [`BlockHashRLP`] => [`BlockHashRLP`]
+/// - Key: `BlockHashRLP::from(bad_block)` (RLP-encoded H256, ~33 bytes)
+/// - Value: `BlockHashRLP::from(latest_valid)` (RLP-encoded H256, ~33 bytes)
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
@@ -235,7 +239,6 @@ impl Store {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_cache(&cache);
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    block_opts.set_block_cache(&cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 _ => {
@@ -439,14 +442,12 @@ impl StoreEngine for Store {
 
                 let hash_key_rlp = BlockHashRLP::from(block_hash);
                 let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-                batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
+                batch.put_cf(&cf_headers, &hash_key_rlp, &header_value_rlp);
 
-                let hash_key: Rlp<H256> = block_hash.into();
                 let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
+                batch.put_cf(&cf_bodies, &hash_key_rlp, &body_value);
 
-                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
+                batch.put_cf(&cf_block_numbers, &hash_key_rlp, block_number.to_le_bytes());
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let tx_hash = transaction.hash();
@@ -469,8 +470,8 @@ impl StoreEngine for Store {
 
             for (code_hash, code) in update_batch.code_updates {
                 let code_key = code_hash.as_bytes();
-                let code_value = AccountCodeRLP::from(code).bytes().clone();
-                batch.put_cf(&cf_codes, code_key, code_value);
+                let code_value = AccountCodeRLP::from(code);
+                batch.put_cf(&cf_codes, code_key, &code_value);
             }
 
             // Single write operation
@@ -502,16 +503,15 @@ impl StoreEngine for Store {
                 let block_hash = block.hash();
                 let block_number = block.header.number;
 
-                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                batch.put_cf(&cf_headers, hash_key, header_value);
+                // Reuse the same key for all operations
+                let hash_key = BlockHashRLP::from(block_hash);
+                let header_value = BlockHeaderRLP::from(block.header.clone());
+                batch.put_cf(&cf_headers, &hash_key, &header_value);
 
-                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                batch.put_cf(&cf_bodies, hash_key, body_value);
+                let body_value = BlockBodyRLP::from(block.body.clone());
+                batch.put_cf(&cf_bodies, &hash_key, &body_value);
 
-                let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-                batch.put_cf(&cf_block_numbers, hash_key, block_number.to_le_bytes());
+                batch.put_cf(&cf_block_numbers, &hash_key, block_number.to_le_bytes());
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let tx_hash = transaction.hash();
@@ -535,8 +535,8 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-        let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
+        let hash_key = BlockHashRLP::from(block_hash).as_ref().to_vec();
+        let header_value = BlockHeaderRLP::from(block_header).as_ref().to_vec();
         self.write_async(CF_HEADERS, hash_key, header_value).await
     }
 
@@ -545,16 +545,20 @@ impl StoreEngine for Store {
 
         for header in block_headers {
             let block_hash = header.hash();
-            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-            let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
+            let hash_key = BlockHashRLP::from(block_hash);
+            let header_value = BlockHeaderRLP::from(header.clone());
 
-            batch_ops.push((CF_HEADERS.to_string(), hash_key, header_value));
+            batch_ops.push((
+                CF_HEADERS.to_string(),
+                hash_key.as_ref().to_vec(),
+                header_value.as_ref().to_vec(),
+            ));
 
-            let number_key = header.number.to_le_bytes().to_vec();
+            let number_key = header.number.to_le_bytes();
             batch_ops.push((
                 CF_BLOCK_NUMBERS.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-                number_key,
+                hash_key.as_ref().to_vec(),
+                number_key.to_vec(),
             ));
         }
 
@@ -577,8 +581,8 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-        let body_value = BlockBodyRLP::from(block_body).bytes().clone();
+        let hash_key = BlockHashRLP::from(block_hash).as_ref().to_vec();
+        let body_value = BlockBodyRLP::from(block_body).as_ref().to_vec();
         self.write_async(CF_BODIES, hash_key, body_value).await
     }
 
@@ -624,7 +628,7 @@ impl StoreEngine for Store {
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
         let numbers: Vec<BlockNumber> = (from..=to).collect();
-        let number_keys: Vec<Vec<u8>> = numbers.iter().map(|n| n.to_le_bytes().to_vec()).collect();
+        let number_keys: Vec<[u8; 8]> = numbers.iter().map(|n| n.to_le_bytes()).collect();
 
         let hashes = self
             .read_bulk_async(CF_CANONICAL_BLOCK_HASHES, number_keys, |bytes| {
@@ -636,7 +640,7 @@ impl StoreEngine for Store {
 
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
-            .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
+            .map(|hash| BlockHashRLP::from(*hash).as_ref().to_vec())
             .collect();
 
         let bodies = self
@@ -656,7 +660,7 @@ impl StoreEngine for Store {
     ) -> Result<Vec<BlockBody>, StoreError> {
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
-            .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
+            .map(|hash| BlockHashRLP::from(*hash).as_ref().to_vec())
             .collect();
 
         let bodies = self
@@ -674,7 +678,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let hash_key = BlockHashRLP::from(block_hash).as_ref().to_vec();
 
         self.read_async(CF_BODIES, hash_key)
             .await?
@@ -687,7 +691,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let hash_key = BlockHashRLP::from(block_hash).as_ref().to_vec();
 
         self.read_sync(CF_HEADERS, hash_key)?
             .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
@@ -696,14 +700,14 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
-        let block_value = BlockRLP::from(block).bytes().clone();
+        let hash_key = BlockHashRLP::from(block.hash()).as_ref().to_vec();
+        let block_value = BlockRLP::from(block).as_ref().to_vec();
         self.write_async(CF_PENDING_BLOCKS, hash_key, block_value)
             .await
     }
 
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let hash_key = BlockHashRLP::from(block_hash).as_ref().to_vec();
 
         self.read_async(CF_PENDING_BLOCKS, hash_key)
             .await?
@@ -717,7 +721,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let hash_key = BlockHashRLP::from(block_hash).as_ref().to_vec();
         let number_value = block_number.to_le_bytes();
         self.write_async(CF_BLOCK_NUMBERS, hash_key, number_value)
             .await
@@ -727,7 +731,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let hash_key = BlockHashRLP::from(block_hash).as_ref().to_vec();
 
         self.read_async(CF_BLOCK_NUMBERS, hash_key)
             .await?
@@ -872,7 +876,7 @@ impl StoreEngine for Store {
 
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         let hash_key = code_hash.as_bytes().to_vec();
-        let code_value = AccountCodeRLP::from(code).bytes().clone();
+        let code_value = AccountCodeRLP::from(code).as_ref().to_vec();
         self.write_async(CF_ACCOUNT_CODES, hash_key, code_value)
             .await
     }
@@ -899,7 +903,7 @@ impl StoreEngine for Store {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        let hash_key = code_hash.as_bytes().to_vec();
+        let hash_key = code_hash.as_bytes();
         self.read_sync(CF_ACCOUNT_CODES, hash_key)?
             .map(|bytes| AccountCodeRLP::from_bytes(bytes).to())
             .transpose()
@@ -949,7 +953,7 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let number_key = block_number.to_le_bytes().to_vec();
+        let number_key = block_number.to_le_bytes();
 
         self.read_async(CF_CANONICAL_BLOCK_HASHES, number_key)
             .await?
@@ -1116,8 +1120,8 @@ impl StoreEngine for Store {
             if let Some(canonical_blocks) = new_canonical_blocks {
                 for (block_number, block_hash) in canonical_blocks {
                     let number_key = block_number.to_le_bytes();
-                    let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
-                    batch.put_cf(&cf_canonical, number_key, hash_value);
+                    let hash_value = BlockHashRLP::from(block_hash);
+                    batch.put_cf(&cf_canonical, number_key, &hash_value);
                 }
             }
 
@@ -1128,8 +1132,8 @@ impl StoreEngine for Store {
 
             // Make head canonical
             let head_key = head_number.to_le_bytes();
-            let head_value = BlockHashRLP::from(head_hash).bytes().clone();
-            batch.put_cf(&cf_canonical, head_key, head_value);
+            let head_value = BlockHashRLP::from(head_hash);
+            batch.put_cf(&cf_canonical, head_key, &head_value);
 
             // Update chain data
 
@@ -1187,11 +1191,10 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
     ) -> Result<(), StoreError> {
         let key = Self::snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
-        let value = BlockHashRLP::from(block_hash).bytes().clone();
+        let value = BlockHashRLP::from(block_hash).as_ref().to_vec();
         self.write_async(CF_SNAP_STATE, key, value).await
     }
 
-    /// Gets the hash of the last header downloaded during a snap sync
     async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         let key = Self::snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
 
@@ -1427,8 +1430,8 @@ impl StoreEngine for Store {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
-        let key = BlockHashRLP::from(bad_block).bytes().clone();
-        let value = BlockHashRLP::from(latest_valid).bytes().clone();
+        let key = BlockHashRLP::from(bad_block).as_ref().to_vec();
+        let value = BlockHashRLP::from(latest_valid).as_ref().to_vec();
         self.write_async(CF_INVALID_ANCESTORS, key, value).await
     }
 
@@ -1436,7 +1439,7 @@ impl StoreEngine for Store {
         &self,
         block: BlockHash,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let key = BlockHashRLP::from(block).bytes().clone();
+        let key = BlockHashRLP::from(block).as_ref().to_vec();
 
         self.read_async(CF_INVALID_ANCESTORS, key)
             .await?
@@ -1449,7 +1452,7 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+        let hash_key = BlockHashRLP::from(block_hash).as_ref().to_vec();
 
         self.read_sync(CF_BLOCK_NUMBERS, hash_key)?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -1465,7 +1468,7 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let number_key = block_number.to_le_bytes().to_vec();
+        let number_key = block_number.to_le_bytes();
 
         self.read_sync(CF_CANONICAL_BLOCK_HASHES, number_key)?
             .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
@@ -1500,7 +1503,7 @@ impl StoreEngine for Store {
 
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
-            let value = AccountCodeRLP::from(code).bytes().clone();
+            let value = AccountCodeRLP::from(code).as_ref().to_vec();
             batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, value));
         }
 

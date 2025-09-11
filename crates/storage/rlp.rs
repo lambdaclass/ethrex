@@ -58,6 +58,12 @@ impl<T> Rlp<T> {
     }
 }
 
+impl<T> AsRef<[u8]> for Rlp<T> {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 #[cfg(feature = "libmdbx")]
 impl<T: Send + Sync> Decodable for Rlp<T> {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
