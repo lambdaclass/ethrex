@@ -28,8 +28,6 @@ use crate::fetcher::get_batchdata;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
-pub const BACKEND: Backend = Backend::OpenVM;
-
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
 pub struct EthrexReplayCLI {
@@ -321,11 +319,20 @@ async fn setup(opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<(EthClient,
 
 async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     let gas_used = get_total_gas_used(&cache.blocks);
+    let backend = if cfg!(feature = "sp1") {
+        Backend::SP1
+    } else if cfg!(feature = "risc0") {
+        Backend::RISC0
+    } else if cfg!(feature = "openvm") {
+        Backend::OpenVM
+    } else {
+        Backend::Exec
+    };
 
     if opts.execute {
-        exec(BACKEND, cache).await?;
+        exec(backend, cache).await?;
     } else {
-        prove(BACKEND, cache).await?;
+        prove(backend, cache).await?;
     }
 
     Ok(gas_used)
