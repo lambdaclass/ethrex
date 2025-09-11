@@ -71,11 +71,7 @@ const DEFAULT_BRIDGE_OWNER_PRIVATE_KEY: H256 = H256([
     0x94, 0x1e, 0x10, 0x33, 0x20, 0x61, 0x5d, 0x39, 0x4a, 0x55, 0x70, 0x8b, 0xe1, 0x3e, 0x45, 0x99,
     0x4c, 0x7d, 0x93, 0xb9, 0x32, 0xb0, 0x64, 0xdb, 0xcb, 0x2b, 0x51, 0x1f, 0xe3, 0x25, 0x4e, 0x2e,
 ]);
-// 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
-const DEFAULT_L2_RETURN_TRANSFER_PRIVATE_KEY: H256 = H256([
-    0xbc, 0xdf, 0x20, 0x24, 0x9a, 0xbf, 0x0e, 0xd6, 0xd9, 0x44, 0xc0, 0x28, 0x8f, 0xad, 0x48, 0x9e,
-    0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
-]);
+
 // 0x0007a881CD95B1484fca47615B64803dad620C8d
 const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0x00, 0x07, 0xa8, 0x81, 0xcd, 0x95, 0xb1, 0x48, 0x4f, 0xca, 0x47, 0x61, 0x5b, 0x64, 0x80, 0x3d,
@@ -219,7 +215,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 /// 1. Deploys a contract in the L2.
 /// 2. Upgrades the contract through the CommonBridge contract in L1.
 /// 3. Checks that the implementation address has changed.
-/// Not thread-safe (fee vault checks).
+///    Not thread-safe (fee vault checks).
 async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256> {
     println!("Testing upgrade");
     let bridge_owner_private_key = bridge_owner_private_key();
@@ -442,7 +438,7 @@ async fn find_withdrawal_with_widget(
 /// 5. Withdraws the tokens back to L1
 /// 6. Checks that the balances are correct at each step
 /// 7. Checks that the withdrawal is correctly recorded in the L2ToL1MessagesTable widget
-/// Not thread-safe (uses test_deploy).
+///    Not thread-safe (uses test_deploy).
 async fn test_erc20_roundtrip(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -639,7 +635,7 @@ async fn test_erc20_roundtrip(
 /// 1. Deploys a contract on L1 that will call the CommonBridge contract sendToL2 function
 /// 2. Calls the contract to send a message to L2
 /// 3. Checks that the message was sent from the aliased address
-/// Thread-safe
+///    Thread-safe
 async fn test_aliasing(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -689,7 +685,7 @@ async fn test_aliasing(
 /// 1. Deploys an ERC20 token on L1
 /// 2. Attempts to deposit the token to an invalid address on L2
 /// 3. Claims the withdrawal on L1
-/// Thread-safe
+///    Thread-safe
 async fn test_erc20_failed_deposit(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -941,14 +937,14 @@ async fn test_send(
 /// 1. Fetch initial balances of depositor on L1, recipient on L2, bridge on L1 and fee vault on L2.
 /// 2. Perform deposit from L1 to L2
 /// 3. Check final balances.
-/// Not thread-safe.
+///    Not thread-safe.
 async fn test_deposit(
     l1_client: &EthClient,
     l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("test deposit: Fetching initial balances on L1 and L2");
-    let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key)
+    let rich_wallet_address = get_address_from_secret_key(rich_wallet_private_key)
         .expect("Failed to get address from l1 rich wallet pk");
 
     println!(
@@ -1118,7 +1114,7 @@ async fn test_transfer(
 /// 1. Fetch initial balance of receiver on L2.
 /// 2. Perform transfer through a deposit.
 /// 3. Check final balance of receiver on L2.
-/// Thread-safe
+///    Thread-safe
 async fn test_transfer_with_privileged_tx(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -1178,7 +1174,7 @@ async fn test_transfer_with_privileged_tx(
 /// Test that gas is burned from the L1 account when making a deposit with a specified L2 gas limit.
 /// 1. Perform deposit with specified L2 gas limit.
 /// 2. Check that the gas used on L1 is within expected range.
-/// Thread-safe
+///    Thread-safe
 async fn test_gas_burning(
     l1_client: EthClient,
     rich_wallet_private_key: SecretKey,
@@ -1213,7 +1209,7 @@ async fn test_gas_burning(
 /// 1. Fetch initial balance of receiver on L2.
 /// 2. Perform transfer through a deposit with value greater than sender's balance.
 /// 3. Check final balance of receiver on L2 (should be unchanged).
-/// Thread-safe
+///    Thread-safe
 async fn test_privileged_tx_not_enough_balance(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -1561,7 +1557,7 @@ async fn test_total_eth_l2(
 /// 1. Fetch initial balances of deployer on L2 and fee vault on L2.
 /// 2. Perform deploy on L2.
 /// 3. Check final balances.
-/// Not thread-safe (as it assumes no other deploys are happening).
+///    Not thread-safe (as it assumes no other deploys are happening).
 async fn test_deploy(
     l2_client: &EthClient,
     init_code: &[u8],
