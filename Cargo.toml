@@ -110,8 +110,8 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.3.0"
-spawned-rt = "0.3.0"
+spawned-concurrency = "0.4.0"
+spawned-rt = "0.4.0"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 rayon = "1.10.0"
