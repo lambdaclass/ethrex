@@ -194,11 +194,11 @@ impl StateUpdater {
 
         let last_l2_committed_block_body = self
             .store
-            .get_block_body(last_l2_committed_batch)
+            .get_block_body(committed_last_block)
             .await?
             .ok_or(StateUpdaterError::MissingData(
-                "No block body found for the last committed batch block number".to_string(),
-            ))?;
+            "No block body found for the last committed batch block number".to_string(),
+        ))?;
 
         let last_l2_committed_block_header = self
             .store
