@@ -226,7 +226,7 @@ async fn health(
 }
 
 pub async fn genserver_health<S, CallMsg, OutMsg, Health>(
-    mut server: Option<GenServerHandle<S>>,
+    mut genserver: Option<GenServerHandle<S>>,
     health_msg: CallMsg,
     extract: impl Fn(OutMsg) -> Option<Health>,
 ) -> Value
@@ -234,7 +234,7 @@ where
     S: GenServer<CallMsg = CallMsg, OutMsg = OutMsg>,
     Health: Serialize,
 {
-    if let Some(handle) = &mut server {
+    if let Some(handle) = &mut genserver {
         match handle.call(health_msg).await {
             Ok(out) => {
                 if let Some(health) = extract(out) {
