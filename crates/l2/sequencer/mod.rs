@@ -134,7 +134,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let _ = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
@@ -193,6 +193,7 @@ pub async fn start_l2(
         l1_watcher.ok(),
         l1_proof_sender.ok(),
         block_producer.ok(),
+        metrics_gatherer.ok(),
     )
     .await
     .inspect_err(|err| {
