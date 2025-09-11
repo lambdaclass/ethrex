@@ -459,14 +459,12 @@ impl DiscoveryServer {
 
         // we are sending the neighbors in 2 different messages to avoid exceeding the
         // maximum packet size
-        for chunk in neighbors.chunks(8) {
-            let _ = self
-                .send_neighbors(chunk.to_vec(), &node)
-                .await
-                .inspect_err(|e| {
-                    error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e, "Error sending message");
-                });
-        }
+        let _ = self
+            .send_neighbors(neighbors, &node)
+            .await
+            .inspect_err(|e| {
+                error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e, "Error sending message");
+            });
     }
 
     async fn handle_neighbors(&self, neighbors_message: NeighborsMessage) {
