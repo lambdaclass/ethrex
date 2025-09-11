@@ -436,7 +436,7 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
         }
         #[cfg(all(not(feature = "sp1"), not(feature = "risc0"), feature = "openvm"))]
         {
-            Backend::OpenVm
+            Backend::OpenVM
         }
         #[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "openvm")))]
         {
