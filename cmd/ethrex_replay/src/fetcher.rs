@@ -99,38 +99,10 @@ pub async fn get_blockdata(
             )
             .await
             .wrap_err("failed to create rpc db")?;
-            let execution_witness = rpc_db
+
+            rpc_db
                 .to_execution_witness(&block)
-                .wrap_err("failed to build execution db")?;
-            let prover_db_retrieval_duration = execution_witness_retrieval_start_time
-                .elapsed()
-                .unwrap_or_else(|e| {
-                    panic!("SystemTime::elapsed failed: {e}");
-                });
-
-            debug!(
-                "Got prover db for block {requested_block_number} in {}",
-                format_duration(prover_db_retrieval_duration)
-            );
-
-            debug!("Caching block {requested_block_number}");
-
-            let block_cache_start_time = SystemTime::now();
-
-            let cache = Cache::new(vec![block], execution_witness);
-
-            write_cache(&cache, &file_name).expect("failed to write cache");
-
-            let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
-                panic!("SystemTime::elapsed failed: {e}");
-            });
-
-            debug!(
-                "Cached block {requested_block_number} in {}",
-                format_duration(block_cache_duration)
-            );
-
-            return Ok(cache);
+                .wrap_err("failed to build execution db")?
         }
         Err(e) => panic!("Unexpected response from get_witness: {e}"),
     };

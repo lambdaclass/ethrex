@@ -224,19 +224,15 @@ These inputs are required for proof generation, but not all of them are committe
 
 The purpose of the execution witness is to allow executing the blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
 
-An execution witness (represented by the `ProverDB` type) contains:
-
-1. all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the blocks' execution.
-2. Merkle Patricia Trie (MPT) proofs that prove the inclusion or exclusion of each initial value in the initial world state trie.
+An execution witness contains all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the blocks' execution.
 
 An execution witness is created from a prior execution of the blocks. Before proving, we need to:
 
 1. execute the blocks (also called "pre-execution").
 2. log every initial state value accessed or updated during this execution.
-3. store each logged value in an in-memory key-value database (`ProverDB`, implemented just using hash maps).
-4. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.
+3. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.
 
-Steps 1-3 are straightforward. Step 4 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](#step-1-initial-state-validation) and [final state validation](#step-3-final-state-validation) we explain what are pruned tries and in which case they get restructured.
+Steps 1 and 2 are data collection steps only - no validation is performed at this stage. The actual validation happens later inside the zkVM guest program. Step 3 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](#step-1-initial-state-validation) and [final state validation](#step-3-final-state-validation) we explain what are pruned tries and in which case they get restructured.
 
 If a value is removed during block execution (meaning it existed initially but not finally), two pathological cases can occur where the witness lacks sufficient information to update the trie structure correctly:
 

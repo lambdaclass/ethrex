@@ -83,7 +83,7 @@ pub async fn run_tx(
 fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
-        execution_witness: db,
+        execution_witness,
         l2_fields,
     } = cache;
 
@@ -93,7 +93,7 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     Ok(ProgramInput {
         blocks,
-        execution_witness: db,
+        execution_witness,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         // The L2 specific fields (blob_commitment, blob_proof)
         // will be filled by Default::default() if the 'l2' feature of
@@ -111,7 +111,7 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
 fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
-        witness: db,
+        execution_witness,
         l2_fields,
     } = cache;
 
@@ -119,7 +119,7 @@ fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     Ok(ProgramInput {
         blocks,
-        db,
+        execution_witness,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         blob_commitment: l2_fields.blob_commitment,
         blob_proof: l2_fields.blob_proof,

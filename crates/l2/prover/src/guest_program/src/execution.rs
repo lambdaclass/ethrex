@@ -135,7 +135,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless_with_witness(blocks, execution_witness, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
@@ -174,7 +174,7 @@ pub fn stateless_validation_l2(
         nodes_hashed,
         codes_hashed,
         parent_block_header,
-    } = execute_stateless_with_witness(blocks, execution_witness, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -254,12 +254,12 @@ struct StatelessResult {
     pub parent_block_header: BlockHeader,
 }
 
-fn execute_stateless_with_witness(
+fn execute_stateless(
     blocks: &[Block],
-    db: ExecutionWitness,
+    execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    let guest_program_state: GuestProgramState = db
+    let guest_program_state: GuestProgramState = execution_witness
         .try_into()
         .map_err(StatelessExecutionError::GuestProgramState)?;
 
