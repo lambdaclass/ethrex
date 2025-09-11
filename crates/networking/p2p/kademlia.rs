@@ -200,7 +200,7 @@ impl Kademlia {
         peer_data.channels.clone()
     }
 
-    /// Score management functions
+    //// Score management functions ////
 
     pub async fn get_score(&self, peer_id: &H256) -> i64 {
         self.get_score_opt(peer_id).await.unwrap_or(0)

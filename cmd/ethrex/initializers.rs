@@ -211,7 +211,6 @@ pub async fn init_network(
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
         peer_handler.peer_table.peers.clone(),
-        peer_handler.peer_scores,
     ));
 }
 
