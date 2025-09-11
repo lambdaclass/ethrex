@@ -1071,7 +1071,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
     Ok(())
 }
 
-// Perform validations over the block's blob gas usage.
+// Perform validations over the block's gas usage.
 // Must be called only if the block has osaka activated
 fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
     for transaction in block.body.transactions.iter() {
