@@ -1391,6 +1391,10 @@ async fn test_n_withdraws(
     let mut withdraw_txs = vec![];
     let mut receipts = vec![];
 
+    let account_nonce = l2_client
+        .get_nonce(withdrawer_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
     for x in 1..n + 1 {
         println!("test_n_withdraws: Sending withdraw {x}/{n}");
         let withdraw_tx = ethrex_l2_sdk::withdraw(
@@ -1398,18 +1402,19 @@ async fn test_n_withdraws(
             withdrawer_address,
             *withdrawer_private_key,
             l2_client,
+            Some(account_nonce + x - 1),
+            Some(21000 * 10),
         )
         .await?;
-
         withdraw_txs.push(withdraw_tx);
+    }
 
-        // TODO: wait for receipts in a second loop
-        let withdraw_tx_receipt =
-            ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, l2_client, 1000)
-                .await
-                .expect("Withdraw tx receipt not found");
-
-        receipts.push(withdraw_tx_receipt);
+    for (i, tx) in withdraw_txs.iter().enumerate() {
+        println!("test_n_withdraws: Waiting receipt {}/{n} ({tx:x})", i + 1);
+        let r = ethrex_l2_sdk::wait_for_transaction_receipt(*tx, l2_client, 1000)
+            .await
+            .expect("Withdraw tx receipt not found");
+        receipts.push(r);
     }
 
     println!("test_n_withdraws: Checking balances on L1 and L2 after withdrawal");
@@ -1418,11 +1423,19 @@ async fn test_n_withdraws(
         .get_balance(withdrawer_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    assert!(
-        (withdrawer_l2_balance_before_withdrawal - withdraw_value * n)
-            .abs_diff(withdrawer_l2_balance_after_withdrawal)
-            < L2_GAS_COST_MAX_DELTA * n,
-        "Withdrawer L2 balance didn't decrease as expected after withdrawal"
+    // Compute actual total L2 gas paid by the withdrawer from receipts
+    let mut total_withdraw_fees_l2 = U256::zero();
+    for receipt in &receipts {
+        total_withdraw_fees_l2 += get_fees_details_l2(receipt, l2_client).await.total_fees;
+    }
+
+    // Now assert exact balance movement on L2: value + gas
+    let expected_l2_after =
+        withdrawer_l2_balance_before_withdrawal - (withdraw_value * n) - total_withdraw_fees_l2;
+
+    assert_eq!(
+        withdrawer_l2_balance_after_withdrawal, expected_l2_after,
+        "Withdrawer L2 balance didn't decrease by value + gas as expected"
     );
 
     let withdrawer_l1_balance_after_withdrawal = l1_client
@@ -1438,31 +1451,29 @@ async fn test_n_withdraws(
         .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let mut withdraw_fees = U256::zero();
+    let mut recoverable_fees = U256::zero();
     for receipt in receipts {
-        withdraw_fees += get_fees_details_l2(&receipt, l2_client)
+        recoverable_fees += get_fees_details_l2(&receipt, l2_client)
             .await
             .recoverable_fees;
     }
 
     assert_eq!(
         fee_vault_balance_after_withdrawal,
-        fee_vault_balance_before_withdrawal + withdraw_fees,
+        fee_vault_balance_before_withdrawal + recoverable_fees,
         "Fee vault balance didn't increase as expected after withdrawal"
     );
 
     // We need to wait for all the txs to be included in some batch
-    let mut proofs = vec![];
-    for (i, tx) in withdraw_txs.clone().into_iter().enumerate() {
-        println!("Getting proof for withdrawal {i}/{n} ({tx:x})");
-        proofs.push(wait_for_verified_proof(l1_client, l2_client, tx).await);
+    let mut proofs = Vec::with_capacity(n as usize);
+    for (i, tx) in withdraw_txs.iter().enumerate() {
+        println!("Getting proof for withdrawal {}/{} ({:x})", i + 1, n, tx);
+        proofs.push(wait_for_verified_proof(l1_client, l2_client, *tx).await);
     }
 
-    let mut withdraw_claim_txs_receipts = vec![];
-
+    let mut withdraw_claim_txs_receipts = Vec::with_capacity(n as usize);
     for (x, proof) in proofs.iter().enumerate() {
-        println!("Claiming withdrawal on L1 {x}/{n}");
-
+        println!("Claiming withdrawal on L1 {}/{}", x + 1, n);
         let withdraw_claim_tx = ethrex_l2_sdk::claim_withdraw(
             withdraw_value,
             withdrawer_address,
