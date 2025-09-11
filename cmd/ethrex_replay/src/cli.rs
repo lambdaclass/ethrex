@@ -320,6 +320,7 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    l2: false,
                 };
 
                 let elapsed = replay_custom_l1_blocks(max(1, n_blocks), &opts).await?;
