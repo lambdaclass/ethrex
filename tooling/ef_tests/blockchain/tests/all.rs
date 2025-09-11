@@ -20,6 +20,9 @@ const SKIPPED_TESTS: &[&str] = &[
     "system_contract_deployment",
     "fork_Osaka",
     "fork_PragueToOsaka",
+    "fork_BPO0",
+    "fork_BPO1",
+    "fork_BPO2",
 ];
 
 // If neither `sp1` nor `stateless` is enabled: run with whichever engine

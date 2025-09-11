@@ -33,8 +33,10 @@ pub fn parse_and_execute(
     let tests = parse_tests(path);
     //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
     //EIPs should be added as strings in the format 'eip-XXXX'
-    let fusaka_eips_to_test: Vec<&str> =
-        vec!["eip-7883", "eip-7939", "eip-7951", "eip-7594", "eip-7825"];
+    let fusaka_eips_to_test: Vec<&str> = vec![
+        "eip-7594", "eip-7883", "eip-7918", "eip-7892", "eip-7939", "eip-7951", "eip-7594",
+        "eip-7825",
+    ];
 
     //Hashes of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
     //We should really remove this once we're finished with implementing Fusaka, but it's a good-enough workaround to run specific tests for now
@@ -262,7 +264,6 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
             )
             | ("create initcode size limit", "Initcode size exceeded")
     ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
-        || (msg.starts_with("Gas allowance exceeded.") && expected_msg == "Gas allowance exceeded")
 }
 
 fn match_expected_regex(expected_error_regex: &str, error_msg: &str) -> bool {
