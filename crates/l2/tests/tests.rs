@@ -1465,13 +1465,13 @@ async fn test_n_withdraws(
     );
 
     // We need to wait for all the txs to be included in some batch
-    let mut proofs = Vec::with_capacity(n as usize);
+    let mut proofs = vec![];
     for (i, tx) in withdraw_txs.iter().enumerate() {
         println!("Getting proof for withdrawal {}/{} ({:x})", i + 1, n, tx);
         proofs.push(wait_for_verified_proof(l1_client, l2_client, *tx).await);
     }
 
-    let mut withdraw_claim_txs_receipts = Vec::with_capacity(n as usize);
+    let mut withdraw_claim_txs_receipts = vec![];
     for (x, proof) in proofs.iter().enumerate() {
         println!("Claiming withdrawal on L1 {}/{}", x + 1, n);
         let withdraw_claim_tx = ethrex_l2_sdk::claim_withdraw(
