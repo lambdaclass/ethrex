@@ -381,7 +381,14 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
+        // println!(
+        //     "Gonna get account info for address {:#x} hashed is {}",
+        //     address,
+        //     hex::encode(&hashed_address)
+        // );
+
         let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
+            // println!("I didn't found the encoded state...");
             return Ok(None);
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {

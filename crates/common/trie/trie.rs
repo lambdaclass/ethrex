@@ -101,10 +101,11 @@ impl Trie {
                 //     hash.finalize()
                 // );
                 let rlp_to_decode = self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?;
+
                 // println!("RLP To decode: {}", hex::encode(&rlp_to_decode));
-                Node::decode(&rlp_to_decode)
-                    .map_err(TrieError::RLPDecode)?
-                    .get(self.db.as_ref(), Nibbles::from_bytes(path))?
+                let node = Node::decode(&rlp_to_decode).map_err(TrieError::RLPDecode)?;
+                // println!("Node RLP encoded: {}", hex::encode(node.encode_raw()));
+                node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
             _ => None,
         })

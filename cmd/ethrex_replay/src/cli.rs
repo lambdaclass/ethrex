@@ -484,6 +484,8 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
+    cache.witness.nodes.retain(|v| v != &[0x80]);
+
     let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
     // witness.rebuild_state_trie().unwrap();
     // let root = witness.state_trie.as_ref().unwrap().hash_no_commit();
@@ -568,7 +570,6 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         for address in &addresses {
             let hashed_address = hash_address(address);
 
-            // println!("Setting up storage for address {:#x}", address);
             let mut necessary_nodes_storage = BTreeMap::new();
             let account_state_rlp_opt = guest_program
                 .state_trie
@@ -633,29 +634,31 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
 
     //TODO: remove this, it is for testing particular stuff.
     // let block_hash =
-    //     H256::from_str("0x2121cb76560598fd62e2db157b9e3d897459619df43031e807ef0c7fb9bc0d1a")
+    //     H256::from_str("0x16d56587933fca3da24f82788b2e55b482f9df81a8f5b74065d9cba716d271ce")
     //         .unwrap();
-    // let address = Address::from_str("000f3df6d732807ef1319fb7b8bb8522d0beac02")
+
+    // let super_address = Address::from_str("fffffffffffffffffffffffffffffffffffffffe")
     //     .expect("Failed to parse address");
-    // let storage_key =
-    //     H256::from_str("0x0000000000000000000000000000000000000000000000000000000000001c97")
-    //         .expect("Failed to parse storage key");
 
     // blockchain
     //     .storage
-    //     .get_account_info_by_hash(block_hash, address)
+    //     .get_account_info_by_hash(block_hash, super_address)
     //     .unwrap();
+
+    // let storage_key =
+    //     H256::from_str("0x0000000000000000000000000000000000000000000000000000000000001c97")
+    //         .expect("Failed to parse storage key");
 
     // let s = blockchain
     //     .storage
     //     .get_storage_at_hash(block_hash, address, storage_key)
     //     .unwrap();
 
-    info!("Starting to execute block");
-    let start_time = Instant::now();
-    blockchain.add_block(&block).await.unwrap();
-    let duration = start_time.elapsed();
-    info!("add_block execution time: {:.2?}", duration);
+    // info!("Starting to execute block");
+    // let start_time = Instant::now();
+    // blockchain.add_block(&block).await.unwrap();
+    // let duration = start_time.elapsed();
+    // info!("add_block execution time: {:.2?}", duration);
 
     // let start = SystemTime::now();
 
