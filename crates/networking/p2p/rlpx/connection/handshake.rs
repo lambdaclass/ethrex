@@ -1,4 +1,8 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 
 use super::{
     codec::RLPxCodec,
@@ -9,6 +13,7 @@ use crate::{
         connection::server::{Established, InnerState},
         error::RLPxError,
         l2::l2_connection::L2ConnState,
+        message::EthCapVersion,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
@@ -58,6 +63,7 @@ pub(crate) struct LocalState {
 
 pub(crate) async fn perform(
     state: InnerState,
+    eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node, .. }) => {
@@ -76,7 +82,7 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             log_peer_debug(&node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec), false)
         }
@@ -94,7 +100,7 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             let node = Node::new(
                 peer_addr.ip(),
                 peer_addr.port(),
@@ -134,6 +140,7 @@ pub(crate) async fn perform(
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
+            tx_broadcaster: context.tx_broadcaster.clone(),
         },
         stream,
     ))

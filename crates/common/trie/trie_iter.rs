@@ -28,7 +28,6 @@ impl TrieIterator {
     /// Manually push the correct nodes to the stack so iteration doesn't rewind back
     /// to left children of a traversed branch node.
     pub fn advance(&mut self, key: PathRLP) -> Result<(), TrieError> {
-        debug_assert!(!self.stack.is_empty());
         let Some((root_path, root_ref)) = self.stack.pop() else {
             return Ok(());
         };
