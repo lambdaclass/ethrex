@@ -59,11 +59,11 @@ def parse_args():
     return parser.parse_args()
 
 
-def send_slack_message_failed(header: str, hostname: str, minutes, network: str, log_file: str):
+def send_slack_message_failed(header: str, hostname: str, network: str, timeout, log_file: str):
     try:
         webhook_url = os.environ["SLACK_WEBHOOK_URL_FAILED"]
 
-        timeout = "" if minutes == None else f"\n*Timeout:* {minutes} minutes"
+        timeout = "" if timeout == None else f"\n*Timeout:* {timeout} minutes"
 
         message = {
             "blocks": [
@@ -234,31 +234,37 @@ def execution_loop(
 
 
 def main():
-    args = parse_args()
-    hostname = socket.gethostname()
+    send_slack_message_failed("⚠️ Node failed to sync within timeout", "test-host", "test-network", 60, "test-log.log")
+    send_slack_message_failed("⚠️ Node stopped generating new blocks after sync", "test-host", "test-network", None, "test-log.log")
+    send_slack_message_failed("⚠️ Node failed to finish snap sync", "test-host", "test-network", None, "test-log.log")
+    
 
-    variables = get_variables(args)
+# def main():
+#     args = parse_args()
+#     hostname = socket.gethostname()
 
-    logs_file = args.logs_file
-    command = ["make", "server-sync"]
+#     variables = get_variables(args)
 
-    for key, value in variables.items():
-        command.append(f"{key}={value}")
+#     logs_file = args.logs_file
+#     command = ["make", "server-sync"]
 
-    payload = {"jsonrpc": "2.0", "method": "eth_syncing", "params": [], "id": 1}
-    block_production_payload = {
-        "jsonrpc": "2.0",
-        "method": "eth_blockNumber",
-        "params": [],
-        "id": 1,
-    }
-    try:
-        execution_loop(
-            command, logs_file, args, hostname, payload, block_production_payload
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"An error occurred while running the make command: {e}", file=sys.stderr)
-        sys.exit(1)
+#     for key, value in variables.items():
+#         command.append(f"{key}={value}")
+
+#     payload = {"jsonrpc": "2.0", "method": "eth_syncing", "params": [], "id": 1}
+#     block_production_payload = {
+#         "jsonrpc": "2.0",
+#         "method": "eth_blockNumber",
+#         "params": [],
+#         "id": 1,
+#     }
+#     try:
+#         execution_loop(
+#             command, logs_file, args, hostname, payload, block_production_payload
+#         )
+#     except subprocess.CalledProcessError as e:
+#         print(f"An error occurred while running the make command: {e}", file=sys.stderr)
+#         sys.exit(1)
 
 
 if __name__ == "__main__":
