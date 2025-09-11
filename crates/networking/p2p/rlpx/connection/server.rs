@@ -1,4 +1,9 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::MempoolTransaction;
@@ -48,6 +53,7 @@ use crate::{
                 handle_l2_broadcast,
             },
         },
+        message::EthCapVersion,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
@@ -197,12 +203,15 @@ impl GenServer for RLPxConnection {
         mut self,
         handle: &GenServerHandle<Self>,
     ) -> Result<InitResult<Self>, Self::Error> {
-        match handshake::perform(self.inner_state).await {
+        // Set a default eth version that we can update after we negotiate peer capabilities
+        // This eth version will only be used to encode & decode the initial `Hello` messages.
+        let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
+        match handshake::perform(self.inner_state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
                 log_peer_debug(&established_state.node, "Starting RLPx connection");
 
                 if let Err(reason) =
-                    initialize_connection(handle, &mut established_state, stream).await
+                    initialize_connection(handle, &mut established_state, stream, eth_version).await
                 {
                     if let Some(contact) = established_state
                         .table
@@ -239,7 +248,6 @@ impl GenServer for RLPxConnection {
                                 .unwrap_or("Unknown".to_string()),
                         )
                         .await;
-
                     // New state
                     self.inner_state = InnerState::Established(established_state);
                     Ok(Success(self))
@@ -383,6 +391,7 @@ async fn initialize_connection<S>(
     handle: &RLPxConnectionHandle,
     state: &mut Established,
     mut stream: S,
+    eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(), RLPxError>
 where
     S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
@@ -390,6 +399,16 @@ where
     post_handshake_checks(state.table.clone()).await?;
 
     exchange_hello_messages(state, &mut stream).await?;
+
+    // Update eth capability version to the negotiated version for further message decoding
+    let version = match &state.negotiated_eth_capability {
+        Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
+        Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
+        _ => EthCapVersion::default(),
+    };
+    *eth_version
+        .write()
+        .map_err(|err| RLPxError::InternalError(err.to_string()))? = version;
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
@@ -495,7 +514,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), RLPxErro
         if eth.version >= 69 {
             log_peer_debug(&state.node, "Sending BlockRangeUpdate");
             let update = BlockRangeUpdate::new(&state.storage).await?;
-            let lastet_block = update.lastest_block;
+            let lastet_block = update.latest_block;
             send(state, Message::BlockRangeUpdate(update)).await?;
             state.last_block_range_update_block = lastet_block - (lastet_block % 32);
         }
@@ -791,17 +810,24 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             }
         }
         Message::BlockRangeUpdate(update) => {
-            if update.earliest_block > update.lastest_block {
-                return Err(RLPxError::InvalidBlockRange);
-            }
-            //TODO implement the logic
             log_peer_debug(
                 &state.node,
                 &format!(
-                    "Range block update: {} to {}",
-                    update.earliest_block, update.lastest_block
+                    "Block range update: {} to {}",
+                    update.earliest_block, update.latest_block
                 ),
             );
+            // We will only validate the incoming update, we may decide to store and use this information in the future
+            if let Err(err) = update.validate() {
+                log_peer_warn(
+                    &state.node,
+                    &format!("disconnected from peer. Reason: {err}"),
+                );
+                send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                return Err(RLPxError::DisconnectSent(
+                    DisconnectReason::SubprotocolError,
+                ));
+            }
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
             let hashes =
