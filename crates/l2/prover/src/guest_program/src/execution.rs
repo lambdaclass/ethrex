@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
 use ethrex_common::{
-    kzg::KzgError,
+    kzg::{KzgError, verify_blob_kzg_proof},
     types::{
         BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
         kzg_commitment_to_versioned_hash,
@@ -436,11 +436,6 @@ fn verify_blob(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
-    #[cfg(feature = "c-kzg")]
-    use ethrex_common::kzg::verify_blob_kzg_proof_c_kzg as verify_blob_kzg_proof;
-    #[cfg(feature = "kzg-rs")]
-    use ethrex_common::kzg::verify_blob_kzg_proof_kzg_rs as verify_blob_kzg_proof;
-
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
 

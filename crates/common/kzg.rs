@@ -11,6 +11,10 @@ pub enum KzgError {
     #[cfg(feature = "openvm-kzg")]
     #[error("openvm-kzg error: {0}")]
     OpenvmKzg(openvm_kzg::KzgError),
+    #[error(
+        "no kzg backend enabled, enable at least one of `c-kzg`, `kzg-rs` or `openvm-kzg` features."
+    )]
+    NoBackendEnabled,
 }
 
 #[cfg(feature = "kzg-rs")]
@@ -113,6 +117,72 @@ pub fn verify_kzg_proof_openvm_kzg(
         &openvm_kzg::get_kzg_settings(),
     )
     .map_err(KzgError::from)
+}
+
+/// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
+///
+/// Dispatches one of the enabled implementations following the hierarchy:
+/// c-kzg > kzg-rs > openvm-kzg
+///
+/// Different implementations exist for different targets:
+/// - Host (any, usually c-kzg as it's more performant)
+/// - SP1 Guest (kzg-rs)
+/// - Risc0 Guest (c-kzg patched)
+/// - OpenVM Guest (openvm-kzg)
+#[allow(unreachable_code)]
+pub fn verify_kzg_proof(
+    commitment_bytes: [u8; 48],
+    z: [u8; 32],
+    y: [u8; 32],
+    proof_bytes: [u8; 48],
+) -> Result<bool, KzgError> {
+    #[cfg(feature = "c-kzg")]
+    {
+        return verify_kzg_proof_c_kzg(commitment_bytes, z, y, proof_bytes);
+    }
+
+    #[cfg(feature = "kzg-rs")]
+    {
+        return verify_kzg_proof_kzg_rs(commitment_bytes, z, y, proof_bytes);
+    }
+
+    #[cfg(feature = "openvm-kzg")]
+    {
+        return verify_kzg_proof_openvm_kzg(commitment_bytes, z, y, proof_bytes);
+    }
+
+    Err(KzgError::NoBackendEnabled)
+}
+
+/// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
+/// as defined by c-kzg-4844.
+///
+/// Dispatches one of the enabled implementations following the hierarchy:
+/// c-kzg > kzg-rs
+///
+/// Different implementations exist for different targets:
+/// - Host (any, usually c-kzg as it's more performant)
+/// - SP1 Guest (kzg-rs)
+/// - Risc0 Guest (c-kzg patched)
+///
+/// There's no implementation of blob verification for openvm-kzg yet.
+#[allow(unreachable_code)]
+pub fn verify_blob_kzg_proof(
+    blob: Blob,
+    commitment: Commitment,
+    proof: Proof,
+) -> Result<bool, KzgError> {
+    #[cfg(feature = "c-kzg")]
+    {
+        return verify_blob_kzg_proof_c_kzg(blob, commitment, proof);
+    }
+
+    #[cfg(feature = "kzg-rs")]
+    {
+        return verify_blob_kzg_proof_kzg_rs(blob, commitment, proof);
+    }
+
+    Err(KzgError::NoBackendEnabled)
 }
 
 #[cfg(feature = "c-kzg")]
