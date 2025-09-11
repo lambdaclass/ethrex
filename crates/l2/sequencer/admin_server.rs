@@ -18,9 +18,10 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
 use axum::{Json, Router, http::StatusCode, routing::get};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use spawned_concurrency::error::GenServerError;
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::tasks::{GenServer, GenServerHandle};
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
@@ -155,99 +156,100 @@ async fn health(
 ) -> Result<Json<Map<String, Value>>, AdminErrorResponse> {
     let mut response = serde_json::Map::new();
 
-    let l1_committer_response = if let Some(mut l1_committer) = admin.l1_committer {
-        let l1_committer_health = l1_committer.call(CommitterCallMessage::Health).await;
+    response.insert(
+        "l1_committer".to_string(),
+        genserver_health(admin.l1_committer, CommitterCallMessage::Health, |msg| {
+            Some(match msg {
+                CommitterOutMessage::Health(h) => h,
+                _ => return None,
+            })
+        })
+        .await,
+    );
 
-        match l1_committer_health {
-            Ok(CommitterOutMessage::Health(health)) => {
-                serde_json::to_value(health).unwrap_or_else(|err| {
-                    Value::String(format!("Failed to serialize health message {err}"))
+    response.insert(
+        "l1_watcher".to_string(),
+        genserver_health(admin.l1_watcher, WatcherCallMessage::Health, |msg| {
+            Some(match msg {
+                WatcherOutMessage::Health(h) => h,
+                _ => return None,
+            })
+        })
+        .await,
+    );
+
+    response.insert(
+        "l1_proof_sender".to_string(),
+        genserver_health(
+            admin.l1_proof_sender,
+            ProofSenderCallMessage::Health,
+            |msg| {
+                Some(match msg {
+                    ProofSenderOutMessage::Health(h) => h,
+                    _ => return None,
                 })
-            }
-            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
-            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
-        }
-    } else {
-        Value::String(
-            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
+            },
         )
-    };
-    response.insert("l1_committer".to_string(), l1_committer_response);
+        .await,
+    );
 
-    let l1_watcher_response = if let Some(mut l1_watcher) = admin.l1_watcher {
-        let l1_watcher_health = l1_watcher.call(WatcherCallMessage::Health).await;
-
-        match l1_watcher_health {
-            Ok(WatcherOutMessage::Health(health)) => {
-                serde_json::to_value(health).unwrap_or_else(|err| {
-                    Value::String(format!("Failed to serialize health message {err}"))
+    response.insert(
+        "block_producer".to_string(),
+        genserver_health(
+            admin.block_producer,
+            BlockProducerCallMessage::Health,
+            |msg| {
+                Some(match msg {
+                    BlockProducerOutMessage::Health(h) => h,
+                    _ => return None,
                 })
-            }
-            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
-            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
-        }
-    } else {
-        Value::String(
-            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
+            },
         )
-    };
-    response.insert("l1_watcher".to_string(), l1_watcher_response);
+        .await,
+    );
 
-    let l1_proof_sender_response = if let Some(mut l1_proof_sender) = admin.l1_proof_sender {
-        let l1_proof_sender_health = l1_proof_sender.call(ProofSenderCallMessage::Health).await;
-
-        match l1_proof_sender_health {
-            Ok(ProofSenderOutMessage::Health(health)) => serde_json::to_value(health)
-                .unwrap_or_else(|err| {
-                    Value::String(format!("Failed to serialize health message {err}"))
-                }),
-            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
-            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
-        }
-    } else {
-        Value::String(
-            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
-        )
-    };
-    response.insert("l1_proof_sender".to_string(), l1_proof_sender_response);
-
-    let block_producer_response = if let Some(mut block_producer) = admin.block_producer {
-        let block_producer_health = block_producer.call(BlockProducerCallMessage::Health).await;
-
-        match block_producer_health {
-            Ok(BlockProducerOutMessage::Health(health)) => serde_json::to_value(health)
-                .unwrap_or_else(|err| {
-                    Value::String(format!("Failed to serialize health message {err}"))
-                }),
-            Ok(_) => Value::String("Genserver returned an unexpected message".into()),
-            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
-        }
-    } else {
-        Value::String(
-            "Admin server does not have the genserver handle. Maybe its not running?".to_string(),
-        )
-    };
-    response.insert("block_producer".to_string(), block_producer_response);
     #[cfg(feature = "metrics")]
     {
-        let metrics_gatherer_response = if let Some(mut metrics_gatherer) = admin.metrics_gatherer {
-            let metrics_gatherer_health = metrics_gatherer.call(MetricsCallMessage::Health).await;
-
-            match metrics_gatherer_health {
-                Ok(MetricsOutMessage::Health(health)) => serde_json::to_value(health)
-                    .unwrap_or_else(|err| {
-                        Value::String(format!("Failed to serialize health message {err}"))
-                    }),
-                Ok(_) => Value::String("Genserver returned an unexpected message".into()),
-                Err(err) => Value::String(format!("Genserver health returned an error {err}")),
-            }
-        } else {
-            Value::String(
-                "Admin server does not have the genserver handle. Maybe its not running?"
-                    .to_string(),
-            )
-        };
-        response.insert("metrics_gatherer".to_string(), metrics_gatherer_response);
+        response.insert(
+            "metrics_gatherer".to_string(),
+            genserver_health(admin.metrics_gatherer, MetricsCallMessage::Health, |msg| {
+                Some(match msg {
+                    MetricsOutMessage::Health(h) => h,
+                    _ => return None,
+                })
+            })
+            .await,
+        );
     }
+
     Ok(Json::from(response))
+}
+
+pub async fn genserver_health<S, CallMsg, OutMsg, Health>(
+    mut server: Option<GenServerHandle<S>>,
+    health_msg: CallMsg,
+    extract: impl Fn(OutMsg) -> Option<Health>,
+) -> Value
+where
+    S: GenServer<CallMsg = CallMsg, OutMsg = OutMsg>,
+    Health: Serialize,
+{
+    if let Some(handle) = &mut server {
+        match handle.call(health_msg).await {
+            Ok(out) => {
+                if let Some(health) = extract(out) {
+                    serde_json::to_value(health).unwrap_or_else(|err| {
+                        Value::String(format!("Failed to serialize health message {err}"))
+                    })
+                } else {
+                    Value::String("Genserver returned an unexpected message".into())
+                }
+            }
+            Err(err) => Value::String(format!("Genserver health returned an error {err}")),
+        }
+    } else {
+        Value::String(
+            "Admin server does not have the genserver handle. Maybe it's not running?".to_string(),
+        )
+    }
 }
