@@ -275,14 +275,13 @@ impl Store {
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
-            db.put_cf(&cf, key, value)
-                .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))
+            let cf = db
+                .cf_handle(&cf_name)
+                .ok_or_else(|| StoreError::Custom(format!("Column family not found: {cf_name}")))?;
+            db.put_cf(&cf, key, value).map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     // Helper method for async reads
@@ -294,14 +293,13 @@ impl Store {
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
-            db.get_cf(&cf, key)
-                .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
+            let cf = db
+                .cf_handle(&cf_name)
+                .ok_or_else(|| StoreError::Custom(format!("Column family not found: {cf_name}")))?;
+            db.get_cf(&cf, key).map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     // Helper method for sync reads
@@ -313,12 +311,9 @@ impl Store {
             .db
             .cf_handle(cf_name)
             .ok_or(StoreError::Custom(format!(
-                "Column family not found: {}",
-                cf_name
+                "Column family not found: {cf_name}"
             )))?;
-        self.db
-            .get_cf(&cf, key)
-            .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
+        self.db.get_cf(&cf, key).map_err(StoreError::from)
     }
 
     // Helper method for batch writes
@@ -333,16 +328,15 @@ impl Store {
 
             for (cf_name, key, value) in batch_ops {
                 let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                    StoreError::Custom(format!("Column family not found: {}", cf_name))
+                    StoreError::Custom(format!("Column family not found: {cf_name}"))
                 })?;
                 batch.put_cf(&cf, key, value);
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            db.write(batch).map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     // Helper method to encode ChainDataIndex as key
@@ -371,28 +365,25 @@ impl Store {
         let cf_name = cf_name.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
+            let cf = db
+                .cf_handle(&cf_name)
+                .ok_or_else(|| StoreError::Custom(format!("Column family not found: {cf_name}")))?;
 
             let mut results = Vec::with_capacity(keys.len());
 
             for key in keys {
-                match db.get_cf(&cf, key)? {
-                    Some(bytes) => {
-                        let value = deserialize_fn(bytes)?;
-                        results.push(value);
-                    }
-                    None => {
-                        return Err(StoreError::Custom("Key not found in bulk read".to_string()));
-                    }
-                }
+                let Some(bytes) = db.get_cf(&cf, key)? else {
+                    return Err(StoreError::Custom("Key not found in bulk read".to_string()));
+                };
+
+                let value = deserialize_fn(bytes)?;
+                results.push(value);
             }
 
             Ok(results)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 }
 
@@ -483,11 +474,10 @@ impl StoreEngine for Store {
             }
 
             // Single write operation
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            db.write(batch).map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     /// Add a batch of blocks in a single transaction.
@@ -534,11 +524,10 @@ impl StoreEngine for Store {
                 }
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            db.write(batch).map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     async fn add_block_header(
@@ -626,9 +615,7 @@ impl StoreEngine for Store {
         batch.delete_cf(&cf_headers, hash.as_bytes());
         batch.delete_cf(&cf_block_numbers, hash.as_bytes());
 
-        self.db
-            .write(batch)
-            .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        self.db.write(batch).map_err(StoreError::from)
     }
 
     async fn get_block_bodies(
@@ -838,7 +825,7 @@ impl StoreEngine for Store {
             Ok(None)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     async fn add_receipt(
@@ -905,11 +892,10 @@ impl StoreEngine for Store {
                 batch.delete_cf(&cf, key);
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            db.write(batch).map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
@@ -950,13 +936,11 @@ impl StoreEngine for Store {
     }
 
     async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        let header = match self.get_block_header_by_hash(block_hash)? {
-            Some(header) => header,
-            None => return Ok(None),
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
         };
-        let body = match self.get_block_body_by_hash(block_hash).await? {
-            Some(body) => body,
-            None => return Ok(None),
+        let Some(body) = self.get_block_body_by_hash(block_hash).await? else {
+            return Ok(None);
         };
         Ok(Some(Block::new(header, body)))
     }
@@ -1166,8 +1150,7 @@ impl StoreEngine for Store {
                 );
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            db.write(batch).map_err(StoreError::from)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1175,20 +1158,25 @@ impl StoreEngine for Store {
 
     // TODO: REVIEW LOGIC AGAINST LIBMDBX
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let cf = self.cf_handle(CF_RECEIPTS)?;
+        let cf = self
+            .db
+            .cf_handle(CF_RECEIPTS)
+            .ok_or(StoreError::Custom(format!(
+                "Column family not found: {}",
+                CF_RECEIPTS
+            )))?;
         let mut receipts = Vec::new();
         let mut index = 0u64;
 
         loop {
             let key = (*block_hash, index).encode_to_vec();
-            match self.db.get_cf(&cf, key)? {
-                Some(receipt_bytes) => {
-                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
-                    receipts.push(receipt);
-                    index += 1;
-                }
-                None => break,
-            }
+            let Some(receipt_bytes) = self.db.get_cf(&cf, key)? else {
+                break;
+            };
+
+            let receipt = Receipt::decode(receipt_bytes.as_slice())?;
+            receipts.push(receipt);
+            index += 1;
         }
 
         Ok(receipts)
@@ -1431,7 +1419,7 @@ impl StoreEngine for Store {
             Ok(results)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     async fn set_latest_valid_ancestor(
