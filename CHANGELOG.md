@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-09-11
+
+- Add RocksDB as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)
+
 ### 2025-09-09
 
 - Refactor substrate backup mechanism to avoid expensive clones [#4381](https://github.com/lambdaclass/ethrex/pull/4381)
