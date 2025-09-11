@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757600215860,
+  "lastUpdate": 1757600305101,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13735,6 +13735,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168323022293,
             "range": "± 207366521",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9d61e15af6be80d7a2610c9eeea4357306e1d57e",
+          "message": "feat(l1): implement osaka EIPs 7918 & 7892 + use `BlobSchedule` from EFTests (#4284)\n\n**Motivation**\nImplement changes defined in\n[EIP-7918](https://eips.ethereum.org/EIPS/eip-7918) &\n[EIP-7892](https://eips.ethereum.org/EIPS/eip-7892)\nFix EFTests not using the `BlobSchedule` defined in the test files\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Update `calc_excess_blob_gas` according to EIP\n* Add `ForkBlobSchedule`s for Osaka & BPO1-BPO5 forks\n* Enable EIP-7918 & EIP-7892  ef tests\n* Use the `BlobSchedule` defined in each test file when running EF Tests\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #4157 & Closes #4156",
+          "timestamp": "2025-09-11T13:23:28Z",
+          "tree_id": "21e97346530e1622de08c7d6f57680dd54a00a9c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9d61e15af6be80d7a2610c9eeea4357306e1d57e"
+        },
+        "date": 1757600285960,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 172068961635,
+            "range": "± 1001249763",
             "unit": "ns/iter"
           }
         ]
