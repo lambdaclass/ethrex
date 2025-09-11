@@ -45,9 +45,10 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    init_tracing(&opts);
+    let log_filter_handler = init_tracing(&opts);
 
-    let (data_dir, cancel_token, peer_table, local_node_record) = init_l1(opts).await?;
+    let (data_dir, cancel_token, peer_table, local_node_record) =
+        init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
 

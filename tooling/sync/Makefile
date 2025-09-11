@@ -98,7 +98,6 @@ flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flame
 		--datadir ${NETWORK}_data/ethrex/$(EVM) \
 		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
 		$(BOOTNODES_FLAG) \
-		--evm $(EVM) \
 
 flamegraph-%: ## Run flamegraph on either mainnet, sepolia, holesky or hoodi network. For example, to run the flamgraph on hoodi, use `flamegraph-hoodi`
 	$(MAKE) flamegraph-inner NETWORK=$*
@@ -185,7 +184,6 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--datadir "${NETWORK}_data/ethrex/$(EVM)" \
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
     		$(BOOTNODES_FLAG) \
-    		--evm $(EVM)
 
 SERVER_SYNC_BRANCH ?= snap_sync
 SERVER_SYNC_NETWORK ?= hoodi
@@ -221,4 +219,4 @@ server-sync:
 
 	sleep 0.2
 
-	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 65000 && rm -rf ../.local/share/ethrex && RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,spawned_concurrency::tasks::gen_server=off $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(SNAP),$(HEALING)),--syncmode snap)  2>&1 | tee $(LOGS_FILE)"
+	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,spawned_concurrency::tasks::gen_server=off $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(SNAP),$(HEALING)),--syncmode snap)  2>&1 | tee $(LOGS_FILE)"
