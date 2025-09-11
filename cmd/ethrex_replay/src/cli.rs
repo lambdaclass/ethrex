@@ -14,7 +14,6 @@ use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
 use reqwest::Url;
 use tracing::info;
 
@@ -643,12 +642,7 @@ pub async fn replay_custom_l1_blocks(
         store_inner
     };
 
-    let blockchain = Arc::new(Blockchain::new(
-        EvmEngine::LEVM,
-        store.clone(),
-        BlockchainType::L1,
-        false,
-    ));
+    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L1, false));
 
     let blocks = produce_l1_blocks(
         blockchain.clone(),
@@ -784,12 +778,7 @@ pub async fn replay_custom_l2_blocks(
         rollup_store
     };
 
-    let blockchain = Arc::new(Blockchain::new(
-        EvmEngine::LEVM,
-        store.clone(),
-        BlockchainType::L2,
-        false,
-    ));
+    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L2, false));
 
     let genesis_hash = genesis.get_block().hash();
 
