@@ -1,6 +1,7 @@
 use std::sync::LazyLock;
 
-static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| reqwest::Client::new());
+#[allow(dead_code)]
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
