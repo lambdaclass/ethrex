@@ -31,7 +31,6 @@ impl NodeHash {
             let hash = Keccak256::new_with_prefix(encoded).finalize();
             NodeHash::Hashed(H256::from_slice(hash.as_slice()))
         } else {
-            println!("inlined node {encoded:?}");
             NodeHash::from_slice(encoded)
         }
     }

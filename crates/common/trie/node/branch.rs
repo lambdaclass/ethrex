@@ -82,8 +82,6 @@ impl BranchNode {
                 }
                 // Insert external node hash if there are no overrides.
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
-                    todo!();
-                    /*
                     if !choice_ref.is_valid() {
                         *choice_ref = hash.into();
                     } else if path.is_empty() {
@@ -97,7 +95,6 @@ impl BranchNode {
                             .insert(db, path, value)?
                             .into();
                     }
-                    */
                 }
             }
         } else if let ValueOrHash::Value(value) = value {
