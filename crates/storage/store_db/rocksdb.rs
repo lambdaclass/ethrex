@@ -268,7 +268,9 @@ impl Store {
             let cf = db
                 .cf_handle(&cf_name)
                 .ok_or_else(|| StoreError::Custom(format!("Column family not found: {cf_name}")))?;
-            db.put_cf(&cf, key, value).map_err(StoreError::from)
+            let txn = db.transaction();
+            txn.put_cf(&cf, key, value).map_err(StoreError::from)?;
+            txn.commit().map_err(StoreError::from)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
@@ -327,16 +329,6 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
-    }
-
-    // Helper method to encode ChainDataIndex as key
-    fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
-        (index as u8).encode_to_vec()
-    }
-
-    // Helper method to encode SnapStateIndex as key
-    fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
-        (index as u8).encode_to_vec()
     }
 
     // Helper method for bulk reads - equivalent to LibMDBX read_bulk
@@ -940,7 +932,7 @@ impl StoreEngine for Store {
     }
 
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        let key = Self::chain_data_key(ChainDataIndex::ChainConfig);
+        let key = [ChainDataIndex::ChainConfig as u8];
         let value = serde_json::to_string(chain_config)
             .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
             .into_bytes();
@@ -951,13 +943,13 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        let key = Self::chain_data_key(ChainDataIndex::EarliestBlockNumber);
+        let key = [ChainDataIndex::EarliestBlockNumber as u8];
         let value = block_number.to_le_bytes();
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = Self::chain_data_key(ChainDataIndex::EarliestBlockNumber);
+        let key = [ChainDataIndex::EarliestBlockNumber as u8];
 
         self.read_async(CF_CHAIN_DATA, key)
             .await?
@@ -971,7 +963,7 @@ impl StoreEngine for Store {
     }
 
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+        let key = [ChainDataIndex::FinalizedBlockNumber as u8];
 
         self.read_async(CF_CHAIN_DATA, key)
             .await?
@@ -985,7 +977,7 @@ impl StoreEngine for Store {
     }
 
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
+        let key = [ChainDataIndex::SafeBlockNumber as u8];
 
         self.read_async(CF_CHAIN_DATA, key)
             .await?
@@ -999,7 +991,7 @@ impl StoreEngine for Store {
     }
 
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
+        let key = [ChainDataIndex::LatestBlockNumber as u8];
 
         self.read_async(CF_CHAIN_DATA, key)
             .await?
@@ -1016,13 +1008,13 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        let key = Self::chain_data_key(ChainDataIndex::PendingBlockNumber);
+        let key = [ChainDataIndex::PendingBlockNumber as u8];
         let value = block_number.to_le_bytes();
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = Self::chain_data_key(ChainDataIndex::PendingBlockNumber);
+        let key = [ChainDataIndex::PendingBlockNumber as u8];
 
         self.read_async(CF_CHAIN_DATA, key)
             .await?
@@ -1114,16 +1106,16 @@ impl StoreEngine for Store {
 
             // Update chain data
 
-            let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
+            let latest_key = [ChainDataIndex::LatestBlockNumber as u8];
             batch.put_cf(&cf_chain_data, latest_key, head_number.to_le_bytes());
 
             if let Some(safe_number) = safe {
-                let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
+                let safe_key = [ChainDataIndex::SafeBlockNumber as u8];
                 batch.put_cf(&cf_chain_data, safe_key, safe_number.to_le_bytes());
             }
 
             if let Some(finalized_number) = finalized {
-                let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+                let finalized_key = [ChainDataIndex::FinalizedBlockNumber as u8];
                 batch.put_cf(
                     &cf_chain_data,
                     finalized_key,
@@ -1167,13 +1159,13 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<(), StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
+        let key = [SnapStateIndex::HeaderDownloadCheckpoint as u8];
         let value = BlockHashRLP::from(block_hash).as_ref().to_vec();
         self.write_async(CF_SNAP_STATE, key, value).await
     }
 
     async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::HeaderDownloadCheckpoint);
+        let key = [SnapStateIndex::HeaderDownloadCheckpoint as u8];
 
         self.read_async(CF_SNAP_STATE, key)
             .await?
@@ -1186,7 +1178,7 @@ impl StoreEngine for Store {
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
+        let key = [SnapStateIndex::StateTrieKeyCheckpoint as u8];
         let value = last_keys.to_vec().encode_to_vec();
         self.write_async(CF_SNAP_STATE, key, value).await
     }
@@ -1194,7 +1186,7 @@ impl StoreEngine for Store {
     async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
+        let key = [SnapStateIndex::StateTrieKeyCheckpoint as u8];
 
         match self.read_async(CF_SNAP_STATE, key).await? {
             Some(keys_bytes) => {
@@ -1212,13 +1204,13 @@ impl StoreEngine for Store {
     }
 
     async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::StateHealPaths);
+        let key = [SnapStateIndex::StateHealPaths as u8];
         let value = paths.encode_to_vec();
         self.write_async(CF_SNAP_STATE, key, value).await
     }
 
     async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::StateHealPaths);
+        let key = [SnapStateIndex::StateHealPaths as u8];
 
         self.read_async(CF_SNAP_STATE, key)
             .await?
@@ -1299,7 +1291,7 @@ impl StoreEngine for Store {
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
+        let key = [SnapStateIndex::StateTrieRebuildCheckpoint as u8];
         let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
         self.write_async(CF_SNAP_STATE, key, value).await
     }
@@ -1307,7 +1299,7 @@ impl StoreEngine for Store {
     async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
+        let key = [SnapStateIndex::StateTrieRebuildCheckpoint as u8];
 
         match self.read_async(CF_SNAP_STATE, key).await? {
             Some(checkpoint_bytes) => {
@@ -1329,7 +1321,7 @@ impl StoreEngine for Store {
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
+        let key = [SnapStateIndex::StorageTrieRebuildPending as u8];
         let value = pending.encode_to_vec();
         self.write_async(CF_SNAP_STATE, key, value).await
     }
@@ -1337,7 +1329,7 @@ impl StoreEngine for Store {
     async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        let key = Self::snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
+        let key = [SnapStateIndex::StorageTrieRebuildPending as u8];
 
         self.read_async(CF_SNAP_STATE, key)
             .await?
