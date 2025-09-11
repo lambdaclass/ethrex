@@ -947,12 +947,6 @@ async fn test_deposit(
     let rich_wallet_address = get_address_from_secret_key(rich_wallet_private_key)
         .expect("Failed to get address from l1 rich wallet pk");
 
-    println!(
-        "test deposit: private key: {}",
-        rich_wallet_private_key.display_secret()
-    );
-    println!("test deposit: address: {rich_wallet_address:#x}");
-
     let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid deposit value"))
         .unwrap_or(U256::from(1000000000000000000000u128));
