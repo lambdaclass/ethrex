@@ -16,6 +16,10 @@ pub const MIN_GAS_TIP: u64 = 1000000;
 // Defined in [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844)
 pub const BYTES_PER_FIELD_ELEMENT: usize = 32;
 pub const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
+pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
+pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
+pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
+pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;
 pub const BYTES_PER_BLOB: usize = BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB;
 pub const BYTES_PER_BLOB_F64: f64 = BYTES_PER_BLOB as f64;
 /// The maximum number of bytes that can be "safely" stored in a blob. This is, prepend

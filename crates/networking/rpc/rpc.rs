@@ -371,6 +371,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
+        "engine_getPayloadV5" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,

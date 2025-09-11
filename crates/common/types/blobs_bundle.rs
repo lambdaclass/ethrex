@@ -113,6 +113,8 @@ impl BlobsBundle {
 
     #[cfg(feature = "c-kzg")]
     pub fn validate(&self, tx: &EIP4844Transaction, fork: Fork) -> Result<(), BlobsBundleError> {
+        use super::CELLS_PER_EXT_BLOB;
+
         let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
 
@@ -127,9 +129,11 @@ impl BlobsBundle {
 
         // Check if the blob versioned hashes and blobs bundle content length mismatch
         if blob_count != self.commitments.len()
-            || blob_count != self.proofs.len()
+            || (fork < Fork::Osaka && blob_count != self.proofs.len())
+            || (fork >= Fork::Osaka && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
             || blob_count != tx.blob_versioned_hashes.len()
         {
+            dbg!(blob_count, self.proofs.len(), fork, tx.blob_versioned_hashes.len());
             return Err(BlobsBundleError::BlobsBundleWrongLen);
         };
 
