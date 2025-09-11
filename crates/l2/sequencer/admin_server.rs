@@ -96,6 +96,7 @@ pub async fn start_api(
         .route("/committer/start", get(start_committer_default))
         .route("/committer/start/{delay}", get(start_committer))
         .route("/committer/stop", get(stop_committer))
+        .route("/admin/health", get(admin_health))
         .route("/health", get(health))
         .layer(cors)
         .with_state(admin.clone());
@@ -252,4 +253,8 @@ where
             "Admin server does not have the genserver handle. Maybe it's not running?".to_string(),
         )
     }
+}
+
+pub async fn admin_health(State(_admin): State<Admin>) -> axum::response::Response {
+    (StatusCode::OK, "OK".to_string()).into_response()
 }
