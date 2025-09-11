@@ -4,7 +4,11 @@
 
 ### 2025-09-11
 
-- Add RocksDB as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)
+- Add `RocksDB` as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)
+
+### 2025-09-10
+
+- Implement fast partition of `TrieIterator` and use it for quickly responding `GetAccountRanges` and `GetStorageRanges` [#4404](https://github.com/lambdaclass/ethrex/pull/4404)
 
 ### 2025-09-09
 

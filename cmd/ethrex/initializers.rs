@@ -202,7 +202,9 @@ pub async fn init_network(
         blockchain.clone(),
         get_client_version(),
         based_context,
-    );
+    )
+    .await
+    .expect("P2P context could not be created");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
