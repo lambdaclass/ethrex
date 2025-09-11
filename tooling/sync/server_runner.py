@@ -59,10 +59,30 @@ def parse_args():
     return parser.parse_args()
 
 
-def send_slack_message_failed(message: str):
+def send_slack_message_failed(header: str, hostname: str, minutes, network: str, log_file: str):
     try:
         webhook_url = os.environ["SLACK_WEBHOOK_URL_FAILED"]
-        message = {"text": message}
+
+        timeout = "" if minutes == None else f"\n*Timeout:* {minutes} minutes"
+
+        message = {
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"{header}"
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Server:* `{hostname}`{timeout}\n*Network:* `{network}`\n*Logs in:* `{log_file}`"
+                    }
+                }
+            ]
+        }
         response = requests.post(
             webhook_url,
             data=json.dumps(message),
@@ -135,18 +155,14 @@ def block_production_loop(
                 current_block_number = int(result, 0)
             else:
                 print(f"⚠️ Node did not generated a new block. Stopping.")
-                send_slack_message_failed(
-                    f"⚠️ Node on {hostname} stopped generating new blocks after sync. Network: {args.network}. Stopping. Log File: {logs_file}_{start_time}.log"
-                )
+                send_slack_message_failed("⚠️ Node stopped generating new blocks after sync", hostname, args.network, None, f"{logs_file}_{start_time}.log")
                 with open("sync_logs.txt", "a") as f:
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
                 return False
         except Exception as e:
             print(f"⚠️ Node did stopped. Stopping.")
             print("Error:", e)
-            send_slack_message_failed(
-                f"⚠️ Node on {hostname} stopped. Network: {args.network}. Log File: {logs_file}_{start_time}.log"
-            )
+            send_slack_message_failed("⚠️ Node failed to finish snap sync", hostname, args.network, None, f"{logs_file}_{start_time}.log")
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
             return False
@@ -161,9 +177,7 @@ def verification_loop(
             elapsed = time.time() - start_time
             if elapsed > args.timeout * 60:
                 print(f"⚠️ Node did not sync within {args.timeout} minutes. Stopping.")
-                send_slack_message_failed(
-                    f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Network: {args.network}. Stopping. Log File: {logs_file}_{start_time}.log"
-                )
+                send_slack_message_failed("⚠️ Node failed to sync within timeout", hostname, args.network, args.timeout, f"{logs_file}_{start_time}.log")
                 with open("sync_logs.txt", "a") as f:
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
                 return False
