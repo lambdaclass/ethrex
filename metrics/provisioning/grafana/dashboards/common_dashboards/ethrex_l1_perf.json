@@ -1312,7 +1312,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "This is the CPU (used vs Total) of the host machine where the node is running. This was extracted from node_exporter.",
+      "description": "This is the CPU utilization % of the host machine where the node is running. This was extracted from node_exporter.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1322,7 +1322,7 @@
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "GiB",
+            "axisLabel": "% Utilization",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "barWidthFactor": 0.6,
@@ -1351,7 +1351,7 @@
               "mode": "off"
             }
           },
-          "decimals": 2,
+          "decimals": 1,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -1366,7 +1366,7 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "percent"
         },
         "overrides": []
       },
@@ -1376,7 +1376,7 @@
         "x": 0,
         "y": 31
       },
-      "id": 44,
+      "id": 45,
       "options": {
         "legend": {
           "calcs": [],
@@ -1393,14 +1393,12 @@
       "pluginVersion": "12.2.0",
       "targets": [
         {
-          "editorMode": "builder",
           "expr": "100 * sum by (instance) (rate(node_cpu_seconds_total{mode!=\"idle\"}[1m])) / sum by (instance) (rate(node_cpu_seconds_total[1m]))",
-          "legendFormat": "{{instance}} Used",
-          "range": true,
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ],
-      "title": "Host CPU — Used vs Total",
+      "title": "Host CPU Utilization (%)",
       "type": "timeseries"
     },
     {
@@ -1724,37 +1722,6 @@
       ],
       "title": "Node Memory (RSS)",
       "type": "timeseries"
-    },
-    {
-      "type": "timeseries",
-      "title": "CPU Utilization (%)",
-      "id": 44,
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "decimals": 1,
-          "custom": {
-            "axisLabel": "% Utilization",
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 20,
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "single" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "100 * sum by (instance) (rate(node_cpu_seconds_total{mode!=\"idle\"}[1m])) / sum by (instance) (rate(node_cpu_seconds_total[1m]))",
-          "legendFormat": "{{instance}}"
-        }
-      ]
     }
   ],
   "preload": false,
