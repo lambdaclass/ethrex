@@ -18,6 +18,12 @@ jobs:
       matrix:
         backend: ["sp1", "risc0"]
     steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -57,10 +63,6 @@ jobs:
           cp fixtures/cache/rpc_prover/cache_hoodi_1192723.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
           make execute-${{ matrix.backend }}-ci BLOCK_NUMBER=1192723 NETWORK=hoodi
-      
-      - name: Ensure admin permissions in _work
-        if: always()
-        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
 
 
   run-replay-no-backend:
