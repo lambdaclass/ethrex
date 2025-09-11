@@ -11,6 +11,7 @@ concurrency:
 
 jobs:
   test:
+    runs-on: ubuntu-latest
     name: Execute an L1 block with ${{ matrix.backend }} backend
     strategy:
       fail-fast: true
