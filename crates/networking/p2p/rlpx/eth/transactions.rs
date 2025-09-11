@@ -12,7 +12,7 @@ use ethrex_rlp::{
 };
 use ethrex_storage::error::StoreError;
 
-use crate::rlpx::utils::log_peer_warn;
+use crate::rlpx::utils::{log_peer_debug, log_peer_warn};
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -278,7 +278,7 @@ impl PooledTransactions {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if is_l2_mode {
-                    log_peer_warn(
+                    log_peer_debug(
                         node,
                         "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
                     );

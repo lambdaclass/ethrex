@@ -774,7 +774,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 for tx in txs.transactions {
                     // Reject blob transactions in L2 mode
                     if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
-                        log_peer_warn(
+                        log_peer_debug(
                             &state.node,
                             "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
                         );
