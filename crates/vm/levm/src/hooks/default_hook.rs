@@ -32,6 +32,11 @@ impl Hook for DefaultHook {
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
+            if vm.env.config.fork >= Fork::Osaka && vm.env.gas_limit > OSAKA_MAX_GAS_LIMIT {
+                return Err(VMError::TxValidation(
+                    TxValidationError::TxMaxGasLimitExceeded,
+                ));
+            }
         }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW

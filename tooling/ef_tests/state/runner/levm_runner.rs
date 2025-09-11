@@ -41,6 +41,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
     //EIPs should be added as strings in the format 'eip-XXXX'
     let fusaka_eips_to_test: Vec<&str> = vec![
         "eip-7594", "eip-7883", "eip-7918", "eip-7892", "eip-7939", "eip-7951", "eip-7594",
+        "eip-7825",
     ];
 
     //Names of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
@@ -366,6 +367,9 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::Type4TxContractCreation,
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
+            ) | (
+                TransactionExpectedException::TxMaxGasLimitExceeded,
+                VMError::TxValidation(TxValidationError::TxMaxGasLimitExceeded)
             ) | (
                 TransactionExpectedException::Other,
                 VMError::TxValidation(_) //TODO: Decide whether to support more specific errors, I think this is enough.
