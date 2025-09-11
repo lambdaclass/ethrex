@@ -59,7 +59,6 @@ color-eyre = "0.6.5"
 
 guest_program = { path = "./prover/src/guest_program/" }
 
-
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
 

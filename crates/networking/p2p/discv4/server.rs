@@ -181,7 +181,10 @@ impl DiscoveryServer {
                     return;
                 }
 
+                let instant = Instant::now();
                 self.handle_find_node(sender_public_key, from).await;
+                let duration = Instant::now() - instant;
+                info!(duration = duration.as_secs_f64(), "FindNode");
             }
             Message::Neighbors(neighbors_message) => {
                 trace!(received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
