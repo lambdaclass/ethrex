@@ -356,7 +356,6 @@ pub fn generic_system_contract_levm(
     system_address: Address,
     vm_type: VMType,
 ) -> Result<ExecutionReport, EvmError> {
-    // println!("LEVM Generic System Contract: 1");
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
     let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
@@ -391,9 +390,7 @@ pub fn generic_system_contract_levm(
     let mut vm =
         VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
-    // println!("LEVM Generic System Contract: 2");
     let report = vm.execute().map_err(EvmError::from)?;
-    // println!("LEVM Generic System Contract: 3");
 
     if let Some(system_account) = system_account_backup {
         db.current_accounts_state

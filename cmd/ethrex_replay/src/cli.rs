@@ -537,15 +537,12 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         }
     }
 
+    // Set up store with preloaded database and the right chain config.
     let store = Store {
         engine: Arc::new(in_memory_store),
         chain_config: Arc::new(RwLock::new(network.get_genesis().unwrap().config)),
         latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
     };
-
-    // Set chain config
-    let chain_config = network.get_genesis()?.config;
-    store.set_chain_config(&chain_config).await.unwrap();
 
     // Add codes to DB
     for (code_hash, code) in guest_program.codes_hashed.clone() {

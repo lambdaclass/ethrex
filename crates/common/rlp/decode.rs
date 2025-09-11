@@ -20,7 +20,6 @@ pub trait RLPDecode: Sized {
     fn decode(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
         let (decoded, remaining) = Self::decode_unfinished(rlp)?;
         if !remaining.is_empty() {
-            // println!("not empty hehe");
             return Err(RLPDecodeError::InvalidLength);
         }
 

@@ -374,14 +374,7 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        // println!(
-        //     "Gonna get account info for address {:#x} hashed is {}",
-        //     address,
-        //     hex::encode(&hashed_address)
-        // );
-
         let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
-            // println!("I didn't found the encoded state...");
             return Ok(None);
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
@@ -468,10 +461,10 @@ impl GuestProgramState {
                 // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
                 // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
                 // Sidenote: logger doesn't work inside SP1, that's why we use println!
-                // println!(
-                //     "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
-                //     hex::encode(code_hash)
-                // );
+                println!(
+                    "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
+                    hex::encode(code_hash)
+                );
                 Ok(Bytes::new())
             }
         }

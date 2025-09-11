@@ -61,7 +61,7 @@ pub enum BlockchainType {
 
 #[derive(Debug)]
 pub struct Blockchain {
-    pub storage: Store,
+    storage: Store,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after
@@ -408,9 +408,7 @@ impl Blockchain {
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        // println!("Add block: before execute");
         let (res, updates) = self.execute_block(block).await?;
-        // println!("Add block: after execute");
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root
