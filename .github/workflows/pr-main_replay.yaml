@@ -14,7 +14,7 @@ jobs:
     # "Test" is a required check, don't change the name
     name: Test
     # It is not working properly, skipping for now
-    if: ${{ false }}
+    if: ${{ true }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
