@@ -9,7 +9,6 @@ use ethrex_rpc::{
     debug::execution_witness::execution_witness_from_rpc_chain_config,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_vm::prover_db::PreExecutionState;
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
@@ -100,38 +99,10 @@ pub async fn get_blockdata(
             )
             .await
             .wrap_err("failed to create rpc db")?;
-            let db = rpc_db
-                .to_prover_db(&block)
-                .wrap_err("failed to build execution db")?;
-            let prover_db_retrieval_duration = execution_witness_retrieval_start_time
-                .elapsed()
-                .unwrap_or_else(|e| {
-                    panic!("SystemTime::elapsed failed: {e}");
-                });
 
-            debug!(
-                "Got prover db for block {requested_block_number} in {}",
-                format_duration(prover_db_retrieval_duration)
-            );
-
-            debug!("Caching block {requested_block_number}");
-
-            let block_cache_start_time = SystemTime::now();
-
-            let cache = Cache::new(vec![block], PreExecutionState::DB(Box::new(db)));
-
-            write_cache(&cache, &file_name).expect("failed to write cache");
-
-            let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
-                panic!("SystemTime::elapsed failed: {e}");
-            });
-
-            debug!(
-                "Cached block {requested_block_number} in {}",
-                format_duration(block_cache_duration)
-            );
-
-            return Ok(cache);
+            rpc_db
+                .to_execution_witness(&block)
+                .wrap_err("failed to build execution db")?
         }
         Err(e) => panic!("Unexpected response from get_witness: {e}"),
     };
@@ -151,7 +122,7 @@ pub async fn get_blockdata(
 
     let block_cache_start_time = SystemTime::now();
 
-    let cache = Cache::new(vec![block], PreExecutionState::Witness(Box::new(witness)));
+    let cache = Cache::new(vec![block], witness);
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
@@ -236,7 +207,7 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let cache = Cache::new(blocks, PreExecutionState::Witness(Box::new(witness)));
+    let cache = Cache::new(blocks, witness);
 
     Ok(cache)
 }

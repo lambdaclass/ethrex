@@ -6,7 +6,6 @@ use tokio::{
 
 use ethrex_l2::sequencer::proof_coordinator::ProofData;
 use ethrex_l2_common::prover::{BatchProof, ProverType};
-use ethrex_vm::prover_db::PreExecutionState;
 
 use ethrex_common::Bytes;
 
@@ -28,7 +27,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
                 batch_number,
                 ProgramInput {
                     blocks: input.blocks,
-                    pre_execution_state: PreExecutionState::Witness(Box::new(input.db)),
+                    execution_witness: input.execution_witness,
                     elasticity_multiplier: input.elasticity_multiplier,
                     #[cfg(feature = "l2")]
                     blob_commitment: input.blob_commitment,

@@ -4,20 +4,22 @@ use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::{ChainConfig, code_hash};
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountInfo, AccountState, Block, TxKind},
+    types::{AccountInfo, Block, TxKind},
 };
 // use ethrex_l2::utils::prover::db::get_potential_child_nodes;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::DatabaseError;
 use ethrex_levm::vm::VMType;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
 use ethrex_vm::backends::levm::LEVM;
-use ethrex_vm::{ProverDB, ProverDBError};
+use eyre::Context;
 use futures_util::future::join_all;
 use sha3::{Digest, Keccak256};
 use tokio_utils::RateLimiter;
@@ -254,7 +256,7 @@ impl RpcDB {
         tokio::task::block_in_place(|| handle.block_on(self.fetch_accounts(index, from_child)))
     }
 
-    pub fn to_prover_db(&self, block: &Block) -> Result<ProverDB, ProverDBError> {
+    pub fn to_execution_witness(&self, block: &Block) -> eyre::Result<ExecutionWitness> {
         let chain_config = self.chain_config;
 
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
@@ -308,73 +310,45 @@ impl RpcDB {
             .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
             .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()));
 
-        let potential_storage_child_nodes: HashMap<_, _> = final_storage_proofs
-            .map(|(address, proofs)| {
-                let nodes: Vec<_> = proofs
+        let potential_storage_child_nodes: Vec<Vec<u8>> = final_storage_proofs
+            .flat_map(|(_, proofs)| {
+                proofs
                     .iter()
                     .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(key)))
                     .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
-                    .collect();
-                (address, nodes)
+                    .collect::<Vec<_>>()
             })
             .collect();
 
         #[derive(Clone)]
         struct ExistingAccount<'a> {
-            pub account_state: &'a AccountState,
             pub storage: &'a HashMap<H256, U256>,
             pub code: &'a Option<Bytes>,
         }
 
         let existing_accs = initial_accounts.iter().filter_map(|(address, account)| {
-            if let Account::Existing {
-                account_state,
-                storage,
-                code,
-                ..
-            } = account
-            {
-                Some((
-                    address,
-                    ExistingAccount {
-                        account_state,
-                        storage,
-                        code,
-                    },
-                ))
+            if let Account::Existing { storage, code, .. } = account {
+                Some((address, ExistingAccount { storage, code }))
             } else {
                 None
             }
         });
-
-        let accounts: HashMap<_, _> = existing_accs
+        let codes = existing_accs
             .clone()
-            .map(|(address, account)| {
-                (
-                    *address,
-                    AccountInfo {
-                        code_hash: account.account_state.code_hash,
-                        balance: account.account_state.balance,
-                        nonce: account.account_state.nonce,
-                    },
-                )
+            .map(|(_, account)| account.code.clone().unwrap_or_default().to_vec())
+            .collect();
+        let keys = existing_accs
+            .clone()
+            .flat_map(|(_, account)| {
+                account
+                    .storage
+                    .keys()
+                    .map(|value| value.as_bytes().to_vec())
+                    .collect::<Vec<_>>()
             })
             .collect();
-        let code = existing_accs
-            .clone()
-            .map(|(_, account)| {
-                (
-                    account.account_state.code_hash,
-                    account.code.clone().unwrap_or_default(),
-                )
-            })
-            .collect();
-        let storage = existing_accs
-            .clone()
-            .map(|(address, account)| (*address, account.storage.clone()))
-            .collect();
 
-        let mut block_headers = HashMap::new();
+        let mut block_headers_bytes = Vec::new();
         let oldest_required_block_number = self
             .block_hashes
             .lock()
@@ -383,59 +357,55 @@ impl RpcDB {
             .min()
             .cloned()
             .unwrap_or(block.header.number - 1);
-        // from oldest required to parent:
         for number in oldest_required_block_number..block.header.number {
             let handle = tokio::runtime::Handle::current();
-            let number_usize: usize = number.try_into().map_err(|_| {
-                ProverDBError::Custom("failed to convert block number into usize".to_string())
-            })?;
+            let number_usize: usize = number
+                .try_into()
+                .wrap_err("failed to convert block number into usize")?;
             let header = tokio::task::block_in_place(|| {
                 handle.block_on(get_block(&self.rpc_url, number_usize, false))
             })
-            .map_err(|err| ProverDBError::Store(err.to_string()))?
+            .wrap_err("failed to fetch block header")?
             .header;
-            block_headers.insert(number, header);
+            block_headers_bytes.push(header.encode_to_vec());
         }
 
         let state_root = initial_account_proofs
             .clone()
             .next()
             .and_then(|proof| proof.first().cloned());
-        let other_state_nodes = initial_account_proofs
+        let other_state_nodes: Vec<Vec<u8>> = initial_account_proofs
             .flat_map(|proof| proof.iter().skip(1).cloned())
             .chain(potential_account_child_nodes)
             .collect();
         let state_proofs = (state_root, other_state_nodes);
 
-        let storage_proofs = initial_storage_proofs
-            .map(|(address, proofs)| {
-                let storage_root = proofs
-                    .iter()
-                    .next()
-                    .and_then(|(_, nodes)| nodes.first())
-                    .cloned();
-                let other_storage_nodes: Vec<NodeRLP> = proofs
-                    .iter()
-                    .flat_map(|(_, proof)| proof.iter().skip(1).cloned())
-                    .chain(
-                        potential_storage_child_nodes
-                            .get(address)
-                            .cloned()
-                            .unwrap_or_default(),
-                    )
-                    .collect();
-                (*address, (storage_root, other_storage_nodes))
-            })
-            .collect();
+        let mut all_nodes = Vec::new();
 
-        Ok(ProverDB {
-            accounts,
-            code,
-            storage,
-            block_headers,
+        if let Some(root) = &state_proofs.0 {
+            all_nodes.push(root.clone());
+        }
+
+        all_nodes.extend(state_proofs.1.clone());
+
+        for (_, proofs) in initial_storage_proofs {
+            if let Some(root) = proofs.iter().next().and_then(|(_, nodes)| nodes.first()) {
+                all_nodes.push(root.clone());
+            }
+
+            for proof in proofs.values() {
+                all_nodes.extend(proof.iter().skip(1).cloned());
+            }
+        }
+        all_nodes.extend(potential_storage_child_nodes);
+
+        Ok(ExecutionWitness {
+            codes,
+            block_headers_bytes,
+            first_block_number: block.header.number,
             chain_config,
-            state_proofs,
-            storage_proofs,
+            nodes: all_nodes,
+            keys,
         })
     }
 }
@@ -553,7 +523,13 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
         let hash = Keccak256::digest(node);
         state_nodes.insert(H256::from_slice(&hash), node.clone());
     }
-    let trie = Trie::from_nodes(None, proof.first(), &state_nodes).ok()?;
+
+    let hash = if let Some(root) = proof.first() {
+        H256::from_slice(&Keccak256::digest(root))
+    } else {
+        *EMPTY_KECCACK_HASH
+    };
+    let trie = Trie::from_nodes(hash.into(), &state_nodes).ok()?;
 
     // return some only if this is a proof of exclusion
     if trie.get(key).ok()?.is_none() {
