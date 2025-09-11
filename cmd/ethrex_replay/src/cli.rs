@@ -16,18 +16,19 @@ use ethrex_storage::{
     hash_address, hash_address_fixed, store_db::in_memory::Store as InMemoryStore,
 };
 use ethrex_trie::InMemoryTrieDB;
+use eyre::Ok;
 use reqwest::Url;
 use std::{
     io::Write,
     sync::{Arc, RwLock},
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 use tracing::info;
 
-use crate::bench::run_and_measure;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
+use crate::{bench::run_and_measure, block_run_report::format_duration};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
@@ -38,7 +39,6 @@ use ethrex_config::networks::{
 
 #[cfg(feature = "l2")]
 use crate::fetcher::get_batchdata;
-use std::time::Instant;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -196,13 +196,7 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(block_opts) => {
-                if block_opts.opts.no_backend {
-                    replay_block_no_backend(block_opts).await?
-                } else {
-                    replay_block(block_opts).await?
-                }
-            }
+            Self::Block(block_opts) => replay_block(block_opts).await?,
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions { mut blocks, opts }) => {
                 if opts.cached {
@@ -358,6 +352,107 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     Ok(gas_used)
 }
 
+async fn replay_no_backend(mut cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
+    let gas_used = get_total_gas_used(&cache.blocks);
+
+    if opts.prove {
+        panic!("Proving not enabled without backend");
+    }
+
+    let start = Instant::now();
+    info!("Preparing Storage for execution without prover backend");
+
+    // TODO: handle this better?
+    cache.witness.nodes.retain(|v| v != &[0x80]);
+
+    let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
+
+    let in_memory_store = InMemoryStore::new();
+    // Set up internal state of in memory store
+    // TODO: Should we add methods in the Store API that let us do this for both in memory database and other databases? Does it make sense?
+    {
+        let mut inner_store = in_memory_store.inner().unwrap();
+
+        // Set up state trie nodes
+        let all_nodes = &guest_program.nodes_hashed;
+        let state_root_hash = guest_program.parent_block_header.state_root;
+
+        let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, all_nodes)?.inner;
+
+        inner_store.state_trie_nodes = state_trie_nodes;
+
+        // Set up storage trie nodes
+        let addresses: Vec<Address> = cache
+            .witness
+            .keys
+            .iter()
+            .filter(|k| k.len() == Address::len_bytes())
+            .map(|k| Address::from_slice(k))
+            .collect();
+
+        for address in &addresses {
+            let hashed_address = hash_address(address);
+
+            // Account state may not be in the state trie
+            let account_state_rlp_opt = guest_program
+                .state_trie
+                .as_ref()
+                .unwrap()
+                .get(&hashed_address)
+                .unwrap();
+
+            let Some(account_state_rlp) = account_state_rlp_opt else {
+                continue;
+            };
+
+            let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
+
+            let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
+                std::result::Result::Ok(trie) => trie.inner,
+                Err(_) => continue,
+            };
+
+            inner_store
+                .storage_trie_nodes
+                .insert(hash_address_fixed(address), in_memory_trie);
+        }
+    }
+
+    // Set up store with preloaded database and the right chain config.
+    let store = Store {
+        engine: Arc::new(in_memory_store),
+        chain_config: Arc::new(RwLock::new(cache.witness.chain_config)),
+        latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+    };
+
+    // Add codes to DB
+    for (code_hash, code) in guest_program.codes_hashed.clone() {
+        store
+            .add_account_code(code_hash, code.into())
+            .await
+            .unwrap();
+    }
+
+    // Add block headers to DB
+    for (_n, header) in guest_program.block_headers.clone() {
+        store.add_block_header(header.hash(), header).await.unwrap();
+    }
+
+    let blockchain = Blockchain::default_with_store(store);
+
+    info!("Storage preparation finished in {:.2?}", start.elapsed());
+
+    for block in cache.blocks {
+        info!("Starting to execute block {}", block.header.number);
+        let start_time = Instant::now();
+        blockchain.add_block(&block).await?;
+        let duration = start_time.elapsed();
+        info!("add_block execution time: {:.2?}", duration);
+    }
+
+    Ok(gas_used)
+}
+
 async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
     if tx_opts.opts.cached {
         unimplemented!("cached mode is not implemented yet");
@@ -420,11 +515,15 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
+    let replayer_mode = replayer_mode(&opts)?;
+
     let start = SystemTime::now();
 
-    let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
-
-    let replayer_mode = replayer_mode(opts.execute)?;
+    let block_run_result = if opts.no_backend {
+        run_and_measure(replay_no_backend(cache, &opts), opts.bench).await
+    } else {
+        run_and_measure(replay(cache, &opts), opts.bench).await
+    };
 
     let block_run_report = BlockRunReport::new_for(
         block,
@@ -454,153 +553,6 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
-    let opts = block_opts.opts;
-
-    let block = block_opts.block;
-
-    if opts.cached {
-        unimplemented!("cached mode is not implemented yet");
-    }
-
-    let l2 = false;
-
-    let (eth_client, network) = setup(&opts, l2).await?;
-
-    #[cfg(feature = "l2")]
-    if network != Network::LocalDevnetL2 {
-        return Err(eyre::Error::msg(
-            "L2 mode is only supported on LocalDevnetL2 network",
-        ));
-    }
-
-    let mut cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
-
-    let block =
-        cache.blocks.first().cloned().ok_or_else(|| {
-            eyre::Error::msg("no block found in the cache, this should never happen")
-        })?;
-
-    // TODO: handle this better?
-    cache.witness.nodes.retain(|v| v != &[0x80]);
-
-    let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
-
-    let in_memory_store = InMemoryStore::new();
-    // Set up internal state of in memory store
-    // TODO: Should we add methods in the Store API that let us do this for both in memory database and other databases? Does it make sense?
-    {
-        let mut inner_store = in_memory_store.inner().unwrap();
-
-        // Set up state trie nodes
-        let all_nodes = &guest_program.nodes_hashed;
-        let state_root_hash = guest_program.parent_block_header.state_root;
-
-        let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, all_nodes)?.inner;
-
-        inner_store.state_trie_nodes = state_trie_nodes;
-
-        // Set up storage trie nodes
-        let addresses: Vec<Address> = cache
-            .witness
-            .keys
-            .iter()
-            .filter(|k| k.len() == Address::len_bytes())
-            .map(|k| Address::from_slice(k))
-            .collect();
-
-        for address in &addresses {
-            let hashed_address = hash_address(address);
-
-            // Account state may not be in the state trie
-            let account_state_rlp_opt = guest_program
-                .state_trie
-                .as_ref()
-                .unwrap()
-                .get(&hashed_address)
-                .unwrap();
-
-            let Some(account_state_rlp) = account_state_rlp_opt else {
-                continue;
-            };
-
-            let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
-
-            let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
-                Ok(trie) => trie.inner,
-                Err(_) => continue,
-            };
-
-            inner_store
-                .storage_trie_nodes
-                .insert(hash_address_fixed(address), in_memory_trie);
-        }
-    }
-
-    // Set up store with preloaded database and the right chain config.
-    let store = Store {
-        engine: Arc::new(in_memory_store),
-        chain_config: Arc::new(RwLock::new(network.get_genesis().unwrap().config)),
-        latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-    };
-
-    // Add codes to DB
-    for (code_hash, code) in guest_program.codes_hashed.clone() {
-        store
-            .add_account_code(code_hash, code.into())
-            .await
-            .unwrap();
-    }
-
-    // Add block headers to DB
-    for (_n, header) in guest_program.block_headers.clone() {
-        store.add_block_header(header.hash(), header).await.unwrap();
-    }
-
-    let blockchain = Blockchain::default_with_store(store);
-
-    info!("Starting to execute block");
-    let start_time = Instant::now();
-    blockchain.add_block(&block).await.unwrap();
-    let duration = start_time.elapsed();
-    info!("add_block execution time: {:.2?}", duration);
-
-    //TODO: See what to do with the code below, maybe we want to make it pretty similar to normal replay_block
-
-    // let start = SystemTime::now();
-
-    // let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
-
-    // let replayer_mode = replayer_mode(opts.execute)?;
-
-    // let block_run_report = BlockRunReport::new_for(
-    //     block,
-    //     network.clone(),
-    //     block_run_result,
-    //     replayer_mode.clone(),
-    //     start.elapsed()?,
-    // );
-
-    // block_run_report.log();
-
-    // if opts.to_csv {
-    //     let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
-
-    //     let mut file = std::fs::OpenOptions::new()
-    //         .append(true)
-    //         .create(true)
-    //         .open(file_name)?;
-
-    //     file.write_all(block_run_report.to_csv().as_bytes())?;
-
-    //     file.write_all(b"\n")?;
-
-    //     file.flush()?;
-    // }
-
-    Ok(())
-}
-
 fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     match chain_id {
         MAINNET_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Mainnet),
@@ -617,8 +569,15 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     }
 }
 
-pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
-    if execute {
+pub fn replayer_mode(opts: &EthrexReplayOptions) -> eyre::Result<ReplayerMode> {
+    if opts.no_backend {
+        #[cfg(any(feature = "sp1", feature = "risc0"))]
+        return Err(eyre::Error::msg(
+            "no-backend mode is not supported with SP1 or RISC0 features enabled",
+        ));
+        return Ok(ReplayerMode::ExecuteNoBackend);
+    }
+    if opts.execute {
         #[cfg(feature = "sp1")]
         return Ok(ReplayerMode::ExecuteSP1);
         #[cfg(all(feature = "risc0", not(feature = "sp1")))]

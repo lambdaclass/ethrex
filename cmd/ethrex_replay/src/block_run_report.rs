@@ -10,6 +10,7 @@ use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookReq
 #[allow(dead_code)]
 pub enum ReplayerMode {
     Execute,
+    ExecuteNoBackend,
     ExecuteSP1,
     ExecuteRISC0,
     ProveSP1,
@@ -37,6 +38,7 @@ impl Display for ReplayerMode {
             ReplayerMode::ExecuteRISC0 => write!(f, "execute_risc0"),
             ReplayerMode::ProveSP1 => write!(f, "prove_sp1"),
             ReplayerMode::ProveRISC0 => write!(f, "prove_risc0"),
+            ReplayerMode::ExecuteNoBackend => write!(f, "execute_no_backend"),
         }
     }
 }
@@ -97,6 +99,9 @@ impl BlockRunReport {
                             (Ok(_), ReplayerMode::Execute) => {
                                 String::from("✅ Successfully Executed Block")
                             }
+                            (Ok(_), ReplayerMode::ExecuteNoBackend) => String::from(
+                                "✅ Successfully Executed Block without Prover Backend",
+                            ),
                             (Ok(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("✅ Successfully Executed Block with SP1")
                             }
@@ -111,6 +116,9 @@ impl BlockRunReport {
                             }
                             (Err(_), ReplayerMode::Execute) => {
                                 String::from("⚠️ Failed to Execute Block")
+                            }
+                            (Err(_), ReplayerMode::ExecuteNoBackend) => {
+                                String::from("⚠️ Failed to Execute Block without Prover Backend")
                             }
                             (Err(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("⚠️ Failed to Execute Block with SP1")
@@ -221,7 +229,7 @@ impl Display for BlockRunReport {
     }
 }
 
-fn format_duration(duration: Duration) -> String {
+pub fn format_duration(duration: Duration) -> String {
     let total_seconds = duration.as_secs();
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
