@@ -1,4 +1,6 @@
-use crate::{NodeHash, error::TrieError};
+use ethereum_types::H256;
+
+use crate::{NodeHash, NodeRLP, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -15,7 +17,7 @@ pub trait TrieDB: Send + Sync {
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 #[derive(Default)]
 pub struct InMemoryTrieDB {
-    inner: Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>,
+    pub inner: Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>,
 }
 
 impl InMemoryTrieDB {
@@ -26,6 +28,20 @@ impl InMemoryTrieDB {
         Self {
             inner: Default::default(),
         }
+    }
+
+    pub fn from_nodes(
+        root_hash: H256,
+        state_nodes: &BTreeMap<H256, NodeRLP>,
+    ) -> Result<Self, TrieError> {
+        let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
+        let mut hashed_nodes: Vec<(NodeHash, Vec<u8>)> = vec![];
+        embedded_root.commit(&mut hashed_nodes);
+
+        let hashed_nodes = hashed_nodes.into_iter().collect();
+
+        let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
+        Ok(Self::new(in_memory_trie))
     }
 }
 

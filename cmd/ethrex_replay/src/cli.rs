@@ -484,32 +484,24 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
+    // TODO: handle this better?
     cache.witness.nodes.retain(|v| v != &[0x80]);
 
     let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
 
     let in_memory_store = InMemoryStore::new();
+    // Set up internal state of in memory store
+    // TODO: Should we add methods in the Store API that let us do this for both in memory database and other databases? Does it make sense?
     {
         let mut inner_store = in_memory_store.inner().unwrap();
 
+        // Set up state trie nodes
         let all_nodes = &guest_program.nodes_hashed;
-
         let state_root_hash = guest_program.parent_block_header.state_root;
-        let state_root_rlp = guest_program
-            .nodes_hashed
-            .get(&state_root_hash)
-            .ok_or(TrieError::InconsistentTree)?;
 
-        let mut embedded_root: NodeRef = Trie::get_embedded_root(all_nodes, state_root_rlp)?.into();
+        let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, all_nodes)?.inner;
 
-        let mut hashed_nodes: Vec<(NodeHash, Vec<u8>)> = vec![];
-        embedded_root.commit(&mut hashed_nodes);
-
-        let hashed_nodes = hashed_nodes.into_iter().collect();
-
-        let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
-
-        inner_store.state_trie_nodes = in_memory_trie;
+        inner_store.state_trie_nodes = state_trie_nodes;
 
         // Set up storage trie nodes
         let addresses: Vec<Address> = cache
@@ -523,6 +515,7 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         for address in &addresses {
             let hashed_address = hash_address(address);
 
+            // Account state may not be in the state trie
             let account_state_rlp_opt = guest_program
                 .state_trie
                 .as_ref()
@@ -534,26 +527,12 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
                 continue;
             };
 
-            let storage_root = NodeHash::Hashed(
-                AccountState::decode(&account_state_rlp)
-                    .unwrap()
-                    .storage_root,
-            );
+            let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
 
-            let Some(storage_root_rlp) = guest_program.nodes_hashed.get(&storage_root.finalize())
-            else {
-                continue;
+            let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
+                Ok(trie) => trie.inner,
+                Err(_) => continue,
             };
-
-            let mut embedded_root: NodeRef =
-                Trie::get_embedded_root(all_nodes, storage_root_rlp)?.into();
-
-            let mut hashed_nodes: Vec<(NodeHash, Vec<u8>)> = vec![];
-            embedded_root.commit(&mut hashed_nodes);
-
-            let hashed_nodes = hashed_nodes.into_iter().collect();
-
-            let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
 
             inner_store
                 .storage_trie_nodes
@@ -567,11 +546,11 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
     };
 
-    // Adding initial state after having filled the previous state is dangerous, it should be done before
+    // Set chain config
     let chain_config = network.get_genesis()?.config;
     store.set_chain_config(&chain_config).await.unwrap();
 
-    // Add codes to the db
+    // Add codes to DB
     for (code_hash, code) in guest_program.codes_hashed.clone() {
         store
             .add_account_code(code_hash, code.into())
@@ -579,7 +558,7 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
             .unwrap();
     }
 
-    // Add block headers
+    // Add block headers to DB
     for (_n, header) in guest_program.block_headers.clone() {
         store.add_block_header(header.hash(), header).await.unwrap();
     }
@@ -591,6 +570,8 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     blockchain.add_block(&block).await.unwrap();
     let duration = start_time.elapsed();
     info!("add_block execution time: {:.2?}", duration);
+
+    //TODO: See what to do with the code below, maybe we want to make it pretty similar to normal replay_block
 
     // let start = SystemTime::now();
 
