@@ -29,7 +29,7 @@ impl<'a> VM<'a> {
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
 
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account_balance = self.db.get_account(address)?.info.balance;
 
         let current_call_frame = &mut self.current_call_frame;
@@ -152,43 +152,51 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        if let Some(calldata_offset_end) = calldata_offset.checked_add(size) {
-            if calldata_offset_end <= current_call_frame.calldata.len() {
-                #[expect(unsafe_code, reason = "bounds checked beforehand")]
-                let slice = unsafe {
-                    current_call_frame
-                        .calldata
-                        .get_unchecked(calldata_offset..calldata_offset_end)
-                };
-                current_call_frame.memory.store_data(dest_offset, slice)?;
+        let calldata_len = current_call_frame.calldata.len();
 
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
-            }
+        // offset is out of bounds, so fill zeroes
+        if calldata_offset >= calldata_len {
+            current_call_frame.memory.store_zeros(dest_offset, size)?;
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let mut data = vec![0u8; size];
-        if calldata_offset < current_call_frame.calldata.len() {
-            let diff = current_call_frame
-                .calldata
-                .len()
-                .wrapping_sub(calldata_offset);
-            let final_size = size.min(diff);
-            let end = calldata_offset.wrapping_add(final_size);
+        #[expect(
+            clippy::arithmetic_side_effects,
+            clippy::indexing_slicing,
+            reason = "bounds checked"
+        )]
+        {
+            // we already verified calldata_len >= calldata_offset
+            let available_data = calldata_len - calldata_offset;
+            let copy_size = size.min(available_data);
+            let zero_fill_size = size - copy_size;
 
-            #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            unsafe {
-                data.get_unchecked_mut(..final_size).copy_from_slice(
-                    current_call_frame
-                        .calldata
-                        .get_unchecked(calldata_offset..end),
-                );
+            if zero_fill_size == 0 {
+                // no zero padding needed
+
+                // calldata_offset + copy_size can't overflow because its the min of size and (calldata_len - calldata_offset).
+                let src_slice =
+                    &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
+                current_call_frame
+                    .memory
+                    .store_data(dest_offset, src_slice)?;
+            } else {
+                let mut data = vec![0u8; size];
+
+                let available_data = calldata_len - calldata_offset;
+                let copy_size = size.min(available_data);
+
+                if copy_size > 0 {
+                    data[..copy_size].copy_from_slice(
+                        &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size],
+                    );
+                }
+
+                current_call_frame.memory.store_data(dest_offset, &data)?;
             }
+
+            Ok(OpcodeResult::Continue { pc_increment: 1 })
         }
-
-        current_call_frame.memory.store_data(dest_offset, &data)?;
-
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CODESIZE operation
@@ -270,7 +278,7 @@ impl<'a> VM<'a> {
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account_code_length = self.db.get_account_code(address)?.len().into();
 
         let current_call_frame = &mut self.current_call_frame;
@@ -292,7 +300,7 @@ impl<'a> VM<'a> {
         let offset = u256_to_usize(offset).unwrap_or(usize::MAX);
 
         let current_memory_size = call_frame.memory.len();
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         self.current_call_frame
@@ -401,7 +409,7 @@ impl<'a> VM<'a> {
     // EXTCODEHASH operation
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account = self.db.get_account(address)?;
         let account_is_empty = account.is_empty();
         let account_code_hash = account.info.code_hash.0;

@@ -52,12 +52,6 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
@@ -75,16 +69,10 @@ P2P options:
       --p2p.enabled
 
 
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P protocol.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -96,7 +84,7 @@ RPC options:
           Listening address for the http rpc server.
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: localhost]
+          [default: 0.0.0.0]
 
       --http.port <PORT>
           Listening port for the http rpc server.
@@ -107,7 +95,7 @@ RPC options:
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
 
-          [default: localhost]
+          [default: 127.0.0.1]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
@@ -177,12 +165,6 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
@@ -199,17 +181,10 @@ P2P options:
 
       --p2p.enabled
 
-
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -444,7 +419,7 @@ L2 options:
 
 Monitor options:
       --no-monitor
-          [env: ETHREX_MONITOR=]
+          [env: ETHREX_NO_MONITOR=]
 ```
 
 ## ethrex l2 prover
@@ -452,7 +427,7 @@ Monitor options:
 ```
 Initialize an ethrex prover
 
-Usage: ethrex l2 prover [OPTIONS] --proof-coordinator <URL>
+Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>
 
 Options:
   -h, --help
@@ -464,7 +439,7 @@ Prover client options:
           [default: exec]
           [possible values: exec]
 
-      --proof-coordinator <URL>
+      --proof-coordinators <URL>
           URL of the sequencer's proof coordinator
 
           [env: PROVER_CLIENT_PROOF_COORDINATOR_URL=]

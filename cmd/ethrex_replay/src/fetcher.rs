@@ -9,8 +9,11 @@ use ethrex_rpc::{
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
-use crate::cache::{Cache, L2Fields, load_cache, write_cache};
+use crate::cache::{Cache, load_cache, write_cache};
 use ethrex_config::networks::Network;
+
+#[cfg(feature = "l2")]
+use crate::cache::L2Fields;
 
 pub async fn get_blockdata(
     eth_client: EthClient,
@@ -32,7 +35,7 @@ pub async fn get_blockdata(
 
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{requested_block_number}.json");
+    let file_name = format!("cache_{network}_{requested_block_number}.bin");
 
     if let Ok(cache) = load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
         info!("Getting block {requested_block_number} data from cache");
@@ -53,7 +56,10 @@ pub async fn get_blockdata(
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness = match eth_client.get_witness(block_number.clone(), None).await {
+    let witness = match eth_client
+        .get_witness(BlockIdentifier::Number(requested_block_number), None)
+        .await
+    {
         Ok(witness) => {
             execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
                 .expect("Failed to convert witness")
@@ -115,8 +121,8 @@ pub async fn get_blockdata(
 async fn fetch_rangedata_from_client(
     eth_client: EthClient,
     chain_config: ChainConfig,
-    from: usize,
-    to: usize,
+    from: u64,
+    to: u64,
 ) -> eyre::Result<Cache> {
     info!("Validating RPC chain ID");
 
@@ -128,7 +134,7 @@ async fn fetch_rangedata_from_client(
         ));
     }
 
-    let mut blocks = Vec::with_capacity(to - from + 1);
+    let mut blocks = Vec::with_capacity((to - from + 1) as usize);
 
     info!(
         "Retrieving execution data for blocks {from} to {to} ({} blocks in total)",
@@ -139,7 +145,7 @@ async fn fetch_rangedata_from_client(
 
     for block_number in from..=to {
         let block = eth_client
-            .get_raw_block(BlockIdentifier::Number(block_number.try_into()?))
+            .get_raw_block(BlockIdentifier::Number(block_number))
             .await
             .wrap_err("failed to fetch block")?;
         blocks.push(block);
@@ -154,9 +160,9 @@ async fn fetch_rangedata_from_client(
         format_duration(block_retrieval_duration)
     );
 
-    let from_identifier = BlockIdentifier::Number(from.try_into()?);
+    let from_identifier = BlockIdentifier::Number(from);
 
-    let to_identifier = BlockIdentifier::Number(to.try_into()?);
+    let to_identifier = BlockIdentifier::Number(to);
 
     info!("Getting execution witness from RPC for blocks {from} to {to}");
 
@@ -167,7 +173,7 @@ async fn fetch_rangedata_from_client(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    let witness = execution_witness_from_rpc_chain_config(witness, chain_config, from as u64)
+    let witness = execution_witness_from_rpc_chain_config(witness, chain_config, from)
         .expect("Failed to convert witness");
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
@@ -189,12 +195,12 @@ async fn fetch_rangedata_from_client(
 pub async fn get_rangedata(
     eth_client: EthClient,
     network: Network,
-    from: usize,
-    to: usize,
+    from: u64,
+    to: u64,
 ) -> eyre::Result<Cache> {
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{from}-{to}.json");
+    let file_name = format!("cache_{network}_{from}-{to}.bin");
 
     if let Ok(cache) = load_cache(&file_name) {
         info!("Getting block range data from cache");
@@ -210,25 +216,26 @@ pub async fn get_rangedata(
     Ok(cache)
 }
 
+#[cfg(feature = "l2")]
 pub async fn get_batchdata(
     rollup_client: EthClient,
-    chain_config: ChainConfig,
+    network: Network,
     batch_number: u64,
 ) -> eyre::Result<Cache> {
-    let file_name = format!("cache_batch_{batch_number}.json");
+    let file_name = format!("cache_batch_{batch_number}.bin");
     if let Ok(cache) = load_cache(&file_name) {
         info!("Getting batch data from cache");
         return Ok(cache);
     }
     info!("Getting batch data from RPC");
 
-    let rpc_batch = rollup_client.get_batch_by_number(batch_number).await?;
+    let rpc_batch = get_batch_by_number(&rollup_client, batch_number).await?;
 
     let mut cache = fetch_rangedata_from_client(
         rollup_client,
-        chain_config,
-        rpc_batch.batch.first_block as usize,
-        rpc_batch.batch.last_block as usize,
+        network.get_genesis()?.config,
+        rpc_batch.batch.first_block,
+        rpc_batch.batch.last_block,
     )
     .await?;
 
