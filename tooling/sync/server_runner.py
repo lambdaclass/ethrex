@@ -97,10 +97,29 @@ def send_slack_message_failed(header: str, hostname: str, minutes, network: str,
         return
 
 
-def send_slack_message_success(message: str):
+def send_slack_message_success(message: str, hostname: str, minutes: str, network: str, log_file: str):
     try:
         webhook_url = os.environ["SLACK_WEBHOOK_URL_SUCCESS"]
-        message = {"text": message}
+
+        message = {
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": ":white_check_mark: Node snap-synced successfully and advanced for 30 minutes"
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f'*Server:* `{hostname}`\n*Synced in:* {minutes} minutes\n*Network:* `{network}`\n*Logs in:* `{log_file}`'
+                    }
+                }
+            ]
+        }
+
         response = requests.post(
             webhook_url,
             data=json.dumps(message),
@@ -142,9 +161,7 @@ def block_production_loop(
         block_elapsed = time.time() - block_start_time
         if block_elapsed > 30 * 60:  # 30 minutes
             print("✅ Node is fully synced!")
-            send_slack_message_success(
-                f"✅ Node on {hostname} is fully synced after {elapsed / 60:.2f} minutes and correctly generated blocks for 30 minutes! Network: {args.network} Log File: {logs_file}_{start_time}.log"
-            )
+            send_slack_message_success(hostname, f"{elapsed / 60:.2f}", args.network, f"{logs_file}_{start_time}.log")
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
             return True
