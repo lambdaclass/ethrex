@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757621658127,
+  "lastUpdate": 1757622465504,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13825,6 +13825,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170287463439,
             "range": "± 1180181016",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "damian.ramirez@lambdaclass.com",
+            "name": "Damian Ramirez",
+            "username": "damiramirez"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "12ad38e27d8ec32f4288a14e2c0ff6d475015986",
+          "message": "feat(l1): rocksdb (#4272)\n\n> [!WARNING]  \n> We added `rocksdb` as a feature flag in the Dockerfile to test how\nHive and Assertoor run with RocksDB instead of libmdbx. This change\nshould be reverted before merging, since RocksDB is not our default\ndatabase yet.\n\n\n**Motivation**\n\nAdd a first version of `rocksdb`\n\n---------\n\nCo-authored-by: Francisco Xavier Gauna <francisco.gauna@lambdaclass.com>\nCo-authored-by: Pablo Deymonnaz <pdeymon@fi.uba.ar>\nCo-authored-by: Gianbelinche <39842759+gianbelinche@users.noreply.github.com>\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: ricomateo <mrico@fi.uba.ar>\nCo-authored-by: Mateo Rico <89949621+ricomateo@users.noreply.github.com>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: juan518munoz <62400508+juan518munoz@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>",
+          "timestamp": "2025-09-11T19:32:40Z",
+          "tree_id": "dc589e1bcb9384aeb648cc94350af32aec81909d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/12ad38e27d8ec32f4288a14e2c0ff6d475015986"
+        },
+        "date": 1757622445830,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170656339524,
+            "range": "± 469061742",
             "unit": "ns/iter"
           }
         ]
