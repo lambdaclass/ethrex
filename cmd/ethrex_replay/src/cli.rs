@@ -487,78 +487,31 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     cache.witness.nodes.retain(|v| v != &[0x80]);
 
     let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
-    // witness.rebuild_state_trie().unwrap();
-    // let root = witness.state_trie.as_ref().unwrap().hash_no_commit();
-    // println!("Oldroot: {}", hex::encode(root));
 
-    // let store = Store::new("testing", EngineType::InMemory).unwrap();
     let in_memory_store = InMemoryStore::new();
     {
-        // This will be just get_traversed_nodes(all_nodes, root_hash) and this calls inner and returns BTreeMap<NodeHash, NodeRLP>. I wonder if we can get the embedded root with this though...
         let mut inner_store = in_memory_store.inner().unwrap();
 
-        let root_hash = NodeHash::Hashed(guest_program.parent_block_header.state_root);
-        let root_rlp = guest_program
+        let all_nodes = &guest_program.nodes_hashed;
+
+        let state_root_hash = guest_program.parent_block_header.state_root;
+        let state_root_rlp = guest_program
             .nodes_hashed
-            .get(&root_hash.finalize())
-            .unwrap();
+            .get(&state_root_hash)
+            .ok_or(TrieError::InconsistentTree)?;
 
-        fn inner(
-            all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_hash: &NodeHash,
-            cur_node_rlp: &NodeRLP,
-            traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
-        ) -> Result<Node, TrieError> {
-            let node = Node::decode_raw(cur_node_rlp)?;
+        let mut embedded_root: NodeRef = Trie::get_embedded_root(all_nodes, state_root_rlp)?.into();
 
-            let encoded = node.encode_to_vec();
-            traversed_nodes.insert(*cur_node_hash, encoded);
+        let mut hashed_nodes: Vec<(NodeHash, Vec<u8>)> = vec![];
+        embedded_root.commit(&mut hashed_nodes);
 
-            Ok(match node {
-                Node::Branch(mut node) => {
-                    for choice in &mut node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
+        let hashed_nodes = hashed_nodes.into_iter().collect();
 
-                        if hash.is_valid() {
-                            *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
-                                None => hash.into(),
-                            };
-                        }
-                    }
-
-                    (*node).into()
-                }
-                Node::Extension(mut node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
-                        None => hash.into(),
-                    };
-
-                    node.into()
-                }
-                Node::Leaf(node) => node.into(),
-            })
-        }
-
-        let mut necessary_nodes = BTreeMap::new();
-        inner(
-            &guest_program.nodes_hashed,
-            &root_hash,
-            root_rlp,
-            &mut necessary_nodes,
-        )?;
-
-        let in_memory_trie = Arc::new(Mutex::new(necessary_nodes));
+        let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
 
         inner_store.state_trie_nodes = in_memory_trie;
 
+        // Set up storage trie nodes
         let addresses: Vec<Address> = cache
             .witness
             .keys
@@ -570,7 +523,6 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
         for address in &addresses {
             let hashed_address = hash_address(address);
 
-            let mut necessary_nodes_storage = BTreeMap::new();
             let account_state_rlp_opt = guest_program
                 .state_trie
                 .as_ref()
@@ -593,17 +545,19 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
                 continue;
             };
 
-            inner(
-                &guest_program.nodes_hashed,
-                &storage_root,
-                storage_root_rlp,
-                &mut necessary_nodes_storage,
-            )?;
+            let mut embedded_root: NodeRef =
+                Trie::get_embedded_root(all_nodes, storage_root_rlp)?.into();
 
-            inner_store.storage_trie_nodes.insert(
-                hash_address_fixed(address),
-                Arc::new(Mutex::new(necessary_nodes_storage)),
-            );
+            let mut hashed_nodes: Vec<(NodeHash, Vec<u8>)> = vec![];
+            embedded_root.commit(&mut hashed_nodes);
+
+            let hashed_nodes = hashed_nodes.into_iter().collect();
+
+            let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
+
+            inner_store
+                .storage_trie_nodes
+                .insert(hash_address_fixed(address), in_memory_trie);
         }
     }
 
@@ -631,28 +585,6 @@ async fn replay_block_no_backend(block_opts: BlockOptions) -> eyre::Result<()> {
     }
 
     let blockchain = Blockchain::default_with_store(store);
-
-    //TODO: remove this, it is for testing particular stuff.
-    // let block_hash =
-    //     H256::from_str("0x16d56587933fca3da24f82788b2e55b482f9df81a8f5b74065d9cba716d271ce")
-    //         .unwrap();
-
-    // let super_address = Address::from_str("fffffffffffffffffffffffffffffffffffffffe")
-    //     .expect("Failed to parse address");
-
-    // blockchain
-    //     .storage
-    //     .get_account_info_by_hash(block_hash, super_address)
-    //     .unwrap();
-
-    // let storage_key =
-    //     H256::from_str("0x0000000000000000000000000000000000000000000000000000000000001c97")
-    //         .expect("Failed to parse storage key");
-
-    // let s = blockchain
-    //     .storage
-    //     .get_storage_at_hash(block_hash, address, storage_key)
-    //     .unwrap();
 
     info!("Starting to execute block");
     let start_time = Instant::now();
