@@ -4,20 +4,22 @@ use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::{ChainConfig, code_hash};
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountInfo, AccountState, Block, TxKind},
+    types::{AccountInfo, Block, TxKind},
 };
 // use ethrex_l2::utils::prover::db::get_potential_child_nodes;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::DatabaseError;
 use ethrex_levm::vm::VMType;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
+use ethrex_vm::ProverDBError;
 use ethrex_vm::backends::levm::LEVM;
-use ethrex_vm::{ProverDB, ProverDBError};
 use futures_util::future::join_all;
 use sha3::{Digest, Keccak256};
 use tokio_utils::RateLimiter;
@@ -254,7 +256,7 @@ impl RpcDB {
         tokio::task::block_in_place(|| handle.block_on(self.fetch_accounts(index, from_child)))
     }
 
-    pub fn to_prover_db(&self, block: &Block) -> Result<ProverDB, ProverDBError> {
+    pub fn to_execution_witness(&self, block: &Block) -> Result<ExecutionWitness, ProverDBError> {
         let chain_config = self.chain_config;
 
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
@@ -321,60 +323,33 @@ impl RpcDB {
 
         #[derive(Clone)]
         struct ExistingAccount<'a> {
-            pub account_state: &'a AccountState,
             pub storage: &'a HashMap<H256, U256>,
             pub code: &'a Option<Bytes>,
         }
 
         let existing_accs = initial_accounts.iter().filter_map(|(address, account)| {
-            if let Account::Existing {
-                account_state,
-                storage,
-                code,
-                ..
-            } = account
-            {
-                Some((
-                    address,
-                    ExistingAccount {
-                        account_state,
-                        storage,
-                        code,
-                    },
-                ))
+            if let Account::Existing { storage, code, .. } = account {
+                Some((address, ExistingAccount { storage, code }))
             } else {
                 None
             }
         });
-
-        let accounts: HashMap<_, _> = existing_accs
+        let codes: Vec<Vec<u8>> = existing_accs
             .clone()
-            .map(|(address, account)| {
-                (
-                    *address,
-                    AccountInfo {
-                        code_hash: account.account_state.code_hash,
-                        balance: account.account_state.balance,
-                        nonce: account.account_state.nonce,
-                    },
-                )
+            .map(|(_, account)| account.code.clone().unwrap_or_default().to_vec())
+            .collect();
+        let keys: Vec<Vec<u8>> = existing_accs
+            .clone()
+            .flat_map(|(_, account)| {
+                account
+                    .storage
+                    .keys()
+                    .map(|value| value.as_bytes().to_vec())
+                    .collect::<Vec<_>>()
             })
             .collect();
-        let code = existing_accs
-            .clone()
-            .map(|(_, account)| {
-                (
-                    account.account_state.code_hash,
-                    account.code.clone().unwrap_or_default(),
-                )
-            })
-            .collect();
-        let storage = existing_accs
-            .clone()
-            .map(|(address, account)| (*address, account.storage.clone()))
-            .collect();
 
-        let mut block_headers = HashMap::new();
+        let mut block_headers = Vec::new();
         let oldest_required_block_number = self
             .block_hashes
             .lock()
@@ -383,7 +358,6 @@ impl RpcDB {
             .min()
             .cloned()
             .unwrap_or(block.header.number - 1);
-        // from oldest required to parent:
         for number in oldest_required_block_number..block.header.number {
             let handle = tokio::runtime::Handle::current();
             let number_usize: usize = number.try_into().map_err(|_| {
@@ -394,48 +368,48 @@ impl RpcDB {
             })
             .map_err(|err| ProverDBError::Store(err.to_string()))?
             .header;
-            block_headers.insert(number, header);
+            block_headers.push(header.encode_to_vec());
         }
 
         let state_root = initial_account_proofs
             .clone()
             .next()
             .and_then(|proof| proof.first().cloned());
-        let other_state_nodes = initial_account_proofs
+        let other_state_nodes: Vec<Vec<u8>> = initial_account_proofs
             .flat_map(|proof| proof.iter().skip(1).cloned())
             .chain(potential_account_child_nodes)
             .collect();
         let state_proofs = (state_root, other_state_nodes);
 
-        let storage_proofs = initial_storage_proofs
-            .map(|(address, proofs)| {
-                let storage_root = proofs
-                    .iter()
-                    .next()
-                    .and_then(|(_, nodes)| nodes.first())
-                    .cloned();
-                let other_storage_nodes: Vec<NodeRLP> = proofs
-                    .iter()
-                    .flat_map(|(_, proof)| proof.iter().skip(1).cloned())
-                    .chain(
-                        potential_storage_child_nodes
-                            .get(address)
-                            .cloned()
-                            .unwrap_or_default(),
-                    )
-                    .collect();
-                (*address, (storage_root, other_storage_nodes))
-            })
-            .collect();
+        let mut all_nodes = Vec::new();
 
-        Ok(ProverDB {
-            accounts,
-            code,
-            storage,
-            block_headers,
+        if let Some(root) = &state_proofs.0 {
+            all_nodes.push(root.clone());
+        }
+
+        all_nodes.extend(state_proofs.1.clone());
+
+        for (address, proofs) in initial_storage_proofs {
+            if let Some(root) = proofs.iter().next().and_then(|(_, nodes)| nodes.first()) {
+                all_nodes.push(root.clone());
+            }
+
+            for proof in proofs.values() {
+                all_nodes.extend(proof.iter().skip(1).cloned());
+            }
+
+            if let Some(child_nodes) = potential_storage_child_nodes.get(&address) {
+                all_nodes.extend(child_nodes.clone());
+            }
+        }
+
+        Ok(ExecutionWitness {
+            codes,
+            block_headers_bytes: block_headers,
+            first_block_number: block.header.number,
             chain_config,
-            state_proofs,
-            storage_proofs,
+            nodes: all_nodes,
+            keys,
         })
     }
 }

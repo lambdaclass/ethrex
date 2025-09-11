@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use ethrex_common::types::{ChainConfig, block_execution_witness::ExecutionWitness};
+use ethrex_common::types::ChainConfig;
 use ethrex_config::networks::Network;
 use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
@@ -9,7 +9,6 @@ use ethrex_rpc::{
     debug::execution_witness::execution_witness_from_rpc_chain_config,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_vm::prover_db::PreExecutionState;
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
@@ -100,17 +99,14 @@ pub async fn get_blockdata(
             )
             .await
             .wrap_err("failed to create rpc db")?;
-            let db = rpc_db
-                .to_prover_db(&block)
+            let execution_witness = rpc_db
+                .to_execution_witness(&block)
                 .wrap_err("failed to build execution db")?;
             let prover_db_retrieval_duration = execution_witness_retrieval_start_time
                 .elapsed()
                 .unwrap_or_else(|e| {
                     panic!("SystemTime::elapsed failed: {e}");
                 });
-
-            let mut witness: ExecutionWitness = db.into();
-            witness.first_block_number = requested_block_number;
 
             debug!(
                 "Got prover db for block {requested_block_number} in {}",
@@ -121,7 +117,7 @@ pub async fn get_blockdata(
 
             let block_cache_start_time = SystemTime::now();
 
-            let cache = Cache::new(vec![block], PreExecutionState::Witness(Box::new(witness)));
+            let cache = Cache::new(vec![block], execution_witness);
 
             write_cache(&cache, &file_name).expect("failed to write cache");
 
@@ -154,7 +150,7 @@ pub async fn get_blockdata(
 
     let block_cache_start_time = SystemTime::now();
 
-    let cache = Cache::new(vec![block], PreExecutionState::Witness(Box::new(witness)));
+    let cache = Cache::new(vec![block], witness);
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
@@ -239,7 +235,7 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let cache = Cache::new(blocks, PreExecutionState::Witness(Box::new(witness)));
+    let cache = Cache::new(blocks, witness);
 
     Ok(cache)
 }

@@ -1,5 +1,4 @@
-use ethrex_common::types::Block;
-use ethrex_vm::prover_db::PreExecutionState;
+use ethrex_common::types::{Block, block_execution_witness::ExecutionWitness};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeAs, SerializeAs, serde_as};
@@ -14,7 +13,7 @@ pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,
     /// database containing all the data necessary to execute
-    pub pre_execution_state: PreExecutionState,
+    pub execution_witness: ExecutionWitness,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
@@ -38,7 +37,7 @@ impl Default for ProgramInput {
     fn default() -> Self {
         Self {
             blocks: Default::default(),
-            pre_execution_state: PreExecutionState::DB(Box::default()),
+            execution_witness: ExecutionWitness::default(),
             elasticity_multiplier: Default::default(),
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],

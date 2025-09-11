@@ -1,6 +1,6 @@
 use ethrex_common::types::Block;
 use ethrex_common::types::blobs_bundle;
-use ethrex_vm::prover_db::PreExecutionState;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use eyre::Context;
 use rkyv::rancor::Error;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -21,17 +21,17 @@ pub struct L2Fields {
 #[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
 pub struct Cache {
     pub blocks: Vec<Block>,
-    pub pre_execution_state: PreExecutionState,
+    pub execution_witness: ExecutionWitness,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(flatten)]
     pub l2_fields: Option<L2Fields>,
 }
 
 impl Cache {
-    pub fn new(blocks: Vec<Block>, pre_execution_state: PreExecutionState) -> Self {
+    pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
         Self {
             blocks,
-            pre_execution_state,
+            execution_witness,
             l2_fields: None,
         }
     }
