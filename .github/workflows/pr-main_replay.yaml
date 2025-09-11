@@ -56,7 +56,7 @@ jobs:
         run: |
           cp fixtures/cache/rpc_prover/cache_hoodi_1191706.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make execute-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=1191706 NETWORK=hoodi
+          make execute-${{ matrix.backend }}-ci BLOCK_NUMBER=1191706 NETWORK=hoodi
       
       - name: Ensure admin permissions in _work
         if: always()
