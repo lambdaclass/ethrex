@@ -35,6 +35,6 @@ jobs:
           RPC_URL: "http://45.76.185.153:8545"
         run: |
           # IMPORTANT: If you change the cache block number, remember to also change it in `main_prover_l1.yaml`
-          cp fixtures/cache/rpc_prover/cache_hoodi_1191625.bin cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_hoodi_1191706.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make execute BLOCK_NUMBER=1191625 NETWORK=hoodi
+          make execute BLOCK_NUMBER=1191706 NETWORK=hoodi
