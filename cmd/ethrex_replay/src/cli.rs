@@ -515,7 +515,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
-    let replayer_mode = replayer_mode(&opts)?;
+    let replayer_mode = replayer_mode(opts.execute, opts.no_backend)?;
 
     let start = SystemTime::now();
 
@@ -570,15 +570,15 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     }
 }
 
-pub fn replayer_mode(opts: &EthrexReplayOptions) -> eyre::Result<ReplayerMode> {
-    if opts.no_backend {
+pub fn replayer_mode(execute: bool, no_backend: bool) -> eyre::Result<ReplayerMode> {
+    if no_backend {
         #[cfg(any(feature = "sp1", feature = "risc0"))]
         return Err(eyre::Error::msg(
             "no-backend mode is not supported with SP1 or RISC0 features enabled",
         ));
         return Ok(ReplayerMode::ExecuteNoBackend);
     }
-    if opts.execute {
+    if execute {
         #[cfg(feature = "sp1")]
         return Ok(ReplayerMode::ExecuteSP1);
         #[cfg(all(feature = "risc0", not(feature = "sp1")))]
