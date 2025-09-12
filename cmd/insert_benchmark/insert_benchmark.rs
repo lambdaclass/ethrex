@@ -81,7 +81,8 @@ async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
 }
 
 async fn insert_accounts_into_db_v2() -> Result<(), SyncError> {
-    let db_options = rocksdb::Options::default();
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, "/home/admin/.local/share/snapshot").unwrap();
     let mut computed_state_root = *EMPTY_TRIE_HASH;
     let file_paths: Vec<PathBuf> = std::fs::read_dir("/home/admin/.local/share/ethrex/account_sst")
