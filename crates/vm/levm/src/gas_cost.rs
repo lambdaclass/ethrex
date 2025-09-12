@@ -151,7 +151,7 @@ pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
 pub const COLD_ADDRESS_ACCESS_COST: u64 = 2600;
 pub const NON_ZERO_VALUE_COST: u64 = 9000;
-pub const BASIC_FALLBACK_FUNCTION_STIPEND: u64 = 2300;
+
 pub const VALUE_TO_EMPTY_ACCOUNT_COST: u64 = 25000;
 
 // Costs in gas for create opcodes
@@ -179,6 +179,7 @@ pub const BLS12_381_MAP_FP_TO_G1_COST: u64 = 5500;
 pub const BLS12_PAIRING_CHECK_MUL_COST: u64 = 32600;
 pub const BLS12_PAIRING_CHECK_FIXED_COST: u64 = 37700;
 pub const BLS12_381_MAP_FP2_TO_G2_COST: u64 = 23800;
+pub const P256_VERIFY_COST: u64 = 6900;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
