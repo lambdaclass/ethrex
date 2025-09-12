@@ -1011,7 +1011,7 @@
           "refId": "A"
         }
       ],
-      "title": "Uptime (seconds)",
+      "title": "Uptime",
       "type": "stat"
     },
     {
