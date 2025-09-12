@@ -6,7 +6,7 @@ use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Node, verify_range};
+use ethrex_trie::verify_range;
 use keccak_hash::H256;
 use spawned_concurrency::{
     messages::Unused,
@@ -72,6 +72,7 @@ impl Downloader {
     }
 }
 
+type AccountRangeTaskSender = Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>;
 #[derive(Clone)]
 pub enum DownloaderCastRequest {
     Headers {
@@ -80,7 +81,7 @@ pub enum DownloaderCastRequest {
         chunk_limit: u64,
     },
     AccountRange {
-        task_sender: Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
+        task_sender: AccountRangeTaskSender,
         root_hash: H256,
         starting_hash: H256,
         limit_hash: H256,
@@ -647,7 +648,7 @@ impl GenServer for Downloader {
 
                 self.send_through_response_channel(response_channel, None)
                     .await;
-                return CastResponse::Stop;
+                CastResponse::Stop
             }
             DownloaderCastRequest::Receipts {
                 response_channel,
@@ -757,7 +758,7 @@ impl GenServer for Downloader {
 
                 self.send_through_response_channel(response_channel, None)
                     .await;
-                return CastResponse::Stop;
+                CastResponse::Stop
             }
             DownloaderCastRequest::TrieNodes {
                 response_channel,
@@ -765,7 +766,6 @@ impl GenServer for Downloader {
                 paths,
             } => {
                 let request_id = rand::random();
-                let expected_nodes = paths.len();
                 let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
                     id: request_id,
                     root_hash,

@@ -464,7 +464,7 @@ impl PeerHandler {
                         "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                     );
                     self.peer_scores.lock().await.record_failure(peer_id);
-                    return None;
+                    None
                 }
             },
             _ => {
@@ -1364,9 +1364,13 @@ impl PeerHandler {
         {
             Ok(()) => match response_reader.recv().await {
                 Some(Some(nodes)) => {
-                    let nodes = nodes.into_iter().map(|bytes| {
-                        Node::decode_raw(&bytes[..]).map_err(|_| RequestStateTrieNodesError::InvalidData)
-                    }).collect::<Result<Vec<Node>, RequestStateTrieNodesError>>()?;
+                    let nodes = nodes
+                        .into_iter()
+                        .map(|bytes| {
+                            Node::decode_raw(&bytes[..])
+                                .map_err(|_| RequestStateTrieNodesError::InvalidData)
+                        })
+                        .collect::<Result<Vec<Node>, RequestStateTrieNodesError>>()?;
                     for (index, node) in nodes.iter().enumerate() {
                         if node.compute_hash().finalize() != paths[index].hash {
                             error!(
@@ -1412,9 +1416,7 @@ impl PeerHandler {
                 RequestStorageTrieNodes::SendMessageError(id, SendMessageError::PeerDisconnected)
             })?;
         match response_reader.recv().await {
-            Some(Some(nodes)) => {
-                Ok(TrieNodes { id, nodes })
-            }
+            Some(Some(nodes)) => Ok(TrieNodes { id, nodes }),
             _ => Err(RequestStorageTrieNodes::SendMessageError(
                 id,
                 SendMessageError::InvalidResponse,
