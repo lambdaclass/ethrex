@@ -17,13 +17,16 @@ use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
 use tracing::info;
 
-use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{bench::run_and_measure, cache::write_cache};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
+};
+use crate::{
+    cache::delete_cache,
+    fetcher::{get_blockdata, get_rangedata},
 };
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
@@ -514,6 +517,10 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
+    // Always write the cache after fetching from RPC.
+    // It will be deleted later if not needed.
+    write_cache(&cache, l2)?;
+
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
             eyre::Error::msg("no block found in the cache, this should never happen")
@@ -540,13 +547,16 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     // Apply cache level rules
     match opts.cache_level {
-        CacheLevel::On => write_cache(&cache, l2)?,
+        // Cache is already saved
+        CacheLevel::On => {}
+        // Only save the cache if the block run failed
         CacheLevel::Failed => {
-            if block_run_failed {
-                write_cache(&cache, l2)?;
+            if !block_run_failed {
+                delete_cache(&cache, l2)?;
             }
         }
-        CacheLevel::Off => {}
+        // Don't keep the cache
+        CacheLevel::Off => delete_cache(&cache, l2)?,
     }
 
     if opts.to_csv {

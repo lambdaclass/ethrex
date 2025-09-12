@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::io::Write;
 use std::{fs::File, io::BufWriter};
+use tracing::debug;
 
 use crate::cli::network_from_chain_id;
 
@@ -77,10 +78,33 @@ pub fn write_cache(cache: &Cache, l2: bool) -> eyre::Result<()> {
         l2,
     );
 
+    debug!("Writing cache to {file_name}");
+
     let mut file = BufWriter::new(File::create(file_name)?);
 
     let bytes = rkyv::to_bytes::<Error>(cache).wrap_err("Failed to serialize with rkyv")?;
 
     file.write_all(&bytes)
         .wrap_err("Failed to write binary data")
+}
+
+pub fn delete_cache(cache: &Cache, l2: bool) -> eyre::Result<()> {
+    if cache.blocks.is_empty() {
+        return Err(eyre::Error::msg("tried to delete cache with no blocks"));
+    }
+
+    let file_name = get_block_cache_file_name(
+        cache.witness.chain_config.chain_id,
+        cache.blocks[0].header.number,
+        if cache.blocks.len() == 1 {
+            None
+        } else {
+            cache.blocks.last().map(|b| b.header.number)
+        },
+        l2,
+    );
+
+    debug!("Deleting cache file {file_name}");
+
+    std::fs::remove_file(file_name).wrap_err("Failed to delete cache file")
 }
