@@ -51,7 +51,7 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
     let subscriber = Registry::default().with(fmt_layer);
     #[cfg(feature = "debug")]
     let subscriber = {
-        console_subscriber::ConsoleLayer::builder().init();
+        // console_subscriber::ConsoleLayer::builder().init();
         let console_layer = console_subscriber::spawn();
         subscriber.with(console_layer)
     };
