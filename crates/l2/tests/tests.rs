@@ -1752,7 +1752,7 @@ async fn test_call_to_contract_with_deposit(
 
     assert_eq!(
         deployed_contract_balance_after_call, deployed_contract_balance_before_call,
-        "{test}:Deployed contract increased unexpectedly after call"
+        "{test}: Deployed contract increased unexpectedly after call"
     );
 
     Ok(())
@@ -1915,7 +1915,7 @@ fn test_private_keys_path() -> PathBuf {
         Ok(path) => PathBuf::from(path),
         Err(_) => {
             println!(
-                "INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_RICH_KEYS_FILE_PATH}",
+                "INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_TEST_KEYS_FILE_PATH}",
             );
             PathBuf::from(DEFAULT_TEST_KEYS_FILE_PATH)
         }
