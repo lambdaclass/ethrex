@@ -82,7 +82,7 @@ async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
 
 async fn insert_accounts_into_db_v2() -> Result<(), SyncError> {
     let mut db_options = rocksdb::Options::default();
-    let store: Store = open_store("/home/admin/.local/share/benchmarks/");
+    let store: Store = open_store("/home/admin/.local/share/benchmarks_old/");
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, "/home/admin/.local/share/snapshot").unwrap();
     let mut computed_state_root = *EMPTY_TRIE_HASH;
@@ -149,7 +149,7 @@ async fn setup_files() -> Result<(), SyncError> {
 }
 
 async fn sub_main() {
-    let store: Store = open_store("/home/admin/.local/share/benchmarks/");
+    let store: Store = open_store("/home/admin/.local/share/benchmarks_new/");
     let _ = insert_accounts_into_db(store)
         .await
         .inspect_err(|err| error!("We had the error {err:?}"));
