@@ -6,13 +6,9 @@ use std::{
 };
 
 use ethrex_common::{H512, U256};
-use futures::{
-    SinkExt as _, StreamExt,
-    stream::{FuturesUnordered, SplitSink, futures_unordered},
-};
+use futures::{SinkExt as _, StreamExt, stream::SplitSink};
 use keccak_hash::H256;
 use rand::rngs::OsRng;
-use rayon::slice::ParallelSlice;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
