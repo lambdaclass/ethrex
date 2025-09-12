@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757688699866,
+  "lastUpdate": 1757699563453,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13885,6 +13885,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171217912022,
             "range": "± 1060219768",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d7cfdb6142ea9e675327e7fc29edd6fa49ac189d",
+          "message": "feat(l1,l2): add ethreum-metrics-exporter, node_exporter dashboard and new panels (#4433)\n\n**Motivation**\n\nWe were lacking some previously usefull panels in snapsync, specially\nthe ones related to ethereum-metrics-exporter, also we needed to\nvisualize better host metrics, this were added through node_exporter.\n\n**Description**\n\n_**Note: The new addition of node_exporter depends on having the\nnode_exporter service started pushing metrics on port 9122. After that,\nthe server is ready to use the new dashboard as well as some additional\npanels**_\n\nThis PR:\n- Fixes an issue with the ethereum-metrics-exporter config to be able to\nuse it in snapsync initiated runs\n- Add the node_exporter scrapper to prometheus on port 9122\n- Adds a new dashboard to the common ones, the `Node Exporter Full`\n- Add 3 new panels:\n  - Historic FDs\n  - Host RAM\n  - Host CPU Utilization\n- Add mean and max info to most of the legends to be able to easily tell\nkey graphs metrics\n\nScreenshots in comments\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-12T16:59:22Z",
+          "tree_id": "5478a35847ae639dee705c56e3b413e6a2e9ccaa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d7cfdb6142ea9e675327e7fc29edd6fa49ac189d"
+        },
+        "date": 1757699543514,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 171187747347,
+            "range": "± 506434534",
             "unit": "ns/iter"
           }
         ]
