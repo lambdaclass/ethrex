@@ -77,6 +77,7 @@ async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
 
         computed_state_root = current_state_root?;
     }
+    info!("computed_state_root {computed_state_root}");
     Ok(())
 }
 
@@ -95,7 +96,7 @@ async fn insert_accounts_into_db_v2() -> Result<(), SyncError> {
         .collect();
     db.ingest_external_file(file_paths);
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    let hash = speedup::trie_from_sorted_accounts(
+    let mut trie = speedup::trie_from_sorted_accounts(
         store,
         &mut iter
             .map(|k| k.unwrap())
@@ -105,6 +106,7 @@ async fn insert_accounts_into_db_v2() -> Result<(), SyncError> {
     )
     .await
     .unwrap();
+    info!("computed_state_root {}", trie.hash().unwrap());
     Ok(())
 }
 
