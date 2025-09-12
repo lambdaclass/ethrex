@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757637133653,
+  "lastUpdate": 1757684770240,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -28307,6 +28307,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015351179157151755,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "441268e318093df8cfc670b2841302ac8c6bd439",
+          "message": "feat(l2): bump risc0 to `3.0.3` and re enable main ci jobs",
+          "timestamp": "2025-09-11T19:50:18Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4425/commits/441268e318093df8cfc670b2841302ac8c6bd439"
+        },
+        "date": 1757684768806,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015431266694490818,
             "unit": "Mgas/s"
           }
         ]
