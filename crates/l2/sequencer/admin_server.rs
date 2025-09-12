@@ -15,6 +15,7 @@ use crate::sequencer::metrics::{
     CallMessage as MetricsCallMessage, MetricsGatherer, OutMessage as MetricsOutMessage,
 };
 use axum::extract::{Path, State};
+use axum::http::Uri;
 use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
 use axum::{Json, Router, http::StatusCode, routing::get};
@@ -91,7 +92,8 @@ pub async fn start_api(
         .route("/committer/stop", get(stop_committer))
         .route("/admin/health", get(admin_health))
         .route("/health", get(health))
-        .with_state(admin.clone());
+        .with_state(admin.clone())
+        .fallback(not_found);
     let http_listener = TcpListener::bind(http_addr)
         .await
         .map_err(|error| AdminError::Internal(error.to_string()))?;
@@ -249,4 +251,11 @@ where
 
 pub async fn admin_health(State(_admin): State<Admin>) -> axum::response::Response {
     (StatusCode::OK, "OK".to_string()).into_response()
+}
+
+async fn not_found(uri: Uri) -> (StatusCode, String) {
+    (
+        StatusCode::NOT_FOUND,
+        format!("Method {uri} does not exist"),
+    )
 }

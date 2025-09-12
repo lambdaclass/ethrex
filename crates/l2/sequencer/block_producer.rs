@@ -16,10 +16,17 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
+<<<<<<< HEAD
 use payload_builder::build_payload;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+=======
+pub use payload_builder::build_payload;
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+>>>>>>> l2/stop_sequencer
 };
 use tracing::{debug, error, info};
 
