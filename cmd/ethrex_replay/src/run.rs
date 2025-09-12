@@ -51,23 +51,16 @@ pub async fn run_tx(
         .ok_or(eyre::Error::msg("missing block data"))?;
 
     let mut remaining_gas = block.header.gas_limit;
-
-    let execution_witness = cache.witness;
-
-    let guest_program_state: GuestProgramState =
-        execution_witness.try_into().map_err(eyre::Error::msg)?;
-
-    let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
-
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
-
+    let guest_program_state =
+        GuestProgramState::try_from(cache.execution_witness).map_err(eyre::Error::msg)?;
+    let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
         let mut db = GeneralizedDatabase::new(store.clone());
         LEVM::prepare_block(block, &mut db, vm_type)?;
         LEVM::get_state_transitions(&mut db)?
     };
-
     wrapped_db.apply_account_updates(&changes)?;
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
@@ -83,13 +76,14 @@ pub async fn run_tx(
             return Ok((receipt, account_updates));
         }
     }
+
     Err(eyre::Error::msg("transaction not found inside block"))
 }
 
 fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
-        witness: db,
+        execution_witness,
         l2_fields,
     } = cache;
 
@@ -99,7 +93,7 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     Ok(ProgramInput {
         blocks,
-        db,
+        execution_witness,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         // The L2 specific fields (blob_commitment, blob_proof)
         // will be filled by Default::default() if the 'l2' feature of
@@ -117,7 +111,7 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
 fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
-        witness: db,
+        execution_witness,
         l2_fields,
     } = cache;
 
@@ -125,7 +119,7 @@ fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     Ok(ProgramInput {
         blocks,
-        db,
+        execution_witness,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         blob_commitment: l2_fields.blob_commitment,
         blob_proof: l2_fields.blob_proof,

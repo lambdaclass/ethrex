@@ -459,11 +459,11 @@ async fn re_run_stateless(
         return Err("Failed to create witness for a test that should not fail".into());
     }
     // At this point witness is guaranteed to be Ok
-    let witness = witness.unwrap();
+    let execution_witness = witness.unwrap();
 
     let program_input = ProgramInput {
         blocks,
-        db: witness,
+        execution_witness,
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()
     };

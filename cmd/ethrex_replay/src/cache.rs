@@ -21,17 +21,17 @@ pub struct L2Fields {
 #[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
 pub struct Cache {
     pub blocks: Vec<Block>,
-    pub witness: ExecutionWitness,
+    pub execution_witness: ExecutionWitness,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(flatten)]
     pub l2_fields: Option<L2Fields>,
 }
 
 impl Cache {
-    pub fn new(blocks: Vec<Block>, witness: ExecutionWitness) -> Self {
+    pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
         Self {
             blocks,
-            witness,
+            execution_witness,
             l2_fields: None,
         }
     }
