@@ -1,10 +1,13 @@
 use std::time::{Duration, SystemTime};
 
-use ethrex_common::types::ChainConfig;
+use ethrex_common::types::{Block, BlockBody, ChainConfig};
 use ethrex_rpc::{
     EthClient,
     debug::execution_witness::execution_witness_from_rpc_chain_config,
-    types::block_identifier::{BlockIdentifier, BlockTag},
+    types::{
+        block::BlockBodyWrapper,
+        block_identifier::{BlockIdentifier, BlockTag},
+    },
 };
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
@@ -52,6 +55,47 @@ pub async fn get_blockdata(
         ));
     }
 
+    debug!("Getting block data from RPC for block {requested_block_number}");
+
+    let block_retrieval_start_time = SystemTime::now();
+
+    let rpc_block = eth_client
+        .get_block_by_number(BlockIdentifier::Number(requested_block_number), true)
+        .await
+        .wrap_err("Failed to retrieve requested block")?;
+
+    let block_body = if let BlockBodyWrapper::Full(body) = rpc_block.body {
+        body
+    } else {
+        return Err(eyre::eyre!("Expected full block body from RPC"));
+    };
+
+    let mut uncles = Vec::new();
+    for hash in block_body.uncles.iter() {
+        let uncle = eth_client.get_block_by_hash(*hash).await?;
+        uncles.push(uncle.header);
+    }
+
+    let transactions = block_body.transactions.into_iter().map(|t| t.tx).collect();
+
+    let block = Block {
+        header: rpc_block.header,
+        body: BlockBody {
+            transactions,
+            ommers: uncles,
+            withdrawals: Some(block_body.withdrawals),
+        },
+    };
+
+    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    debug!(
+        "Got block {requested_block_number} in {}",
+        format_duration(block_retrieval_duration)
+    );
+
     debug!("Getting execution witness from RPC for block {requested_block_number}");
 
     let execution_witness_retrieval_start_time = SystemTime::now();
@@ -79,23 +123,6 @@ pub async fn get_blockdata(
     debug!(
         "Got execution witness for block {requested_block_number} in {}",
         format_duration(execution_witness_retrieval_duration)
-    );
-
-    debug!("Getting block data from RPC for block {requested_block_number}");
-
-    let block_retrieval_start_time = SystemTime::now();
-
-    let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(requested_block_number))
-        .await?;
-
-    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
-    });
-
-    debug!(
-        "Got block {requested_block_number} in {}",
-        format_duration(block_retrieval_duration)
     );
 
     debug!("Caching block {requested_block_number}");
