@@ -87,7 +87,6 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-
       # - name: Report Status
       #   if: always()
       #   uses: ravsamhq/notify-slack-action@v2
