@@ -82,6 +82,7 @@ async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
 
 async fn insert_accounts_into_db_v2() -> Result<(), SyncError> {
     let mut db_options = rocksdb::Options::default();
+    let store: Store = open_store("/home/admin/.local/share/benchmarks/");
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, "/home/admin/.local/share/snapshot").unwrap();
     let mut computed_state_root = *EMPTY_TRIE_HASH;
@@ -94,13 +95,16 @@ async fn insert_accounts_into_db_v2() -> Result<(), SyncError> {
         .collect();
     db.ingest_external_file(file_paths);
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for (key, value) in iter.map(|f| f.unwrap()) {
-        let hash = H256::from_slice(&key);
-        let account_state = AccountState::decode(&value).unwrap();
-
-        println!("Key {hash} Value {account_state:?}");
-        break;
-    }
+    let hash = speedup::trie_from_sorted_accounts(
+        store,
+        &mut iter
+            .map(|k| k.unwrap())
+            .map(|(k, v)| (H256::from_slice(&k), v.to_vec()))
+            .into_iter(),
+        None,
+    )
+    .await
+    .unwrap();
     Ok(())
 }
 
@@ -145,7 +149,6 @@ async fn setup_files() -> Result<(), SyncError> {
 }
 
 async fn sub_main() {
-    info!("Starting");
     let store: Store = open_store("/home/admin/.local/share/benchmarks/");
     let _ = insert_accounts_into_db(store)
         .await
@@ -156,6 +159,7 @@ async fn sub_main() {
 async fn main() {
     let opts = Options::default();
     init_tracing(&opts);
+    info!("Starting");
     insert_accounts_into_db_v2().await;
     info!("finishing");
 }

@@ -29,7 +29,7 @@ struct CenterSide {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum TrieGenerationError {
+pub enum TrieGenerationError {
     #[error("When creating a child node, the nibbles diff was empty. Child Node {0:x?}")]
     IndexNotFound(Nibbles),
     #[error("When popping from the trie stack it was empty. Current position: {0:x?}")]
@@ -43,15 +43,10 @@ enum TrieGenerationError {
 const SIZE_TO_WRITE_DB: u64 = 20_000;
 
 impl CenterSide {
-    fn from_value<R>(tuple: (&H256, &R)) -> CenterSide
-    where
-        R: RLPEncode,
-    {
+    fn from_value(tuple: (H256, Vec<u8>)) -> CenterSide {
         CenterSide {
             path: Nibbles::from_raw(&tuple.0.0, true),
-            element: CenterSideElement::Leaf {
-                value: tuple.1.encode_to_vec(),
-            },
+            element: CenterSideElement::Leaf { value: tuple.1 },
         }
     }
     fn from_stack_element(element: StackElement) -> CenterSide {
@@ -152,14 +147,13 @@ fn flush_nodes_to_write(
 }
 
 #[inline(never)]
-async fn trie_from_sorted_accounts<'a, T, R>(
+pub async fn trie_from_sorted_accounts<'a, T>(
     store: Store,
     accounts_iter: &mut T,
     account_hash: Option<H256>,
 ) -> Result<Trie, TrieGenerationError>
 where
-    T: Iterator<Item = (&'a H256, &'a R)>,
-    R: 'a + RLPEncode,
+    T: Iterator<Item = (H256, Vec<u8>)>,
 {
     let mut nodes_to_write: Vec<Node> = Vec::with_capacity(20_065);
     let mut trie_stack: Vec<StackElement> = Vec::new();
@@ -167,7 +161,7 @@ where
 
     let mut left_side = StackElement::default();
     let mut center_side: CenterSide = CenterSide::from_value(accounts_iter.next().unwrap());
-    let mut right_side_opt: Option<(&H256, &R)> = accounts_iter.next();
+    let mut right_side_opt: Option<(H256, Vec<u8>)> = accounts_iter.next();
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
@@ -321,9 +315,15 @@ async fn main() {
 
         let store = Store::new("test_fast", store_engine).unwrap();
         let now: Instant = Instant::now();
-        let res: Trie = trie_from_sorted_accounts(store, &mut accounts.iter(), None)
-            .await
-            .expect("Shouldn't have errors");
+        let res: Trie = trie_from_sorted_accounts(
+            store,
+            &mut accounts
+                .into_iter()
+                .map(|(hash, state)| (hash, state.encode_to_vec())),
+            None,
+        )
+        .await
+        .expect("Shouldn't have errors");
         let computed_state_root = res.hash_no_commit();
         println!("Time in new fashioned {:?}", now.elapsed());
         let result = computed_state_root == state_root;
@@ -418,9 +418,16 @@ mod test {
     pub async fn run_test_account_state(accounts: BTreeMap<H256, AccountState>) {
         let store =
             Store::new("memory", EngineType::InMemory).expect("Should open the inmemory db");
-        let tested_trie: Trie = trie_from_sorted_accounts(store, &mut accounts.iter(), None)
-            .await
-            .expect("Shouldn't have errors");
+        let tested_trie: Trie = trie_from_sorted_accounts(
+            store,
+            &mut accounts
+                .clone()
+                .into_iter()
+                .map(|(hash, state)| (hash, state.encode_to_vec())),
+            None,
+        )
+        .await
+        .expect("Shouldn't have errors");
 
         let mut trie: Trie = Trie::empty_in_memory();
         for account in accounts.iter() {
@@ -435,9 +442,16 @@ mod test {
         let account_hash = Some(H256::zero());
         let store =
             Store::new("memory", EngineType::InMemory).expect("Should open the inmemory db");
-        let tested_trie: Trie = trie_from_sorted_accounts(store, &mut slots.iter(), account_hash)
-            .await
-            .expect("Shouldn't have errors");
+        let tested_trie: Trie = trie_from_sorted_accounts(
+            store,
+            &mut slots
+                .clone()
+                .into_iter()
+                .map(|(hash, state)| (hash, state.encode_to_vec())),
+            account_hash,
+        )
+        .await
+        .expect("Shouldn't have errors");
 
         let mut trie: Trie = Trie::empty_in_memory();
         for account in slots.iter() {
