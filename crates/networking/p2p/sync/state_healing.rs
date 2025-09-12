@@ -127,7 +127,7 @@ async fn heal_state_trie(
 
             METRICS
                 .global_state_trie_leafs_healed
-                .fetch_add(*global_leafs_healed, Ordering::Relaxed);
+                .store(*global_leafs_healed, Ordering::Relaxed);
             METRICS
                 .healing_empty_try_recv
                 .store(empty_try_recv, Ordering::Relaxed);
