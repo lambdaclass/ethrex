@@ -159,6 +159,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .coinbase_address
                     .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
+                max_gas_limit: opts.block_producer_opts.max_gas_limit,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -386,6 +387,14 @@ pub struct BlockProducerOptions {
         help_heading = "Proposer options"
     )]
     pub elasticity_multiplier: u64,
+    #[arg(
+        long = "block-producer.max-gas-limit",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_PRODUCER_MAX_GAS_LIMIT",
+        help = "Maximum gas limit for the L2 blocks.",
+        help_heading = "Block producer options"
+    )]
+    pub max_gas_limit: Option<u64>,
 }
 
 impl Default for BlockProducerOptions {
@@ -398,6 +407,7 @@ impl Default for BlockProducerOptions {
                     .unwrap(),
             ),
             elasticity_multiplier: 2,
+            max_gas_limit: None,
         }
     }
 }

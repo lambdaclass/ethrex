@@ -52,6 +52,7 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    max_gas_limit: Option<u64>,
 }
 
 impl BlockProducer {
@@ -66,6 +67,7 @@ impl BlockProducer {
             block_time_ms,
             coinbase_address,
             elasticity_multiplier,
+            max_gas_limit,
         } = config;
         Self {
             store,
@@ -75,6 +77,7 @@ impl BlockProducer {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
+            max_gas_limit: *max_gas_limit,
         }
     }
 
@@ -136,6 +139,7 @@ impl BlockProducer {
             payload,
             &self.store,
             &self.rollup_store,
+            self.max_gas_limit,
         )
         .await?;
         info!(
