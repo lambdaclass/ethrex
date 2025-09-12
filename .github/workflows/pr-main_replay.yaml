@@ -1,0 +1,39 @@
+name: Replay
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  run-replay:
+    # "Test" is a required check, don't change the name
+    name: Test
+    # It is not working properly, skipping for now
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Build Replay
+        run: |
+          cd cmd/ethrex_replay
+          cargo b -r
+
+      - name: Execute Hoodi block with Replay
+        env:
+          # TODO(): use RPC
+          # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
+          RPC_URL: "http://45.76.185.153:8545"
+        run: |
+          # IMPORTANT: If you change the cache block number, remember to also change it in `main_prover_l1.yaml`
+          cp fixtures/cache/rpc_prover/cache_hoodi_1192723.bin cmd/ethrex_replay
+          cd cmd/ethrex_replay
+          make execute BLOCK_NUMBER=1192723 NETWORK=hoodi
