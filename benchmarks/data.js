@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757699563453,
+  "lastUpdate": 1757702948872,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13915,6 +13915,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171187747347,
             "range": "± 506434534",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b259772ef15bd189fd7a539751e241e75cb9417",
+          "message": "fix(l1): fixed global state slot metric  (#4449)\n\n**Motivation**\n\nThe global state account healed metrics was displaying a number way\nlarger than expected.\n\n**Description**\n\n- Fixed bug where the global metrics counter was being added to itself\nmultiple times.",
+          "timestamp": "2025-09-12T17:55:30Z",
+          "tree_id": "95b7aa124fe28be9570c0043f170dc8ed01f13bc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9b259772ef15bd189fd7a539751e241e75cb9417"
+        },
+        "date": 1757702928773,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170029425128,
+            "range": "± 1064876673",
             "unit": "ns/iter"
           }
         ]
