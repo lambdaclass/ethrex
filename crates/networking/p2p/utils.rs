@@ -164,4 +164,6 @@ pub enum SendMessageError {
     PeerBusy,
     #[error("RLP decode error")]
     RLPDecodeError(RLPDecodeError),
+    #[error("Peer returned an invalid response")]
+    InvalidResponse,
 }
