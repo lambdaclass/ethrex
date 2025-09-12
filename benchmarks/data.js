@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757627106841,
+  "lastUpdate": 1757637133653,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -28282,6 +28282,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004880965676567657,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "6b5af6cc50837e9e811483e6195918c3c41caebf",
+          "message": "feat: add job on every pr for zkvm executing",
+          "timestamp": "2025-09-11T19:50:18Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4441/commits/6b5af6cc50837e9e811483e6195918c3c41caebf"
+        },
+        "date": 1757637132743,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015351179157151755,
             "unit": "Mgas/s"
           }
         ]
