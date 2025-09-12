@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757702948872,
+  "lastUpdate": 1757706683105,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13945,6 +13945,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170029425128,
             "range": "± 1064876673",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "504dd26fcd5768efec955dce58125f3c1aaae4f6",
+          "message": "feat(l1): block size limit (#4217)\n\n**Description**\n\nThis PR implements [EIP-7934](https://eips.ethereum.org/EIPS/eip-7934),\nwhich will be incorporated in Fusaka. Said EIP introduces a limit on the\nsize of the RLP encode of blocks. This PR adds the required check in\nblock validation.\n\nPartially resolves #4158, the block building side of the EIP will be a\nseparate PR.",
+          "timestamp": "2025-09-12T18:58:39Z",
+          "tree_id": "2454a1657bc1b9b6fdacb38beb2778368e20c823",
+          "url": "https://github.com/lambdaclass/ethrex/commit/504dd26fcd5768efec955dce58125f3c1aaae4f6"
+        },
+        "date": 1757706662783,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167832652676,
+            "range": "± 373911747",
             "unit": "ns/iter"
           }
         ]
