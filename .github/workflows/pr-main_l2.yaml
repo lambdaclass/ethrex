@@ -79,19 +79,19 @@ jobs:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
 
-    build-ethrex:
-      name: Build ethrex binary
-      runs-on: ubuntu-latest
-      steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
+  build-ethrex:
+    name: Build ethrex binary
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
 
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+    - name: Setup Rust Environment
+      uses: ./.github/actions/setup-rust
 
-      - name: Build ethrex
-        run: |
-          cargo build --release --bin ethrex
+    - name: Build ethrex
+      run: |
+        cargo build --release --bin ethrex
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
