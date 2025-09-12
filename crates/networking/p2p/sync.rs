@@ -815,6 +815,10 @@ impl Syncer {
             // The function request_account_range writes the leafs into files in
             // account_state_snapshots_dir
 
+            // Create a file to save bytecode hashes that we need to fetch later
+            let bytecodes_to_fetch_path = PathBuf::from(format!("./bytecodes_to_fetch.txt"));
+            let bytecodes_to_fetch_file = std::fs::File::create(bytecodes_to_fetch_path).unwrap();
+
             info!("Starting to download account ranges from peers");
             self.peers
                 .request_account_range(
@@ -871,6 +875,23 @@ impl Syncer {
                                 .account_tries_inserted
                                 .fetch_add(1, Ordering::Relaxed);
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+
+                            // check if the account has a valid bytecode hash
+                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                                // save hash to dish to be fetched later
+
+                                // Another way to write a formatted string to the file.
+                                // This also requires the `write!` macro from `std::io::Write`.
+                                writeln!(
+                                    file,
+                                    "This is another line, formatted with a number: {}",
+                                    42
+                                )?;
+
+                                // The file is automatically flushed and closed when `file` goes out of scope,
+                                // but you can explicitly flush if needed.
+                                file.flush()?;
+                            }
                         }
                         *METRICS.current_step.blocking_lock() =
                             "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
@@ -1064,31 +1085,9 @@ impl Syncer {
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
-        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
-        let mut bytecode_iter = store
-            .iter_accounts(pivot_header.state_root)
-            .expect("we couldn't iterate over accounts")
-            .map(|(_, state)| state.code_hash)
-            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
-        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
-            // Download bytecodes
-            bytecode_hashes.sort();
-            bytecode_hashes.dedup();
-            info!(
-                "Starting bytecode download of {} hashes",
-                bytecode_hashes.len()
-            );
-            let bytecodes = self
-                .peers
-                .request_bytecodes(&bytecode_hashes)
-                .await
-                .map_err(SyncError::PeerHandler)?
-                .ok_or(SyncError::BytecodesNotFound)?;
-            store
-                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
-                .await?;
-        }
-        *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
+        // download bytecodes
+        self.download_bytecodes(store.clone(), &pivot_header)
+            .await?;
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
@@ -1119,6 +1118,40 @@ impl Syncer {
                 None,
             )
             .await?;
+        Ok(())
+    }
+
+    async fn download_bytecodes(
+        &self,
+        store: Store,
+        pivot_header: &BlockHeader,
+    ) -> Result<(), SyncError> {
+        // TODO: open the file with the bytecode hashes to fetch and download them
+        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+        let mut bytecode_iter = store
+            .iter_accounts(pivot_header.state_root)
+            .expect("we couldn't iterate over accounts")
+            .map(|(_, state)| state.code_hash)
+            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
+        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
+            // Download bytecodes
+            bytecode_hashes.sort();
+            bytecode_hashes.dedup();
+            info!(
+                "Starting bytecode download of {} hashes",
+                bytecode_hashes.len()
+            );
+            let bytecodes = self
+                .peers
+                .request_bytecodes(&bytecode_hashes)
+                .await
+                .map_err(SyncError::PeerHandler)?
+                .ok_or(SyncError::BytecodesNotFound)?;
+            store
+                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+                .await?;
+        }
+        *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
         Ok(())
     }
 }
