@@ -333,7 +333,9 @@ impl RpcHandler for GetPayloadV4Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config()?;
 
-        if !chain_config.is_prague_activated(payload_bundle.block.header.timestamp) {
+        if !chain_config.is_prague_activated(payload_bundle.block.header.timestamp)
+            || chain_config.is_osaka_activated(payload_bundle.block.header.timestamp)
+        {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
