@@ -104,13 +104,17 @@ async fn setup_files() -> Result<(), SyncError> {
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
         account_states_snapshot.sort_by(|(hash_a, _), (hash_b, _)| hash_a.cmp(hash_b));
-        writer.open(std::path::Path::new(&format!(
-            "/home/admin/.local/share/ethrex/account_sst/account_{count}.sst"
-        )));
+        writer
+            .open(std::path::Path::new(&format!(
+                "/home/admin/.local/share/ethrex/account_sst/account_{count}.sst"
+            )))
+            .expect("Failed to open file");
         for account in account_states_snapshot {
-            writer.put(account.0, account.1.encode_to_vec());
+            writer
+                .put(account.0, account.1.encode_to_vec())
+                .expect("Failed to put file");
         }
-        writer.finish();
+        writer.finish().expect("Failed to finish file");
         count += 1;
     }
     Ok(())
