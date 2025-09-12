@@ -1,5 +1,6 @@
 use crate::sequencer::l1_committer::{CallMessage, L1Committer, OutMessage};
 use axum::extract::{Path, State};
+use axum::http::Uri;
 use axum::response::IntoResponse;
 use axum::serve::WithGracefulShutdown;
 use axum::{Json, Router, http::StatusCode, routing::get};
@@ -53,7 +54,8 @@ pub async fn start_api(
         .route("/committer/start", get(start_committer_default))
         .route("/committer/start/{delay}", get(start_committer))
         .route("/committer/stop", get(stop_committer))
-        .with_state(admin.clone());
+        .with_state(admin.clone())
+        .fallback(not_found);
     let http_listener = TcpListener::bind(http_addr)
         .await
         .map_err(|error| AdminError::Internal(error.to_string()))?;
@@ -96,4 +98,11 @@ async fn stop_committer(State(mut admin): State<Admin>) -> Result<Json<Value>, A
         },
         Err(err) => Err(AdminErrorResponse::GenServerError(err)),
     }
+}
+
+async fn not_found(uri: Uri) -> (StatusCode, String) {
+    (
+        StatusCode::NOT_FOUND,
+        format!("Method {uri} does not exist"),
+    )
 }
