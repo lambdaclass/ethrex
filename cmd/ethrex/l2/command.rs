@@ -320,7 +320,10 @@ impl Command {
                     if !logs.is_empty() {
                         // Get parent beacon block root hash from block
                         let block = eth_client
-                            .get_block_by_number(BlockIdentifier::Number(current_block.as_u64()))
+                            .get_block_by_number(
+                                BlockIdentifier::Number(current_block.as_u64()),
+                                false,
+                            )
                             .await?;
                         let parent_beacon_hash = block
                             .header

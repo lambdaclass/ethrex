@@ -1637,7 +1637,10 @@ async fn get_fees_details_l2(tx_receipt: RpcReceipt, l2_client: &EthClient) -> F
 
     let effective_gas_price = tx_receipt.tx_info.effective_gas_price;
     let base_fee_per_gas = l2_client
-        .get_block_by_number(BlockIdentifier::Number(tx_receipt.block_info.block_number))
+        .get_block_by_number(
+            BlockIdentifier::Number(tx_receipt.block_info.block_number),
+            false,
+        )
         .await
         .unwrap()
         .header
