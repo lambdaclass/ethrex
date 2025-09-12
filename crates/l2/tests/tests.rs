@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use ethrex_common::types::TxType;
 use ethrex_common::{Address, H160, H256, U256};
@@ -274,7 +274,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256
         ],
         "test_upgrade",
     )
-    .await;
+    .await?;
 
     assert!(
         tx_receipt.receipt.status,
@@ -519,7 +519,7 @@ async fn test_erc20_roundtrip(
         &[],
         "test_erc20_roundtrip",
     )
-    .await;
+    .await?;
     test_send(
         &l1_client,
         &rich_wallet_private_key,
@@ -528,7 +528,7 @@ async fn test_erc20_roundtrip(
         &[Value::Address(bridge_address()?), Value::Uint(token_amount)],
         "test_erc20_roundtrip",
     )
-    .await;
+    .await?;
 
     println!("test_erc20_roundtrip: Depositing ERC20 token from L1 to L2");
     let initial_balance = test_balance_of(&l1_client, token_l1, rich_address).await;
@@ -572,7 +572,7 @@ async fn test_erc20_roundtrip(
         ],
         "test_erc20_roundtrip",
     )
-    .await;
+    .await?;
 
     let approve_fees = get_fees_details_l2(&approve_receipt, &l2_client).await;
 
@@ -589,7 +589,7 @@ async fn test_erc20_roundtrip(
         ],
         "test_erc20_roundtrip",
     )
-    .await;
+    .await?;
 
     let withdraw_fees = get_fees_details_l2(&withdraw_receipt, &l2_client).await;
 
@@ -695,7 +695,7 @@ async fn test_aliasing(
         ],
         "test_aliasing",
     )
-    .await;
+    .await?;
 
     assert!(receipt_l1.receipt.status);
 
@@ -743,7 +743,7 @@ async fn test_erc20_failed_deposit(
         &[],
         "test_erc20_failed_deposit",
     )
-    .await;
+    .await?;
     test_send(
         &l1_client,
         &rich_wallet_private_key,
@@ -752,7 +752,7 @@ async fn test_erc20_failed_deposit(
         &[Value::Address(bridge_address()?), Value::Uint(token_amount)],
         "test_erc20_failed_deposit",
     )
-    .await;
+    .await?;
 
     println!("test_erc20_failed_deposit: Depositing ERC20 token from L1 to L2");
 
@@ -946,7 +946,7 @@ async fn test_send(
     signature: &str,
     data: &[Value],
     test: &str,
-) -> RpcReceipt {
+) -> Result<RpcReceipt> {
     let signer: Signer = LocalSigner::new(*private_key).into();
     let mut tx = build_generic_tx(
         client,
@@ -957,12 +957,12 @@ async fn test_send(
         Default::default(),
     )
     .await
-    .expect("Failed to build tx for {test}");
+    .with_context(|| format!("Failed to build tx for {test}"))?;
     tx.gas = tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
-        .expect("Failed to get receipt for {test}")
+        .with_context(|| format!("Failed to get receipt for {test}"))
 }
 
 /// Test depositing ETH from L1 to L2
@@ -1088,7 +1088,7 @@ async fn test_privileged_spammer(
             &[Value::Address(bridge_address()?), Value::Uint(5.into())],
             "test_privileged_spammer",
         )
-        .await;
+        .await?;
     }
     Ok(U256::zero())
 }
