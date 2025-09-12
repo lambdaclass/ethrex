@@ -68,6 +68,9 @@ where
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerBlobGas
                     }
+                    "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM" => {
+                        TransactionExpectedException::TxMaxGasLimitExceeded
+                    }
                     _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }
             })

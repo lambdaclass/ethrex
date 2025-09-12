@@ -86,6 +86,11 @@ where
                         "Insufficient max fee per blob gas".to_string(),
                     )
                 }
+                "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM" => {
+                    BlockChainExpectedException::TxtException(
+                        "Transaction gas max limit exceeded for Osaka".to_string(),
+                    )
+                }
                 "BlockException.RLP_STRUCTURES_ENCODING" => {
                     BlockChainExpectedException::RLPException
                 }

@@ -137,6 +137,8 @@ pub enum TxValidationError {
     Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
+    #[error("Transaction gas max limit exceeded for Osaka")]
+    TxMaxGasLimitExceeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
