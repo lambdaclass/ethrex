@@ -513,16 +513,7 @@ impl DiscoveryServer {
     }
 
     async fn send(&self, message: Message, addr: SocketAddr) -> Result<(), DiscoveryServerError> {
-        if let Some(s) = &self.sink {
-            s.lock()
-                .await
-                .send((message, addr))
-                .await
-                .map_err(DiscoveryServerError::MessageSendFailure)
-        } else {
-            error!("Trying to send a message through a non-initialized UdpSocket");
-            Ok(())
-        }
+        self.send_all(std::iter::once(message), addr).await
     }
 
     async fn send_all(
@@ -533,7 +524,9 @@ impl DiscoveryServer {
         if let Some(s) = &self.sink {
             let mut s = s.lock().await;
             for msg in messages {
-                s.feed((msg, addr)).await;
+                s.feed((msg, addr))
+                    .await
+                    .map_err(DiscoveryServerError::MessageSendFailure)?
             }
             s.flush()
                 .await
