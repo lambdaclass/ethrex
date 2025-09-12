@@ -5,9 +5,7 @@ use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::orm::{Database, Encodable, Table};
 
-/// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
-/// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
-/// A will be a fixed-size encoded key set by the user (of generic type SK), B will be a fixed-size encoded NodeHash and C will be an encoded Node
+/// Libmdbx implementation for the TrieDB trait for a table with keys classified by a shared prefix.
 pub struct LibmdbxPrefixedTrieDB<T, SK>
 where
     T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
