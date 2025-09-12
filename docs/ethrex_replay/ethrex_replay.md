@@ -37,6 +37,8 @@ Currently ethrex replay only works against ethrex nodes with the `debug_executio
 
 ### Dependencies
 
+Make sure to read each zkVM's install docs first to ensure you have all needed prerequisites (for example, correct versions of CUDA related packages).
+
 #### [RISC0](https://dev.risczero.com/api/zkvm/install)
 
 ```sh
@@ -51,6 +53,19 @@ rzup install rust
 curl -L https://sp1up.succinct.xyz | bash
 sp1up --version 5.0.8
 ```
+
+#### [OpenVM](https://docs.openvm.dev/book/getting-started/install/#install)
+
+```sh
+rustup install nightly-2025-02-14
+rustup component add rust-src --toolchain nightly-2025-02-14
+cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.0 --features cuda cargo-openvm
+cargo openvm setup --evm
+```
+if the `cargo openvm setup --evm` step fails, install the trusted setup parameters via the alternative way described [here](https://docs.openvm.dev/book/advanced-usage/sdk#setup).
+
+> [!NOTE]
+> The OpenVM backend only supports L1 proving as of now.
 
 ### Installation
 

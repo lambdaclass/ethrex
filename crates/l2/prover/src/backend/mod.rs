@@ -15,6 +15,9 @@ pub mod sp1;
 #[cfg(feature = "openvm")]
 pub mod openvm;
 
+#[cfg(all(feature = "l2", feature = "openvm"))]
+compile_error!("The OpenVM backend only supports L1 proving as of now");
+
 #[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]
 pub enum Backend {
     #[default]
