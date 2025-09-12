@@ -120,5 +120,7 @@ tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
 
+rocksdb = "0.24.0"
+
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }

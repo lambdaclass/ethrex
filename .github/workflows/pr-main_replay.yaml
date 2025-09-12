@@ -14,7 +14,6 @@ jobs:
     # "Test" is a required check, don't change the name
     name: Test
     # It is not working properly, skipping for now
-    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -34,6 +33,7 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "http://45.76.185.153:8545"
         run: |
-          cp fixtures/cache/rpc_prover/cache_hoodi_1145479.bin cmd/ethrex_replay
+          # IMPORTANT: If you change the cache block number, remember to also change it in `main_prover_l1.yaml`
+          cp fixtures/cache/rpc_prover/cache_hoodi_1192723.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make execute BLOCK_NUMBER=1145479 NETWORK=hoodi
+          make execute BLOCK_NUMBER=1192723 NETWORK=hoodi
