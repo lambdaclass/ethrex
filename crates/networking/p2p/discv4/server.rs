@@ -453,9 +453,8 @@ impl DiscoveryServer {
             return;
         }
 
-        let neighbors = get_closest_nodes(node_id, table.clone());
-
-        drop(table);
+        let table = table.clone();
+        let neighbors = get_closest_nodes(node_id, table);
 
         let _ = self
             .send_neighbors(neighbors, &node)
