@@ -1159,7 +1159,7 @@ impl Syncer {
 
         // download bytecodes
         self.download_bytecodes(store.clone()).await?;
-        let _ = std::fs::remove_dir_all(get_bytecode_hashes_snapshots_dir(&self.datadir));
+        // let _ = std::fs::remove_dir_all(get_bytecode_hashes_snapshots_dir(&self.datadir));
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
@@ -1484,12 +1484,4 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     .all(|valid| valid);
     info!("Finished validate_storage_root");
     is_valid
-}
-
-fn bytecode_iter_fn<T>(bytecode_iter: &mut T) -> Option<Vec<H256>>
-where
-    T: Iterator<Item = H256>,
-{
-    Some(bytecode_iter.by_ref().take(BYTECODE_CHUNK_SIZE).collect())
-        .filter(|chunk: &Vec<_>| !chunk.is_empty())
 }
