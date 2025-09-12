@@ -80,6 +80,29 @@ async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
     Ok(())
 }
 
+async fn insert_accounts_into_db_v2() -> Result<(), SyncError> {
+    let db_options = rocksdb::Options::default();
+    let db = rocksdb::DB::open(&db_options, "/home/admin/.local/share/benchmarks/").unwrap();
+    let mut computed_state_root = *EMPTY_TRIE_HASH;
+    let file_paths: Vec<PathBuf> = std::fs::read_dir("/home/admin/.local/share/ethrex/account_sst")
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+        .into_iter()
+        .map(|res| res.path())
+        .collect();
+    db.ingest_external_file(file_paths);
+    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    for (key, value) in iter.map(|f| f.unwrap()) {
+        let hash = H256::from_slice(&key);
+        let account_state = AccountState::decode(&value).unwrap();
+
+        println!("Key {hash} Value {account_state:?}");
+        break;
+    }
+    Ok(())
+}
+
 async fn setup_files() -> Result<(), SyncError> {
     let writer_options = rocksdb::Options::default();
     let mut writer = SstFileWriter::create(&writer_options);
@@ -121,8 +144,6 @@ async fn setup_files() -> Result<(), SyncError> {
 }
 
 async fn sub_main() {
-    let mut opts = Options::default();
-    init_tracing(&opts);
     info!("Starting");
     let store: Store = open_store("/home/admin/.local/share/benchmarks/");
     let _ = insert_accounts_into_db(store)
@@ -132,6 +153,8 @@ async fn sub_main() {
 
 #[tokio::main]
 async fn main() {
-    setup_files().await;
+    let opts = Options::default();
+    init_tracing(&opts);
+    insert_accounts_into_db_v2().await;
     info!("finishing");
 }
