@@ -6,9 +6,13 @@ use std::{
 };
 
 use ethrex_common::{H512, U256};
-use futures::{SinkExt as _, StreamExt, stream::SplitSink};
+use futures::{
+    SinkExt as _, StreamExt,
+    stream::{FuturesUnordered, SplitSink, futures_unordered},
+};
 use keccak_hash::H256;
 use rand::rngs::OsRng;
+use rayon::slice::ParallelSlice;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
@@ -371,9 +375,14 @@ impl DiscoveryServer {
         // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
 
-        let msg = Message::Neighbors(NeighborsMessage::new(neighbors, expiration));
+        // Max size per packet is 1280 bytes per https://github.com/ethereum/devp2p/blob/master/discv4.md#wire-protocol
+        // Max encoded size per ENR is 300 bytes per https://github.com/ethereum/devp2p/blob/master/enr.md#rlp-encoding
+        // Thus, worst case we may fit at most 4 nodes per packet. Just assume worst case and send 4.
+        let msgs = neighbors
+            .chunks(4)
+            .map(|chunk| Message::Neighbors(NeighborsMessage::new(chunk.to_vec(), expiration)));
 
-        self.send(msg, node.udp_addr()).await?;
+        self.send_all(msgs, node.udp_addr()).await?;
 
         debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
@@ -508,6 +517,25 @@ impl DiscoveryServer {
             s.lock()
                 .await
                 .send((message, addr))
+                .await
+                .map_err(DiscoveryServerError::MessageSendFailure)
+        } else {
+            error!("Trying to send a message through a non-initialized UdpSocket");
+            Ok(())
+        }
+    }
+
+    async fn send_all(
+        &self,
+        messages: impl Iterator<Item = Message>,
+        addr: SocketAddr,
+    ) -> Result<(), DiscoveryServerError> {
+        if let Some(s) = &self.sink {
+            let mut s = s.lock().await;
+            for msg in messages {
+                s.feed((msg, addr)).await;
+            }
+            s.flush()
                 .await
                 .map_err(DiscoveryServerError::MessageSendFailure)
         } else {
