@@ -3,14 +3,14 @@ use std::{marker::PhantomData, sync::Arc};
 use super::utils::node_hash_to_fixed_size;
 use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
-use libmdbx::orm::{Database, DupSort, Encodable};
+use libmdbx::orm::{Database, Encodable, Table};
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
 /// A will be a fixed-size encoded key set by the user (of generic type SK), B will be a fixed-size encoded NodeHash and C will be an encoded Node
 pub struct LibmdbxPrefixedTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     db: Arc<Database>,
@@ -20,7 +20,7 @@ where
 
 impl<T, SK> LibmdbxPrefixedTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     pub fn new(db: Arc<Database>, fixed_key: T::SeekKey) -> Self {
@@ -34,7 +34,7 @@ where
 
 impl<T, SK> TrieDB for LibmdbxPrefixedTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
@@ -61,9 +61,9 @@ mod test {
     use crate::trie_db::test_utils::libmdbx::new_db;
 
     use super::*;
-    use libmdbx::{dupsort, table};
+    use libmdbx::table;
 
-    dupsort!(
+    table!(
         /// (Key + NodeHash) to Node table
         ( Nodes )  ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
     );

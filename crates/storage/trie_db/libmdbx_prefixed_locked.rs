@@ -4,14 +4,14 @@ use super::utils::node_hash_to_fixed_size;
 use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::RO;
-use libmdbx::orm::{Database, DupSort, Encodable, Transaction};
+use libmdbx::orm::{Database, Encodable, Table, Transaction};
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
 /// A will be a fixed-size encoded key set by the user (of generic type SK), B will be a fixed-size encoded NodeHash and C will be an encoded Node
 pub struct LibmdbxLockedPrefixedTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     db: &'static Arc<Database>,
@@ -22,7 +22,7 @@ where
 
 impl<T, SK> LibmdbxLockedPrefixedTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     pub fn new(db: Arc<Database>, fixed_key: T::SeekKey) -> Result<Self, TrieError> {
@@ -39,7 +39,7 @@ where
 
 impl<T, SK> Drop for LibmdbxLockedPrefixedTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     fn drop(&mut self) {
@@ -54,7 +54,7 @@ where
 
 impl<T, SK> TrieDB for LibmdbxLockedPrefixedTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
