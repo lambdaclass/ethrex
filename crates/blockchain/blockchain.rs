@@ -11,7 +11,7 @@ use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, OSAKA_MAX_GAS_LIMIT};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
@@ -989,6 +989,17 @@ pub fn validate_block(
     validate_block_header(&block.header, parent_header, elasticity_multiplier)
         .map_err(InvalidBlockError::from)?;
 
+    if chain_config.is_osaka_activated(block.header.timestamp) {
+        let block_rlp_size = block.encode_to_vec().len();
+        if block_rlp_size > MAX_RLP_BLOCK_SIZE as usize {
+            return Err(error::ChainError::InvalidBlock(
+                InvalidBlockError::MaximumRlpSizeExceeded(
+                    MAX_RLP_BLOCK_SIZE,
+                    block_rlp_size as u64,
+                ),
+            ));
+        }
+    }
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
