@@ -1,13 +1,10 @@
 use std::time::{Duration, SystemTime};
 
-use ethrex_common::types::{Block, BlockBody, ChainConfig};
+use ethrex_common::types::ChainConfig;
 use ethrex_rpc::{
     EthClient,
     debug::execution_witness::execution_witness_from_rpc_chain_config,
-    types::{
-        block::BlockBodyWrapper,
-        block_identifier::{BlockIdentifier, BlockTag},
-    },
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
@@ -64,28 +61,10 @@ pub async fn get_blockdata(
         .await
         .wrap_err("Failed to retrieve requested block")?;
 
-    let block_body = if let BlockBodyWrapper::Full(body) = rpc_block.body {
-        body
-    } else {
-        return Err(eyre::eyre!("Expected full block body from RPC"));
-    };
-
-    let mut uncles = Vec::new();
-    for hash in block_body.uncles.iter() {
-        let uncle = eth_client.get_block_by_hash(*hash).await?;
-        uncles.push(uncle.header);
-    }
-
-    let transactions = block_body.transactions.into_iter().map(|t| t.tx).collect();
-
-    let block = Block {
-        header: rpc_block.header,
-        body: BlockBody {
-            transactions,
-            ommers: uncles,
-            withdrawals: Some(block_body.withdrawals),
-        },
-    };
+    let block = rpc_block
+        .try_into()
+        .map_err(|e| eyre::eyre!("{}", e))
+        .wrap_err("Failed to convert from rpc block to block")?;
 
     let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
         panic!("SystemTime::elapsed failed: {e}");
