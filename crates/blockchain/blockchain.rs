@@ -998,7 +998,8 @@ pub fn validate_block(
                 ),
             ));
         }
-    } else if chain_config.is_prague_activated(block.header.timestamp) {
+    }
+    if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
