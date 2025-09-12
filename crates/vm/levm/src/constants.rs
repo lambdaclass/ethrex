@@ -1,4 +1,9 @@
 use ethrex_common::{H256, U256};
+use k256::elliptic_curve::{Curve as K256Curve, bigint::Encoding};
+use p256::{
+    FieldElement as P256FieldElement, NistP256,
+    elliptic_curve::{bigint::U256 as P256Uint, ff::PrimeField},
+};
 use std::sync::LazyLock;
 
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
@@ -65,7 +70,7 @@ pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
 pub static SECP256K1_ORDER: LazyLock<U256> =
-    LazyLock::new(|| U256::from_big_endian(&secp256k1::constants::CURVE_ORDER));
+    LazyLock::new(|| U256::from_big_endian(&k256::Secp256k1::ORDER.to_be_bytes()));
 pub static SECP256K1_ORDER_OVER2: LazyLock<U256> =
     LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;
@@ -75,3 +80,14 @@ pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 pub const PER_AUTH_BASE_COST: u64 = 12500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
+
+// Secp256r1 curve parameters
+// See https://eips.ethereum.org/EIPS/eip-7951
+pub const P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
+pub const P256_N: P256Uint = NistP256::ORDER;
+pub const P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
+pub const P256_B_UINT: P256Uint =
+    P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
+lazy_static::lazy_static! {
+    pub static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
+}

@@ -17,7 +17,7 @@ ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage-rollup.workspace = true
 ethrex-l2.workspace = true
-ethrex-l2-common.workspace = true
+ethrex-l2-common = { workspace = true, features = ["secp256k1"] }
 ethrex-sdk.workspace = true
 ethrex-l2-rpc.workspace = true
 
@@ -71,6 +71,7 @@ c-kzg = [
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
+rocksdb = ["ethrex-storage/rocksdb"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]
 sp1 = ["ethrex-prover/sp1"]

@@ -1,13 +1,14 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM,
-    INITIAL_BASE_FEE,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
+    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
     Address, H256, U256,
     constants::{
-        DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS,
+        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
+        MIN_BASE_FEE_PER_BLOB_GAS,
     },
-    types::{Receipt, Transaction},
+    types::{EcdsaError, Receipt, Transaction},
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
@@ -249,15 +250,13 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(
-        &self,
-    ) -> Result<Vec<(&Transaction, Address)>, secp256k1::Error> {
+    pub fn get_transactions_with_sender(&self) -> Result<Vec<(&Transaction, Address)>, EcdsaError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
             .par_iter()
             .map(|tx| Ok((tx, tx.sender()?)))
-            .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
+            .collect::<Result<Vec<(&Transaction, Address)>, _>>()
     }
 }
 
@@ -719,11 +718,7 @@ fn validate_excess_blob_gas(
     let expected_excess_blob_gas = chain_config
         .get_fork_blob_schedule(header.timestamp)
         .map(|schedule| {
-            calc_excess_blob_gas(
-                parent_header.excess_blob_gas.unwrap_or_default(),
-                parent_header.blob_gas_used.unwrap_or_default(),
-                schedule.target,
-            )
+            calc_excess_blob_gas(parent_header, schedule, chain_config.fork(header.timestamp))
         })
         .unwrap_or_default();
     if header
@@ -735,14 +730,31 @@ fn validate_excess_blob_gas(
     Ok(())
 }
 
-pub fn calc_excess_blob_gas(
-    parent_excess_blob_gas: u64,
-    parent_blob_gas_used: u64,
-    target: u32,
-) -> u64 {
+pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fork: Fork) -> u64 {
+    let parent_blob_gas_used = parent.blob_gas_used.unwrap_or_default();
+    let parent_base_fee_per_gas = parent.base_fee_per_gas.unwrap_or_default();
+    let parent_excess_blob_gas = parent.excess_blob_gas.unwrap_or_default();
+
     let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
-    let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    excess_blob_gas.saturating_sub(target_blob_gas_per_block.into())
+    let target_blob_gas_per_block = (schedule.target * GAS_PER_BLOB) as u64;
+    if excess_blob_gas < target_blob_gas_per_block {
+        return 0;
+    }
+
+    if fork >= Fork::Osaka
+        && BLOB_BASE_COST * parent_base_fee_per_gas
+            > (GAS_PER_BLOB as u64)
+                * calculate_base_fee_per_blob_gas(
+                    parent_excess_blob_gas,
+                    schedule.base_fee_update_fraction,
+                )
+    {
+        return parent_excess_blob_gas
+            + parent_blob_gas_used * (schedule.max as u64 - schedule.target as u64)
+                / schedule.max as u64;
+    }
+
+    excess_blob_gas - target_blob_gas_per_block
 }
 
 #[cfg(test)]
@@ -912,5 +924,61 @@ mod test {
             ELASTICITY_MULTIPLIER,
         );
         assert_eq!(calc_base_fee, expected_base_fee)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo1() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(5149252),
+            blob_gas_used: Some(1310720),
+            base_fee_per_gas: Some(30),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 9,
+            max: 14,
+            base_fee_update_fraction: 8832827,
+        };
+        let fork = Fork::Osaka;
+
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 5617366)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo3() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(19251039),
+            blob_gas_used: Some(2490368),
+            base_fee_per_gas: Some(50),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 21,
+            max: 32,
+            base_fee_update_fraction: 20609697,
+        };
+        let fork = Fork::Osaka;
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 20107103)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo1_ef() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(0x360000),
+            blob_gas_used: Some(0),
+            base_fee_per_gas: Some(0x11),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 9,
+            max: 14,
+            base_fee_update_fraction: 0x86c73b,
+        };
+        let fork = Fork::Osaka;
+
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 3538944)
     }
 }

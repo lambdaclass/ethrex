@@ -16,12 +16,10 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
-# TODO(#1102): Move to Lambdaworks in the future
-c-kzg = { version = "^1.0.3", optional = true }
-kzg-rs.workspace = true
+kzg-rs = { workspace = true, optional = true }
 keccak-hash.workspace = true
 sha3.workspace = true
-secp256k1.workspace = true
+k256.workspace = true
 once_cell = "1.20.2"
 crc32fast.workspace = true
 bytes.workspace = true
@@ -31,12 +29,20 @@ rayon.workspace = true
 url.workspace = true
 rkyv.workspace = true
 
+# TODO(#1102): Move to Lambdaworks in the future
+c-kzg = { version = "^1.0.3", optional = true }
+
+# pinned to latest main commit at the time of writing this
+openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "1a01e080656a638643f563a461f96498052ffb2c", optional = true}
+
 [dev-dependencies]
 hex-literal.workspace = true
 
 [features]
 default = []
+kzg-rs = ["dep:kzg-rs"]
 c-kzg = ["dep:c-kzg"]
+openvm-kzg = ["dep:openvm-kzg"]
 
 [lib]
 path = "./common.rs"

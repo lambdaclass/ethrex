@@ -10,8 +10,8 @@ ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
-secp256k1.workspace = true
 
+k256.workspace = true
 thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true
@@ -33,6 +33,8 @@ path = "./blockchain.rs"
 [features]
 default = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
+kzg-rs = ["ethrex-common/kzg-rs", "ethrex-vm/kzg-rs"]
+openvm-kzg = ["ethrex-common/openvm-kzg", "ethrex-vm/openvm-kzg"]
 metrics = ["ethrex-metrics/transactions"]
 
 [lints.clippy]

@@ -304,7 +304,10 @@ async fn replay_latest_block(
     let start = SystemTime::now();
 
     let run_result = match replayer_mode {
-        ReplayerMode::Execute | ReplayerMode::ExecuteSP1 | ReplayerMode::ExecuteRISC0 => {
+        ReplayerMode::Execute
+        | ReplayerMode::ExecuteSP1
+        | ReplayerMode::ExecuteRISC0
+        | ReplayerMode::ExecuteOpenVM => {
             EthrexReplayCommand::Block(BlockOptions {
                 block: Some(latest_block),
                 opts: EthrexReplayOptions {
@@ -319,7 +322,7 @@ async fn replay_latest_block(
             .run()
             .await
         }
-        ReplayerMode::ProveSP1 | ReplayerMode::ProveRISC0 => {
+        ReplayerMode::ProveSP1 | ReplayerMode::ProveRISC0 | ReplayerMode::ProveOpenVM => {
             EthrexReplayCommand::Block(BlockOptions {
                 block: Some(latest_block),
                 opts: EthrexReplayOptions {

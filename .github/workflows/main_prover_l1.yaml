@@ -1,11 +1,12 @@
 name: Replay proving
 on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["**"]
-    paths:
-      - ".github/workflows/main_prover_l1.yaml"
+  # push:
+  #   branches: ["main"]
+  # pull_request:
+  #   branches: ["**"]
+  #   paths:
+  #     - ".github/workflows/main_prover_l1.yaml"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -27,7 +28,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        backend: ["sp1", "risc0"]
+        backend: ["sp1", "risc0", "openvm"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -51,6 +52,14 @@ jobs:
         run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.8
+      - name: RISC-V OpenVM toolchain install
+        if: matrix.backend == 'openvm'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rustup install nightly-2025-02-14
+          rustup component add rust-src --toolchain nightly-2025-02-14
+          cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.0 cargo-openvm
 
       - name: Build
         run: |

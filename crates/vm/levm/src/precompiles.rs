@@ -6,10 +6,12 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
-use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
-    utils::u256_from_big_endian,
+    Address, H160, H256, U256,
+    kzg::verify_kzg_proof,
+    serde_utils::bool,
+    types::Fork,
+    utils::{u256_from_big_endian, u256_from_big_endian_const},
 };
 use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
@@ -41,13 +43,20 @@ use lambdaworks_math::{
 use malachite::base::num::arithmetic::traits::ModPow as _;
 use malachite::base::num::basic::traits::Zero as _;
 use malachite::{Natural, base::num::conversion::traits::*};
+use p256::{
+    EncodedPoint, FieldElement as P256FieldElement,
+    ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
+    elliptic_curve::bigint::U256 as P256Uint,
+};
 use sha3::Digest;
 use std::borrow::Cow;
 use std::ops::Mul;
 
-use crate::gas_cost::MODEXP_STATIC_COST;
+use crate::constants::{P256_A, P256_B, P256_N};
+use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
+use crate::vm::VMType;
 use crate::{
-    constants::VERSIONED_HASH_VERSION_KZG,
+    constants::{P256_P, VERSIONED_HASH_VERSION_KZG},
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
@@ -125,6 +134,10 @@ pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x11,
 ]);
+pub const P256_VERIFICATION_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x00,
+]);
 
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
@@ -185,18 +198,26 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
-pub fn is_precompile(address: &Address, fork: Fork) -> bool {
+pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
     if *address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
         return false;
     }
-    // Prague or newers forks should only use this precompiles
+    // Prague or newers forks should only use these precompiles
     // https://eips.ethereum.org/EIPS/eip-2537
     if PRECOMPILES_POST_CANCUN.contains(address) && fork < Fork::Prague {
         return false;
     }
 
-    PRECOMPILES.contains(address) || PRECOMPILES_POST_CANCUN.contains(address)
+    // P256 verify Precompile only existed on L2 before Osaka
+    if fork < Fork::Osaka && matches!(vm_type, VMType::L1) && address == &P256_VERIFICATION_ADDRESS
+    {
+        return false;
+    }
+
+    PRECOMPILES.contains(address)
+        || PRECOMPILES_POST_CANCUN.contains(address)
+        || address == &P256_VERIFICATION_ADDRESS
 }
 
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
@@ -208,8 +229,8 @@ pub fn execute_precompile(
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64, Fork) -> Result<Bytes, VMError>;
 
-    const PRECOMPILES: [Option<PrecompileFn>; 18] = const {
-        let mut precompiles = [const { None }; 18];
+    const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
+        let mut precompiles = [const { None }; 512];
         precompiles[ECRECOVER_ADDRESS.0[19] as usize] = Some(ecrecover as PrecompileFn);
         precompiles[IDENTITY_ADDRESS.0[19] as usize] = Some(identity as PrecompileFn);
         precompiles[SHA2_256_ADDRESS.0[19] as usize] = Some(sha2_256 as PrecompileFn);
@@ -231,11 +252,14 @@ pub fn execute_precompile(
             Some(bls12_map_fp_to_g1 as PrecompileFn);
         precompiles[BLS12_MAP_FP2_TO_G2_ADDRESS.0[19] as usize] =
             Some(bls12_map_fp2_tp_g2 as PrecompileFn);
-
+        precompiles[u16::from_be_bytes([
+            P256_VERIFICATION_ADDRESS.0[18],
+            P256_VERIFICATION_ADDRESS.0[19],
+        ]) as usize] = Some(p_256_verify as PrecompileFn);
         precompiles
     };
 
-    if address[0..18] != [0u8; 18] {
+    if address[0..17] != [0u8; 17] {
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
     }
     let index = u16::from_be_bytes([address[18], address[19]]) as usize;
@@ -1001,6 +1025,95 @@ pub fn bls12_g1add(
     add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
 
     Ok(Bytes::from(padded_result))
+}
+
+/// Signature verification in the “secp256r1” elliptic curve
+/// If the verification succeeds, returns 1 in a 32-bit big-endian format.
+/// If the verification fails, returns an empty `Bytes` object.
+/// Implemented following https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7951.md
+pub fn p_256_verify(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
+    increase_precompile_consumed_gas(P256_VERIFY_COST, gas_remaining)
+        .map_err(|_| PrecompileError::NotEnoughGas)?;
+
+    // Validate input data length is 160 bytes
+    if calldata.len() != 160 {
+        return Ok(Bytes::new());
+    }
+
+    // Parse parameters
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "length of the calldata is checked before slicing"
+    )]
+    let (message_hash, r, s, x, y) = (
+        &calldata[0..32],
+        &calldata[32..64],
+        &calldata[64..96],
+        &calldata[96..128],
+        &calldata[128..160],
+    );
+
+    {
+        let [r, s, x, y] = [r, s, x, y].map(P256Uint::from_be_slice);
+
+        // Verify that the r and s values are in (0, n) (exclusive)
+        if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N ||
+        // Verify that both x and y are in [0, p) (inclusive 0, exclusive p)
+        x >= P256_P || y >= P256_P ||
+        // Verify that the point (x,y) isn't at infinity
+        (x == P256Uint::ZERO && y == P256Uint::ZERO)
+        {
+            return Ok(Bytes::new());
+        }
+
+        // Verify that the point formed by (x, y) is on the curve
+        let x: Option<P256FieldElement> = P256FieldElement::from_uint(x).into();
+        let y: Option<P256FieldElement> = P256FieldElement::from_uint(y).into();
+
+        let (Some(x), Some(y)) = (x, y) else {
+            return Err(InternalError::Slicing.into());
+        };
+
+        // Curve equation: `y² = x³ + ax + b`
+        let a_x = P256_A.multiply(&x);
+        if y.square() != x.pow_vartime(&[3u64]).add(&a_x).add(&P256_B) {
+            return Ok(Bytes::new());
+        }
+    }
+
+    // Build verifier
+    let Ok(verifier) = p256::ecdsa::VerifyingKey::from_encoded_point(
+        &EncodedPoint::from_affine_coordinates(x.into(), y.into(), false),
+    ) else {
+        return Ok(Bytes::new());
+    };
+
+    // Build signature
+    let r: [u8; 32] = r.try_into()?;
+    let s: [u8; 32] = s.try_into()?;
+
+    let Ok(signature) = P256Signature::from_scalars(r, s) else {
+        return Ok(Bytes::new());
+    };
+
+    // Verify message signature
+    let success = verifier.verify_prehash(message_hash, &signature).is_ok();
+
+    // If the verification succeeds, returns 1 in a 32-bit big-endian format.
+    // If the verification fails, returns an empty `Bytes` object.
+    if success {
+        const RESULT: [u8; 32] = [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 1,
+        ];
+        Ok(Bytes::from_static(&RESULT))
+    } else {
+        Ok(Bytes::new())
+    }
 }
 
 pub fn bls12_g1msm(

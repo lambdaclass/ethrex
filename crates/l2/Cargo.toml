@@ -23,7 +23,7 @@ ethrex-storage-rollup.workspace = true
 ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
-ethrex-l2-common.workspace = true
+ethrex-l2-common = { workspace = true, features = ["secp256k1"] }
 ethrex-l2-rpc.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
@@ -39,6 +39,7 @@ rand.workspace = true
 thiserror.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
+futures.workspace = true
 directories = "5.0.1"
 bincode = "1.3.3"
 serde_with.workspace = true

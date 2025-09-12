@@ -413,6 +413,12 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            RLPxError::InvalidBlockRangeUpdate => {
+                failures_grouped_by_reason
+                    .entry("InvalidBlockRangeUpdate".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
         }
     }
 }

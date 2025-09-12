@@ -1,5 +1,5 @@
 use ethrex_common::types::{
-    BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError,
+    BlobsBundleError, BlockHash, EcdsaError, InvalidBlockBodyError, InvalidBlockHeaderError,
 };
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
@@ -110,7 +110,7 @@ pub enum MempoolError {
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
     #[error("Transaction sender is invalid {0}")]
-    InvalidTxSender(#[from] secp256k1::Error),
+    InvalidTxSender(#[from] EcdsaError),
 }
 
 #[derive(Debug)]

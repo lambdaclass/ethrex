@@ -1,10 +1,8 @@
 use crate::{
-    discv4::{
-        server::{DiscoveryServer, DiscoveryServerError},
-        side_car::{DiscoverySideCar, DiscoverySideCarError},
-    },
+    discv4::server::{DiscoveryServer, DiscoveryServerError},
     kademlia::{Kademlia, PeerData},
     metrics::METRICS,
+    peer_score::PeerScores,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
         initiator::{RLPxInitiator, RLPxInitiatorError},
@@ -19,6 +17,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     collections::BTreeMap,
     io,
@@ -47,11 +46,12 @@ pub struct P2PContext {
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
     pub based_context: Option<P2PBasedContext>,
+    pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
 }
 
 impl P2PContext {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
@@ -61,13 +61,19 @@ impl P2PContext {
         blockchain: Arc<Blockchain>,
         client_version: String,
         based_context: Option<P2PBasedContext>,
-    ) -> Self {
+    ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
             Arc<Message>,
         )>(MAX_MESSAGES_TO_BROADCAST);
 
-        P2PContext {
+        let tx_broadcaster = TxBroadcaster::spawn(peer_table.clone(), blockchain.clone())
+            .await
+            .inspect_err(|e| {
+                error!("Failed to start Tx Broadcaster: {e}");
+            })?;
+
+        Ok(P2PContext {
             local_node,
             local_node_record,
             tracker,
@@ -78,7 +84,8 @@ impl P2PContext {
             broadcast: channel_broadcast_send_end,
             client_version,
             based_context,
-        }
+            tx_broadcaster,
+        })
     }
 }
 
@@ -86,8 +93,6 @@ impl P2PContext {
 pub enum NetworkError {
     #[error("Failed to start discovery server: {0}")]
     DiscoveryServerError(#[from] DiscoveryServerError),
-    #[error("Failed to start discovery side car: {0}")]
-    DiscoverySideCarError(#[from] DiscoverySideCarError),
     #[error("Failed to start RLPx Initiator: {0}")]
     RLPxInitiatorError(#[from] RLPxInitiatorError),
     #[error("Failed to start Tx Broadcaster: {0}")]
@@ -117,27 +122,10 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery server: {e}");
     })?;
 
-    DiscoverySideCar::spawn(
-        context.local_node.clone(),
-        context.signer,
-        udp_socket,
-        context.table.clone(),
-    )
-    .await
-    .inspect_err(|e| {
-        error!("Failed to start discovery side car: {e}");
-    })?;
-
     RLPxInitiator::spawn(context.clone())
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");
-        })?;
-
-    TxBroadcaster::spawn(context.table.clone(), context.blockchain.clone())
-        .await
-        .inspect_err(|e| {
-            error!("Failed to start Tx Broadcaster: {e}");
         })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
@@ -184,14 +172,16 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 pub async fn periodically_show_peer_stats(
     blockchain: Arc<Blockchain>,
     peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
+    peers_score: Arc<Mutex<PeerScores>>,
 ) {
-    periodically_show_peer_stats_during_syncing(blockchain, peers.clone()).await;
+    periodically_show_peer_stats_during_syncing(blockchain, peers.clone(), peers_score).await;
     periodically_show_peer_stats_after_sync(peers).await;
 }
 
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
     peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
+    peer_scores: Arc<Mutex<PeerScores>>,
 ) {
     let start = std::time::Instant::now();
     loop {
@@ -209,6 +199,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Common metrics
             let elapsed = format_duration(start.elapsed());
             let peer_number = peers.lock().await.len();
+            let peer_scores_number = peer_scores.lock().await.len();
             let current_step = METRICS.current_step.lock().await.clone();
 
             // Headers metrics
@@ -370,7 +361,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             info!(
                 "P2P Snap Sync:
 elapsed: {elapsed}
-{peer_number} peers
+{peer_number} peers. Scored peers {peer_scores_number}
 \x1b[93mCurrent step:\x1b[0m {current_step}
 ---
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})

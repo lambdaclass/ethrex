@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        backend: ["sp1", "risc0"]
+        backend: ["sp1", "risc0", "openvm"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -41,6 +41,15 @@ jobs:
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.8
 
+      - name: RISC-V OpenVM toolchain install
+        if: matrix.backend == 'openvm'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rustup install nightly-2025-02-14
+          rustup component add rust-src --toolchain nightly-2025-02-14
+          cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.0 cargo-openvm
+
       - name: Check ${{ matrix.backend }} backend
         run: |
           cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
@@ -52,7 +61,7 @@ jobs:
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |
-          git diff --exit-code -- crates/l2/prover/src/guest_program/${{ matrix.backend }}/Cargo.lock
+          git diff --exit-code -- crates/l2/prover/src/guest_program/src/${{ matrix.backend }}/Cargo.lock
 
   lint_exec:
     name: Lint exec backend
