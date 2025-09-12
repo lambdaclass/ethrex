@@ -962,7 +962,7 @@ async fn test_send(
     let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
-        .expect(&format!("Failed to get receipt for {test}"))
+        .expect("Failed to get receipt for {test}")
 }
 
 /// Test depositing ETH from L1 to L2
