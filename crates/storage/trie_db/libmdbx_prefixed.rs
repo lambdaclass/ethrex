@@ -8,7 +8,7 @@ use libmdbx::orm::{Database, DupSort, Encodable};
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
 /// A will be a fixed-size encoded key set by the user (of generic type SK), B will be a fixed-size encoded NodeHash and C will be an encoded Node
-pub struct LibmdbxDupsortTrieDB<T, SK>
+pub struct LibmdbxPrefixedTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
@@ -18,7 +18,7 @@ where
     phantom: PhantomData<T>,
 }
 
-impl<T, SK> LibmdbxDupsortTrieDB<T, SK>
+impl<T, SK> LibmdbxPrefixedTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
@@ -32,7 +32,7 @@ where
     }
 }
 
-impl<T, SK> TrieDB for LibmdbxDupsortTrieDB<T, SK>
+impl<T, SK> TrieDB for LibmdbxPrefixedTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
@@ -71,7 +71,7 @@ mod test {
     #[test]
     fn simple_addition() {
         let inner_db = new_db::<Nodes>();
-        let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32]);
+        let db = LibmdbxPrefixedTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32]);
         let key = NodeHash::from_encoded_raw(b"hello");
         assert_eq!(db.get(key).unwrap(), None);
         db.put(key, "value".into()).unwrap();
@@ -81,8 +81,8 @@ mod test {
     #[test]
     fn different_keys() {
         let inner_db = new_db::<Nodes>();
-        let db_a = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db.clone(), [5; 32]);
-        let db_b = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [7; 32]);
+        let db_a = LibmdbxPrefixedTrieDB::<Nodes, [u8; 32]>::new(inner_db.clone(), [5; 32]);
+        let db_b = LibmdbxPrefixedTrieDB::<Nodes, [u8; 32]>::new(inner_db, [7; 32]);
         let key = NodeHash::from_encoded_raw(b"hello");
         db_a.put(key, "hello!".into()).unwrap();
         db_b.put(key, "go away!".into()).unwrap();

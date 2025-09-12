@@ -9,7 +9,7 @@ use libmdbx::orm::{Database, DupSort, Encodable, Transaction};
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
 /// A will be a fixed-size encoded key set by the user (of generic type SK), B will be a fixed-size encoded NodeHash and C will be an encoded Node
-pub struct LibmdbxLockedDupsortTrieDB<T, SK>
+pub struct LibmdbxLockedPrefixedTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
@@ -20,7 +20,7 @@ where
     phantom: PhantomData<T>,
 }
 
-impl<T, SK> LibmdbxLockedDupsortTrieDB<T, SK>
+impl<T, SK> LibmdbxLockedPrefixedTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
@@ -37,7 +37,7 @@ where
     }
 }
 
-impl<T, SK> Drop for LibmdbxLockedDupsortTrieDB<T, SK>
+impl<T, SK> Drop for LibmdbxLockedPrefixedTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
@@ -52,7 +52,7 @@ where
     }
 }
 
-impl<T, SK> TrieDB for LibmdbxLockedDupsortTrieDB<T, SK>
+impl<T, SK> TrieDB for LibmdbxLockedPrefixedTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,

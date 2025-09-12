@@ -7,9 +7,9 @@ use crate::rlp::{
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
-use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
-use crate::trie_db::libmdbx_dupsort_locked::LibmdbxLockedDupsortTrieDB;
 use crate::trie_db::libmdbx_locked::LibmdbxLockedTrieDB;
+use crate::trie_db::libmdbx_prefixed::LibmdbxPrefixedTrieDB;
+use crate::trie_db::libmdbx_prefixed_locked::LibmdbxLockedPrefixedTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
@@ -570,7 +570,7 @@ impl StoreEngine for Store {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
+        let db = Box::new(LibmdbxPrefixedTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
             hashed_address.0,
         ));
@@ -596,7 +596,7 @@ impl StoreEngine for Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(
-            LibmdbxLockedDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
+            LibmdbxLockedPrefixedTrieDB::<StorageTriesNodes, [u8; 32]>::new(
                 self.db.clone(),
                 hashed_address.0,
             )

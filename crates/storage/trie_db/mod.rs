@@ -1,11 +1,11 @@
 #[cfg(feature = "libmdbx")]
 pub mod libmdbx;
 #[cfg(feature = "libmdbx")]
-pub mod libmdbx_dupsort;
-#[cfg(feature = "libmdbx")]
-pub mod libmdbx_dupsort_locked;
-#[cfg(feature = "libmdbx")]
 pub mod libmdbx_locked;
+#[cfg(feature = "libmdbx")]
+pub mod libmdbx_prefixed;
+#[cfg(feature = "libmdbx")]
+pub mod libmdbx_prefixed_locked;
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
 #[cfg(feature = "rocksdb")]
