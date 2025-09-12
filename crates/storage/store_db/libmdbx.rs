@@ -1178,7 +1178,7 @@ dupsort!(
     ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
-dupsort!(
+table!(
     /// Table containing all storage trie's nodes
     /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
     ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
