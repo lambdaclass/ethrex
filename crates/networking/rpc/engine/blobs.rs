@@ -1,7 +1,7 @@
 use ethrex_common::{
     H256,
     serde_utils::{self},
-    types::{Blob, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
+    types::{Blob, Fork, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,22 +47,12 @@ impl RpcHandler for BlobsV1Request {
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-
-        if let Some(current_block_header) = context
-            .storage
-            .get_block_header(context.storage.get_latest_block_number().await?)?
-        {
-            if context
-                .storage
-                .get_chain_config()?
-                .is_osaka_activated(current_block_header.timestamp)
-            {
-                // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
-                return Err(RpcErr::UnsuportedFork(
-                    "getBlobsV1 engine request not supported for Osaka".to_string(),
-                ));
-            }
-        };
+        if context.blockchain.current_fork().await? >= Fork::Osaka {
+            // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
+            return Err(RpcErr::UnsuportedFork(
+                "getBlobsV1 engine request not supported for Osaka".to_string(),
+            ));
+        }
 
         let mut res: Vec<Option<BlobAndProofV1>> = vec![None; self.blob_versioned_hashes.len()];
 
