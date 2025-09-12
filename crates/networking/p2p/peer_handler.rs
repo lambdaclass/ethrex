@@ -1364,6 +1364,9 @@ impl PeerHandler {
         {
             Ok(()) => match response_reader.recv().await {
                 Some(Some(nodes)) => {
+                    let nodes = nodes.into_iter().map(|bytes| {
+                        Node::decode_raw(&bytes[..]).map_err(|_| RequestStateTrieNodesError::InvalidData)
+                    }).collect::<Result<Vec<Node>, RequestStateTrieNodesError>>()?;
                     for (index, node) in nodes.iter().enumerate() {
                         if node.compute_hash().finalize() != paths[index].hash {
                             error!(
@@ -1410,10 +1413,6 @@ impl PeerHandler {
             })?;
         match response_reader.recv().await {
             Some(Some(nodes)) => {
-                let nodes = nodes
-                    .iter()
-                    .map(|node| Bytes::from(node.encode_raw()))
-                    .collect();
                 Ok(TrieNodes { id, nodes })
             }
             _ => Err(RequestStorageTrieNodes::SendMessageError(

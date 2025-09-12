@@ -116,7 +116,7 @@ pub enum DownloaderCastRequest {
         block_hashes: Vec<H256>,
     },
     TrieNodes {
-        response_channel: Sender<Option<Vec<Node>>>,
+        response_channel: Sender<Option<Vec<Bytes>>>,
         root_hash: H256,
         paths: Vec<Vec<Bytes>>,
     },
@@ -802,17 +802,7 @@ impl GenServer for Downloader {
                 .await
                 .ok()
                 .flatten()
-                .and_then(|nodes| {
-                    (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                        .then(|| {
-                            nodes
-                                .iter()
-                                .map(|node| Node::decode_raw(node))
-                                .collect::<Result<Vec<_>, _>>()
-                                .ok()
-                        })
-                        .flatten()
-                }) {
+                {
                     self.send_through_response_channel(response_channel, Some(nodes))
                         .await;
                     return CastResponse::Stop;
