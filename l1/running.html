@@ -262,6 +262,14 @@
 <p>To sync with hoodi</p>
 <pre><code>ethrex --network hoodi
 </code></pre>
+<h2 id="running-an-ethereum-node-with-docker"><a class="header" href="#running-an-ethereum-node-with-docker">Running an Ethereum node with Docker</a></h2>
+<p>You can simply start a node with a Consensus client and ethrex as Execution client with Docker using the <a href="https://github.com/lambdaclass/ethrex/blob/main/docker-compose.yaml">docker-compose.yaml</a></p>
+<pre><code class="language-sh">curl -L -o docker-compose.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/docker-compose.yaml
+docker compose up
+</code></pre>
+<p>Or you can set a different network:</p>
+<pre><code class="language-sh">ETHREX_NETWORK=hoodi docker compose up
+</code></pre>
 
                     </main>
 
