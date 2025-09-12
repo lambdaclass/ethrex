@@ -1,20 +1,23 @@
 use std::time::{Duration, SystemTime};
 
-use ethrex_common::types::ChainConfig;
+use ethrex_common::types::{Block, BlockBody, ChainConfig};
 use ethrex_config::networks::Network;
 use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, eth::errors::GetWitnessError},
     debug::execution_witness::execution_witness_from_rpc_chain_config,
-    types::block_identifier::{BlockIdentifier, BlockTag},
+    types::{
+        block::BlockBodyWrapper,
+        block_identifier::{BlockIdentifier, BlockTag},
+    },
 };
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
 use crate::{
     cache::{Cache, load_cache, write_cache},
-    rpc::db::RpcDB,
+    rpc::{db::RpcDB, get_block},
 };
 
 #[cfg(feature = "l2")]
@@ -62,10 +65,36 @@ pub async fn get_blockdata(
 
     let block_retrieval_start_time = SystemTime::now();
 
-    // TODO: we could change this to use eth_getBlockByNumber to not use any debug endpoint
-    let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(requested_block_number))
-        .await?;
+    let rpc_block = get_block(
+        eth_client.urls.first().unwrap().as_str(),
+        requested_block_number as usize,
+        true,
+    )
+    .await
+    .wrap_err("Failed to retrieve requested block")?;
+
+    let block_body = if let BlockBodyWrapper::Full(body) = rpc_block.body {
+        body
+    } else {
+        return Err(eyre::eyre!("Expected full block body from RPC"));
+    };
+
+    let mut uncles = Vec::new();
+    for hash in block_body.uncles.iter() {
+        let uncle = eth_client.get_block_by_hash(*hash).await?;
+        uncles.push(uncle.header);
+    }
+
+    let transactions = block_body.transactions.into_iter().map(|t| t.tx).collect();
+
+    let block = Block {
+        header: rpc_block.header,
+        body: BlockBody {
+            transactions,
+            ommers: uncles,
+            withdrawals: Some(block_body.withdrawals),
+        },
+    };
 
     let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
         panic!("SystemTime::elapsed failed: {e}");
