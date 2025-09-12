@@ -146,17 +146,33 @@ impl BlobsBundle {
             }
         }
 
-        // Validate the blobs with the commitments and proofs
-        for ((blob, commitment), proof) in self
-            .blobs
-            .iter()
-            .zip(self.commitments.iter())
-            .zip(self.proofs.iter())
-        {
-            use crate::kzg::verify_blob_kzg_proof;
+        if fork >= Fork::Osaka {
+            // Validate the blobs with the commitments and cell proofs
+            for ((blob, commitment), proof) in self
+                .blobs
+                .iter()
+                .zip(self.commitments.iter())
+                .zip(self.proofs.chunks(CELLS_PER_EXT_BLOB))
+            {
+                use crate::kzg::verify_cell_kzg_proof_batch;
 
-            if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
-                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
+                if !verify_cell_kzg_proof_batch(*blob, *commitment, proof)? {
+                    return Err(BlobsBundleError::BlobToCommitmentAndProofError);
+                }
+            }
+        } else {
+            // Validate the blobs with the commitments and proofs
+            for ((blob, commitment), proof) in self
+                .blobs
+                .iter()
+                .zip(self.commitments.iter())
+                .zip(self.proofs.iter())
+            {
+                use crate::kzg::verify_blob_kzg_proof;
+
+                if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
+                    return Err(BlobsBundleError::BlobToCommitmentAndProofError);
+                }
             }
         }
 
