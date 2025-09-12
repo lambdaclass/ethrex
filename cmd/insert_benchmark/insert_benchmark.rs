@@ -159,7 +159,10 @@ async fn sub_main() {
 async fn main() {
     let opts = Options::default();
     init_tracing(&opts);
-    info!("Starting");
+    info!("Starting old");
+    sub_main().await;
+    info!("finishing");
+    info!("Starting new");
     insert_accounts_into_db_v2().await;
     info!("finishing");
 }
