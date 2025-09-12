@@ -50,7 +50,8 @@ use tokio::task::JoinSet;
 ///
 /// Accounts private keys:
 /// ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH: The path to a file with pks that are rich accounts in the l2
-///
+/// INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH: The path to a file with pks that are used in the tests. (subset of the rich accounts)
+/// INTEGRATION_TEST_BRIDGE_OWNER_PRIVATE_KEY: The private key of the l1 bridge owner
 ///
 /// Contract addresses:
 /// ETHREX_WATCHER_BRIDGE_ADDRESS: The address of the l1 bridge contract
@@ -192,7 +193,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "Fee vault is not correct after tests"
     );
 
-    // Not thread-safe (fee vault and bridge balance checks) (maybe we can move the fee vault check at the end)
+    // Not thread-safe (fee vault and bridge balance checks)
     test_n_withdraws(
         &l1_client,
         &l2_client,
@@ -212,15 +213,15 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Test upgrading the CommonBridgeL2 contract
-/// 1. Deploys a contract in the L2.
-/// 2. Upgrades the contract through the CommonBridge contract in L1.
-/// 3. Checks that the implementation address has changed.
-///    Not thread-safe (fee vault checks).
+/// 1. Compiles the CommonBridgeL2 contract
+/// 2. Deploys the new implementation on L2
+/// 3. Calls the upgrade function on the L1 bridge contract
+/// 4. Checks that the implementation address has changed
 async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256> {
     println!("Testing upgrade");
     let bridge_owner_private_key = bridge_owner_private_key();
 
-    println!("test upgrade: Downloading openzeppelin contracts");
+    println!("test_upgrade: Downloading openzeppelin contracts");
 
     let contracts_path = Path::new("contracts");
     get_contract_dependencies(contracts_path);
@@ -230,7 +231,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
 
-    println!("test upgrade: Compiling CommonBridgeL2 contract");
+    println!("test_upgrade: Compiling CommonBridgeL2 contract");
     compile_contract(
         contracts_path,
         Path::new("contracts/src/l2/CommonBridgeL2.sol"),
@@ -241,9 +242,14 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
 
-    println!("test upgrade: Deploying CommonBridgeL2 contract");
-    let (deploy_address, deploy_recoverable_fees) =
-        test_deploy(&l2_client, &bridge_code, &bridge_owner_private_key).await?;
+    println!("test_upgrade: Deploying CommonBridgeL2 contract");
+    let (deploy_address, deploy_recoverable_fees) = test_deploy(
+        &l2_client,
+        &bridge_code,
+        &bridge_owner_private_key,
+        "test_upgrade",
+    )
+    .await?;
 
     let impl_slot = get_erc1967_slot("eip1967.proxy.implementation");
     let initial_impl = l2_client
@@ -254,7 +260,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256
         )
         .await?;
 
-    println!("test upgrade: Upgrading CommonBridgeL2 contract");
+    println!("test_upgrade: Upgrading CommonBridgeL2 contract");
     let tx_receipt = test_send(
         &l1_client,
         &bridge_owner_private_key,
@@ -266,10 +272,14 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256
             Value::Uint(U256::from(100_000)),
             Value::Bytes(Bytes::new()),
         ],
+        "test_upgrade",
     )
     .await;
 
-    assert!(tx_receipt.receipt.status, "Upgrade transaction failed");
+    assert!(
+        tx_receipt.receipt.status,
+        "test_upgrade: Upgrade transaction failed"
+    );
 
     let _ = wait_for_l2_deposit_receipt(&tx_receipt, &l1_client, &l2_client).await?;
     let final_impl = l2_client
@@ -305,8 +315,13 @@ async fn test_privileged_tx_with_contract_call(
 
     println!("ptx_with_contract_call: Deploying contract on L2");
 
-    let (deployed_contract_address, recoverable_fees) =
-        test_deploy(&l2_client, &init_code, &rich_wallet_private_key).await?;
+    let (deployed_contract_address, recoverable_fees) = test_deploy(
+        &l2_client,
+        &init_code,
+        &rich_wallet_private_key,
+        "ptx_with_contract_call",
+    )
+    .await?;
 
     let number_to_emit = U256::from(424242);
     let calldata_to_contract: Bytes =
@@ -323,6 +338,7 @@ async fn test_privileged_tx_with_contract_call(
         deployed_contract_address,
         calldata_to_contract,
         &rich_wallet_private_key,
+        "ptx_with_contract_call",
     )
     .await?;
 
@@ -371,7 +387,7 @@ async fn test_privileged_tx_with_contract_call(
 
     assert_eq!(
         number_emitted, number_to_emit,
-        "Event emitted with wrong value. Expected 424242, got {number_emitted}"
+        "ptx_with_contract_call: Event emitted with wrong value. Expected 424242, got {number_emitted}"
     );
 
     Ok(recoverable_fees)
@@ -396,8 +412,13 @@ async fn test_privileged_tx_with_contract_call_revert(
 
     println!("ptx_with_contract_call_revert: Deploying contract on L2");
 
-    let (deployed_contract_address, recoverable_fees) =
-        test_deploy(&l2_client, &init_code, &rich_wallet_private_key).await?;
+    let (deployed_contract_address, recoverable_fees) = test_deploy(
+        &l2_client,
+        &init_code,
+        &rich_wallet_private_key,
+        "ptx_with_contract_call_revert",
+    )
+    .await?;
 
     let calldata_to_contract: Bytes = encode_calldata("revert_call()", &[])?.into();
 
@@ -409,6 +430,7 @@ async fn test_privileged_tx_with_contract_call_revert(
         deployed_contract_address,
         calldata_to_contract,
         &rich_wallet_private_key,
+        "ptx_with_contract_call_revert",
     )
     .await?;
 
@@ -434,11 +456,10 @@ async fn find_withdrawal_with_widget(
 /// 1. Deploys an ERC20 token on L1
 /// 2. Deploys an ERC20 token on L2 that points to the L1 token
 /// 3. Mints some tokens on L1
-/// 4. Deposits the tokens to L2
+/// 4. Deposits the tokens to L2 through the bridge
 /// 5. Withdraws the tokens back to L1
 /// 6. Checks that the balances are correct at each step
 /// 7. Checks that the withdrawal is correctly recorded in the L2ToL1MessagesTable widget
-///    Not thread-safe (uses test_deploy).
 async fn test_erc20_roundtrip(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -481,8 +502,13 @@ async fn test_erc20_roundtrip(
     ]
     .concat();
 
-    let (token_l2, deploy_fees) =
-        test_deploy(&l2_client, &init_code_l2, &rich_wallet_private_key).await?;
+    let (token_l2, deploy_fees) = test_deploy(
+        &l2_client,
+        &init_code_l2,
+        &rich_wallet_private_key,
+        "test_erc20_roundtrip",
+    )
+    .await?;
 
     println!("test_erc20_roundtrip: token l1={token_l1:x}, l2={token_l2:x}");
     test_send(
@@ -491,6 +517,7 @@ async fn test_erc20_roundtrip(
         token_l1,
         "freeMint()",
         &[],
+        "test_erc20_roundtrip",
     )
     .await;
     test_send(
@@ -499,6 +526,7 @@ async fn test_erc20_roundtrip(
         token_l1,
         "approve(address,uint256)",
         &[Value::Address(bridge_address()?), Value::Uint(token_amount)],
+        "test_erc20_roundtrip",
     )
     .await;
 
@@ -542,6 +570,7 @@ async fn test_erc20_roundtrip(
             Value::Address(COMMON_BRIDGE_L2_ADDRESS),
             Value::Uint(token_amount),
         ],
+        "test_erc20_roundtrip",
     )
     .await;
 
@@ -558,6 +587,7 @@ async fn test_erc20_roundtrip(
             Value::Address(rich_address),
             Value::Uint(token_amount),
         ],
+        "test_erc20_roundtrip",
     )
     .await;
 
@@ -635,7 +665,6 @@ async fn test_erc20_roundtrip(
 /// 1. Deploys a contract on L1 that will call the CommonBridge contract sendToL2 function
 /// 2. Calls the contract to send a message to L2
 /// 3. Checks that the message was sent from the aliased address
-///    Thread-safe
 async fn test_aliasing(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -664,6 +693,7 @@ async fn test_aliasing(
             Value::Address(bridge_address()?),
             Value::Bytes(send_to_l2_calldata.into()),
         ],
+        "test_aliasing",
     )
     .await;
 
@@ -673,7 +703,7 @@ async fn test_aliasing(
         .await
         .unwrap();
     println!(
-        "alising {:#x} to {:#x}",
+        "test_aliasing: alising {:#x} to {:#x}",
         get_address_alias(caller_l1),
         receipt_l2.tx_info.from
     );
@@ -685,7 +715,6 @@ async fn test_aliasing(
 /// 1. Deploys an ERC20 token on L1
 /// 2. Attempts to deposit the token to an invalid address on L2
 /// 3. Claims the withdrawal on L1
-///    Thread-safe
 async fn test_erc20_failed_deposit(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -712,6 +741,7 @@ async fn test_erc20_failed_deposit(
         token_l1,
         "freeMint()",
         &[],
+        "test_erc20_failed_deposit",
     )
     .await;
     test_send(
@@ -720,6 +750,7 @@ async fn test_erc20_failed_deposit(
         token_l1,
         "approve(address,uint256)",
         &[Value::Address(bridge_address()?), Value::Uint(token_amount)],
+        "test_erc20_failed_deposit",
     )
     .await;
 
@@ -778,7 +809,7 @@ async fn test_forced_withdrawal(
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
 ) -> Result<U256> {
-    println!("Testing forced withdrawal");
+    println!("forced_withdrawal: Testing forced withdrawal");
     let rich_address =
         get_address_from_secret_key(&rich_wallet_private_key).expect("Failed to get address");
     let l1_initial_balance = l1_client
@@ -860,7 +891,7 @@ async fn test_forced_withdrawal(
         &proof,
     )
     .await
-    .expect("error while claiming");
+    .expect("forced_withdrawal: error while claiming");
     let res = wait_for_transaction_receipt(withdraw_claim_tx, &l1_client, 5).await?;
     l1_gas_costs += res.tx_info.gas_used * res.tx_info.effective_gas_price;
     assert_eq!(
@@ -914,6 +945,7 @@ async fn test_send(
     to: Address,
     signature: &str,
     data: &[Value],
+    test: &str,
 ) -> RpcReceipt {
     let signer: Signer = LocalSigner::new(*private_key).into();
     let mut tx = build_generic_tx(
@@ -925,25 +957,24 @@ async fn test_send(
         Default::default(),
     )
     .await
-    .unwrap();
+    .expect("Failed to build tx for {test}");
     tx.gas = tx.gas.map(|g| g * 2); // tx reverts in some cases otherwise
     let tx_hash = send_generic_transaction(client, tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
-        .unwrap()
+        .expect(&format!("Failed to get receipt for {test}"))
 }
 
 /// Test depositing ETH from L1 to L2
 /// 1. Fetch initial balances of depositor on L1, recipient on L2, bridge on L1 and fee vault on L2.
 /// 2. Perform deposit from L1 to L2
 /// 3. Check final balances.
-///    Not thread-safe.
 async fn test_deposit(
     l1_client: &EthClient,
     l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("test deposit: Fetching initial balances on L1 and L2");
+    println!("test_deposit: Fetching initial balances on L1 and L2");
     let rich_wallet_address = get_address_from_secret_key(rich_wallet_private_key)
         .expect("Failed to get address from l1 rich wallet pk");
 
@@ -972,7 +1003,7 @@ async fn test_deposit(
         .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    println!("test deposit: Depositing funds from L1 to L2");
+    println!("test_deposit: Depositing funds from L1 to L2");
 
     let deposit_tx_hash = ethrex_l2_sdk::deposit_through_transfer(
         deposit_value,
@@ -982,7 +1013,7 @@ async fn test_deposit(
     )
     .await?;
 
-    println!("test deposit: Waiting for L1 deposit transaction receipt");
+    println!("test_deposit: Waiting for L1 deposit transaction receipt");
 
     let deposit_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, l1_client, 5).await?;
@@ -1014,7 +1045,7 @@ async fn test_deposit(
         "Bridge balance didn't increase as expected after deposit"
     );
 
-    println!("test deposit: Waiting for L2 deposit tx receipt");
+    println!("test_deposit: Waiting for L2 deposit tx receipt");
 
     let _ = wait_for_l2_deposit_receipt(&deposit_tx_receipt, l1_client, l2_client).await?;
 
@@ -1055,6 +1086,7 @@ async fn test_privileged_spammer(
             caller_l1,
             "spam(address,uint256)",
             &[Value::Address(bridge_address()?), Value::Uint(5.into())],
+            "test_privileged_spammer",
         )
         .await;
     }
@@ -1071,12 +1103,12 @@ async fn test_transfer(
     transferer_private_key: SecretKey,
     returnerer_private_key: SecretKey,
 ) -> Result<U256> {
-    println!("test transfer: Transferring funds on L2");
+    println!("test_transfer: Transferring funds on L2");
     let transferer_address = get_address_from_secret_key(&transferer_private_key).unwrap();
     let returner_address = get_address_from_secret_key(&returnerer_private_key).unwrap();
 
     println!(
-        "test transfer: Performing transfer from {transferer_address:#x} to {returner_address:#x}"
+        "test_transfer: Performing transfer from {transferer_address:#x} to {returner_address:#x}"
     );
 
     let mut recoverable_fees = perform_transfer(
@@ -1090,7 +1122,7 @@ async fn test_transfer(
     let return_amount = (transfer_value() * 99) / 100;
 
     println!(
-        "test transfer: Performing return transfer from {returner_address:#x} to {transferer_address:#x} with amount {return_amount}"
+        "test_transfer: Performing return transfer from {returner_address:#x} to {transferer_address:#x} with amount {return_amount}"
     );
 
     recoverable_fees += perform_transfer(
@@ -1108,7 +1140,6 @@ async fn test_transfer(
 /// 1. Fetch initial balance of receiver on L2.
 /// 2. Perform transfer through a deposit.
 /// 3. Check final balance of receiver on L2.
-///    Thread-safe
 async fn test_transfer_with_privileged_tx(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -1168,7 +1199,6 @@ async fn test_transfer_with_privileged_tx(
 /// Test that gas is burned from the L1 account when making a deposit with a specified L2 gas limit.
 /// 1. Perform deposit with specified L2 gas limit.
 /// 2. Check that the gas used on L1 is within expected range.
-///    Thread-safe
 async fn test_gas_burning(
     l1_client: EthClient,
     rich_wallet_private_key: SecretKey,
@@ -1203,14 +1233,15 @@ async fn test_gas_burning(
 /// 1. Fetch initial balance of receiver on L2.
 /// 2. Perform transfer through a deposit with value greater than sender's balance.
 /// 3. Check final balance of receiver on L2 (should be unchanged).
-///    Thread-safe
 async fn test_privileged_tx_not_enough_balance(
     l1_client: EthClient,
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
     receiver_private_key: SecretKey,
 ) -> Result<U256> {
-    println!("Starting test for privileged transaction with insufficient balance");
+    println!(
+        "ptx_not_enough_balance: Starting test for privileged transaction with insufficient balance"
+    );
     let rich_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
     let receiver_address = get_address_from_secret_key(&receiver_private_key).unwrap();
 
@@ -1461,13 +1492,22 @@ async fn test_n_withdraws(
     // We need to wait for all the txs to be included in some batch
     let mut proofs = vec![];
     for (i, tx) in withdraw_txs.iter().enumerate() {
-        println!("Getting proof for withdrawal {}/{} ({:x})", i + 1, n, tx);
+        println!(
+            "test_n_withdraws: Getting proof for withdrawal {}/{} ({:x})",
+            i + 1,
+            n,
+            tx
+        );
         proofs.push(wait_for_verified_proof(l1_client, l2_client, *tx).await);
     }
 
     let mut withdraw_claim_txs_receipts = vec![];
     for (x, proof) in proofs.iter().enumerate() {
-        println!("Claiming withdrawal on L1 {}/{}", x + 1, n);
+        println!(
+            "test_n_withdraws: Claiming withdrawal on L1 {}/{}",
+            x + 1,
+            n
+        );
         let withdraw_claim_tx = ethrex_l2_sdk::claim_withdraw(
             withdraw_value,
             withdrawer_address,
@@ -1559,16 +1599,16 @@ async fn test_total_eth_l2(
 }
 
 /// Test deploying a contract on L2
-/// 1. Fetch initial balances of deployer on L2 and fee vault on L2.
+/// 1. Fetch initial balances of deployer on L2.
 /// 2. Perform deploy on L2.
 /// 3. Check final balances.
-///    Not thread-safe (as it assumes no other deploys are happening).
 async fn test_deploy(
     l2_client: &EthClient,
     init_code: &[u8],
     deployer_private_key: &SecretKey,
+    test_name: &str,
 ) -> Result<(Address, U256)> {
-    println!("Deploying contract on L2");
+    println!("{test_name}: Deploying contract on L2");
 
     let deployer: Signer = LocalSigner::new(*deployer_private_key).into();
 
@@ -1589,7 +1629,7 @@ async fn test_deploy(
 
     assert!(
         deploy_tx_receipt.receipt.status,
-        "Deploy transaction failed"
+        "{test_name}: Deploy transaction failed"
     );
 
     let deploy_fees = get_fees_details_l2(&deploy_tx_receipt, l2_client).await;
@@ -1601,7 +1641,7 @@ async fn test_deploy(
     assert_eq!(
         deployer_balance_after_deploy,
         deployer_balance_before_deploy - deploy_fees.total_fees,
-        "Deployer L2 balance didn't decrease as expected after deploy"
+        "{test_name}: Deployer L2 balance didn't decrease as expected after deploy"
     );
 
     let deployed_contract_balance = l2_client
@@ -1610,7 +1650,7 @@ async fn test_deploy(
 
     assert!(
         deployed_contract_balance.is_zero(),
-        "Deployed contract balance should be zero after deploy"
+        "{test_name}: Deployed contract balance should be zero after deploy"
     );
 
     Ok((contract_address, deploy_fees.recoverable_fees))
@@ -1621,8 +1661,6 @@ async fn test_deploy_l1(
     init_code: &[u8],
     private_key: &SecretKey,
 ) -> Result<Address> {
-    println!("Deploying contract on L1");
-
     let deployer_signer: Signer = LocalSigner::new(*private_key).into();
 
     let (deploy_tx_hash, contract_address) = create_deploy(
@@ -1645,11 +1683,12 @@ async fn test_call_to_contract_with_deposit(
     deployed_contract_address: Address,
     calldata_to_contract: Bytes,
     caller_private_key: &SecretKey,
+    test: &str,
 ) -> Result<()> {
     let caller_address =
         get_address_from_secret_key(caller_private_key).expect("Failed to get address");
 
-    println!("Checking balances before call");
+    println!("{test}: Checking balances before call");
 
     let caller_l1_balance_before_call = l1_client
         .get_balance(caller_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -1662,7 +1701,7 @@ async fn test_call_to_contract_with_deposit(
         )
         .await?;
 
-    println!("Calling contract on L2 with deposit");
+    println!("{test}: Calling contract on L2 with deposit");
 
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         caller_address,
@@ -1680,17 +1719,17 @@ async fn test_call_to_contract_with_deposit(
     )
     .await?;
 
-    println!("Waiting for L1 to L2 transaction receipt on L1");
+    println!("{test}: Waiting for L1 to L2 transaction receipt on L1");
 
     let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, l1_client, 5).await?;
 
     assert!(l1_to_l2_tx_receipt.receipt.status);
 
-    println!("Waiting for L1 to L2 transaction receipt on L2");
+    println!("{test}: Waiting for L1 to L2 transaction receipt on L2");
 
     let _ = wait_for_l2_deposit_receipt(&l1_to_l2_tx_receipt, l1_client, l2_client).await?;
 
-    println!("Checking balances after call");
+    println!("{test}: Checking balances after call");
 
     let caller_l1_balance_after_call = l1_client
         .get_balance(caller_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -1701,7 +1740,7 @@ async fn test_call_to_contract_with_deposit(
         caller_l1_balance_before_call
             - l1_to_l2_tx_receipt.tx_info.gas_used
                 * l1_to_l2_tx_receipt.tx_info.effective_gas_price,
-        "Caller L1 balance didn't decrease as expected after call"
+        "{test}: Caller L1 balance didn't decrease as expected after call"
     );
 
     let deployed_contract_balance_after_call = l2_client
@@ -1713,7 +1752,7 @@ async fn test_call_to_contract_with_deposit(
 
     assert_eq!(
         deployed_contract_balance_after_call, deployed_contract_balance_before_call,
-        "Deployed contract increased unexpectedly after call"
+        "{test}:Deployed contract increased unexpectedly after call"
     );
 
     Ok(())
