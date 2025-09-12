@@ -36,7 +36,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 2.3.1
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
           ~/.risc0/bin/rzup install rust
 
       - name: Create placeholder SP1 ELF
