@@ -1,6 +1,6 @@
 use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
 
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use ethrex_blockchain::{
     Blockchain, BlockchainType,
     fork_choice::apply_fork_choice,
@@ -17,13 +17,16 @@ use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
 use tracing::info;
 
-use crate::bench::run_and_measure;
-use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
+use crate::{bench::run_and_measure, cache::write_cache};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
+};
+use crate::{
+    cache::delete_cache,
+    fetcher::{get_blockdata, get_rangedata},
 };
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
@@ -141,6 +144,20 @@ pub struct EthrexReplayOptions {
     pub bench: bool,
     #[arg(long, required = false)]
     pub to_csv: bool,
+    #[arg(
+        long,
+        help = "Block cache level: off, failed, on (default: on)",
+        default_value = "on"
+    )]
+    pub cache_level: CacheLevel,
+}
+
+#[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Default)]
+pub enum CacheLevel {
+    Off,
+    Failed,
+    #[default]
+    On,
 }
 
 #[derive(Parser)]
@@ -317,6 +334,7 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    cache_level: CacheLevel::default(),
                 };
 
                 let elapsed = replay_custom_l1_blocks(max(1, n_blocks), &opts).await?;
@@ -406,6 +424,7 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    cache_level: CacheLevel::default(),
                 };
 
                 let elapsed = replay_custom_l2_blocks(max(1, n_blocks), &opts).await?;
@@ -498,6 +517,10 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
+    // Always write the cache after fetching from RPC.
+    // It will be deleted later if not needed.
+    write_cache(&cache, l2)?;
+
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
             eyre::Error::msg("no block found in the cache, this should never happen")
@@ -505,7 +528,10 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let start = SystemTime::now();
 
-    let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+    let block_run_result = run_and_measure(replay(cache.clone(), &opts), opts.bench).await;
+
+    // We save this because block_run_result (Result<u64, Report>) is not clonable.
+    let block_run_failed = block_run_result.is_err();
 
     let replayer_mode = replayer_mode(opts.execute)?;
 
@@ -518,6 +544,20 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     );
 
     block_run_report.log();
+
+    // Apply cache level rules
+    match opts.cache_level {
+        // Cache is already saved
+        CacheLevel::On => {}
+        // Only save the cache if the block run failed
+        CacheLevel::Failed => {
+            if !block_run_failed {
+                delete_cache(&cache, l2)?;
+            }
+        }
+        // Don't keep the cache
+        CacheLevel::Off => delete_cache(&cache, l2)?,
+    }
 
     if opts.to_csv {
         let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
@@ -537,7 +577,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
+pub(crate) fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     match chain_id {
         MAINNET_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Mainnet),
         HOLESKY_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Holesky),

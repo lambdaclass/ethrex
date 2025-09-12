@@ -8,9 +8,12 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::io::Write;
 use std::{fs::File, io::BufWriter};
+use tracing::debug;
+
+use crate::cli::network_from_chain_id;
 
 #[serde_as]
-#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
 pub struct L2Fields {
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
@@ -18,7 +21,7 @@ pub struct L2Fields {
     pub blob_proof: blobs_bundle::Proof,
 }
 
-#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive)]
+#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
 pub struct Cache {
     pub blocks: Vec<Block>,
     pub witness: ExecutionWitness,
@@ -37,6 +40,21 @@ impl Cache {
     }
 }
 
+pub fn get_block_cache_file_name(chain_id: u64, from: u64, to: Option<u64>, l2: bool) -> String {
+    let network = network_from_chain_id(chain_id, l2);
+
+    if let Some(to) = to {
+        format!("cache_{network}_{from}-{to}.bin")
+    } else {
+        format!("cache_{network}_{from}.bin")
+    }
+}
+
+#[cfg(feature = "l2")]
+pub fn get_batch_cache_file_name(batch_number: u64) -> String {
+    format!("cache_batch_{batch_number}.bin")
+}
+
 pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
     let file_data = std::fs::read(file_name)?;
     let cache =
@@ -44,12 +62,49 @@ pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
     Ok(cache)
 }
 
-pub fn write_cache(cache: &Cache, file_name: &str) -> eyre::Result<()> {
+pub fn write_cache(cache: &Cache, l2: bool) -> eyre::Result<()> {
     if cache.blocks.is_empty() {
-        return Err(eyre::Error::msg("cache can't be empty"));
+        return Err(eyre::Error::msg("tried to write cache with no blocks"));
     }
+
+    let file_name = get_block_cache_file_name(
+        cache.witness.chain_config.chain_id,
+        cache.blocks[0].header.number,
+        if cache.blocks.len() == 1 {
+            None
+        } else {
+            cache.blocks.last().map(|b| b.header.number)
+        },
+        l2,
+    );
+
+    debug!("Writing cache to {file_name}");
+
     let mut file = BufWriter::new(File::create(file_name)?);
+
     let bytes = rkyv::to_bytes::<Error>(cache).wrap_err("Failed to serialize with rkyv")?;
+
     file.write_all(&bytes)
         .wrap_err("Failed to write binary data")
+}
+
+pub fn delete_cache(cache: &Cache, l2: bool) -> eyre::Result<()> {
+    if cache.blocks.is_empty() {
+        return Err(eyre::Error::msg("tried to delete cache with no blocks"));
+    }
+
+    let file_name = get_block_cache_file_name(
+        cache.witness.chain_config.chain_id,
+        cache.blocks[0].header.number,
+        if cache.blocks.len() == 1 {
+            None
+        } else {
+            cache.blocks.last().map(|b| b.header.number)
+        },
+        l2,
+    );
+
+    debug!("Deleting cache file {file_name}");
+
+    std::fs::remove_file(file_name).wrap_err("Failed to delete cache file")
 }
