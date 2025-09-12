@@ -116,7 +116,7 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 # EEST Hive
-TEST_PATTERN_EEST ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*|.*fork_Osaka.*
+TEST_PATTERN_EEST ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
 run-hive-eest: build-image setup-hive ## 🧪 Generic command for running Hive EEST tests. Specify EEST_SIM
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
 

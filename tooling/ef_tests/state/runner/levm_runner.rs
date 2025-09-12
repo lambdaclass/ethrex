@@ -199,6 +199,7 @@ pub fn prepare_vm_for_tx<'a>(
             data: test_tx.data.clone(),
             access_list,
             authorization_list: list,
+            gas_limit: test_tx.gas_limit,
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -206,6 +207,7 @@ pub fn prepare_vm_for_tx<'a>(
             value: test_tx.value,
             data: test_tx.data.clone(),
             access_list,
+            gas_limit: test_tx.gas_limit,
             ..Default::default()
         }),
     };
