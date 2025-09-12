@@ -27,6 +27,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
+console-subscriber = { version = "0.4.1", optional = true }
 eyre.workspace = true
 directories = "5.0.1"
 serde.workspace = true
@@ -60,7 +61,7 @@ name = "ethrex"
 path = "./lib.rs"
 
 [features]
-debug = ["ethrex-vm/debug"]
+debug = ["ethrex-vm/debug", "tokio/tracing", "dep:console-subscriber"]
 default = ["libmdbx", "c-kzg", "rollup_storage_sql", "dev", "metrics"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [

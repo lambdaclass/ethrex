@@ -57,6 +57,9 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
+    #[cfg(feature = "debug")]
+    console_subscriber::init();
+
     filter_handle
 }
 
