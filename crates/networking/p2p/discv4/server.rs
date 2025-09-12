@@ -620,7 +620,7 @@ pub fn get_closest_nodes(node_id: H256, table: BTreeMap<H256, Contact>) -> Vec<N
         .into_iter()
         .map(|(contact_id, contact)| (contact.node, distance(&node_id, &contact_id)))
         .collect();
-    nodes.sort_unstable_by_key(|(_, dis)| *dis);
+    nodes.select_nth_unstable_by_key(|(_, dis)| *dis);
     nodes
         .into_iter()
         .map(|(node, _)| node)
