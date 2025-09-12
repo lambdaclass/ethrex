@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757711621718,
+  "lastUpdate": 1757712470514,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13975,6 +13975,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167832652676,
             "range": "± 373911747",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7937b620d9102cf8554efaff682ea17efed17e39",
+          "message": "ci(l2): optimize tdx job (#4451)\n\n**Motivation**\n\nThe docker image for the l2 ci was being built both for tdx and for the\nmain jobs also it makes more sense to have this job in `pr-main_l2.yaml`\nas it runs the integration test the same way the other jobs do. This\nremoves ~20 minutes from the tdx job\n\n- This pr\n[~40min](https://github.com/lambdaclass/ethrex/actions/runs/17683522286/job/50264069464)\n- Main\n[~60min](https://github.com/lambdaclass/ethrex/actions/runs/17681349803/job/50256046400)\n\n**Description**\n\n- Remove pr-main_l2_tdx.yaml file and move all the logic to\n`pr-main_l2.yaml`\n- remove the build l2 step and the build docker image step saving\n~20minutes of execution time",
+          "timestamp": "2025-09-12T20:34:20Z",
+          "tree_id": "2b55781d01890f519f4f659d315e8dcbb8190765",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7937b620d9102cf8554efaff682ea17efed17e39"
+        },
+        "date": 1757712450135,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169094072403,
+            "range": "± 378313231",
             "unit": "ns/iter"
           }
         ]
