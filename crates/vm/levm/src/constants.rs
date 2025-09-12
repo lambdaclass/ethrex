@@ -82,11 +82,12 @@ pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
 
 // Secp256r1 curve parameters
 // See https://eips.ethereum.org/EIPS/eip-7951
+
 pub const P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
 pub const P256_N: P256Uint = NistP256::ORDER;
 pub const P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
 pub const P256_B_UINT: P256Uint =
     P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
-lazy_static::lazy_static! {
-    pub static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
-}
+
+pub static P256_B: LazyLock<P256FieldElement> =
+    LazyLock::new(|| P256FieldElement::from_uint(P256_B_UINT).unwrap());
