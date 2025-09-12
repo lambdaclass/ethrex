@@ -49,16 +49,23 @@ jobs:
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.8
 
-      - name: Build
+      - name: Build Risc0
+        if: matrix.backend == 'risc0'
         run: |
           cd cmd/ethrex_replay
-          cargo b -r --features ${{ matrix.backend }}
+          cargo b -r --no-default-features --features "${{ matrix.backend }},ci"
+
+      - name: Build SP1
+        if: matrix.backend == 'sp1'
+        run: |
+          cd cmd/ethrex_replay
+          cargo b -r --features "${{ matrix.backend }},ci"
       
       - name: Run
         env:
           # TODO(): use RPC
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
-          RPC_URL: "http://eth-testnet-rpc:8547"
+          RPC_URL: "http://45.76.185.153:8545"
         run: |
           cp fixtures/cache/rpc_prover/cache_hoodi_1192723.bin cmd/ethrex_replay
           cd cmd/ethrex_replay
