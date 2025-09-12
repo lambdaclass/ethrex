@@ -1,3 +1,5 @@
+pub mod speedup;
+
 use ethrex::cli::Options;
 use ethrex::initializers::init_tracing;
 use ethrex_common::{
@@ -9,8 +11,9 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use keccak_hash::H256;
-use std::path::PathBuf;
+use rocksdb::SstFileWriter;
 use std::{alloc::System, time::SystemTime};
+use std::{hash, path::PathBuf};
 use tracing::{error, info};
 
 /// Opens a pre-existing Store or creates a new one
@@ -77,15 +80,54 @@ async fn insert_accounts_into_db(store: Store) -> Result<(), SyncError> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() {
+async fn setup_files() -> Result<(), SyncError> {
+    let writer_options = rocksdb::Options::default();
+    let mut writer = SstFileWriter::create(&writer_options);
+    let mut count = 0;
+    for entry in std::fs::read_dir("/home/admin/.local/share/ethrex/account_state_snapshots")
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+    {
+        let entry = entry.map_err(|err| {
+            SyncError::SnapshotReadError(
+                "/home/admin/.local/share/ethrex/account_state_snapshots"
+                    .clone()
+                    .into(),
+                err,
+            )
+        })?;
+        info!("Reading account file from entry {entry:?}");
+        let snapshot_path = entry.path();
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        let mut account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        account_states_snapshot.sort_by(|(hash_a, _), (hash_b, _)| hash_a.cmp(hash_b));
+        writer.open(std::path::Path::new(&format!(
+            "/home/admin/.local/share/ethrex/account_sst/account_{count}.sst"
+        )));
+        for account in account_states_snapshot {
+            writer.put(account.0, account.1.encode_to_vec());
+        }
+        writer.finish();
+        count += 1;
+    }
+    Ok(())
+}
+
+async fn sub_main() {
     let mut opts = Options::default();
-    //opts.log_level = tracing::Level::INFO;
     init_tracing(&opts);
     info!("Starting");
     let store: Store = open_store("/home/admin/.local/share/benchmarks/");
     let _ = insert_accounts_into_db(store)
         .await
         .inspect_err(|err| error!("We had the error {err:?}"));
+}
+
+#[tokio::main]
+async fn main() {
+    setup_files().await;
     info!("finishing");
 }
