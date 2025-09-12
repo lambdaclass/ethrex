@@ -169,7 +169,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--metrics-address 0.0.0.0 \
 		--metrics-port 5054 \
 		--datadir $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM) \
-		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
+		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT)
 
 start-ethrex: ## Start ethrex for the network given by NETWORK.
 	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
@@ -215,8 +215,8 @@ server-sync:
 
 	tmux new-session -d -s sync -n htop "htop"
 
-	tmux new-window -t sync:1 -n lighthouse "lighthouse bn --network $(SERVER_SYNC_NETWORK) --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url $(CHECKPOINT_URL) --purge-db-force "
+	tmux new-window -t sync:1 -n lighthouse "lighthouse bn --network $(SERVER_SYNC_NETWORK) --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url $(CHECKPOINT_URL) --http-address 0.0.0.0 --purge-db-force "
 
 	sleep 0.2
 
-	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ../.local/share/ethrex && RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,spawned_concurrency::tasks::gen_server=off $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(SNAP),$(HEALING)),--syncmode snap)  2>&1 | tee $(LOGS_FILE)"
+	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,spawned_concurrency::tasks::gen_server=off $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(SNAP),$(HEALING)),--syncmode snap)  2>&1 | tee $(LOGS_FILE)"
