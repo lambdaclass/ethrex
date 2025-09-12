@@ -48,17 +48,22 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
     let fmt_layer = fmt::layer().with_filter(filter);
+    let subscriber = Registry::default().with(fmt_layer);
+    #[cfg(feature = "debug")]
+    let subscriber = {
+        console_subscriber::ConsoleLayer::builder().init();
+        let console_layer = console_subscriber::spawn();
+        subscriber.with(console_layer)
+    };
+
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
-        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
+        Box::new(subscriber.with(profiling_layer))
     } else {
-        Box::new(Registry::default().with(fmt_layer))
+        Box::new(subscriber)
     };
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-
-    #[cfg(feature = "debug")]
-    console_subscriber::init();
 
     filter_handle
 }
