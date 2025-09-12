@@ -457,8 +457,6 @@ impl DiscoveryServer {
 
         drop(table);
 
-        // we are sending the neighbors in 2 different messages to avoid exceeding the
-        // maximum packet size
         let _ = self
             .send_neighbors(neighbors, &node)
             .await
@@ -619,28 +617,21 @@ pub enum ConnectionHandlerOutMessage {
 
 /// Returns the nodes closest to the given `node_id`.
 pub fn get_closest_nodes(node_id: H256, table: BTreeMap<H256, Contact>) -> Vec<Node> {
-    let mut nodes: Vec<(Node, usize)> = vec![];
-
-    for (contact_id, contact) in &table {
-        let distance = distance(&node_id, contact_id);
-        if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
-            nodes.push((contact.node.clone(), distance));
-        } else {
-            for (i, (_, dis)) in &mut nodes.iter().enumerate() {
-                if distance < *dis {
-                    nodes[i] = (contact.node.clone(), distance);
-                    break;
-                }
-            }
-        }
-    }
-    nodes.into_iter().map(|(node, _distance)| node).collect()
+    let mut nodes: Vec<_> = table
+        .into_iter()
+        .map(|(contact_id, contact)| (contact.node, distance(&node_id, &contact_id)))
+        .collect();
+    nodes.sort_unstable_by_key(|(_, dis)| *dis);
+    nodes
+        .into_iter()
+        .map(|(node, _)| node)
+        .take(MAX_NODES_IN_NEIGHBORS_PACKET)
+        .collect()
 }
 
-pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
+pub fn distance(node_id_1: &H256, node_id_2: &H256) -> U256 {
     let xor = node_id_1 ^ node_id_2;
-    let distance = U256::from_big_endian(xor.as_bytes());
-    distance.bits().saturating_sub(1)
+    U256::from_big_endian(xor.as_bytes())
 }
 
 // TODO: Reimplement tests removed during snap sync refactor
