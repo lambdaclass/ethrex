@@ -11,7 +11,7 @@ use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
 };
-use rkyv::rancor::Error;
+use rkyv::rancor::Error as RkyvError;
 use std::time::Instant;
 use tracing::info;
 
@@ -30,7 +30,7 @@ pub enum Error {
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
     let env = ExecutorEnv::builder().write(&execute)?.build()?;
 
     let executor = default_executor();
@@ -49,7 +49,7 @@ pub fn prove(
 ) -> Result<Receipt, Box<dyn std::error::Error>> {
     let mut stdout = Vec::new();
 
-    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
     let env = ExecutorEnv::builder()
         .stdout(&mut stdout)
         .write(&bytes)?
