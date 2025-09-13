@@ -3,7 +3,7 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProofCalldata, ProverType},
 };
 use guest_program::{
-    input::{JSONProgramInput, ProgramInput},
+    input::ProgramInput,
     methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };
 use risc0_zkp::verify::VerificationError;

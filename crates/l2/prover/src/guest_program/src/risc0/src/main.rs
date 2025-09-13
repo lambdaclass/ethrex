@@ -5,7 +5,7 @@ use rkyv::rancor::Error;
 fn main() {
     println!("start reading input");
     let start = env::cycle_count();
-    let input = env::read_frame();
+    let input = env::read::<Vec<u8>>();
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
     let end = env::cycle_count();
     println!("end reading input, cycles: {}", end - start);
