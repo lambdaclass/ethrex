@@ -15,7 +15,7 @@ const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 #[tokio::main]
 async fn main() {
-    let zkvm = ErezkVM::SP1;
+    let zkvm = ErezkVM::Zisk;
 
     // Compile a guest program
     println!("Compiling guest program for {zkvm:?}...");
@@ -32,13 +32,13 @@ async fn main() {
                 .join(zkvm.to_string()),
         )
         .unwrap();
-    println!("Guest program compiled successfully.");
+    println!("{zkvm} guest program compiled successfully.");
 
     // Create zkVM instance
-    println!("Creating zkVM instance...");
-    let resource = ProverResourceType::Cpu;
+    println!("Creating {zkvm} instance...");
+    let resource = ProverResourceType::Gpu;
     let zkvm = EreDockerizedzkVM::new(zkvm, program, resource).unwrap();
-    println!("zkVM instance created successfully.");
+    println!("{} instance created successfully.", zkvm.zkvm());
 
     // Prepare inputs
     println!("Preparing inputs...");
@@ -52,12 +52,12 @@ async fn main() {
 
     // Execute program
     println!("Executing program...");
-    let (public_values, execution_report) = zkvm.execute(&inputs).unwrap();
+    let (_public_values, execution_report) = zkvm.execute(&inputs).unwrap();
     println!("{execution_report:#?}");
 
-    // // Generate proof
-    // let (public_values, proof, proving_report) = zkvm.prove(&inputs).unwrap();
-    // println!("Proof generated in: {:#?}", proving_report.proving_time);
+    // Generate proof
+    let (_public_values, _proof, proving_report) = zkvm.prove(&inputs).unwrap();
+    println!("Proof generated in: {:#?}", proving_report.proving_time);
 
     // // Verify proof
     // let public_values = zkvm.verify(&proof).unwrap();
