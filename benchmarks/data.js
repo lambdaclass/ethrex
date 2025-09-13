@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757747886255,
+  "lastUpdate": 1757750101896,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -28708,6 +28708,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015357555555555557,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "504dd26fcd5768efec955dce58125f3c1aaae4f6",
+          "message": "feat(l1): block size limit (#4217)\n\n**Description**\n\nThis PR implements [EIP-7934](https://eips.ethereum.org/EIPS/eip-7934),\nwhich will be incorporated in Fusaka. Said EIP introduces a limit on the\nsize of the RLP encode of blocks. This PR adds the required check in\nblock validation.\n\nPartially resolves #4158, the block building side of the EIP will be a\nseparate PR.",
+          "timestamp": "2025-09-12T18:58:39Z",
+          "tree_id": "2454a1657bc1b9b6fdacb38beb2778368e20c823",
+          "url": "https://github.com/lambdaclass/ethrex/commit/504dd26fcd5768efec955dce58125f3c1aaae4f6"
+        },
+        "date": 1757750100741,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004871319499341239,
             "unit": "Mgas/s"
           }
         ]
