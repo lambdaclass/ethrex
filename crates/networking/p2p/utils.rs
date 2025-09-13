@@ -73,6 +73,14 @@ pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -
     format!("{directory}/account_storages_chunk.rlp.{chunk_index}")
 }
 
+pub fn get_bytecode_hashes_snapshots_dir(datadir: &String) -> String {
+    format!("{datadir}/bytecode_hashes_snapshots")
+}
+
+pub fn get_bytecode_hashes_snapshot_file(directory: String, chunk_index: u64) -> String {
+    format!("{directory}/bytecode_hashes_chunk.rlp.{chunk_index}")
+}
+
 pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
     std::fs::write(&path, &contents)
         .inspect_err(|err| {

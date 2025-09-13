@@ -6,7 +6,9 @@ use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
-    current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
+    current_unix_time, dump_to_file, get_account_state_snapshots_dir,
+    get_account_storages_snapshots_dir, get_bytecode_hashes_snapshot_file,
+    get_bytecode_hashes_snapshots_dir,
 };
 use crate::{
     metrics::METRICS,
@@ -809,6 +811,44 @@ impl Syncer {
         let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
+        // Bytecode hashes snapshots directory and index file
+        let bytecode_hashes_snapshots_dir = get_bytecode_hashes_snapshots_dir(&self.datadir);
+        let mut bytecode_index_file = 0_u64;
+
+        // Buffer for collecting bytecode hashes before writing to disk
+        const BYTECODE_WRITE_BUFFER_SIZE: usize = 100_000;
+        let mut bytecode_write_buffer = Vec::new();
+
+        // Helper function to flush bytecode buffer to disk
+        let flush_bytecode_buffer =
+            |buffer: &mut Vec<H256>, file_index: &mut u64, dir: &String| -> Result<(), SyncError> {
+                if buffer.is_empty() {
+                    return Ok(());
+                }
+
+                buffer.sort();
+                buffer.dedup();
+                let file_name = get_bytecode_hashes_snapshot_file(dir.clone(), *file_index);
+
+                info!(
+                    "Flushing bytecode buffer with {} hashes to {}",
+                    buffer.len(),
+                    file_name
+                );
+                dump_to_file(file_name.clone(), buffer.encode_to_vec())
+                    .map_err(|_| SyncError::BytecodeFileError)
+                    .inspect_err(|err| {
+                        error!(
+                            "Failed to flush bytecode buffer to file {}: {}",
+                            file_name, err
+                        );
+                    })?;
+
+                buffer.clear();
+                *file_index += 1;
+                Ok(())
+            };
+
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // We start by downloading all of the leafs of the trie of accounts
@@ -861,6 +901,23 @@ impl Syncer {
 
                 info!("Inserting accounts into the state trie");
 
+                // Collect bytecode hashes from current account snapshot and add to buffer
+                let bytecodes_from_snapshot =
+                    account_states_snapshot.iter().filter_map(|(_, state)| {
+                        (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
+                    });
+
+                bytecode_write_buffer.extend(bytecodes_from_snapshot);
+
+                // Flush buffer if it's getting too large
+                if bytecode_write_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
+                    flush_bytecode_buffer(
+                        &mut bytecode_write_buffer,
+                        &mut bytecode_index_file,
+                        &bytecode_hashes_snapshots_dir,
+                    )?;
+                }
+
                 let store_clone = store.clone();
                 let current_state_root =
                     tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
@@ -881,6 +938,13 @@ impl Syncer {
 
                 computed_state_root = current_state_root;
             }
+
+            // Flush any remaining bytecode hashes in buffer
+            flush_bytecode_buffer(
+                &mut bytecode_write_buffer,
+                &mut bytecode_index_file,
+                &bytecode_hashes_snapshots_dir,
+            )?;
 
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
@@ -1064,30 +1128,79 @@ impl Syncer {
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
+        // Bytecode download
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
-        let mut bytecode_iter = store
-            .iter_accounts(pivot_header.state_root)
-            .expect("we couldn't iterate over accounts")
-            .map(|(_, state)| state.code_hash)
-            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
-        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
-            // Download bytecodes
-            bytecode_hashes.sort();
-            bytecode_hashes.dedup();
+
+        // Read all bytecode hash files and deduplicate globally
+        let bytecode_dir = get_bytecode_hashes_snapshots_dir(&self.datadir);
+        let mut seen_bytecodes = HashSet::new();
+        let mut bytecodes_to_download = Vec::new();
+        let mut total_unique_hashes = 0;
+
+        info!("Starting bytecode deduplication and batch processing");
+
+        for entry in std::fs::read_dir(&bytecode_dir).map_err(|_| SyncError::CorruptPath)? {
+            let entry = entry.map_err(|_| SyncError::CorruptPath)?;
+            let snapshot_contents = std::fs::read(entry.path())
+                .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
+            let bytecode_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(entry.path()))?;
+
+            // Deduplicate globally and collect unique hashes
+            for hash in bytecode_hashes {
+                if seen_bytecodes.insert(hash) {
+                    bytecodes_to_download.push(hash);
+                    total_unique_hashes += 1;
+
+                    // Process in batches to avoid memory buildup
+                    if bytecodes_to_download.len() >= BYTECODE_CHUNK_SIZE {
+                        info!(
+                            "Downloading bytecode batch of {} hashes (processed {}/{} unique so far)",
+                            bytecodes_to_download.len(),
+                            total_unique_hashes,
+                            seen_bytecodes.len()
+                        );
+
+                        let bytecodes = self
+                            .peers
+                            .request_bytecodes(&bytecodes_to_download)
+                            .await
+                            .map_err(SyncError::PeerHandler)?
+                            .ok_or(SyncError::BytecodesNotFound)?;
+
+                        store
+                            .write_account_code_batch(
+                                bytecodes_to_download.drain(..).zip(bytecodes).collect(),
+                            )
+                            .await?;
+                    }
+                }
+            }
+        }
+
+        // Download remaining bytecodes if any
+        if !bytecodes_to_download.is_empty() {
             info!(
-                "Starting bytecode download of {} hashes",
-                bytecode_hashes.len()
+                "Downloading final bytecode batch of {} hashes",
+                bytecodes_to_download.len()
             );
             let bytecodes = self
                 .peers
-                .request_bytecodes(&bytecode_hashes)
+                .request_bytecodes(&bytecodes_to_download)
                 .await
                 .map_err(SyncError::PeerHandler)?
                 .ok_or(SyncError::BytecodesNotFound)?;
             store
-                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+                .write_account_code_batch(
+                    bytecodes_to_download.into_iter().zip(bytecodes).collect(),
+                )
                 .await?;
         }
+
+        info!(
+            "Bytecode download completed. Total unique hashes processed: {}",
+            total_unique_hashes
+        );
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
@@ -1301,6 +1414,8 @@ pub enum SyncError {
     PeerHandler(#[from] PeerHandlerError),
     #[error("Corrupt Path")]
     CorruptPath,
+    #[error("Bytecode file error")]
+    BytecodeFileError,
 }
 
 impl<T> From<SendError<T>> for SyncError {
@@ -1363,12 +1478,4 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     .all(|valid| valid);
     info!("Finished validate_storage_root");
     is_valid
-}
-
-fn bytecode_iter_fn<T>(bytecode_iter: &mut T) -> Option<Vec<H256>>
-where
-    T: Iterator<Item = H256>,
-{
-    Some(bytecode_iter.by_ref().take(BYTECODE_CHUNK_SIZE).collect())
-        .filter(|chunk: &Vec<_>| !chunk.is_empty())
 }
