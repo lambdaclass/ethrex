@@ -166,9 +166,6 @@ impl L1ProofSender {
             } else {
                 self.send_proof_to_contract(batch_to_send, proofs).await?;
             }
-            self.rollup_store
-                .set_lastest_sent_batch_proof(batch_to_send)
-                .await?;
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
                 .iter()

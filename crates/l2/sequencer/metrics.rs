@@ -74,17 +74,13 @@ impl MetricsGatherer {
         let l1_gas_price = self.l1_eth_client.get_gas_price().await?;
         let l2_gas_price = self.l2_eth_client.get_gas_price().await?;
 
-        if let Ok(Some(last_verified_batch_blocks)) = self
+        if let Ok(Some((_first_block, last_block))) = self
             .rollup_store
             .get_block_numbers_by_batch(last_verified_batch)
             .await
         {
-            if let Some(last_block) = last_verified_batch_blocks.last() {
-                METRICS.set_block_type_and_block_number(
-                    MetricsBlockType::LastVerifiedBlock,
-                    *last_block,
-                )?;
-            }
+            METRICS
+                .set_block_type_and_block_number(MetricsBlockType::LastVerifiedBlock, last_block)?;
         }
 
         if let Ok(operations_metrics) = self.rollup_store.get_operations_count().await {
