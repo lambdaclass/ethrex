@@ -8,7 +8,7 @@ use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::{
-        configs::{AlignedConfig, MonitorConfig},
+        configs::{AdminConfig, AlignedConfig, MonitorConfig},
         utils::resolve_aligned_network,
     },
 };
@@ -76,6 +76,8 @@ pub struct SequencerOptions {
     pub aligned_opts: AlignedOptions,
     #[command(flatten)]
     pub monitor_opts: MonitorOptions,
+    #[command(flatten)]
+    pub admin_opts: AdminOptions,
     #[arg(
         long = "validium",
         default_value = "false",
@@ -230,6 +232,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 enabled: !opts.no_monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
                 batch_widget_height: opts.monitor_opts.batch_widget_height,
+            },
+            admin_server: AdminConfig {
+                listen_ip: opts.admin_opts.admin_listen_ip,
+                listen_port: opts.admin_opts.admin_listen_port,
             },
         })
     }
@@ -731,6 +737,36 @@ impl Default for MonitorOptions {
         Self {
             tick_rate: 1000,
             batch_widget_height: None,
+        }
+    }
+}
+
+#[derive(Parser, Debug)]
+pub struct AdminOptions {
+    #[arg(
+        long = "admin-server.addr",
+        env = "ETHREX_ADMIN_SERVER_LISTEN_ADDRESS",
+        default_value = "127.0.0.1",
+        value_name = "IP_ADDRESS",
+        help_heading = "Admin server options"
+    )]
+    pub admin_listen_ip: IpAddr,
+
+    #[arg(
+        long = "admin-server.port",
+        env = "ETHREX_ADMIN_SERVER_LISTEN_PORT",
+        default_value_t = 5555,
+        value_name = "UINT16",
+        help_heading = "Admin server options"
+    )]
+    pub admin_listen_port: u16,
+}
+
+impl Default for AdminOptions {
+    fn default() -> Self {
+        Self {
+            admin_listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            admin_listen_port: 5555,
         }
     }
 }

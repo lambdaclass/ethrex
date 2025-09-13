@@ -1,5 +1,6 @@
 use crate::based::block_fetcher::BlockFetcherError;
 use crate::based::state_updater::StateUpdaterError;
+use crate::sequencer::admin_server::AdminError;
 use crate::utils::error::UtilsError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
@@ -48,6 +49,8 @@ pub enum SequencerError {
     AlignedNetworkError(String),
     #[error("Failed to start EthrexMonitor: {0}")]
     MonitorError(#[from] MonitorError),
+    #[error("Failed to start admin api: {0}")]
+    Admin(#[from] AdminError),
 }
 
 #[derive(Debug, thiserror::Error)]
