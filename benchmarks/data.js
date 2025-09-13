@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757765239395,
+  "lastUpdate": 1757777632127,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -28824,6 +28824,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004845781782437746,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e37894d174835c6f8b9001df45f0b394e921a5a3",
+          "message": "refactor(replay): use `eth_getBlockByNumber` instead of `debug_getRawBlock` (#4454)\n\n**Motivation**\n\nThis pull request updates the block fetching logic in `fetcher.rs`.\nInstead of relying on the debug endpoint, we now use\n`eth_getBlockByNumber`, which is implemented across all nodes. This\nmakes the process more reliable and avoids depending on an endpoint that\nis not universally available.\n\n**Description**\n\n- Added a `hydrated` boolean parameter to\n`EthClient::get_block_by_number`, allowing callers to specify whether to\nretrieve full block data or just hashes. All call sites are updated to\nuse this new parameter.\n- Refactored `get_blockdata` in `cmd/ethrex_replay/src/fetcher.rs` to\nuse `get_blockByNumber` with `hydrated=true` instead of `get_rawBlock`,\nand updated logic to construct the full `Block` from the response.",
+          "timestamp": "2025-09-12T21:08:27Z",
+          "tree_id": "c6af94e44124e35588becf0f818574a672a4d81b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e37894d174835c6f8b9001df45f0b394e921a5a3"
+        },
+        "date": 1757777631178,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015370324256911245,
             "unit": "Mgas/s"
           }
         ]
