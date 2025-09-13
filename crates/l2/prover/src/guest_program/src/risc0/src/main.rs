@@ -1,4 +1,4 @@
-use guest_program::execution::execution_program;
+use guest_program::{execution::execution_program, input::ProgramInput};
 use risc0_zkvm::guest::env;
 use rkyv::rancor::Error;
 
