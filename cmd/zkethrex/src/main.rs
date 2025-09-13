@@ -100,7 +100,7 @@ async fn main() {
     } = Options::parse();
 
     println!(
-        "Replaying https://etherscan.io/block/{block:?} using {zkvm:?} on {resource:?} ({action:?})"
+        "Replaying https://etherscan.io/block/{block} using {zkvm:?} on {resource:?} ({action:?})"
     );
 
     let zkvm = zkvm.into();
