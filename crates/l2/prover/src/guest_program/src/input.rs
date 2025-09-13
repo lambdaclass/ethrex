@@ -25,3 +25,17 @@ pub struct ProgramInput {
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
 }
+
+impl Default for ProgramInput {
+    fn default() -> Self {
+        Self {
+            blocks: Default::default(),
+            db: Default::default(),
+            elasticity_multiplier: Default::default(),
+            #[cfg(feature = "l2")]
+            blob_commitment: [0; 48],
+            #[cfg(feature = "l2")]
+            blob_proof: [0; 48],
+        }
+    }
+}
