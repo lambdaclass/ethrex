@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757789353993,
+  "lastUpdate": 1757791633197,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -28911,6 +28911,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015328903399668325,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "67b265e7d1a5140e3c0a2f36ba81743efba2072a",
+          "message": "feat(l1): add docker compose with CL and EL (#4432)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd a `docker-compose.yaml` file that deploys a Consensus client\n(lighthouse) and ethrex with just one command:\n```sh\ndocker compose up\n```\n`ETHREX_NETWORK` can be used to set the network, default is `mainnet`.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-12T21:49:11Z",
+          "tree_id": "d55baf82ae869c76d342a0a60d13bf4758cdab31",
+          "url": "https://github.com/lambdaclass/ethrex/commit/67b265e7d1a5140e3c0a2f36ba81743efba2072a"
+        },
+        "date": 1757791632581,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004852141076115486,
             "unit": "Mgas/s"
           }
         ]
