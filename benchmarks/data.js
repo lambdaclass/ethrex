@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757733053900,
+  "lastUpdate": 1757741438911,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -28650,6 +28650,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004829956237753103,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b259772ef15bd189fd7a539751e241e75cb9417",
+          "message": "fix(l1): fixed global state slot metric  (#4449)\n\n**Motivation**\n\nThe global state account healed metrics was displaying a number way\nlarger than expected.\n\n**Description**\n\n- Fixed bug where the global metrics counter was being added to itself\nmultiple times.",
+          "timestamp": "2025-09-12T17:55:30Z",
+          "tree_id": "95b7aa124fe28be9570c0043f170dc8ed01f13bc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9b259772ef15bd189fd7a539751e241e75cb9417"
+        },
+        "date": 1757741437819,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0048906501322751325,
             "unit": "Mgas/s"
           }
         ]
