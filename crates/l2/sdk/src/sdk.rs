@@ -166,6 +166,8 @@ pub async fn withdraw(
     from: Address,
     from_pk: SecretKey,
     proposer_client: &EthClient,
+    nonce: Option<u64>,
+    gas_limit: Option<u64>,
 ) -> Result<H256, EthClientError> {
     let withdraw_transaction = build_generic_tx(
         proposer_client,
@@ -178,6 +180,8 @@ pub async fn withdraw(
         )?),
         Overrides {
             value: Some(amount),
+            nonce,
+            gas_limit,
             ..Default::default()
         },
     )
