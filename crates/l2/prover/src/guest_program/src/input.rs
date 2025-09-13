@@ -1,7 +1,7 @@
 use ethrex_common::types::{Block, block_execution_witness::ExecutionWitness};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
-use serde_with::{DeserializeAs, SerializeAs, serde_as};
+use serde_with::serde_as;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::blobs_bundle;
