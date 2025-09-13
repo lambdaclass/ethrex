@@ -6,8 +6,9 @@ use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
 };
 use ethrex_rpc::{
-    EthClient, debug::execution_witness::execution_witness_from_rpc_chain_config,
-    types::block_identifier::BlockIdentifier,
+    EthClient,
+    debug::execution_witness::execution_witness_from_rpc_chain_config,
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use guest_program::input::ProgramInput;
 use zkvm_interface::{Compiler, Input, ProverResourceType, zkVM};
@@ -22,6 +23,23 @@ pub struct Options {
     resource: Resource,
     #[arg(long, value_enum)]
     action: Action,
+    #[arg(long, value_parser = parse_block_identifier, default_value = "latest", help = "Block identifier (number or tag: earliest, finalized, safe, latest, pending)")]
+    block: BlockIdentifier,
+}
+
+fn parse_block_identifier(s: &str) -> Result<BlockIdentifier, String> {
+    if let Ok(num) = s.parse::<u64>() {
+        Ok(BlockIdentifier::Number(num))
+    } else {
+        match s {
+            "earliest" => Ok(BlockIdentifier::Tag(BlockTag::Earliest)),
+            "finalized" => Ok(BlockIdentifier::Tag(BlockTag::Finalized)),
+            "safe" => Ok(BlockIdentifier::Tag(BlockTag::Safe)),
+            "latest" => Ok(BlockIdentifier::Tag(BlockTag::Latest)),
+            "pending" => Ok(BlockIdentifier::Tag(BlockTag::Pending)),
+            _ => Err(format!("Invalid block identifier: {s}")),
+        }
+    }
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -78,6 +96,7 @@ async fn main() {
         zkvm,
         resource,
         action,
+        block,
     } = Options::parse();
 
     let zkvm = zkvm.into();
@@ -107,8 +126,9 @@ async fn main() {
     // Prepare inputs
     println!("Preparing inputs...");
     let mut inputs = Input::new();
+    let input = get_program_input(block).await;
     inputs.write_bytes(
-        rkyv::to_bytes::<rkyv::rancor::Error>(&get_program_input().await)
+        rkyv::to_bytes::<rkyv::rancor::Error>(&input)
             .unwrap()
             .to_vec(),
     );
@@ -126,21 +146,19 @@ async fn main() {
     }
 }
 
-async fn get_program_input() -> ProgramInput {
+async fn get_program_input(block_identifier: BlockIdentifier) -> ProgramInput {
     let eth_client = EthClient::new("http://157.180.1.98:8545").unwrap();
 
-    let canonical_head = eth_client.get_block_number().await.unwrap().as_u64();
-
-    println!("https://etherscan.io/block/{canonical_head}");
-
     let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(canonical_head))
+        .get_raw_block(block_identifier.clone())
         .await
         .unwrap();
 
+    println!("https://etherscan.io/block/{}", block.header.number);
+
     let execution_witness = {
         let rpc_execution_witness = eth_client
-            .get_witness(BlockIdentifier::Number(canonical_head), None)
+            .get_witness(block_identifier, None)
             .await
             .unwrap();
 
@@ -151,8 +169,12 @@ async fn get_program_input() -> ProgramInput {
             .unwrap()
             .config;
 
-        execution_witness_from_rpc_chain_config(rpc_execution_witness, chain_config, canonical_head)
-            .unwrap()
+        execution_witness_from_rpc_chain_config(
+            rpc_execution_witness,
+            chain_config,
+            block.header.number,
+        )
+        .unwrap()
     };
 
     ProgramInput {
