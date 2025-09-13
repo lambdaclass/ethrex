@@ -99,6 +99,10 @@ async fn main() {
         block,
     } = Options::parse();
 
+    println!(
+        "Replaying https://etherscan.io/block/{block:?} using {zkvm:?} on {resource:?} ({action:?})"
+    );
+
     let zkvm = zkvm.into();
 
     // Compile a guest program
