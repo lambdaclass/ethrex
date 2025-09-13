@@ -1,94 +1,22 @@
 use std::path::Path;
 
-use clap::{Parser, ValueEnum};
-use ere_dockerized::{EreDockerizedCompiler, EreDockerizedzkVM, ErezkVM};
+use clap::Parser;
+use ere_dockerized::{EreDockerizedCompiler, EreDockerizedzkVM};
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
 };
 use ethrex_rpc::{
-    EthClient,
-    debug::execution_witness::execution_witness_from_rpc_chain_config,
-    types::block_identifier::{BlockIdentifier, BlockTag},
+    EthClient, debug::execution_witness::execution_witness_from_rpc_chain_config,
+    types::block_identifier::BlockIdentifier,
 };
 use guest_program::input::ProgramInput;
-use zkvm_interface::{Compiler, Input, ProverResourceType, zkVM};
+use zkvm_interface::{Compiler, Input, zkVM};
+
+use crate::cli::{Action, Options};
+
+mod cli;
 
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
-
-#[derive(Parser)]
-pub struct Options {
-    #[arg(long, value_enum)]
-    zkvm: ZKVM,
-    #[arg(long, value_enum)]
-    resource: Resource,
-    #[arg(long, value_enum)]
-    action: Action,
-    #[arg(long, value_parser = parse_block_identifier, default_value = "latest", help = "Block identifier (number or tag: earliest, finalized, safe, latest, pending)")]
-    block: BlockIdentifier,
-}
-
-fn parse_block_identifier(s: &str) -> Result<BlockIdentifier, String> {
-    if let Ok(num) = s.parse::<u64>() {
-        Ok(BlockIdentifier::Number(num))
-    } else {
-        match s {
-            "earliest" => Ok(BlockIdentifier::Tag(BlockTag::Earliest)),
-            "finalized" => Ok(BlockIdentifier::Tag(BlockTag::Finalized)),
-            "safe" => Ok(BlockIdentifier::Tag(BlockTag::Safe)),
-            "latest" => Ok(BlockIdentifier::Tag(BlockTag::Latest)),
-            "pending" => Ok(BlockIdentifier::Tag(BlockTag::Pending)),
-            _ => Err(format!("Invalid block identifier: {s}")),
-        }
-    }
-}
-
-#[derive(Clone, Debug, ValueEnum)]
-pub enum ZKVM {
-    Jolt,
-    Nexus,
-    OpenVM,
-    Pico,
-    Risc0,
-    SP1,
-    Ziren,
-    Zisk,
-}
-
-impl From<ZKVM> for ErezkVM {
-    fn from(value: ZKVM) -> Self {
-        match value {
-            ZKVM::Jolt => ErezkVM::Jolt,
-            ZKVM::Nexus => ErezkVM::Nexus,
-            ZKVM::OpenVM => ErezkVM::OpenVM,
-            ZKVM::Pico => ErezkVM::Pico,
-            ZKVM::Risc0 => ErezkVM::Risc0,
-            ZKVM::SP1 => ErezkVM::SP1,
-            ZKVM::Ziren => ErezkVM::Ziren,
-            ZKVM::Zisk => ErezkVM::Zisk,
-        }
-    }
-}
-
-#[derive(Clone, Debug, ValueEnum)]
-pub enum Resource {
-    CPU,
-    GPU,
-}
-
-impl From<Resource> for ProverResourceType {
-    fn from(value: Resource) -> Self {
-        match value {
-            Resource::CPU => ProverResourceType::Cpu,
-            Resource::GPU => ProverResourceType::Gpu,
-        }
-    }
-}
-
-#[derive(Clone, Debug, ValueEnum)]
-pub enum Action {
-    Execute,
-    Prove,
-}
 
 #[tokio::main]
 async fn main() {
@@ -99,10 +27,6 @@ async fn main() {
         block,
     } = Options::parse();
 
-    println!(
-        "Replaying https://etherscan.io/block/{block} using {zkvm:?} on {resource:?} ({action:?})"
-    );
-
     let zkvm = zkvm.into();
 
     // Compile a guest program
@@ -112,8 +36,8 @@ async fn main() {
         .and_then(Path::parent)
         .unwrap();
     let guest_relative_dir = Path::new("crates/l2/prover/src/guest_program/src");
-    let compiler = EreDockerizedCompiler::new(zkvm, workspace_dir).unwrap();
-    let program = compiler
+    let program = EreDockerizedCompiler::new(zkvm, workspace_dir)
+        .unwrap()
         .compile(
             &workspace_dir
                 .join(guest_relative_dir)
