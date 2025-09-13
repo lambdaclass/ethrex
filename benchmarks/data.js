@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757716945349,
+  "lastUpdate": 1757729377639,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -28592,6 +28592,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015319376424280092,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5860ab86506413cccd2232ba6e276aee91babd5b",
+          "message": "feat(l2): bump risc0 to `3.0.3` and re enable main ci jobs (#4425)\n\n**Motivation**\n\nWe want to use the newer version of the RISC0 zkVM.\nAlso re enable the CI jobs that tests replay proving an executing.\n\n**Description**\n\n* Updated `risc0-zkvm` from version `2.3.1` to `3.0.3`.\n* Updated `risc0-zkp` from version `2.0.2` to `3.0.2`..\n  * This is the latest version for this crate, not `3.0.3` available\n* Updated `risc0-zkvm-platform` from version `2.0.3` to `2.2.1`.\n* Re-enabled the \"Test\" job in `pr-main_replay.yaml`.\n* Restored push and pull request triggers in `main_prover_l1.yaml`.\n* Updated block number and cache file.\n\nCloses #4411\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-09-12T13:57:48Z",
+          "tree_id": "8a4f9a290a5e237307dc4016ad27a5c5fb5671cb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5860ab86506413cccd2232ba6e276aee91babd5b"
+        },
+        "date": 1757729343922,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015386315022888058,
             "unit": "Mgas/s"
           }
         ]
