@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use clap::{Parser, ValueEnum};
 use ere_dockerized::{EreDockerizedCompiler, EreDockerizedzkVM, ErezkVM};
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
@@ -13,9 +14,73 @@ use zkvm_interface::{Compiler, Input, ProverResourceType, zkVM};
 
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
+#[derive(Parser)]
+pub struct Options {
+    #[arg(long, value_enum)]
+    zkvm: ZKVM,
+    #[arg(long, value_enum)]
+    resource: Resource,
+    #[arg(long, value_enum)]
+    action: Action,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ZKVM {
+    Jolt,
+    Nexus,
+    OpenVM,
+    Pico,
+    Risc0,
+    SP1,
+    Ziren,
+    Zisk,
+}
+
+impl From<ZKVM> for ErezkVM {
+    fn from(value: ZKVM) -> Self {
+        match value {
+            ZKVM::Jolt => ErezkVM::Jolt,
+            ZKVM::Nexus => ErezkVM::Nexus,
+            ZKVM::OpenVM => ErezkVM::OpenVM,
+            ZKVM::Pico => ErezkVM::Pico,
+            ZKVM::Risc0 => ErezkVM::Risc0,
+            ZKVM::SP1 => ErezkVM::SP1,
+            ZKVM::Ziren => ErezkVM::Ziren,
+            ZKVM::Zisk => ErezkVM::Zisk,
+        }
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum Resource {
+    CPU,
+    GPU,
+}
+
+impl From<Resource> for ProverResourceType {
+    fn from(value: Resource) -> Self {
+        match value {
+            Resource::CPU => ProverResourceType::Cpu,
+            Resource::GPU => ProverResourceType::Gpu,
+        }
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum Action {
+    Execute,
+    Prove,
+}
+
 #[tokio::main]
 async fn main() {
-    let zkvm = ErezkVM::Zisk;
+    let Options {
+        zkvm,
+        resource,
+        action,
+    } = Options::parse();
+
+    let zkvm = zkvm.into();
 
     // Compile a guest program
     println!("Compiling guest program for {zkvm:?}...");
@@ -36,8 +101,7 @@ async fn main() {
 
     // Create zkVM instance
     println!("Creating {zkvm} instance...");
-    let resource = ProverResourceType::Gpu;
-    let zkvm = EreDockerizedzkVM::new(zkvm, program, resource).unwrap();
+    let zkvm = EreDockerizedzkVM::new(zkvm, program, resource.into()).unwrap();
     println!("{} instance created successfully.", zkvm.zkvm());
 
     // Prepare inputs
@@ -55,13 +119,11 @@ async fn main() {
     let (_public_values, execution_report) = zkvm.execute(&inputs).unwrap();
     println!("{execution_report:#?}");
 
-    // Generate proof
-    let (_public_values, _proof, proving_report) = zkvm.prove(&inputs).unwrap();
-    println!("Proof generated in: {:#?}", proving_report.proving_time);
-
-    // // Verify proof
-    // let public_values = zkvm.verify(&proof).unwrap();
-    // println!("Proof verified successfully!");
+    if let Action::Prove = action {
+        // Generate proof
+        let (_public_values, _proof, proving_report) = zkvm.prove(&inputs).unwrap();
+        println!("Proof generated in: {:#?}", proving_report.proving_time);
+    }
 }
 
 async fn get_program_input() -> ProgramInput {
