@@ -27,19 +27,15 @@ impl Report {
             blocks: vec![
                 SlackWebHookBlock::Header {
                     text: Box::new(SlackWebHookBlock::PlainText {
-                        text: match &self.execution_result {
-                            Ok(_) => {
-                                format!(
-                                    "✅ Succeeded to {} Block with {} on {}",
-                                    self.action, self.zkvm, self.resource
-                                )
-                            }
-                            Err(_) => {
-                                format!(
-                                    "⚠️ Failed to {} Block with {} on {}",
-                                    self.action, self.zkvm, self.resource
-                                )
-                            }
+                        text: match (&self.execution_result, &self.proving_result) {
+                            (Ok(_), Some(Ok(_))) | (Ok(_), None) => format!(
+                                "✅ Succeeded to {} Block with {} on {}",
+                                self.action, self.zkvm, self.resource
+                            ),
+                            (Ok(_), Some(Err(_))) | (Err(_), _) => format!(
+                                "⚠️ Failed to {} Block with {} on {}",
+                                self.action, self.zkvm, self.resource
+                            ),
                         },
                         emoji: true,
                     }),
@@ -47,24 +43,24 @@ impl Report {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}{maybe_execution_result}{maybe_proving_result}{maybe_gpu}{maybe_cpu}{maybe_ram}{maybe_execution_time}{maybe_proving_time}",
+                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}{maybe_execution_result}{maybe_execution_result}{maybe_proving_result}{maybe_gpu}{maybe_cpu}{maybe_ram}{maybe_execution_time}{maybe_proving_time}",
                             network = self.network,
                             number = self.block.header.number,
                             gas = self.block.header.gas_used,
                             txs = self.block.body.transactions.len(),
-                            maybe_execution_result = if let Err(err) = &self.execution_result {
+                            maybe_execution_result = if self.proving_result.is_some() {
+                                format!(
+                                    "\n*Execution Result:* {}",
+                                    match &self.execution_result {
+                                        Ok(_) => "✅ Succeeded".to_string(),
+                                        Err(err) => format!("⚠️ Failed with {err}"),
+                                    }
+                                )
+                            } else if let Err(err) = &self.execution_result {
                                 format!("\n*Execution Error:* {err}")
                             } else {
                                 "".to_string()
                             },
-                            maybe_proving_result = if let Some(Err(err)) = &self.proving_result {
-                                format!("\n*Proving Error:* {err}")
-                            } else {
-                                "".to_string()
-                            },
-                            maybe_gpu = hardware_info_slack_message("GPU"),
-                            maybe_cpu = hardware_info_slack_message("CPU"),
-                            maybe_ram = hardware_info_slack_message("RAM"),
                             maybe_execution_time =
                                 if let Ok((_public_values, report)) = &self.execution_result {
                                     format!(
@@ -74,6 +70,11 @@ impl Report {
                                 } else {
                                     "".to_string()
                                 },
+                            maybe_proving_result = if let Some(Err(err)) = &self.proving_result {
+                                format!("\n*Proving Error:* {err}")
+                            } else {
+                                "".to_string()
+                            },
                             maybe_proving_time = if let Some(Ok((_public_values, _proof, report))) =
                                 &self.proving_result
                             {
@@ -84,6 +85,9 @@ impl Report {
                             } else {
                                 "".to_string()
                             },
+                            maybe_gpu = hardware_info_slack_message("GPU"),
+                            maybe_cpu = hardware_info_slack_message("CPU"),
+                            maybe_ram = hardware_info_slack_message("RAM"),
                         ),
                     }),
                 },
@@ -110,35 +114,33 @@ impl Report {
 
 impl Display for Report {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
-            f,
-            "{} to {} Block with {} on {}",
-            match &self.execution_result {
-                Ok(_) => "✅ Succeeded",
-                Err(_) => "⚠️ Failed",
-            },
-            self.action,
-            self.zkvm,
-            self.resource
-        )?;
+        match (&self.execution_result, &self.proving_result) {
+            (Ok(_), Some(Ok(_))) | (Ok(_), None) => write!(
+                f,
+                "✅ Succeeded to {} Block with {} on {}",
+                self.action, self.zkvm, self.resource
+            )?,
+            (Ok(_), Some(Err(_))) | (Err(_), _) => write!(
+                f,
+                "⚠️ Failed to {} Block with {} on {}",
+                self.action, self.zkvm, self.resource
+            )?,
+        };
         writeln!(f, "Network: {}", self.network)?;
         writeln!(f, "Block: {}", self.block.header.number)?;
         writeln!(f, "Gas: {}", self.block.header.gas_used)?;
         writeln!(f, "#Txs: {}", self.block.body.transactions.len())?;
-        if let Err(err) = &self.execution_result {
+        if self.proving_result.is_some() {
+            write!(
+                f,
+                "Execution Result: {}",
+                match &self.execution_result {
+                    Ok(_) => "✅ Succeeded".to_string(),
+                    Err(err) => format!("⚠️ Failed with {err}"),
+                }
+            )?;
+        } else if let Err(err) = &self.execution_result {
             writeln!(f, "Execution Error: {err}")?;
-        }
-        if let Some(Err(err)) = &self.proving_result {
-            writeln!(f, "Proving Error: {err}")?;
-        }
-        if let Some(gpu) = gpu_info() {
-            writeln!(f, "GPU: {gpu}")?;
-        }
-        if let Some(cpu) = cpu_info() {
-            writeln!(f, "CPU: {cpu}")?;
-        }
-        if let Some(ram) = ram_info() {
-            writeln!(f, "RAM: {ram}")?;
         }
         if let Ok((_public_values, report)) = &self.execution_result {
             writeln!(
@@ -147,8 +149,20 @@ impl Display for Report {
                 format_duration(report.execution_duration)
             )?;
         }
+        if let Some(Err(err)) = &self.proving_result {
+            writeln!(f, "Proving Error: {err}")?;
+        }
         if let Some(Ok((_public_values, _proof, report))) = &self.proving_result {
             writeln!(f, "Proving Time: {}", format_duration(report.proving_time))?;
+        }
+        if let Some(info) = gpu_info() {
+            writeln!(f, "GPU: {info}")?;
+        }
+        if let Some(info) = cpu_info() {
+            writeln!(f, "CPU: {info}")?;
+        }
+        if let Some(info) = ram_info() {
+            writeln!(f, "RAM: {info}")?;
         }
         Ok(())
     }
