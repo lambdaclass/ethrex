@@ -132,12 +132,12 @@ impl Report {
 impl Display for Report {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match (&self.execution_result, &self.proving_result) {
-            (Ok(_), Some(Ok(_))) | (Ok(_), None) => write!(
+            (Ok(_), Some(Ok(_))) | (Ok(_), None) => writeln!(
                 f,
                 "✅ Succeeded to {} Block with {} on {}",
                 self.action, self.zkvm, self.resource
             )?,
-            (Ok(_), Some(Err(_))) | (Err(_), _) => write!(
+            (Ok(_), Some(Err(_))) | (Err(_), _) => writeln!(
                 f,
                 "⚠️ Failed to {} Block with {} on {}",
                 self.action, self.zkvm, self.resource
@@ -148,7 +148,7 @@ impl Display for Report {
         writeln!(f, "Gas: {}", self.block.header.gas_used)?;
         writeln!(f, "#Txs: {}", self.block.body.transactions.len())?;
         if self.proving_result.is_some() {
-            write!(
+            writeln!(
                 f,
                 "Execution Result: {}",
                 match &self.execution_result {
