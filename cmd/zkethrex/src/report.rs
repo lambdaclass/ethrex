@@ -73,7 +73,7 @@ impl Report {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}{maybe_execution_result}{maybe_execution_result}{maybe_proving_result}{maybe_gpu}{maybe_cpu}{maybe_ram}{maybe_execution_time}{maybe_proving_time}",
+                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}{maybe_execution_result}{maybe_proving_result}{maybe_gpu}{maybe_cpu}{maybe_ram}{maybe_execution_time}{maybe_proving_time}",
                             network = self.network,
                             number = self.block.header.number,
                             gas = self.block.header.gas_used,
