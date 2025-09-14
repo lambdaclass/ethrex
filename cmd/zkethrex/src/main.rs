@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 use clap::Parser;
 use ere_dockerized::{EreDockerizedCompiler, EreDockerizedzkVM};
@@ -6,28 +6,41 @@ use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
 };
 use ethrex_rpc::{
-    EthClient, debug::execution_witness::execution_witness_from_rpc_chain_config,
-    types::block_identifier::BlockIdentifier,
+    EthClient,
+    debug::execution_witness::execution_witness_from_rpc_chain_config,
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use guest_program::input::ProgramInput;
 use zkvm_interface::{Compiler, Input, zkVM};
 
-use crate::cli::{Action, Options};
+use crate::{
+    cli::{Action, Options},
+    report::Report,
+    slack::try_send_report_to_slack,
+};
 
 mod cli;
+mod report;
+mod slack;
 
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 #[tokio::main]
 async fn main() {
     let Options {
-        zkvm,
+        zkvm: _zkvm,
         resource,
         action,
         block,
+        endless,
+        slack_webhook_url,
     } = Options::parse();
 
-    let zkvm = zkvm.into();
+    if endless && !matches!(block, BlockIdentifier::Tag(_)) {
+        panic!("--endless can only be used with block tags (e.g. --block latest)");
+    }
+
+    let zkvm = _zkvm.clone().into();
 
     // Compile a guest program
     println!("Compiling guest program for {zkvm:?}...");
@@ -48,34 +61,67 @@ async fn main() {
 
     // Create zkVM instance
     println!("Creating {zkvm} instance...");
-    let zkvm = EreDockerizedzkVM::new(zkvm, program, resource.into()).unwrap();
+    let zkvm = EreDockerizedzkVM::new(zkvm, program, resource.clone().into()).unwrap();
     println!("{} instance created successfully.", zkvm.zkvm());
 
-    // Prepare inputs
-    println!("Preparing inputs...");
-    let mut inputs = Input::new();
-    let input = get_program_input(block).await;
-    inputs.write_bytes(
-        rkyv::to_bytes::<rkyv::rancor::Error>(&input)
-            .unwrap()
-            .to_vec(),
-    );
-    println!("Inputs prepared successfully.");
+    loop {
+        // Prepare inputs
+        println!("Preparing inputs...");
+        let mut inputs = Input::new();
+        let input = get_program_input(block.clone()).await;
+        inputs.write_bytes(
+            rkyv::to_bytes::<rkyv::rancor::Error>(&input)
+                .unwrap()
+                .to_vec(),
+        );
+        println!("Inputs prepared successfully.");
 
-    // Execute program
-    println!("Executing program...");
-    let (_public_values, execution_report) = zkvm.execute(&inputs).unwrap();
-    println!("{execution_report:#?}");
+        // Execute program
+        println!("Executing program...");
+        let execution_result = zkvm.execute(&inputs);
+        let mut report = Report {
+            zkvm: _zkvm.clone(),
+            resource: resource.clone(),
+            action: action.clone(),
+            network: Network::PublicNetwork(PublicNetwork::Mainnet), // Temporary hardcode to Mainnet
+            block: input.blocks[0].clone(),
+            execution_result,
+            proving_result: None,
+        };
+        println!("{report}");
 
-    if let Action::Prove = action {
-        // Generate proof
-        let (_public_values, _proof, proving_report) = zkvm.prove(&inputs).unwrap();
-        println!("Proof generated in: {:#?}", proving_report.proving_time);
+        if let Action::Prove = action {
+            // Generate proof
+            let proving_result = zkvm.prove(&inputs);
+            report.proving_result = Some(proving_result);
+            println!("{report}");
+        }
+
+        try_send_report_to_slack(report, slack_webhook_url.clone())
+            .await
+            .unwrap();
+
+        if !endless {
+            break;
+        }
     }
 }
 
-async fn get_program_input(block_identifier: BlockIdentifier) -> ProgramInput {
+async fn get_program_input(mut block_identifier: BlockIdentifier) -> ProgramInput {
     let eth_client = EthClient::new("http://157.180.1.98:8545").unwrap();
+
+    // Replay EthProofs latest blocks.
+    if let BlockIdentifier::Tag(BlockTag::Latest) = block_identifier {
+        let mut latest_block_number = eth_client.get_block_number().await.unwrap().as_u64();
+
+        while latest_block_number % 100 != 0 {
+            tokio::time::sleep(Duration::from_secs(12)).await;
+
+            latest_block_number = eth_client.get_block_number().await.unwrap().as_u64();
+        }
+
+        block_identifier = BlockIdentifier::Number(latest_block_number);
+    }
 
     let block = eth_client
         .get_raw_block(block_identifier.clone())

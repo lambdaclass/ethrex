@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ethrex-common.workspace = true
 ethrex-rpc.workspace = true
 ethrex-config.workspace = true
 guest_program = { path = "../../crates/l2/prover/src/guest_program" }
@@ -15,4 +16,7 @@ zkvm-interface = { git = "https://github.com/eth-act/ere", package = "zkvm-inter
 
 tokio.workspace = true
 rkyv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 clap.workspace = true
+reqwest.workspace = true

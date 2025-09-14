@@ -1,6 +1,9 @@
+use std::fmt::Display;
+
 use clap::{Parser, ValueEnum};
 use ere_dockerized::ErezkVM;
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
+use reqwest::Url;
 use zkvm_interface::ProverResourceType;
 
 #[derive(Parser)]
@@ -13,6 +16,14 @@ pub struct Options {
     pub action: Action,
     #[arg(long, value_parser = parse_block_identifier, default_value = "latest", help = "Block identifier (number or tag: earliest, finalized, safe, latest, pending)")]
     pub block: BlockIdentifier,
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Run block after block endlessly"
+    )]
+    pub endless: bool,
+    #[arg(long, value_name = "URL", env = "SLACK_WEBHOOK_URL")]
+    pub slack_webhook_url: Option<Url>,
 }
 
 fn parse_block_identifier(s: &str) -> Result<BlockIdentifier, String> {
@@ -43,6 +54,22 @@ pub enum ZKVM {
     Zisk,
 }
 
+impl Display for ZKVM {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ZKVM::Jolt => "Jolt",
+            ZKVM::Nexus => "Nexus",
+            ZKVM::OpenVM => "OpenVM",
+            ZKVM::Pico => "Pico",
+            ZKVM::Risc0 => "RISC0",
+            ZKVM::SP1 => "SP1",
+            ZKVM::Ziren => "Ziren",
+            ZKVM::Zisk => "ZisK",
+        };
+        write!(f, "{s}")
+    }
+}
+
 impl From<ZKVM> for ErezkVM {
     fn from(value: ZKVM) -> Self {
         match value {
@@ -65,6 +92,16 @@ pub enum Resource {
     GPU,
 }
 
+impl Display for Resource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Resource::CPU => "CPU",
+            Resource::GPU => "GPU",
+        };
+        write!(f, "{s}")
+    }
+}
+
 impl From<Resource> for ProverResourceType {
     fn from(value: Resource) -> Self {
         match value {
@@ -78,4 +115,14 @@ impl From<Resource> for ProverResourceType {
 pub enum Action {
     Execute,
     Prove,
+}
+
+impl Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Action::Execute => "Execute",
+            Action::Prove => "Prove",
+        };
+        write!(f, "{s}")
+    }
 }
