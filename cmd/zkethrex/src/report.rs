@@ -53,12 +53,12 @@ impl Report {
                             gas = self.block.header.gas_used,
                             txs = self.block.body.transactions.len(),
                             maybe_execution_result = if let Err(err) = &self.execution_result {
-                                format!("\n*Error:* {err}")
+                                format!("\n*Execution Error:* {err}")
                             } else {
                                 "".to_string()
                             },
                             maybe_proving_result = if let Some(Err(err)) = &self.proving_result {
-                                format!("\n*Error:* {err}")
+                                format!("\n*Proving Error:* {err}")
                             } else {
                                 "".to_string()
                             },
@@ -126,7 +126,10 @@ impl Display for Report {
         writeln!(f, "Gas: {}", self.block.header.gas_used)?;
         writeln!(f, "#Txs: {}", self.block.body.transactions.len())?;
         if let Err(err) = &self.execution_result {
-            writeln!(f, "Error: {err}")?;
+            writeln!(f, "Execution Error: {err}")?;
+        }
+        if let Some(Err(err)) = &self.proving_result {
+            writeln!(f, "Proving Error: {err}")?;
         }
         if let Some(gpu) = gpu_info() {
             writeln!(f, "GPU: {gpu}")?;
