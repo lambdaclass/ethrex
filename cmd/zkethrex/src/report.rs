@@ -181,6 +181,28 @@ impl Display for Report {
         if let Some(info) = ram_info() {
             writeln!(f, "RAM: {info}")?;
         }
+        // ethrescan link
+        if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+            writeln!(
+                f,
+                "Etherscan: https://etherscan.io/block/{}",
+                self.block.header.number
+            )?;
+            // EthProofs only prove block numbers multiples of 100.
+            if self.block.header.number % 100 == 0 && matches!(self.action, Action::Prove) {
+                writeln!(
+                    f,
+                    "EthProofs: https://ethproofs.org/blocks/{}",
+                    self.block.header.number
+                )?;
+            }
+        } else {
+            writeln!(
+                f,
+                "Etherscan: https://{}.etherscan.io/block/{}",
+                self.network, self.block.header.number
+            )?;
+        }
         Ok(())
     }
 }
