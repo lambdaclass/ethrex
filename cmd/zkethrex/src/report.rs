@@ -23,6 +23,36 @@ pub struct Report {
 
 impl Report {
     pub fn to_slack_message(&self) -> SlackWebHookRequest {
+        let eth_proofs_button = SlackWebHookActionElement::Button {
+            text: SlackWebHookBlock::PlainText {
+                text: String::from("View on EthProofs"),
+                emoji: false,
+            },
+            url: format!("https://ethproofs.org/blocks/{}", self.block.header.number),
+        };
+
+        let mut slack_webhook_actions = vec![SlackWebHookActionElement::Button {
+            text: SlackWebHookBlock::PlainText {
+                text: String::from("View on Etherscan"),
+                emoji: false,
+            },
+            url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+                format!("https://etherscan.io/block/{}", self.block.header.number)
+            } else {
+                format!(
+                    "https://{}.etherscan.io/block/{}",
+                    self.network, self.block.header.number
+                )
+            },
+        }];
+
+        if let Network::PublicNetwork(_) = self.network {
+            // EthProofs only prove block numbers multiples of 100.
+            if self.block.header.number % 100 == 0 && matches!(self.action, Action::Prove) {
+                slack_webhook_actions.push(eth_proofs_button);
+            }
+        }
+
         SlackWebHookRequest {
             blocks: vec![
                 SlackWebHookBlock::Header {
@@ -92,20 +122,7 @@ impl Report {
                     }),
                 },
                 SlackWebHookBlock::Actions {
-                    elements: vec![SlackWebHookActionElement::Button {
-                        text: SlackWebHookBlock::PlainText {
-                            text: String::from("View on Etherscan"),
-                            emoji: false,
-                        },
-                        url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
-                            format!("https://etherscan.io/block/{}", self.block.header.number)
-                        } else {
-                            format!(
-                                "https://{}.etherscan.io/block/{}",
-                                self.network, self.block.header.number
-                            )
-                        },
-                    }],
+                    elements: slack_webhook_actions,
                 },
             ],
         }
