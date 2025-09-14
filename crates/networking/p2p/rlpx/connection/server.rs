@@ -6,7 +6,7 @@ use std::{
 };
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
