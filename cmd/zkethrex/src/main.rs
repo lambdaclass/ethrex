@@ -82,7 +82,7 @@ async fn main() {
         let mut report = Report {
             zkvm: _zkvm.clone(),
             resource: resource.clone(),
-            action: action.clone(),
+            action: Action::Execute,
             network: Network::PublicNetwork(PublicNetwork::Mainnet), // Temporary hardcode to Mainnet
             block: input.blocks[0].clone(),
             execution_result,
@@ -94,6 +94,7 @@ async fn main() {
             // Generate proof
             let proving_result = zkvm.prove(&inputs);
             report.proving_result = Some(proving_result);
+            report.action = Action::Prove;
             println!("{report}");
         }
 
