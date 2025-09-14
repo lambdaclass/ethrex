@@ -43,7 +43,7 @@ async fn main() {
     let zkvm = _zkvm.clone().into();
 
     // Compile a guest program
-    println!("Compiling guest program for {zkvm:?}...");
+    println!("Compiling guest program for {_zkvm:?}...");
     let workspace_dir = Path::new(CARGO_MANIFEST_DIR)
         .parent()
         .and_then(Path::parent)
@@ -57,12 +57,12 @@ async fn main() {
                 .join(zkvm.to_string()),
         )
         .unwrap();
-    println!("{zkvm} guest program compiled successfully.");
+    println!("{_zkvm} guest program compiled successfully.");
 
     // Create zkVM instance
-    println!("Creating {zkvm} instance...");
+    println!("Creating {_zkvm} instance...");
     let zkvm = EreDockerizedzkVM::new(zkvm, program, resource.clone().into()).unwrap();
-    println!("{} instance created successfully.", zkvm.zkvm());
+    println!("{_zkvm} instance created successfully.");
 
     loop {
         // Prepare inputs
@@ -109,7 +109,7 @@ async fn main() {
 }
 
 async fn get_program_input(mut block_identifier: BlockIdentifier) -> ProgramInput {
-    let eth_client = EthClient::new("http://157.180.1.98:8545").unwrap();
+    let eth_client = EthClient::new("http://157.180.1.98:8545").unwrap(); // Temporary hardcode to a public node
 
     // Replay EthProofs latest blocks.
     if let BlockIdentifier::Tag(BlockTag::Latest) = block_identifier {
