@@ -1,42 +1,115 @@
 use ethrex_common::types::Block;
+use ethrex_common::types::ChainConfig;
 use ethrex_common::types::blobs_bundle;
-use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use eyre::Context;
-use rkyv::rancor::Error;
-use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
+use ethrex_config::networks::Network;
+use ethrex_rpc::debug::execution_witness::RpcExecutionWitness;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::io::Write;
+use std::io::BufReader;
 use std::{fs::File, io::BufWriter};
 use tracing::debug;
 
 use crate::cli::network_from_chain_id;
 
 #[serde_as]
-#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct L2Fields {
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
 }
-
-#[derive(Serialize, Deserialize, RSerialize, RDeserialize, Archive, Clone)]
+/// Structure holding input data needed to execute or prove blocks.
+/// Optional fields are included only when relevant (e.g. L2 or custom chain).
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Cache {
+    /// Blocks to execute / prove.
     pub blocks: Vec<Block>,
-    pub witness: ExecutionWitness,
+    /// State data required to run those blocks.
+    pub witness: RpcExecutionWitness,
+    /// L1 network identifier.
+    /// For L1 chains, this is used to retrieve the chain configuration from the repository.
+    /// For L2 chains, the chain configuration is passed directly via `chain_config` instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(flatten)]
+    pub network: Option<Network>,
+    /// Chain configuration.
+    /// For L2 chains, this is used directly as we might not have the chain in our repository.
+    /// For custom chains, this allows using a configuration different from the repository.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(flatten)]
+    pub chain_config: Option<ChainConfig>,
+    /// L2 specific fields (blob data).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(flatten)]
     pub l2_fields: Option<L2Fields>,
 }
 
 impl Cache {
-    pub fn new(blocks: Vec<Block>, witness: ExecutionWitness) -> Self {
+    pub fn new(blocks: Vec<Block>, witness: RpcExecutionWitness, network: Option<Network>) -> Self {
         Self {
             blocks,
             witness,
+            network,
+            chain_config: None,
             l2_fields: None,
         }
+    }
+    pub fn load(file_name: &str) -> eyre::Result<Self> {
+        let file = BufReader::new(File::open(file_name)?);
+        Ok(serde_json::from_reader(file)?)
+    }
+
+    pub fn write(&self, l2: bool) -> eyre::Result<()> {
+        if self.blocks.is_empty() {
+            return Err(eyre::Error::msg("cache can't be empty"));
+        }
+
+        let file_name = get_block_cache_file_name(
+            self.chain_config
+                .ok_or(eyre::Error::msg("chain_config must be set to write cache"))?
+                .chain_id,
+            self.blocks[0].header.number,
+            if self.blocks.len() == 1 {
+                None
+            } else {
+                self.blocks.last().map(|b| b.header.number)
+            },
+            l2,
+        );
+
+        debug!("Writing cache to {file_name}");
+
+        let file = BufWriter::new(File::create(file_name)?);
+
+        serde_json::to_writer_pretty(file, self)?;
+
+        Ok(())
+    }
+
+    pub fn delete(&self, l2: bool) -> eyre::Result<()> {
+        if self.blocks.is_empty() {
+            return Err(eyre::Error::msg("tried to delete cache with no blocks"));
+        }
+
+        let file_name = get_block_cache_file_name(
+            self.chain_config
+                .ok_or(eyre::Error::msg("chain_config must be set to write cache"))?
+                .chain_id,
+            self.blocks[0].header.number,
+            if self.blocks.len() == 1 {
+                None
+            } else {
+                self.blocks.last().map(|b| b.header.number)
+            },
+            l2,
+        );
+
+        debug!("Deleting cache file {file_name}");
+
+        std::fs::remove_file(file_name)?;
+
+        Ok(())
     }
 }
 
@@ -53,58 +126,4 @@ pub fn get_block_cache_file_name(chain_id: u64, from: u64, to: Option<u64>, l2: 
 #[cfg(feature = "l2")]
 pub fn get_batch_cache_file_name(batch_number: u64) -> String {
     format!("cache_batch_{batch_number}.bin")
-}
-
-pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
-    let file_data = std::fs::read(file_name)?;
-    let cache =
-        rkyv::from_bytes::<Cache, Error>(&file_data).wrap_err("Failed to deserialize with rkyv")?;
-    Ok(cache)
-}
-
-pub fn write_cache(cache: &Cache, l2: bool) -> eyre::Result<()> {
-    if cache.blocks.is_empty() {
-        return Err(eyre::Error::msg("tried to write cache with no blocks"));
-    }
-
-    let file_name = get_block_cache_file_name(
-        cache.witness.chain_config.chain_id,
-        cache.blocks[0].header.number,
-        if cache.blocks.len() == 1 {
-            None
-        } else {
-            cache.blocks.last().map(|b| b.header.number)
-        },
-        l2,
-    );
-
-    debug!("Writing cache to {file_name}");
-
-    let mut file = BufWriter::new(File::create(file_name)?);
-
-    let bytes = rkyv::to_bytes::<Error>(cache).wrap_err("Failed to serialize with rkyv")?;
-
-    file.write_all(&bytes)
-        .wrap_err("Failed to write binary data")
-}
-
-pub fn delete_cache(cache: &Cache, l2: bool) -> eyre::Result<()> {
-    if cache.blocks.is_empty() {
-        return Err(eyre::Error::msg("tried to delete cache with no blocks"));
-    }
-
-    let file_name = get_block_cache_file_name(
-        cache.witness.chain_config.chain_id,
-        cache.blocks[0].header.number,
-        if cache.blocks.len() == 1 {
-            None
-        } else {
-            cache.blocks.last().map(|b| b.header.number)
-        },
-        l2,
-    );
-
-    debug!("Deleting cache file {file_name}");
-
-    std::fs::remove_file(file_name).wrap_err("Failed to delete cache file")
 }

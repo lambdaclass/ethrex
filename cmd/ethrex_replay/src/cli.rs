@@ -11,22 +11,21 @@ use ethrex_common::{
     types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt},
 };
 use ethrex_prover_lib::backend::Backend;
-use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_rpc::{
+    debug::execution_witness::RpcExecutionWitness, types::block_identifier::BlockTag,
+};
 use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
 use tracing::info;
 
+use crate::bench::run_and_measure;
+use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
-use crate::{bench::run_and_measure, cache::write_cache};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
-};
-use crate::{
-    cache::delete_cache,
-    fetcher::{get_blockdata, get_rangedata},
 };
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
@@ -519,7 +518,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     // Always write the cache after fetching from RPC.
     // It will be deleted later if not needed.
-    write_cache(&cache, l2)?;
+    cache.write(l2)?;
 
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
@@ -552,11 +551,11 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         // Only save the cache if the block run failed
         CacheLevel::Failed => {
             if !block_run_failed {
-                delete_cache(&cache, l2)?;
+                cache.delete(l2)?;
             }
         }
         // Don't keep the cache
-        CacheLevel::Off => delete_cache(&cache, l2)?,
+        CacheLevel::Off => cache.delete(l2)?,
     }
 
     if opts.to_csv {
@@ -695,7 +694,15 @@ pub async fn replay_custom_l1_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let cache = Cache::new(blocks, execution_witness);
+    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let cache = Cache::new(
+        blocks,
+        RpcExecutionWitness::from(execution_witness),
+        Some(network),
+    );
 
     let start = SystemTime::now();
 
@@ -834,7 +841,15 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let mut cache = Cache::new(blocks, execution_witness);
+    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let mut cache = Cache::new(
+        blocks,
+        RpcExecutionWitness::from(execution_witness),
+        Some(network),
+    );
 
     cache.l2_fields = Some(L2Fields {
         blob_commitment: [0_u8; 48],
