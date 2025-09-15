@@ -8,7 +8,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info};
-use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, OSAKA_MAX_GAS_LIMIT};
+use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -763,7 +763,8 @@ impl Blockchain {
             return Err(MempoolError::TxMaxDataSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > OSAKA_MAX_GAS_LIMIT {
+        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        {
             return Err(MempoolError::TxMaxGasLimitExceededError(
                 tx.hash(),
                 tx.gas_limit(),
@@ -1089,7 +1090,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 // Must be called only if the block has osaka activated
 fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
     for transaction in block.body.transactions.iter() {
-        if transaction.gas_limit() > OSAKA_MAX_GAS_LIMIT {
+        if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
             return Err(ChainError::InvalidTransaction(format!(
                 "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
                 transaction.hash(),

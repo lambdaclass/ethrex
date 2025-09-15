@@ -27,7 +27,7 @@ pub const SYS_CALL_GAS_LIMIT: u64 = 30000000;
 // Transaction costs in gas
 pub const TX_BASE_COST: u64 = 21000;
 
-pub const OSAKA_MAX_GAS_LIMIT: u64 = 16777216;
+pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
 
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
