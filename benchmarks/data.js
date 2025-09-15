@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757962552974,
+  "lastUpdate": 1757966177186,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14275,6 +14275,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168853621759,
             "range": "± 434154298",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "54ad169a23152592a0c9b3797f1732e208317f3a",
+          "message": "fix(l1): handle syncing in case of reorgs and handle the case of reorg with invalid side chain (#4028)\n\n**Motivation**\n\nRestoring `request_block_headers` previous to this\n[pr](https://github.com/lambdaclass/ethrex/pull/4213) since it brought\nissues in case of re org.\nFixing the Invalid Missing Ancestor Syncing ReOrG hive tests which are\nfailing.\n\n**Description**\n\nUp to now, when executing blocks during syncing, if there's an error\nwhile running a batch we set only the failing block with having an\ninvalid ancestor. This pr sets all the downloaded descendants of a\nfailing block with having an invalid ancestor during syncing.\n\nAlso, when syncing, it drops the sync head header from the requested\nheaders when downloading block bodies if the sync head is stored as a\npending block, since we already have it and there's no need to ask for\nit.\n\nOn another note, it was necessary to restore for full syncing the\n`request_block_headers` that we had previous to merging this\n[pr](https://github.com/lambdaclass/ethrex/pull/4213), since there was\nan issue with the way the block headers were requested. The core problem\nwith the update was that we requested the all headers left from the sync\nhead on by number, and since the tests come with a re-org scenario and\nthe sync head number was the same as the current head number, no headers\nwere requested, so the fork choice update never stopped syncing.\n\nCloses #3105",
+          "timestamp": "2025-09-15T19:03:28Z",
+          "tree_id": "fe5b1ea84784e2df1d607a7505fe0df15929c2c8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/54ad169a23152592a0c9b3797f1732e208317f3a"
+        },
+        "date": 1757966155953,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166849041329,
+            "range": "± 595443025",
             "unit": "ns/iter"
           }
         ]
