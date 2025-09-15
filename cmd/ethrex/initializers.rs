@@ -416,6 +416,7 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        // TODO (#4482): Make this configurable.
         None,
     )
     .await;

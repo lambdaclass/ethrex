@@ -87,7 +87,6 @@ pub async fn build_payload(
 
 /// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size
 /// stays within the blob size limit after processing each transaction.
-/// Also, uses a configured `max_gas_limit` to cap the gas used of the block.
 pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
