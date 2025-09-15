@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757978533788,
+  "lastUpdate": 1757980778446,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -29388,6 +29388,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0016377991140642304,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e8b776a84c2c0ef6414b48f6de19d5980cd1e53d",
+          "message": "feat(l2): serialize RISC0's guest program input using `rkyv` (#4459)\n\n**Motivation**\n\nJSON deserializations are slow and take too many zkVM cycles.\n\n**Description**\n\nSerialize RISC0's guest program input with `rkyv`.\n\n**Results**\n\nzkVM cycles to read RISC0's guest program takes half the cycles now. \n\n*Before*\n\n> [!NOTE]\n> See the logs below, it takes 1.122.344.791 cycles to read the input\n\n```\n2025-09-13T00:52:28.376524Z  INFO ethrex_replay::fetcher: Retrieving execution data for block 23350480 (205 block behind latest)\n2025-09-13T00:52:28.381127Z  INFO ethrex_replay::fetcher: Getting block 23350480 data from cache\n2025-09-13T00:52:28.381827Z  INFO ethrex_replay::bench: Starting prover program\nstart reading input\nend reading input, cycles: 1122344791\nstart execution\nend execution, cycles: 1929020069\nstart committing public inputs\nend committing public inputs, cycles: 2648\ntotal cycles: 3051367508\n2025-09-13T00:52:58.019699Z  INFO ethrex_prover_lib::backend::risc0: Successfully generated session info in 29.62s\n2025-09-13T00:52:58.019749Z  INFO ethrex_replay::block_run_report: [mainnet] Block #23350480, Gas Used: 10932281, Tx Count: 114, execute_risc0 Result: Success, Time Taken: 29s 637ms | https://etherscan.io/block/23350480\n```\n\n*After*\n\n> [!NOTE]\n> See the logs below, it takes 623.283.163 cycles to read the input\n(almost half of the cycles)\n\n```\nadmin@ethrex-office-2:~/ethrex$ ./ethrex-replay-risc0 block --block 23350480 --execute --rpc-url http://157.180.1.98:8545\n2025-09-13T00:49:59.531233Z  INFO ethrex_replay::fetcher: Retrieving execution data for block 23350480 (192 block behind latest)\n2025-09-13T00:49:59.535781Z  INFO ethrex_replay::fetcher: Getting block 23350480 data from cache\n2025-09-13T00:49:59.536302Z  INFO ethrex_replay::bench: Starting prover program\nstart reading input\nend reading input, cycles: 623283163\nstart execution\nend execution, cycles: 1929032701\nstart committing public inputs\nend committing public inputs, cycles: 2645\ntotal cycles: 2552318509\n2025-09-13T00:50:28.021984Z  INFO ethrex_prover_lib::backend::risc0: Successfully generated session info in 28.48s\n2025-09-13T00:50:28.022693Z  INFO ethrex_replay::block_run_report: [mainnet] Block #23350480, Gas Used: 10932281, Tx Count: 114, execute_risc0 Result: Success, Time Taken: 28s 486ms | https://etherscan.io/block/23350480\n```",
+          "timestamp": "2025-09-15T14:26:30Z",
+          "tree_id": "e58a36c857c488b0a8dddb005458b0ba3930019a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e8b776a84c2c0ef6414b48f6de19d5980cd1e53d"
+        },
+        "date": 1757980777760,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004826803524804178,
             "unit": "Mgas/s"
           }
         ]
