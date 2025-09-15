@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-09-15
+
+- Add `jemalloc` as an optional global allocator used by default [#4301](https://github.com/lambdaclass/ethrex/pull/4301)
+
 ### 2025-09-11
 
 - Add `RocksDB` as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)
