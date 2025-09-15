@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757973500188,
+  "lastUpdate": 1757976640447,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14425,6 +14425,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169358473231,
             "range": "± 860879107",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "da519b6c9c32ca65f51e338971e0014dd90fa535",
+          "message": "ci(replay): add job on every pr for zkvm executing (#4441)\n\n**Motivation**\n\nThis pull request updates the CI workflows to support executing L1 block\nreplays with both SP1 and Risc0 backends.\n\n**Description**\n\n* Added a new `test` job in `pr-main_replay.yaml` to execute an L1 block\nwith both `sp1` and `risc0` backends.\n* Added new targets `execute-sp1-ci` and `execute-risc0-ci` to\n`cmd/ethrex_replay/Makefile` for executing blocks with the respective\nbackends in CI.\n\n*\n[Both](https://github.com/lambdaclass/ethrex/actions/runs/17674951506/job/50234765309?pr=4441)\nexecute under 25 minutes\n\nCloses #4436\nCloses #4134\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>",
+          "timestamp": "2025-09-15T21:58:29Z",
+          "tree_id": "16521e2a2925ecc66a99663f3948c9b46791a92f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/da519b6c9c32ca65f51e338971e0014dd90fa535"
+        },
+        "date": 1757976619571,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167094294389,
+            "range": "± 343338997",
             "unit": "ns/iter"
           }
         ]
