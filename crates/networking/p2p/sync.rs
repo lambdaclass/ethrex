@@ -7,8 +7,8 @@ use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
     current_unix_time, dump_to_file, get_account_state_snapshots_dir,
-    get_account_storages_snapshots_dir, get_bytecode_hashes_snapshot_file,
-    get_bytecode_hashes_snapshots_dir, prepare_bytecode_buffer_for_dump,
+    get_account_storages_snapshots_dir, get_bytecode_hashes_snapshots_dir,
+    prepare_bytecode_buffer_for_dump,
 };
 use crate::{
     metrics::METRICS,
