@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757950167791,
+  "lastUpdate": 1757951473979,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14125,6 +14125,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169166724641,
             "range": "± 921532047",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dmitriymozir@gmail.com",
+            "name": "MozirDmitriy",
+            "username": "MozirDmitriy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "26329f474c3444ceea35f014aef9da9a1c7d294d",
+          "message": "fix(l1): add RLP_INVALID_VALUE exception support (#4369)\n\nAdd missing TransactionException.RLP_INVALID_VALUE case to\ndeserialize_transaction_expected_exception function.\n\nThe RlpInvalidValue enum variant was already defined but not handled in\nthe deserializer, causing these exceptions to fall through to the _other\ncase.\n\nreopen #3941\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-09-15T14:50:32Z",
+          "tree_id": "c4ec764a8a4b4e4acae3185f5f2d7fbf5dbe03d0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/26329f474c3444ceea35f014aef9da9a1c7d294d"
+        },
+        "date": 1757951452633,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164979488563,
+            "range": "± 635595566",
             "unit": "ns/iter"
           }
         ]
