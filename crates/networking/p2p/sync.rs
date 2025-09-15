@@ -819,36 +819,6 @@ impl Syncer {
         const BYTECODE_WRITE_BUFFER_SIZE: usize = 100_000;
         let mut bytecode_write_buffer = Vec::new();
 
-        // Helper function to flush bytecode buffer to disk
-        let flush_bytecode_buffer =
-            |buffer: &mut Vec<H256>, file_index: &mut u64, dir: &String| -> Result<(), SyncError> {
-                if buffer.is_empty() {
-                    return Ok(());
-                }
-
-                buffer.sort();
-                buffer.dedup();
-                let file_name = get_bytecode_hashes_snapshot_file(dir.clone(), *file_index);
-
-                info!(
-                    "Flushing bytecode buffer with {} hashes to {}",
-                    buffer.len(),
-                    file_name
-                );
-                dump_to_file(file_name.clone(), buffer.encode_to_vec())
-                    .map_err(|_| SyncError::BytecodeFileError)
-                    .inspect_err(|err| {
-                        error!(
-                            "Failed to flush bytecode buffer to file {}: {}",
-                            file_name, err
-                        );
-                    })?;
-
-                buffer.clear();
-                *file_index += 1;
-                Ok(())
-            };
-
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // We start by downloading all of the leafs of the trie of accounts
@@ -913,9 +883,10 @@ impl Syncer {
                 if bytecode_write_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
                     flush_bytecode_buffer(
                         &mut bytecode_write_buffer,
-                        &mut bytecode_index_file,
-                        &bytecode_hashes_snapshots_dir,
+                        bytecode_index_file,
+                        bytecode_hashes_snapshots_dir.clone(),
                     )?;
+                    bytecode_index_file += 1;
                 }
 
                 let store_clone = store.clone();
@@ -942,8 +913,8 @@ impl Syncer {
             // Flush any remaining bytecode hashes in buffer
             flush_bytecode_buffer(
                 &mut bytecode_write_buffer,
-                &mut bytecode_index_file,
-                &bytecode_hashes_snapshots_dir,
+                bytecode_index_file,
+                bytecode_hashes_snapshots_dir.clone(),
             )?;
 
             info!(
@@ -1131,13 +1102,13 @@ impl Syncer {
         // Bytecode download
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
-        // Read all bytecode hash files and deduplicate globally
+        // Read all bytecode hash files
         let bytecode_dir = get_bytecode_hashes_snapshots_dir(&self.datadir);
         let mut seen_bytecodes = HashSet::new();
         let mut bytecodes_to_download = Vec::new();
         let mut total_unique_hashes = 0;
 
-        info!("Starting bytecode deduplication and batch processing");
+        info!("Starting download of bytecodes");
 
         for entry in std::fs::read_dir(&bytecode_dir).map_err(|_| SyncError::CorruptPath)? {
             let entry = entry.map_err(|_| SyncError::CorruptPath)?;
@@ -1146,16 +1117,15 @@ impl Syncer {
             let bytecode_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
                 .map_err(|_| SyncError::SnapshotDecodeError(entry.path()))?;
 
-            // Deduplicate globally and collect unique hashes
             for hash in bytecode_hashes {
+                // If we haven't seen the bytecode hash yet, add it to the list of bytecodes to download
                 if seen_bytecodes.insert(hash) {
                     bytecodes_to_download.push(hash);
                     total_unique_hashes += 1;
 
-                    // Process in batches to avoid memory buildup
                     if bytecodes_to_download.len() >= BYTECODE_CHUNK_SIZE {
                         info!(
-                            "Downloading bytecode batch of {} hashes (processed {}/{} unique so far)",
+                            "Downloading bytecode batch of {} hashes (processed {}/{} unique so far) from {entry:?}",
                             bytecodes_to_download.len(),
                             total_unique_hashes,
                             seen_bytecodes.len()
@@ -1478,4 +1448,35 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     .all(|valid| valid);
     info!("Finished validate_storage_root");
     is_valid
+}
+
+fn flush_bytecode_buffer(
+    buffer: &mut Vec<H256>,
+    file_index: u64,
+    dir: String,
+) -> Result<(), SyncError> {
+    if buffer.is_empty() {
+        return Ok(());
+    }
+
+    buffer.sort();
+    buffer.dedup();
+    let file_name = get_bytecode_hashes_snapshot_file(dir.clone(), file_index);
+
+    info!(
+        "Flushing bytecode buffer with {} hashes to {}",
+        buffer.len(),
+        file_name
+    );
+    dump_to_file(file_name.clone(), buffer.encode_to_vec())
+        .map_err(|_| SyncError::BytecodeFileError)
+        .inspect_err(|err| {
+            error!(
+                "Failed to flush bytecode buffer to file {}: {}",
+                file_name, err
+            );
+        })?;
+
+    buffer.clear();
+    Ok(())
 }
