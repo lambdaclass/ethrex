@@ -41,7 +41,6 @@ pub async fn build_payload(
     payload: Block,
     store: &Store,
     rollup_store: &StoreRollup,
-    max_gas_limit: Option<u64>,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -49,14 +48,7 @@ pub async fn build_payload(
     debug!("Building payload");
     let mut context = PayloadBuildContext::new(payload, store, blockchain.r#type.clone())?;
 
-    fill_transactions(
-        blockchain.clone(),
-        &mut context,
-        store,
-        rollup_store,
-        max_gas_limit,
-    )
-    .await?;
+    fill_transactions(blockchain.clone(), &mut context, store, rollup_store).await?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
@@ -101,7 +93,6 @@ pub async fn fill_transactions(
     context: &mut PayloadBuildContext,
     store: &Store,
     rollup_store: &StoreRollup,
-    max_gas_limit: Option<u64>,
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
@@ -125,16 +116,6 @@ pub async fn fill_transactions(
             break;
         };
 
-        // Check if we have enough gas to run more transactions within the configured max_gas_limit
-        if let Some(max_gas_limit) = max_gas_limit {
-            if context.payload.header.gas_limit - context.remaining_gas + TX_GAS_COST
-                >= max_gas_limit
-            {
-                debug!("No more gas to run transactions");
-                break;
-            }
-        }
-
         // Check if we have enough space for the StateDiff to run more transactions
         if acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
             > safe_bytes_per_blob
@@ -154,18 +135,6 @@ pub async fn fill_transactions(
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;
-        }
-
-        // Check if we have enough gas to run the transaction within the configured max_gas_limit
-        if let Some(max_gas_limit) = max_gas_limit {
-            if context.payload.header.gas_limit - context.remaining_gas + head_tx.tx.gas_limit()
-                >= max_gas_limit
-            {
-                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
-                // We don't have enough gas left for the transaction, so we skip all txs from this account
-                txs.pop();
-                continue;
-            }
         }
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)

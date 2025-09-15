@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
+use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::network::peer_table;
@@ -47,6 +48,7 @@ async fn init_rpc_api(
     tracker: TaskTracker,
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -76,6 +78,7 @@ async fn init_rpc_api(
         l2_opts.sponsor_private_key,
         rollup_store,
         log_filter_handler,
+        gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
     );
 
     tracker.spawn(rpc_api);
@@ -196,6 +199,7 @@ pub async fn init_l2(
         tracker.clone(),
         rollup_store.clone(),
         log_filter_handler,
+        opts.sequencer_opts.block_producer_opts.block_gas_ceil,
     )
     .await;
 

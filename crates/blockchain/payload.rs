@@ -84,6 +84,7 @@ pub struct BuildPayloadArgs {
     pub beacon_root: Option<H256>,
     pub version: u8,
     pub elasticity_multiplier: u64,
+    pub gas_ceil: u64,
 }
 
 #[derive(Debug, Error)]
@@ -121,7 +122,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         .get_block_header_by_hash(args.parent)?
         .ok_or_else(|| ChainError::ParentNotFound)?;
     let chain_config = storage.get_chain_config()?;
-    let gas_limit = calc_gas_limit(parent_block.gas_limit);
+    let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
     let excess_blob_gas = chain_config
         .get_fork_blob_schedule(args.timestamp)
         .map(|schedule| {
@@ -182,12 +183,11 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
     Ok(Block::new(header, body))
 }
 
-pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
+pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
     // TODO: check where we should get builder values from
-    const DEFAULT_BUILDER_GAS_CEIL: u64 = 30_000_000;
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
-    let desired_limit = max(DEFAULT_BUILDER_GAS_CEIL, MIN_GAS_LIMIT);
+    let desired_limit = max(builder_gas_ceil, MIN_GAS_LIMIT);
     if limit < desired_limit {
         limit = parent_gas_limit + delta;
         if limit > desired_limit {

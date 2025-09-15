@@ -157,6 +157,7 @@ impl RpcHandler for FeeHistoryRequest {
                         &header,
                         base_fee_update_fraction,
                         blob_target,
+                        context.gas_ceil,
                     );
             }
             if !self.reward_percentiles.is_empty() {
@@ -191,12 +192,13 @@ fn project_next_block_base_fee_values(
     header: &BlockHeader,
     base_fee_update_fraction: u64,
     blob_target: u32,
+    gas_ceil: u64,
 ) -> (u64, u64) {
     // NOTE: Given that this client supports the Paris fork and later versions, we are sure that the next block
     // will have the London update active, so the base fee calculation makes sense
     // Geth performs a validation for this case:
     // -> https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go#L93
-    let next_gas_limit = calc_gas_limit(header.gas_limit);
+    let next_gas_limit = calc_gas_limit(header.gas_limit, gas_ceil);
     let base_fee_per_gas = calculate_base_fee_per_gas(
         next_gas_limit,
         header.gas_limit,

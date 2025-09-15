@@ -11,7 +11,7 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
     validate_block,
 };
-use ethrex_common::Address;
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -52,7 +52,7 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
-    max_gas_limit: Option<u64>,
+    block_gas_ceil: u64,
 }
 
 impl BlockProducer {
@@ -67,7 +67,7 @@ impl BlockProducer {
             block_time_ms,
             coinbase_address,
             elasticity_multiplier,
-            max_gas_limit,
+            block_gas_ceil,
         } = config;
         Self {
             store,
@@ -77,7 +77,7 @@ impl BlockProducer {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
-            max_gas_limit: *max_gas_limit,
+            block_gas_ceil: block_gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
         }
     }
 
@@ -130,6 +130,7 @@ impl BlockProducer {
             beacon_root: Some(head_beacon_block_root),
             version,
             elasticity_multiplier: self.elasticity_multiplier,
+            gas_ceil: self.block_gas_ceil,
         };
         let payload = create_payload(&args, &self.store)?;
 
@@ -139,7 +140,6 @@ impl BlockProducer {
             payload,
             &self.store,
             &self.rollup_store,
-            self.max_gas_limit,
         )
         .await?;
         info!(

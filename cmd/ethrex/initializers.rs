@@ -137,6 +137,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) {
     // Create SyncManager
     let syncer = SyncManager::new(
@@ -161,6 +162,7 @@ pub async fn init_rpc_api(
         peer_handler,
         get_client_version(),
         log_filter_handler,
+        gas_ceil,
     );
 
     tracker.spawn(rpc_api);
@@ -414,6 +416,7 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        None,
     )
     .await;
 
