@@ -191,7 +191,7 @@ mod tests {
     use std::sync::LazyLock;
 
     // Constant values for hive `AccountRange` tests
-    static HASH_MIN: LazyLock<H256> = LazyLock::new(|| H256::zero());
+    static HASH_MIN: LazyLock<H256> = LazyLock::new(H256::zero);
     static HASH_MAX: LazyLock<H256> = LazyLock::new(|| {
         H256::from_str("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
             .unwrap()
