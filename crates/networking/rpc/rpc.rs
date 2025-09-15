@@ -68,13 +68,15 @@ use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
+#[cfg(feature = "jemalloc_profiling")]
 use axum::response::IntoResponse;
 
+#[cfg(feature = "jemalloc_profiling")]
 pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
     let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
         return Err((
             StatusCode::NOT_IMPLEMENTED,
-            "jemalloc profiling is not available (compile with `jemalloc_profiling` and enable via MALLOC_CONF)".into(),
+            "jemalloc profiling is not available (compile with `jemalloc_profiling`)".into(),
         ));
     };
     let mut prof_ctl = mutex.lock().await;
@@ -86,6 +88,7 @@ pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)
 }
 
 /// Checks whether jemalloc profiling is activated an returns an error response if not.
+#[cfg(feature = "jemalloc_profiling")]
 fn require_profiling_activated(
     prof_ctl: &jemalloc_pprof::JemallocProfCtl,
 ) -> Result<(), (StatusCode, String)> {
@@ -99,6 +102,7 @@ fn require_profiling_activated(
     }
 }
 
+#[cfg(feature = "jemalloc_profiling")]
 pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCode, String)> {
     use axum::body::Body;
     use axum::http::header::CONTENT_TYPE;
@@ -107,7 +111,7 @@ pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCo
     let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
         return Err((
             StatusCode::NOT_IMPLEMENTED,
-            "jemalloc profiling is not available (compile with `jemalloc_profiling` and enable via MALLOC_CONF)".into(),
+            "jemalloc profiling is not available (compile with `jemalloc_profiling`)".into(),
         ));
     };
     let mut prof_ctl = mutex.lock().await;
@@ -119,6 +123,23 @@ pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCo
         .header(CONTENT_TYPE, "image/svg+xml")
         .body(Body::from(svg))
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+// Feature-disabled stubs (no dependency on jemalloc_pprof, build always)
+#[cfg(not(feature = "jemalloc_profiling"))]
+pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`)".into(),
+    ))
+}
+
+#[cfg(not(feature = "jemalloc_profiling"))]
+pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`)".into(),
+    ))
 }
 
 #[derive(Deserialize)]

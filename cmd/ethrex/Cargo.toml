@@ -73,7 +73,12 @@ metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
 rocksdb = ["ethrex-storage/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
-jemalloc_profiling = ["jemalloc", "tikv-jemallocator/profiling"]
+jemalloc_profiling = [
+  "jemalloc",
+  "tikv-jemallocator/profiling",
+  # forward to the RPC crate so its handlers and dependency are enabled
+  "ethrex-rpc/jemalloc_profiling",
+]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]
 sp1 = ["ethrex-prover/sp1"]
