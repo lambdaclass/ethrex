@@ -44,16 +44,32 @@ impl StoreVmDatabase {
 impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
-        self.store
+        let result = self
+            .store
             .get_account_info_by_hash(self.block_hash, address)
-            .map_err(|e| EvmError::DB(e.to_string()))
+            .map_err(|e| EvmError::DB(e.to_string()));
+
+        #[cfg(feature = "replay")]
+        if result.is_err() {
+            return Ok(None);
+        };
+
+        result
     }
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        self.store
+        let result = self
+            .store
             .get_storage_at_hash(self.block_hash, address, key)
-            .map_err(|e| EvmError::DB(e.to_string()))
+            .map_err(|e| EvmError::DB(e.to_string()));
+
+        #[cfg(feature = "replay")]
+        if result.is_err() {
+            return Ok(None);
+        };
+
+        result
     }
 
     #[instrument(level = "trace", name = "Block hash read", skip_all)]
@@ -108,7 +124,15 @@ impl VmDatabase for StoreVmDatabase {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
-        match self.store.get_account_code(code_hash) {
+
+        let result = self.store.get_account_code(code_hash);
+
+        #[cfg(feature = "replay")]
+        if result.is_err() || matches!(result, Ok(None)) {
+            return Ok(Bytes::new());
+        }
+
+        match result {
             Ok(Some(code)) => Ok(code),
             Ok(None) => Err(EvmError::DB(format!(
                 "Code not found for hash: {code_hash:?}",

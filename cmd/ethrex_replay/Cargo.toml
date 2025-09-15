@@ -47,6 +47,7 @@ rkyv.workspace = true
 jemallocator = { version = "0.5.4", optional = true }
 
 [features]
+default = ["ethrex-blockchain/replay"]
 risc0 = ["guest_program/risc0", "ethrex-prover/risc0"]
 sp1 = ["guest_program/sp1", "ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
