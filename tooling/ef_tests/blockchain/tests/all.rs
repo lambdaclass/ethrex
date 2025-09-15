@@ -31,9 +31,9 @@ const SKIPPED_TESTS: &[&str] = &[
     "create2collisionStorageParis",
     "RevertInCreateInInitCreate2Paris",
     "createBlobhashTx",
-    "test_reserve_price_at_transition.json",
-    "CreateTransactionHighNonce.json",
-    "lowGasLimit.json",
+    "test_reserve_price_at_transition",
+    "CreateTransactionHighNonce",
+    "lowGasLimit",
 ];
 
 // If neither `sp1` nor `stateless` is enabled: run with whichever engine
