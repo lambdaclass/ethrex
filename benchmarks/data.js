@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757791633197,
+  "lastUpdate": 1757949812789,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14065,6 +14065,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166289315423,
             "range": "± 278898792",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8e7a734eb7b91feca9ded109ccf19f5f47f4ce99",
+          "message": "docs(levm): fix minor comments in levm code (#4405)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nFix comments that were merged in #4381 before they could be fixed there.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-09-15T14:20:30Z",
+          "tree_id": "2ff61d6b838a281829057aedeee22138a942ba80",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8e7a734eb7b91feca9ded109ccf19f5f47f4ce99"
+        },
+        "date": 1757949792459,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165965146877,
+            "range": "± 600034421",
             "unit": "ns/iter"
           }
         ]
