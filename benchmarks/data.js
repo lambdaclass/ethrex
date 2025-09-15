@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757951473979,
+  "lastUpdate": 1757954829994,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14155,6 +14155,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164979488563,
             "range": "± 635595566",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0b546aa8d85a55f43c2640d0d67113895ca2e01e",
+          "message": "fix(l2): race condition tracking privileged tx count (#4394)\n\n**Motivation**\n\nWe have a race condition between the `block_producer` and the\n`l1_committer` when updating the `precommit_privileged` table. The race\ncondition manifests as the following error:\n```\n2025-09-08T18:17:00.931203Z ERROR ethrex_l2::sequencer::l1_committer: L1 Committer Error: Committer failed to send transaction: Failed to send commitment for batch 3. first_block: 14 last_block: 38: Committer failed because of an EthClient error: eth_estimateGas request error: execution reverted: unknown error\n```\n\nThis is what happens:\n\nThe `block_producer` tracks the number of privileged transactions in the\n`rollup_store` to ensure it does not exceed the maximum cap of 300,\nwhich is imposed by gas limitations. Once the cap is reached, it stops\nadding privileged transactions until the `l1_committer` resets the\ncounter after creating a new batch.\n\nBut given the `block_producer` and `l1_committer`run concurrently, the\nfollowing scenario may occur:\n1. The `l1_committer` starts producing a new batch containing the last\navailable block.\n2. The `block_producer` creates a new block with 150 privileged\ntransactions and sets the counter to 150.\n3. The `l1_committer` finishes the batch and resets the counter to 0.\n4. The `block_producer` continues adding privileged transactions until\nthe cap is reached again.\n5. As a result, the `l1_committer` builds a batch containing 450\nprivileged transactions instead of 300.\n\n**Description**\n- Removes the shared table in the `rollup_store`.\n- The `block_producer` only enforces a `PRIVILEGED_TX_BUDGET` per block.\nIt no longer has a notion of batches.\n- The `l1_committer` ensures that the `PRIVILEGED_TX_BUDGET` is not\nexceeded per batch when adding blocks.\n- The `block_producer` tracks the `last_privileged_nonce` to ensure all\nprivileged transactions are added sequentially across blocks. IMO, this\nis a better solution since it allows us to enforce ordering across\ndifferent batches. However, it is not the ultimate solution, because we\nstill mark the very first processed privileged transaction as the first\none, even though it may not actually be in order (this issue already\nexists and should be addressed in a separate PR). #4398 was created to\nsolve this.\n\n\nCloses #4359",
+          "timestamp": "2025-09-15T15:53:27Z",
+          "tree_id": "e4eab10c95e5a83fff9ce8846b508566078cbe47",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0b546aa8d85a55f43c2640d0d67113895ca2e01e"
+        },
+        "date": 1757954809909,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169150138792,
+            "range": "± 629289458",
             "unit": "ns/iter"
           }
         ]
