@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
-    ops::Range,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -47,8 +46,6 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
-    /// Privileged transactions included in the batch being built
-    precommit_privileged: Option<Range<u64>>,
 }
 
 impl Store {
@@ -290,7 +287,6 @@ impl StoreEngineRollup for Store {
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);
-        store.precommit_privileged = None;
         Ok(())
     }
 
@@ -322,20 +318,21 @@ impl StoreEngineRollup for Store {
         if let Some(verify_tx) = batch.verify_tx {
             inner.verify_txs.insert(batch.number, verify_tx);
         }
-        inner.precommit_privileged = None;
         Ok(())
     }
 
-    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
-        Ok(self.inner()?.precommit_privileged.clone())
-    }
-
-    async fn update_precommit_privileged(
+    async fn delete_proof_by_batch_and_type(
         &self,
-        range: Option<Range<u64>>,
+        batch_number: u64,
+        proof_type: ProverType,
     ) -> Result<(), RollupStoreError> {
-        self.inner()?.precommit_privileged = range;
+        let mut inner = self.inner()?;
+        inner.batch_proofs.remove(&(proof_type, batch_number));
         Ok(())
+    }
+
+    async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self.inner()?.state_roots.keys().max().cloned())
     }
 }
 

@@ -5,7 +5,7 @@
 
 ## Intro
 
-The prover consists of two main components: handling incoming proving data from the `L2 proposer`, specifically from the `ProofCoordinator` component, and the `zkVM`. The `Prover` is responsible for this first part, while the `zkVM` serves as a RISC-V emulator executing code specified in `crates/l2/prover/zkvm/interface/guest/src`.
+The prover consists of two main components: handling incoming proving data from the `L2 proposer`, specifically from the `ProofCoordinator` component, and the `zkVM`. The `Prover` is responsible for this first part, while the `zkVM` serves as a RISC-V emulator executing code specified in `crates/l2/prover/src/guest_program/guest/src`.
 Before the `zkVM` code (or guest), there is a directory called `interface`, which indicates that we access the `zkVM` through the "interface" crate.
 
 In summary, the `Prover` manages the inputs from the `ProofCoordinator` and then "calls" the `zkVM` to perform the proving process and generate the `groth16` ZK proof.
@@ -33,7 +33,9 @@ sequenceDiagram
 
 - [RISC0](https://dev.risczero.com/api/zkvm/install)
   1. `curl -L https://risczero.com/install | bash`
-  2. `rzup install cargo-risczero 2.3.1`
+  2. `rzup install cargo-risczero 3.0.3`
+  3. `rzup install risc0-groth16`
+  4. `rzup install rust`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
   2. `sp1up --version 5.0.8`

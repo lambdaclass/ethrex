@@ -16,6 +16,7 @@ hex.workspace = true
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { workspace = true, optional = true }
+rocksdb = { workspace = true, optional = true }
 smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
 digest = "0.10.6"
 lazy_static.workspace = true
@@ -23,12 +24,14 @@ lazy_static.workspace = true
 [features]
 default = []
 libmdbx = ["dep:libmdbx"]
+rocksdb = ["dep:rocksdb"]
+
 
 [dev-dependencies]
 hex.workspace = true
 hex-literal.workspace = true
 proptest = "1.0.0"
-tempdir = "0.3.7"
+tempfile.workspace = true
 cita_trie = "4.0.0"          # used for proptest comparisons
 hasher = "0.1.4"             # cita_trie needs this
 criterion = "0.5.1"

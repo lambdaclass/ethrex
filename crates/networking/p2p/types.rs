@@ -10,6 +10,7 @@ use ethrex_rlp::{
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
 use sha3::{Digest, Keccak256};
+use std::net::Ipv6Addr;
 use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -17,7 +18,7 @@ use std::{
     sync::OnceLock,
 };
 
-use crate::rlpx::utils::node_id;
+use crate::utils::node_id;
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
@@ -166,10 +167,12 @@ impl Node {
         let encoded = verifying_key.serialize_uncompressed();
         let public_key = H512::from_slice(&encoded[1..]);
 
-        let ip = pairs
-            .ip
-            .map(|p| IpAddr::from(Ipv4Addr::from_bits(p)))
-            .ok_or("Ip not found in record, can't construct node")?;
+        let ip: IpAddr = match (pairs.ip, pairs.ip6) {
+            (None, None) => return Err("Ip not found in record, can't construct node".to_string()),
+            (None, Some(ipv6)) => IpAddr::from(ipv6),
+            (Some(ipv4), None) => IpAddr::from(ipv4),
+            (Some(ipv4), Some(_ipv6)) => IpAddr::from(ipv4),
+        };
 
         // both udp and tcp can be defined in the pairs or only one
         // in the latter case, we have to default both ports to the one provided
@@ -198,7 +201,9 @@ impl Node {
     }
 
     pub fn udp_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.ip, self.udp_port)
+        // Nodes that use ipv6 currently are only ipv4 masked addresses, so we can convert it to an ipv4 address.
+        // If in the future we have real ipv6 nodes, we will need to handle them differently.
+        SocketAddr::new(self.ip.to_canonical(), self.udp_port)
     }
 
     pub fn tcp_addr(&self) -> SocketAddr {
@@ -231,8 +236,11 @@ pub struct NodeRecord {
 
 #[derive(Debug, Default, PartialEq)]
 pub struct NodeRecordPairs {
+    /// The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
+    /// This is always "v4".
     pub id: Option<String>,
-    pub ip: Option<u32>,
+    pub ip: Option<Ipv4Addr>,
+    pub ip6: Option<Ipv6Addr>,
     // the record structure reference says that tcp_port and udp_ports are big-endian integers
     // but they are actually encoded as 2 bytes, see geth for example: https://github.com/ethereum/go-ethereum/blob/f544fc3b4659aeca24a6de83f820dd61ea9b39db/p2p/enr/entries.go#L60-L78
     // I think the confusion comes from the fact that geth decodes the bytes and then builds an IPV4/6 big-integer structure.
@@ -241,7 +249,7 @@ pub struct NodeRecordPairs {
     pub secp256k1: Option<H264>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
     pub eth: Option<ForkId>,
-    // TODO implement ipv6 addresses
+    // TODO implement ipv6 specific ports
 }
 
 impl NodeRecord {
@@ -254,7 +262,8 @@ impl NodeRecord {
             let value = value.to_vec();
             match key.as_str() {
                 "id" => decoded_pairs.id = String::decode(&value).ok(),
-                "ip" => decoded_pairs.ip = u32::decode(&value).ok(),
+                "ip" => decoded_pairs.ip = Ipv4Addr::decode(&value).ok(),
+                "ip6" => decoded_pairs.ip6 = Ipv6Addr::decode(&value).ok(),
                 "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
                 "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
                 "secp256k1" => {
@@ -330,7 +339,7 @@ impl NodeRecord {
 
     pub fn update_seq(&mut self, signer: &SecretKey) -> Result<(), String> {
         self.seq += 1;
-        self.signature = self.sign_record(signer)?;
+        self.sign_record(signer)?;
         Ok(())
     }
 
@@ -370,6 +379,34 @@ impl NodeRecord {
             .finish();
         let digest = Keccak256::digest(&rlp);
         digest.to_vec()
+    }
+}
+
+impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
+    fn from(value: NodeRecordPairs) -> Self {
+        let mut pairs = vec![];
+        if let Some(eth) = value.eth {
+            pairs.push(("eth".into(), eth.encode_to_vec().into()));
+        }
+        if let Some(id) = value.id {
+            pairs.push(("id".into(), id.encode_to_vec().into()));
+        }
+        if let Some(ip) = value.ip {
+            pairs.push(("ip".into(), ip.encode_to_vec().into()));
+        }
+        if let Some(ip6) = value.ip6 {
+            pairs.push(("ip6".into(), ip6.encode_to_vec().into()));
+        }
+        if let Some(secp256k1) = value.secp256k1 {
+            pairs.push(("secp256k1".into(), secp256k1.encode_to_vec().into()));
+        }
+        if let Some(tcp) = value.tcp_port {
+            pairs.push(("tcp".into(), tcp.encode_to_vec().into()));
+        }
+        if let Some(udp) = value.udp_port {
+            pairs.push(("udp".into(), udp.encode_to_vec().into()));
+        }
+        pairs
     }
 }
 
@@ -443,12 +480,15 @@ impl RLPEncode for Node {
 #[cfg(test)]
 mod tests {
     use crate::{
-        network::public_key_from_signing_key,
         types::{Node, NodeRecord},
+        utils::public_key_from_signing_key,
     };
     use ethrex_common::H512;
+    use ethrex_storage::{EngineType, Store};
     use secp256k1::SecretKey;
     use std::{net::SocketAddr, str::FromStr};
+
+    pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
 
     #[test]
     fn parse_node_from_enode_string() {
@@ -502,8 +542,8 @@ mod tests {
         assert_eq!(node, expected_node);
     }
 
-    #[test]
-    fn encode_node_record_to_enr_url() {
+    #[tokio::test]
+    async fn encode_node_record_to_enr_url() {
         // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
         let signer = SecretKey::from_slice(&[
             16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
@@ -512,13 +552,24 @@ mod tests {
         .unwrap();
         let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
 
+        let storage =
+            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        storage
+            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .await
+            .expect("Failed to build test genesis");
+
         let node = Node::new(
             addr.ip(),
             addr.port(),
             addr.port(),
             public_key_from_signing_key(&signer),
         );
-        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        // Drop fork ID since the test doesn't use it
+        record.pairs.retain(|(k, _)| k != "eth");
+        record.sign_record(&signer).unwrap();
+
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);

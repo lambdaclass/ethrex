@@ -18,8 +18,7 @@ ethrex-rlp = { path = "../../../common/rlp" }
 ethrex-vm = { path = "../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../blockchain", default-features = false }
 ethrex-rpc = { path = "../../../networking/rpc", default-features = false }
-zkvm_interface = { path = "../../prover/zkvm/interface", default-features = false }
-ethrex-sdk = { path = "../../sdk", default-features = false }
+guest_program = { path = "../../prover/src/guest_program", default-features = false }
 ethrex-l2 = { path = "../..", default-features = false }
 ethrex-l2-common = { path = "../../common", default-features = false }
 
@@ -34,4 +33,4 @@ secp256k1 = { version = "0.29.1", default-features = false, features = [
 
 [features]
 default = ["l2"]
-l2 = ["zkvm_interface/l2", "ethrex-l2/l2"]
+l2 = ["guest_program/l2", "ethrex-l2/l2"]
