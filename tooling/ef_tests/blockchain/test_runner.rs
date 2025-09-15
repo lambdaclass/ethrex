@@ -185,7 +185,7 @@ fn exception_is_expected(
         if let (
             BlockChainExpectedException::TxtException(expected_error_msg),
             ChainError::EvmError(EvmError::Transaction(error_msg))
-            | ChainError::InvalidTransaction(error_msg),
+            | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(error_msg)),
         ) = (exception, returned_error)
         {
             return match_alternative_revm_exception_msg(expected_error_msg, error_msg)

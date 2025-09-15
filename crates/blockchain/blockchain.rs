@@ -1091,11 +1091,13 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
     for transaction in block.body.transactions.iter() {
         if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
-            return Err(ChainError::InvalidTransaction(format!(
-                "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
-                transaction.hash(),
-                transaction.gas_limit()
-            )));
+            return Err(ChainError::InvalidBlock(
+                InvalidBlockError::InvalidTransaction(format!(
+                    "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
+                    transaction.hash(),
+                    transaction.gas_limit()
+                )),
+            ));
         }
     }
     Ok(())
