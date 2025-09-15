@@ -1338,7 +1338,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .to_vec()
 }
 
-pub fn hash_address_fixed(address: &Address) -> H256 {
+fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
             .finalize()

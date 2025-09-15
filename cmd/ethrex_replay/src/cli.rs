@@ -12,9 +12,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use ethrex_storage::Store;
-use ethrex_storage::{
-    hash_address, hash_address_fixed, store_db::in_memory::Store as InMemoryStore,
-};
+use ethrex_storage::{hash_address, store_db::in_memory::Store as InMemoryStore};
 use ethrex_trie::InMemoryTrieDB;
 use eyre::Ok;
 use reqwest::Url;
@@ -368,8 +366,7 @@ async fn replay_no_backend(mut cache: Cache, opts: &EthrexReplayOptions) -> eyre
     let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
 
     let in_memory_store = InMemoryStore::new();
-    // Set up internal state of in memory store
-    // TODO: Should we add methods in the Store API that let us do this for both in memory database and other databases? Does it make sense?
+    // Set up internal state of in-memory store
     {
         let mut inner_store = in_memory_store.inner().unwrap();
 
@@ -414,7 +411,7 @@ async fn replay_no_backend(mut cache: Cache, opts: &EthrexReplayOptions) -> eyre
 
             inner_store
                 .storage_trie_nodes
-                .insert(hash_address_fixed(address), in_memory_trie);
+                .insert(H256::from_slice(&hashed_address), in_memory_trie);
         }
     }
 
