@@ -35,6 +35,8 @@ pub struct BlobsBundle {
     pub commitments: Vec<Commitment>,
     #[serde(with = "serde_utils::bytes48::vec")]
     pub proofs: Vec<Proof>,
+    #[serde(skip)]
+    pub version: Option<u8>,
 }
 
 pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
@@ -101,6 +103,7 @@ impl BlobsBundle {
             blobs: blobs.clone(),
             commitments,
             proofs,
+            version: None,
         })
     }
 
@@ -129,11 +132,16 @@ impl BlobsBundle {
 
         // Check if the blob versioned hashes and blobs bundle content length mismatch
         if blob_count != self.commitments.len()
-            || (fork < Fork::Osaka && blob_count != self.proofs.len())
-            || (fork >= Fork::Osaka && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
+            || (!self.version.is_some_and(|v| v == 1) && blob_count != self.proofs.len())
+            || (self.version.is_some_and(|v| v == 1) && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
             || blob_count != tx.blob_versioned_hashes.len()
         {
-            dbg!(blob_count, self.proofs.len(), fork, tx.blob_versioned_hashes.len());
+            dbg!(
+                blob_count,
+                self.proofs.len(),
+                fork,
+                tx.blob_versioned_hashes.len()
+            );
             return Err(BlobsBundleError::BlobsBundleWrongLen);
         };
 
@@ -146,7 +154,7 @@ impl BlobsBundle {
             }
         }
 
-        if fork >= Fork::Osaka {
+        if self.version.is_some_and(|v| v == 1) {
             // Validate the blobs with the commitments and cell proofs
             for ((blob, commitment), proof) in self
                 .blobs
@@ -202,6 +210,7 @@ impl RLPDecode for BlobsBundle {
                 blobs,
                 commitments,
                 proofs,
+                version: None,
             },
             decoder.finish()?,
         ))
@@ -310,7 +319,8 @@ mod tests {
                             .map(|s| {
                                 shared::convert_str_to_bytes48(s)
                             })
-                            .collect()
+                            .collect(),
+                            version: None,
         };
 
         let tx = EIP4844Transaction {
@@ -361,7 +371,8 @@ mod tests {
                               .map(|s| {
                                 shared::convert_str_to_bytes48(s)
                               })
-                              .collect()
+                              .collect(),
+                              version: None,
         };
 
         let tx = EIP4844Transaction {
