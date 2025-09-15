@@ -571,7 +571,7 @@ async fn start_prover_listener(
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(format!("{ip}:{port}")).await?;
     let stream = TcpListenerStream::new(listener);
-    let stream = stream.filter_map(async |x| match x {
+    let stream = stream.filter_map(async |result| match result {
         Ok(mut stream) => {
             let mut buffer = Vec::new();
             stream
@@ -580,14 +580,10 @@ async fn start_prover_listener(
                 .inspect_err(|err| error!("Failed to read from tcp stream: {err}"))
                 .ok()?;
 
-            let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
-
-            if let Ok(data) = data {
-                Some(ProofCordInMessage::Data(data, Arc::new(stream)))
-            } else {
-                error!("Invalid request data");
-                None
-            }
+            serde_json::from_slice(&buffer)
+                .map(|data| ProofCordInMessage::Data(data, Arc::new(stream)))
+                .inspect_err(|err| error!("Failed to deserialize data: {}", err))
+                .ok()
         }
         Err(e) => {
             error!("{}", e);
