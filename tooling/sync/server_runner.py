@@ -59,7 +59,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def send_slack_message_failed(header: str, hostname: str, network: str, timeout, log_file: str):
+def send_slack_message_failed(header: str, hostname: str, timeout, log_file: str):
     try:
         webhook_url = os.environ["SLACK_WEBHOOK_URL_FAILED"]
 
@@ -78,7 +78,7 @@ def send_slack_message_failed(header: str, hostname: str, network: str, timeout,
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*Server:* `{hostname}`{timeout}\n*Network:* `{network}`\n*Logs in:* `{log_file}`"
+                        "text": f"*Server:* `{hostname}`{timeout}\n*Logs in:* `{log_file}`"
                     }
                 }
             ]
@@ -107,14 +107,14 @@ def send_slack_message_success(hostname: str, minutes: str, network: str, log_fi
                     "type": "header",
                     "text": {
                         "type": "plain_text",
-                        "text": ":white_check_mark: Node snap-synced successfully and advanced for 30 minutes"
+                        "text": f":white_check_mark: Node snap-synced {capitalize_network(network)} and advanced for 30 minutes"
                     }
                 },
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f'*Server:* `{hostname}`\n*Synced in:* {minutes} minutes\n*Network:* `{network}`\n*Logs in:* `{log_file}`'
+                        "text": f'*Server:* `{hostname}`\n*Synced in:* {minutes} minutes\n*Logs in:* `{log_file}`'
                     }
                 }
             ]
@@ -132,6 +132,12 @@ def send_slack_message_success(hostname: str, minutes: str, network: str, log_fi
     except Exception as e:
         print(f"Error sending Slack message: {e}", file=sys.stderr)
         return
+
+
+def capitalize_network(word):
+    if not word:
+        return word
+    return word[0].upper() + word[1:]
 
 
 def get_variables(args):
@@ -172,14 +178,14 @@ def block_production_loop(
                 current_block_number = int(result, 0)
             else:
                 print(f"⚠️ Node did not generated a new block. Stopping.")
-                send_slack_message_failed("⚠️ Node stopped generating new blocks after sync", hostname, args.network, None, f"{logs_file}_{start_time}.log")
+                send_slack_message_failed(f"⚠️ Node stopped generating new blocks after snap syncing {capitalize_network(args.network)}", hostname, None, f"{logs_file}_{start_time}.log")
                 with open("sync_logs.txt", "a") as f:
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
                 return False
         except Exception as e:
             print(f"⚠️ Node did stopped. Stopping.")
             print("Error:", e)
-            send_slack_message_failed("⚠️ Node stopped running after snap sync", hostname, args.network, None, f"{logs_file}_{start_time}.log")
+            send_slack_message_failed(f"⚠️ Node stopped running after snap syncing {capitalize_network(args.network)}", hostname, None, f"{logs_file}_{start_time}.log")
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
             return False
@@ -194,7 +200,7 @@ def verification_loop(
             elapsed = time.time() - start_time
             if elapsed > args.timeout * 60:
                 print(f"⚠️ Node did not sync within {args.timeout} minutes. Stopping.")
-                send_slack_message_failed("⚠️ Node failed to sync within timeout", hostname, args.network, args.timeout, f"{logs_file}_{start_time}.log")
+                send_slack_message_failed(f"⚠️ Node failed to sync {capitalize_network(args.network)} within timeout", hostname, args.timeout, f"{logs_file}_{start_time}.log")
                 with open("sync_logs.txt", "a") as f:
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
                 return False
