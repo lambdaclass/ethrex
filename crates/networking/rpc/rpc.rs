@@ -76,7 +76,7 @@ pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)
     let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
         return Err((
             StatusCode::NOT_IMPLEMENTED,
-            "jemalloc profiling is not available (compile with `jemalloc_profiling`)".into(),
+            "jemalloc profiling is not available (compile with `jemalloc_profiling` and make sure env_target is not msvc)".into(),
         ));
     };
     let mut prof_ctl = mutex.lock().await;
@@ -111,7 +111,7 @@ pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCo
     let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
         return Err((
             StatusCode::NOT_IMPLEMENTED,
-            "jemalloc profiling is not available (compile with `jemalloc_profiling`)".into(),
+            "jemalloc profiling is not available (compile with `jemalloc_profiling` and make sure env_target is not msvc)".into(),
         ));
     };
     let mut prof_ctl = mutex.lock().await;

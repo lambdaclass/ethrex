@@ -17,6 +17,14 @@ use tracing::info;
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+fn log_global_allocator() {
+    if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
+        tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
+    } else {
+        tracing::info!("Global allocator: system (std::alloc::System)");
+    }
+}
+
 // This could be also enabled via `MALLOC_CONF` env var, but for consistency with the previous jemalloc feature
 // usage, we keep it in the code and enable the profiling feature only with the `jemalloc_profiling` feature flag.
 #[cfg(all(feature = "jemalloc_profiling", not(target_env = "msvc")))]
@@ -63,6 +71,8 @@ async fn main() -> eyre::Result<()> {
             server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
     }
+
+    log_global_allocator();
 
     Ok(())
 }
