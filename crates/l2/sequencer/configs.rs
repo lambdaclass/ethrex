@@ -23,7 +23,7 @@ pub struct BlockProducerConfig {
     pub block_time_ms: u64,
     pub coinbase_address: Address,
     pub elasticity_multiplier: u64,
-    pub block_gas_ceil: Option<u64>,
+    pub block_gas_limit: Option<u64>,
 }
 
 #[derive(Clone, Debug)]

@@ -251,6 +251,10 @@ impl PayloadBuildContext {
             account_updates: Vec::new(),
         })
     }
+
+    pub fn gas_used(&self) -> u64 {
+        self.payload.header.gas_limit - self.remaining_gas
+    }
 }
 
 impl PayloadBuildContext {
