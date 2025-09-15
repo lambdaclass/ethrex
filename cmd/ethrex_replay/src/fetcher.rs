@@ -109,23 +109,6 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    debug!("Getting block data from RPC for block {requested_block_number}");
-
-    let block_retrieval_start_time = SystemTime::now();
-
-    let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(requested_block_number))
-        .await?;
-
-    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
-    });
-
-    debug!(
-        "Got block {requested_block_number} in {}",
-        format_duration(block_retrieval_duration)
-    );
-
     Ok(Cache::new(vec![block], witness))
 }
 
