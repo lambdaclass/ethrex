@@ -141,8 +141,6 @@ pub struct EthrexReplayOptions {
     pub bench: bool,
     #[arg(long, required = false)]
     pub to_csv: bool,
-    #[arg(long, required = false)]
-    pub l2: bool,
 }
 
 #[derive(Parser)]
@@ -215,7 +213,7 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(block_opts) => replay_block(block_opts).await?,
+            Self::Block(block_opts) => replay_block(block_opts, false).await?,
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions { mut blocks, opts }) => {
                 if opts.cached {
@@ -232,10 +230,13 @@ impl EthrexReplayCommand {
                         blocks.len()
                     );
 
-                    replay_block(BlockOptions {
-                        block: Some(*block_number),
-                        opts: opts.clone(),
-                    })
+                    replay_block(
+                        BlockOptions {
+                            block: Some(*block_number),
+                            opts: opts.clone(),
+                        },
+                        false,
+                    )
                     .await?;
                 }
             }
@@ -252,10 +253,13 @@ impl EthrexReplayCommand {
                 }
 
                 for block in start..=end {
-                    replay_block(BlockOptions {
-                        block: Some(block),
-                        opts: opts.clone(),
-                    })
+                    replay_block(
+                        BlockOptions {
+                            block: Some(block),
+                            opts: opts.clone(),
+                        },
+                        false,
+                    )
                     .await?;
                 }
             }
@@ -320,7 +324,6 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
-                    l2: false,
                 };
 
                 let elapsed = replay_custom_l1_blocks(max(1, n_blocks), &opts).await?;
@@ -384,7 +387,7 @@ impl EthrexReplayCommand {
                 run_and_measure(replay(cache, &opts), opts.bench).await?;
             }
             #[cfg(feature = "l2")]
-            Self::L2(L2Subcommand::Block(block_opts)) => replay_block(block_opts).await?,
+            Self::L2(L2Subcommand::Block(block_opts)) => replay_block(block_opts, true).await?,
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Block(CustomBlockOptions {
                 prove,
@@ -481,7 +484,7 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
+async fn replay_block(block_opts: BlockOptions, l2: bool) -> eyre::Result<()> {
     let opts = block_opts.opts;
 
     let block = block_opts.block;
@@ -489,8 +492,6 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     if opts.cached {
         unimplemented!("cached mode is not implemented yet");
     }
-
-    let l2 = false;
 
     let (eth_client, network) = setup(&opts, l2).await?;
 
@@ -501,7 +502,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         ));
     }
 
-    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?, opts.l2).await?;
+    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?, l2).await?;
 
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
