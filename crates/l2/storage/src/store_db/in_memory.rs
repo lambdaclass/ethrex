@@ -23,8 +23,10 @@ struct StoreInner {
     batches_by_block: HashMap<BlockNumber, u64>,
     /// Map of message hashes by batch numbers
     message_hashes_by_batch: HashMap<u64, Vec<H256>>,
-    /// Map of batch number to block numbers
-    block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
+    /// Map of batch number to first block number
+    first_block_number_by_batch: HashMap<u64, BlockNumber>,
+    /// Map of batch number to last block number
+    last_block_number_by_batch: HashMap<u64, BlockNumber>,
     /// Map of batch number to deposit logs hash
     privileged_transactions_hashes: HashMap<u64, H256>,
     /// Map of batch number to state root
@@ -86,13 +88,26 @@ impl StoreEngineRollup for Store {
     async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError> {
-        let block_numbers = self
+    ) -> Result<Option<(BlockNumber, BlockNumber)>, RollupStoreError> {
+        let Some(first_block) = self
             .inner()?
-            .block_numbers_by_batch
+            .first_block_number_by_batch
             .get(&batch_number)
-            .cloned();
-        Ok(block_numbers)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+
+        let Some(last_block) = self
+            .inner()?
+            .last_block_number_by_batch
+            .get(&batch_number)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some((first_block, last_block)))
     }
 
     async fn get_privileged_transactions_hash_by_batch_number(
@@ -155,7 +170,7 @@ impl StoreEngineRollup for Store {
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
         Ok(self
             .inner()?
-            .block_numbers_by_batch
+            .first_block_number_by_batch
             .contains_key(batch_number))
     }
 
@@ -220,14 +235,6 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.lastest_sent_batch_proof)
     }
 
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.lastest_sent_batch_proof = batch_number;
-        Ok(())
-    }
-
     async fn get_account_updates_by_block_number(
         &self,
         block_number: BlockNumber,
@@ -283,7 +290,10 @@ impl StoreEngineRollup for Store {
             .message_hashes_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
-            .block_numbers_by_batch
+            .first_block_number_by_batch
+            .retain(|batch, _| *batch <= batch_number);
+        store
+            .last_block_number_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
             .privileged_transactions_hashes
@@ -296,13 +306,13 @@ impl StoreEngineRollup for Store {
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
         let mut inner = self.inner()?;
-        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
-        for block_number in blocks.iter() {
-            inner.batches_by_block.insert(*block_number, batch.number);
-        }
-
-        inner.block_numbers_by_batch.insert(batch.number, blocks);
+        inner
+            .first_block_number_by_batch
+            .insert(batch.number, batch.first_block);
+        inner
+            .last_block_number_by_batch
+            .insert(batch.number, batch.last_block);
 
         inner
             .message_hashes_by_batch

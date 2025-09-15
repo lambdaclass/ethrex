@@ -166,17 +166,12 @@ impl L1Committer {
         let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
             Some(batch) => batch,
             None => {
-                let last_committed_blocks = self
+                let (_first_block, last_block) = self
                     .rollup_store
                     .get_block_numbers_by_batch(last_committed_batch_number)
                     .await?
                     .ok_or(
                         CommitterError::RetrievalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
-                    )?;
-                let last_block = last_committed_blocks
-                    .last()
-                    .ok_or(
-                        CommitterError::RetrievalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
                     )?;
                 let first_block_to_commit = last_block + 1;
 
@@ -188,10 +183,10 @@ impl L1Committer {
                     privileged_transactions_hash,
                     last_block_of_batch,
                 ) = self
-                    .prepare_batch_from_block(*last_block, batch_to_commit)
+                    .prepare_batch_from_block(last_block, batch_to_commit)
                     .await?;
 
-                if *last_block == last_block_of_batch {
+                if last_block == last_block_of_batch {
                     debug!("No new blocks to commit, skipping");
                     return Ok(());
                 }
