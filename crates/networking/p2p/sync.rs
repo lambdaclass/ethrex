@@ -572,9 +572,9 @@ impl FullBlockSyncState {
     /// Saves incoming headers, requests as many block bodies as needed to complete
     /// an execution batch and executes it.
     /// An incomplete batch may be executed if the sync_head was already found
-    /// Returns bool finish to know wether the amount of block headers was less than MAX_BLOCK_BODIES_TO_REQUEST
+    /// Returns bool finish to know whether the amount of block headers was less than MAX_BLOCK_BODIES_TO_REQUEST
     /// to determine if there's still more blocks to download.
-    /// Returns bool sync_head_found to know wether full sync was completed.
+    /// Returns bool sync_head_found to know whether full sync was completed.
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
