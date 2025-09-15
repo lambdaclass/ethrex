@@ -350,7 +350,10 @@ contract OnChainProposer is
                 );
             }
             try
-                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(tdxPublicValues, tdxSignature)
+                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
+                    tdxPublicValues,
+                    tdxSignature
+                )
             {} catch {
                 revert(
                     "OnChainProposer: Invalid TDX proof failed proof verification"
@@ -377,7 +380,8 @@ contract OnChainProposer is
             ALIGNED_MODE,
             "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead."
         );
-        require( firstBatchNumber == lastVerifiedBatch + 1,
+        require(
+            firstBatchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: incorrect first batch number"
         );
 
@@ -428,23 +432,22 @@ contract OnChainProposer is
                     )
                 );
             }
-            bytes memory callData = abi.encodeWithSignature(
-                "verifyProofInclusion(bytes32[],bytes32,bytes)",
-                merkleProofsList[i],
-                SP1_VERIFICATION_KEY,
-                publicInputsList[i]
-            );
-            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-                .staticcall(callData);
-            require(
-                callResult,
-                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-            );
-            bool proofVerified = abi.decode(response, (bool));
-            require(
-                proofVerified,
-                "OnChainProposer: Invalid ALIGNED proof failed proof verification"
-            );
+
+            if (REQUIRE_SP1_PROOF) {
+                _verifyProofInclusionAligned(
+                    sp1MerkleProofsList[i],
+                    SP1_VERIFICATION_KEY,
+                    publicInputsList[i]
+                );
+            }
+
+            if (REQUIRE_RISC0_PROOF) {
+                _verifyProofInclusionAligned(
+                    risc0MerkleProofsList[i],
+                    RISC0_VERIFICATION_KEY,
+                    publicInputsList[i]
+                );
+            }
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];

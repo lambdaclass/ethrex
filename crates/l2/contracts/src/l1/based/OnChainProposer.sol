@@ -386,23 +386,35 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata alignedPublicInputsList,
-        bytes32[][] calldata alignedMerkleProofsList
+        bytes[] calldata publicInputsList,
+        bytes32[][] calldata sp1MerkleProofsList,
+        bytes32[][] calldata risc0MerkleProofsList
     ) external override {
-        require(ALIGNED_MODE, "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.");
-
         require(
-            alignedPublicInputsList.length == alignedMerkleProofsList.length,
-            "OnChainProposer: input/proof array length mismatch"
+            ALIGNED_MODE,
+            "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead."
         );
         require(
             firstBatchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: incorrect first batch number"
         );
 
+        if (REQUIRE_SP1_PROOF) {
+            require(
+                publicInputsList.length == sp1MerkleProofsList.length,
+                "OnChainProposer: SP1 input/proof array length mismatch"
+            );
+        }
+        if (REQUIRE_RISC0_PROOF) {
+            require(
+                publicInputsList.length == risc0MerkleProofsList.length,
+                "OnChainProposer: Risc0 input/proof array length mismatch"
+            );
+        }
+
         uint256 batchNumber = firstBatchNumber;
 
-        for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
+        for (uint256 i = 0; i < publicInputsList.length; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
                 "OnChainProposer: cannot verify an uncommitted batch"
@@ -424,7 +436,7 @@ contract OnChainProposer is
             // Verify public data for the batch
             string memory reason = _verifyPublicData(
                 batchNumber,
-                alignedPublicInputsList[i][8:]
+                publicInputsList[i][8:]
             );
             if (bytes(reason).length != 0) {
                 revert(
@@ -434,23 +446,22 @@ contract OnChainProposer is
                     )
                 );
             }
-            bytes memory callData = abi.encodeWithSignature(
-                "verifyProofInclusion(bytes32[],bytes32,bytes)",
-                alignedMerkleProofsList[i],
-                SP1_VERIFICATION_KEY,
-                alignedPublicInputsList[i]
-            );
-            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-                .staticcall(callData);
-            require(
-                callResult,
-                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-            );
-            bool proofVerified = abi.decode(response, (bool));
-            require(
-                proofVerified,
-                "OnChainProposer: Aligned proof verification failed"
-            );
+
+            if (REQUIRE_SP1_PROOF) {
+                _verifyProofInclusionAligned(
+                    sp1MerkleProofsList[i],
+                    SP1_VERIFICATION_KEY,
+                    publicInputsList[i]
+                );
+            }
+
+            if (REQUIRE_RISC0_PROOF) {
+                _verifyProofInclusionAligned(
+                    risc0MerkleProofsList[i],
+                    RISC0_VERIFICATION_KEY,
+                    publicInputsList[i]
+                );
+            }
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
@@ -518,6 +529,30 @@ contract OnChainProposer is
                 "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
         }
         return "";
+    }
+
+    function _verifyProofInclusionAligned(
+        bytes32[] calldata merkleProofsList,
+        bytes32 verificationKey,
+        bytes calldata publicInputsList
+    ) internal view {
+        bytes memory callData = abi.encodeWithSignature(
+            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            merkleProofsList,
+            verificationKey,
+            publicInputsList
+        );
+        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+            .staticcall(callData);
+        require(
+            callResult,
+            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+        );
+        bool proofVerified = abi.decode(response, (bool));
+        require(
+            proofVerified,
+            "OnChainProposer: Aligned proof verification failed"
+        );
     }
 
     /// @notice Allow owner to upgrade the contract.
