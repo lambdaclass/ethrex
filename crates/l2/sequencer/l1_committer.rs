@@ -610,7 +610,7 @@ impl L1Committer {
         Ok(commit_tx_hash)
     }
 
-    async fn stop_sequencer(&mut self) -> CallResponse<Self> {
+    async fn stop_committer(&mut self) -> CallResponse<Self> {
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
             info!("L1 committer stopped");
@@ -621,7 +621,7 @@ impl L1Committer {
         }
     }
 
-    async fn start_sequencer(
+    async fn start_committer(
         &mut self,
         handle: GenServerHandle<Self>,
         delay: u64,
@@ -700,8 +700,8 @@ impl GenServer for L1Committer {
         handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
         match message {
-            CallMessage::Stop => self.stop_sequencer().await,
-            CallMessage::Start(delay) => self.start_sequencer(handle.clone(), delay).await,
+            CallMessage::Stop => self.stop_committer().await,
+            CallMessage::Start(delay) => self.start_committer(handle.clone(), delay).await,
         }
     }
 }
