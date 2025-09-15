@@ -4,7 +4,7 @@ use std::{
 };
 
 use ethrex_common::{H256, H512};
-use ethrex_rlp::error::RLPDecodeError;
+use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
@@ -91,6 +91,19 @@ pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
             contents,
             error: err.kind(),
         })
+}
+
+pub fn prepare_bytecode_buffer_for_dump(
+    buffer: Vec<H256>,
+    file_index: u64,
+    dir: String,
+) -> (Vec<u8>, String) {
+    let mut sorted_buffer = buffer;
+    sorted_buffer.sort();
+    sorted_buffer.dedup();
+    let encoded = sorted_buffer.encode_to_vec();
+    let filename = get_bytecode_hashes_snapshot_file(dir, file_index);
+    (encoded, filename)
 }
 
 /// TODO: make it more generic

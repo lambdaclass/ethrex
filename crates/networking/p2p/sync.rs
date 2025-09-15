@@ -8,7 +8,7 @@ use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
     current_unix_time, dump_to_file, get_account_state_snapshots_dir,
     get_account_storages_snapshots_dir, get_bytecode_hashes_snapshot_file,
-    get_bytecode_hashes_snapshots_dir,
+    get_bytecode_hashes_snapshots_dir, prepare_bytecode_buffer_for_dump,
 };
 use crate::{
     metrics::METRICS,
@@ -886,18 +886,12 @@ impl Syncer {
 
                 // Flush buffer if it's getting too large
                 if bytecode_write_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
-                    // Prepare buffer data
-                    let mut buffer_to_write = std::mem::take(&mut bytecode_write_buffer);
-                    buffer_to_write.sort();
-                    buffer_to_write.dedup();
-
-                    let encoded_buffer = buffer_to_write.encode_to_vec();
-                    let file_name = get_bytecode_hashes_snapshot_file(
-                        bytecode_hashes_snapshots_dir.clone(),
+                    let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
+                        bytecode_write_buffer.clone(),
                         bytecode_index_file,
+                        bytecode_hashes_snapshots_dir.clone(),
                     );
 
-                    // Spawn async write task
                     let sender_clone = bytecode_dump_sender.clone();
                     tokio::task::spawn(async move {
                         let result = dump_to_file(file_name, encoded_buffer);
@@ -947,18 +941,12 @@ impl Syncer {
 
             // Flush any remaining bytecode hashes in buffer
             if !bytecode_write_buffer.is_empty() {
-                // Prepare remaining buffer data
-                let mut buffer_to_write = std::mem::take(&mut bytecode_write_buffer);
-                buffer_to_write.sort();
-                buffer_to_write.dedup();
-
-                let encoded_buffer = buffer_to_write.encode_to_vec();
-                let file_name = get_bytecode_hashes_snapshot_file(
-                    bytecode_hashes_snapshots_dir.clone(),
+                let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
+                    bytecode_write_buffer,
                     bytecode_index_file,
+                    bytecode_hashes_snapshots_dir.clone(),
                 );
 
-                // Spawn final async write task
                 let sender_clone = bytecode_dump_sender.clone();
                 tokio::task::spawn(async move {
                     let result = dump_to_file(file_name, encoded_buffer);
@@ -1151,15 +1139,7 @@ impl Syncer {
         // Wait for all pending bytecode disk writes to complete
         while let Some(result) = bytecode_dump_receiver.recv().await {
             if let Err(dump_error) = result {
-                if dump_error.error == std::io::ErrorKind::StorageFull {
-                    return Err(SyncError::BytecodeFileError);
-                }
-                // Final retry attempt
-                dump_to_file(dump_error.path, dump_error.contents)
-                    .inspect_err(|err| {
-                        error!("Failed final retry for bytecode dump: {:?}", err);
-                    })
-                    .map_err(|_| SyncError::BytecodeFileError)?;
+                error!("Bytecode dump failed: {:?}", dump_error);
             }
         }
         info!("All bytecode hash files have been written to disk");
