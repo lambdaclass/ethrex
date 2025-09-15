@@ -72,7 +72,7 @@ impl TryFrom<u64> for Network {
             HOLESKY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
             SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
             HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
-            _ => Err("Unknown chain ID".to_owned()),
+            _ => Err(format!("Unknown chain ID: {}", value)),
         }
     }
 }
