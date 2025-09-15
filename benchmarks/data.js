@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757971527563,
+  "lastUpdate": 1757972714698,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14365,6 +14365,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169680891345,
             "range": "± 423160309",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b5deea9fd51f0ad00fc7a250302e340579b816d5",
+          "message": "refactor(replay): standardize replay cache (#4485)\n\n**Motivation**\n\nWe want to make the replay cache more reliable to future changes. This\nincludes using a standard execution witness and use when possible (on\nthe L1) known network names.\nAlso, use `json` caches for better readability.\n\n**Description**\n\n* Switched cache serialization from binary (`rkyv`) to JSON\n(`serde_json`), updating `load_cache` and `write_cache` to use JSON and\nchanging cache file extensions from `.bin` to `.json`.\n* Expanded the `Cache` struct to include `network` and `chain_config`\nfields, allowing the cache to distinguish between L1 and L2 chains and\nsupport custom configurations.\n* Added `TryFrom<u64>` for `Network` to map chain IDs to network\nvariants, improving robustness when determining the network from chain\nconfiguration.\n* Made `Network` and `PublicNetwork` serializable with `serde`, and\nadjusted their usage to ensure correct (de)serialization in cache files.\n* Refactored input preparation functions (`get_l1_input`,\n`get_l2_input`) to enforce presence/absence of `network` and\n`chain_config` fields according to the context (L1 vs L2).\n\nCloses #4286\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-15T20:49:36Z",
+          "tree_id": "eaf6b0f7e67e5484df0feb50d124ca3fee4e8df5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b5deea9fd51f0ad00fc7a250302e340579b816d5"
+        },
+        "date": 1757972693804,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170750919144,
+            "range": "± 703913518",
             "unit": "ns/iter"
           }
         ]
