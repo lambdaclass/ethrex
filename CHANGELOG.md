@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-09-15
+
+- Fix caching mechanism of the latest block's hash [#4479](https://github.com/lambdaclass/ethrex/pull/4479)
+
 ### 2025-09-11
 
 - Add `RocksDB` as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)
