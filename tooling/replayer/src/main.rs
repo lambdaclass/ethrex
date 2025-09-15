@@ -74,8 +74,6 @@ pub struct Options {
         help_heading = "Replayer options"
     )]
     pub cache_level: CacheLevel,
-    #[arg(long, required = false)]
-    pub l2: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq, Copy)]
