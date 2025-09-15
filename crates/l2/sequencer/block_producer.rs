@@ -52,6 +52,8 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    // Needed to ensure privileged tx nonces are sequential
+    last_privileged_nonce: Option<u64>,
 }
 
 impl BlockProducer {
@@ -75,6 +77,8 @@ impl BlockProducer {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
+            // FIXME: Initialize properly to the last privileged nonce in the chain
+            last_privileged_nonce: None,
         }
     }
 
@@ -135,7 +139,7 @@ impl BlockProducer {
             self.blockchain.clone(),
             payload,
             &self.store,
-            &self.rollup_store,
+            &mut self.last_privileged_nonce,
         )
         .await?;
         info!(
