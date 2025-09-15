@@ -2,8 +2,7 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-    BlockRLP, Rlp, TransactionHashRLP, TupleRLP,
+    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -1175,7 +1174,7 @@ table!(
 
 dupsort!(
     /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+    ( Receipts ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Receipt>
 );
 
 dupsort!(
@@ -1186,7 +1185,7 @@ dupsort!(
 
 dupsort!(
     /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+    ( TransactionLocations ) Rlp<H256> => Rlp<(BlockNumber, BlockHash, Index)>
 );
 
 table!(
@@ -1215,7 +1214,7 @@ table!(
 
 dupsort!(
     /// Storage Snapshot used by an ongoing sync process
-    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
+    ( StorageSnapShot ) Rlp<H256> => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
 );
 
 table!(
@@ -1342,7 +1341,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rlp::TupleRLP;
     use bytes::Bytes;
     use ethrex_common::{
         Address, H256,
@@ -1540,7 +1538,7 @@ mod tests {
     fn mdbx_indexed_chunks_test() {
         dupsort!(
             /// Receipts table.
-            ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+            ( Receipts ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Receipt>
         );
 
         let tables = [table_info!(Receipts)].into_iter().collect();
@@ -1582,7 +1580,7 @@ mod tests {
         // now retrieve the values and assert they are the same
         let mut stored_receipts = vec![];
         let mut receipt_index = 0;
-        let mut key: TupleRLP<BlockHash, Index> = (block_hash, 0).into();
+        let mut key: Rlp<(BlockHash, Index)> = (block_hash, 0).into();
         let txn = db.begin_read().unwrap();
         let mut cursor = txn.cursor::<Receipts>().unwrap();
         while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key).unwrap() {
