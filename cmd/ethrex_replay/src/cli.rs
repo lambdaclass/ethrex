@@ -517,7 +517,6 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     let start = SystemTime::now();
 
     let block_run_result = if opts.no_backend {
-        //TODO: Is it possible that Instant is more accurate for measuring these kind of things?
         run_and_measure(replay_no_backend(cache, &opts), opts.bench).await
     } else {
         run_and_measure(replay(cache, &opts), opts.bench).await
