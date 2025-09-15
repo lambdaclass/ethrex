@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757972714698,
+  "lastUpdate": 1757973500188,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14395,6 +14395,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170750919144,
             "range": "± 703913518",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b2c647c63ac82ff998fb379ba085d4fa949d25f5",
+          "message": "feat(l1, l2): add action button to EthProofs in `BlockRunReport` slack message (#4388)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nMainnet blocks whose numbers are multiples of 100 are proved in\n[EthProofs](http://ethproofs.org/). If we happen to prove one of them,\nit is useful to have a link to more proving stats for that block.\n\n---------\n\nCo-authored-by: Jeremías Salomón 🐃🐄🥚 <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-09-15T21:02:46Z",
+          "tree_id": "ca9e65b8be65504f9893b31bcf3308e507492237",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b2c647c63ac82ff998fb379ba085d4fa949d25f5"
+        },
+        "date": 1757973479012,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169358473231,
+            "range": "± 860879107",
             "unit": "ns/iter"
           }
         ]
