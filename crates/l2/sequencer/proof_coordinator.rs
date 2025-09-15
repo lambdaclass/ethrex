@@ -160,7 +160,7 @@ pub fn get_commit_hash() -> String {
 
 #[derive(Clone)]
 pub enum ProofCordInMessage {
-    Data(ProofData, Arc<TcpStream>),
+    Request(ProofData, Arc<TcpStream>),
 }
 
 #[derive(Clone, PartialEq)]
@@ -512,7 +512,7 @@ impl GenServer for ProofCoordinator {
         _handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            ProofCordInMessage::Data(data, stream) => {
+            ProofCordInMessage::Request(data, stream) => {
                 let Some(mut stream) = Arc::into_inner(stream) else {
                     error!("Failed to send response to prover client failed to get stream");
                     return CastResponse::NoReply;
@@ -581,7 +581,7 @@ async fn start_prover_listener(
                 .ok()?;
 
             serde_json::from_slice(&buffer)
-                .map(|data| ProofCordInMessage::Data(data, Arc::new(stream)))
+                .map(|data| ProofCordInMessage::Request(data, Arc::new(stream)))
                 .inspect_err(|err| error!("Failed to deserialize data: {}", err))
                 .ok()
         }
