@@ -503,8 +503,9 @@ sequenceDiagram
     OnChainProposer -&gt;&gt; Sequencer: OK
 </pre>
 <h2 id="limitations"><a class="header" href="#limitations">Limitations</a></h2>
-<p>Due to the gas cost of computing the rolling hashes, there is a limit to how many deposits can be handled in a single batch.</p>
-<p>To prevent creation of invalid batches, we save to the rollup store information about the deposits being included in the current batch.</p>
+<p>Due to the gas cost of computing rolling hashes, there is a limit to how many deposits can be handled in a single batch.<br />
+To prevent the creation of invalid batches, we enforce a maximum cap on deposits per batch in the <code>l1_committer</code>.<br />
+We also enforce the same maximum cap per block in the <code>block_producer</code>, to avoid situations where the <code>l1_committer</code> could get stuck if a single block contains more deposits than the configured batch cap.</p>
 
                     </main>
 
