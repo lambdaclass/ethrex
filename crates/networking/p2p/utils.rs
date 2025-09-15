@@ -91,7 +91,10 @@ pub async fn send_message_and_wait_for_response(
     message: Message,
     request_id: u64,
 ) -> Result<Vec<Node>, SendMessageError> {
-    let receiver = peer_channel.receiver.lock().await;
+    let receiver = peer_channel
+        .receiver
+        .try_lock()
+        .map_err(|_| SendMessageError::PeerBusy)?;
     peer_channel
         .connection
         .cast(CastMessage::BackendMessage(message))
