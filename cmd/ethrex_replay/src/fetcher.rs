@@ -80,7 +80,7 @@ pub async fn get_blockdata(
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness = eth_client
+    let witness_rpc = eth_client
         .get_witness(BlockIdentifier::Number(requested_block_number), None)
         .await
         .wrap_err("Unimplemented: Retry with eth_getProofs")?;
@@ -100,7 +100,7 @@ pub async fn get_blockdata(
 
     let block_cache_start_time = SystemTime::now();
 
-    let cache = Cache::new(vec![block], witness, Some(network));
+    let cache = Cache::new(vec![block], witness_rpc, Some(network));
 
     cache.write_cache(&file_name)?;
 
