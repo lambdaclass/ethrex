@@ -69,7 +69,7 @@ jobs:
         run: |
           cp fixtures/cache/rpc_prover/cache_hoodi_1219705.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make execute-${{ matrix.backend }}-ci BLOCK_NUMBER=1192723 NETWORK=hoodi
+          make execute-${{ matrix.backend }}-ci BLOCK_NUMBER=1219705 NETWORK=hoodi
 
 
   run-replay-no-backend:
