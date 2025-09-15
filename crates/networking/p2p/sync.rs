@@ -985,15 +985,19 @@ impl Syncer {
                 }
                 // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
                 // We just need to update the pivot and start again
-                if !heal_state_trie_wrap(
+                let (healing_done, new_bytecode_index) = heal_state_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
                     &self.peers,
                     calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut state_leafs_healed,
                     &mut storage_accounts,
+                    bytecode_index_file,
+                    &self.datadir,
                 )
-                .await?
+                .await?;
+                bytecode_index_file = new_bytecode_index;
+                if !healing_done
                 {
                     continue;
                 };
@@ -1108,15 +1112,19 @@ impl Syncer {
                 )
                 .await?;
             }
-            healing_done = heal_state_trie_wrap(
+            let (healing_result, new_bytecode_index) = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
                 &self.peers,
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_state_leafs_healed,
                 &mut storage_accounts,
+                bytecode_index_file,
+                &self.datadir,
             )
             .await?;
+            healing_done = healing_result;
+            bytecode_index_file = new_bytecode_index;
             if !healing_done {
                 continue;
             }

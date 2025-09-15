@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::{H256, types::AccountState};
+use ethrex_common::{H256, types::AccountState, constants::EMPTY_KECCACK_HASH};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
@@ -23,10 +23,10 @@ use tracing::{debug, error, info};
 
 use crate::{
     metrics::METRICS,
-    peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
+    peer_handler::{DumpError, PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     sync::AccountStorageRoots,
-    utils::current_unix_time,
+    utils::{current_unix_time, dump_to_file, get_bytecode_hashes_snapshots_dir, prepare_bytecode_buffer_for_dump},
 };
 
 /// Max size of a bach to start a storage fetch request in queues
@@ -35,6 +35,8 @@ pub const STORAGE_BATCH_SIZE: usize = 300;
 pub const NODE_BATCH_SIZE: usize = 500;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
+/// Buffer size for collecting bytecode hashes before writing to disk during healing
+const BYTECODE_WRITE_BUFFER_SIZE: usize = 100_000;
 
 use super::SyncError;
 
@@ -52,10 +54,20 @@ pub async fn heal_state_trie_wrap(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     storage_accounts: &mut AccountStorageRoots,
-) -> Result<bool, SyncError> {
+    bytecode_index_file: u64,
+    datadir: &str,
+) -> Result<(bool, u64), SyncError> {
     let mut healing_done = false;
     *METRICS.current_step.lock().await = "Healing State".to_string();
     info!("Starting state healing");
+
+    // Setup for bytecode collection during healing
+    let (healing_bytecode_sender, mut healing_bytecode_receiver) =
+        tokio::sync::mpsc::channel::<Result<(), DumpError>>(50);
+    let mut healing_bytecode_buffer = Vec::new();
+    let mut healing_bytecode_index = bytecode_index_file;
+    let bytecode_hashes_snapshots_dir = get_bytecode_hashes_snapshots_dir(&datadir.to_string());
+
     while !healing_done {
         healing_done = heal_state_trie(
             state_root,
@@ -65,6 +77,11 @@ pub async fn heal_state_trie_wrap(
             global_leafs_healed,
             HashMap::new(),
             storage_accounts,
+            &mut healing_bytecode_buffer,
+            &healing_bytecode_sender,
+            &mut healing_bytecode_receiver,
+            &mut healing_bytecode_index,
+            &bytecode_hashes_snapshots_dir,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -73,7 +90,39 @@ pub async fn heal_state_trie_wrap(
         }
     }
     info!("Stopped state healing");
-    Ok(healing_done)
+
+    // Flush remaining buffer
+    if !healing_bytecode_buffer.is_empty() {
+        let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
+            healing_bytecode_buffer,
+            healing_bytecode_index,
+            bytecode_hashes_snapshots_dir.clone(),
+        );
+
+        let sender_clone = healing_bytecode_sender.clone();
+        tokio::task::spawn(async move {
+            let result = dump_to_file(file_name, encoded_buffer);
+            sender_clone.send(result).await.ok();
+        });
+        healing_bytecode_index += 1;
+    }
+
+    // Wait for all pending writes
+    drop(healing_bytecode_sender);
+    while let Some(result) = healing_bytecode_receiver.recv().await {
+        if let Err(dump_error) = result {
+            if dump_error.error == std::io::ErrorKind::StorageFull {
+                return Err(SyncError::BytecodeFileError);
+            }
+            dump_to_file(dump_error.path, dump_error.contents)
+                .inspect_err(|err| {
+                    error!("Failed final retry for healing bytecode dump: {:?}", err);
+                })
+                .map_err(|_| SyncError::BytecodeFileError)?;
+        }
+    }
+
+    Ok((healing_done, healing_bytecode_index))
 }
 
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
@@ -88,6 +137,11 @@ async fn heal_state_trie(
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
+    healing_bytecode_buffer: &mut Vec<H256>,
+    healing_bytecode_sender: &tokio::sync::mpsc::Sender<Result<(), DumpError>>,
+    healing_bytecode_receiver: &mut tokio::sync::mpsc::Receiver<Result<(), DumpError>>,
+    healing_bytecode_index: &mut u64,
+    bytecode_hashes_snapshots_dir: &str,
 ) -> Result<bool, SyncError> {
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
@@ -176,6 +230,29 @@ async fn heal_state_trie(
                             let account_hash = H256::from_slice(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
+
+                            // Collect bytecode hash if not empty
+                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                                healing_bytecode_buffer.push(account.code_hash);
+
+                                // Flush if buffer is full
+                                if healing_bytecode_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
+                                    let buffer = std::mem::take(healing_bytecode_buffer);
+                                    let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
+                                        buffer,
+                                        *healing_bytecode_index,
+                                        bytecode_hashes_snapshots_dir.to_string(),
+                                    );
+
+                                    let sender_clone = healing_bytecode_sender.clone();
+                                    tokio::task::spawn(async move {
+                                        let result = dump_to_file(file_name, encoded_buffer);
+                                        sender_clone.send(result).await.ok();
+                                    });
+                                    *healing_bytecode_index += 1;
+                                }
+                            }
+
                             if account.storage_root != *EMPTY_TRIE_HASH {
                                 storage_accounts.healed_accounts.insert(account_hash);
                             }
@@ -314,6 +391,21 @@ async fn heal_state_trie(
         if !is_stale && current_unix_time() > staleness_timestamp {
             info!("state healing is stale");
             is_stale = true;
+        }
+
+        // Check for failed bytecode writes and retry if necessary
+        if let Ok(Err(dump_error)) = healing_bytecode_receiver.try_recv() {
+            if dump_error.error == std::io::ErrorKind::StorageFull {
+                return Err(SyncError::BytecodeFileError);
+            }
+            // Retry the failed dump
+            let sender_clone = healing_bytecode_sender.clone();
+            tokio::task::spawn(async move {
+                let result = dump_to_file(dump_error.path, dump_error.contents);
+                sender_clone.send(result).await.inspect_err(|err| {
+                    error!("Failed to send healing bytecode dump result through channel. Error: {err}")
+                }).ok();
+            });
         }
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
