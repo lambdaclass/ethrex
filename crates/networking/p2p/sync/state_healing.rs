@@ -96,11 +96,6 @@ pub async fn heal_state_trie_wrap(
 
     // Flush remaining buffer
     if !healing_bytecode_buffer.is_empty() {
-        info!(
-            "[BYTECODE_DOWNLOAD] Final healing flush of {} bytecodes to file {}",
-            healing_bytecode_buffer.len(),
-            *bytecode_index_file
-        );
         let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
             healing_bytecode_buffer,
             *bytecode_index_file,
@@ -247,11 +242,6 @@ async fn heal_state_trie(
                                 // Flush if buffer is full
                                 if healing_bytecode_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
                                     let buffer = std::mem::take(healing_bytecode_buffer);
-                                    info!(
-                                        "[BYTECODE_DOWNLOAD] Flushing healing buffer with {} entries to file {}",
-                                        buffer.len(),
-                                        *healing_bytecode_index
-                                    );
                                     let (encoded_buffer, file_name) =
                                         prepare_bytecode_buffer_for_dump(
                                             buffer,

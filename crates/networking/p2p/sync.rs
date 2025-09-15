@@ -887,22 +887,12 @@ impl Syncer {
                         (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
                     })
                     .collect();
-                info!(
-                    "[BYTECODE_DOWNLOAD] Processing {} accounts from snapshot, collected {} bytecodes",
-                    account_states_snapshot.len(),
-                    bytecodes_from_snapshot.len()
-                );
 
                 bytecode_write_buffer.extend(bytecodes_from_snapshot);
 
                 // Flush buffer if it's getting too large
                 if bytecode_write_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
                     let buffer = std::mem::take(&mut bytecode_write_buffer);
-                    info!(
-                        "[BYTECODE_DOWNLOAD] Flushing buffer with {} entries to file {}",
-                        buffer.len(),
-                        bytecode_index_file
-                    );
                     let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
                         buffer,
                         bytecode_index_file,
@@ -958,11 +948,6 @@ impl Syncer {
 
             // Flush any remaining bytecode hashes in buffer
             if !bytecode_write_buffer.is_empty() {
-                info!(
-                    "[BYTECODE_DOWNLOAD] Final flush of {} remaining bytecodes to file {}",
-                    bytecode_write_buffer.len(),
-                    bytecode_index_file
-                );
                 let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
                     bytecode_write_buffer,
                     bytecode_index_file,
@@ -1179,7 +1164,6 @@ impl Syncer {
                     .map_err(|_| SyncError::BytecodeFileError)?;
             }
         }
-        info!("[BYTECODE_DOWNLOAD] All bytecode hash files have been written to disk");
 
         // Bytecode download
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
@@ -1188,10 +1172,8 @@ impl Syncer {
         let bytecode_dir = get_bytecode_hashes_snapshots_dir(&self.datadir);
         let mut seen_bytecodes = HashSet::new();
         let mut bytecodes_to_download = Vec::new();
-        let mut total_unique_hashes = 0;
 
-        info!("[BYTECODE_DOWNLOAD] Starting download phase - reading bytecode hash files");
-
+        info!("Starting download bytecodes from peers");
         for entry in std::fs::read_dir(&bytecode_dir).map_err(|_| SyncError::CorruptPath)? {
             let entry = entry.map_err(|_| SyncError::CorruptPath)?;
             let snapshot_contents = std::fs::read(entry.path())
@@ -1203,16 +1185,8 @@ impl Syncer {
                 // If we haven't seen the bytecode hash yet, add it to the list of bytecodes to download
                 if seen_bytecodes.insert(hash) {
                     bytecodes_to_download.push(hash);
-                    total_unique_hashes += 1;
 
                     if bytecodes_to_download.len() >= BYTECODE_CHUNK_SIZE {
-                        info!(
-                            "[BYTECODE_DOWNLOAD] Downloading batch of {} hashes (processed {}/{} unique so far) from {entry:?}",
-                            bytecodes_to_download.len(),
-                            total_unique_hashes,
-                            seen_bytecodes.len()
-                        );
-
                         let bytecodes = self
                             .peers
                             .request_bytecodes(&bytecodes_to_download)
@@ -1232,10 +1206,6 @@ impl Syncer {
 
         // Download remaining bytecodes if any
         if !bytecodes_to_download.is_empty() {
-            info!(
-                "[BYTECODE_DOWNLOAD] Downloading final batch of {} hashes",
-                bytecodes_to_download.len()
-            );
             let bytecodes = self
                 .peers
                 .request_bytecodes(&bytecodes_to_download)
@@ -1249,10 +1219,6 @@ impl Syncer {
                 .await?;
         }
 
-        info!(
-            "[BYTECODE_DOWNLOAD] Download completed. Total unique hashes processed: {}",
-            total_unique_hashes
-        );
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
