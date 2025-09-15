@@ -4,7 +4,7 @@ use std::{
 };
 
 use ethrex_common::{H256, H512};
-use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
