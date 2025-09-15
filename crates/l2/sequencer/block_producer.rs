@@ -16,7 +16,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
-use payload_builder::build_payload;
+pub use payload_builder::build_payload;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
@@ -52,6 +52,8 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    // Needed to ensure privileged tx nonces are sequential
+    last_privileged_nonce: Option<u64>,
     block_gas_ceil: u64,
 }
 
@@ -77,6 +79,8 @@ impl BlockProducer {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
+            // FIXME: Initialize properly to the last privileged nonce in the chain
+            last_privileged_nonce: None,
             block_gas_ceil: block_gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
         }
     }
@@ -139,7 +143,7 @@ impl BlockProducer {
             self.blockchain.clone(),
             payload,
             &self.store,
-            &self.rollup_store,
+            &mut self.last_privileged_nonce,
         )
         .await?;
         info!(

@@ -122,16 +122,11 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         .get_block_header_by_hash(args.parent)?
         .ok_or_else(|| ChainError::ParentNotFound)?;
     let chain_config = storage.get_chain_config()?;
+    let fork = chain_config.fork(args.timestamp);
     let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
     let excess_blob_gas = chain_config
         .get_fork_blob_schedule(args.timestamp)
-        .map(|schedule| {
-            calc_excess_blob_gas(
-                parent_block.excess_blob_gas.unwrap_or_default(),
-                parent_block.blob_gas_used.unwrap_or_default(),
-                schedule.target,
-            )
-        });
+        .map(|schedule| calc_excess_blob_gas(&parent_block, schedule, fork));
 
     let header = BlockHeader {
         parent_hash: args.parent,

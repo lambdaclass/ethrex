@@ -3,6 +3,8 @@ use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
+#[cfg(feature = "rocksdb")]
+use crate::store_db::rocksdb::Store as RocksDBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -46,6 +48,8 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "libmdbx")]
     Libmdbx,
+    #[cfg(feature = "rocksdb")]
+    RocksDB,
 }
 
 pub struct UpdateBatch {
@@ -78,6 +82,12 @@ impl Store {
     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!(engine = ?engine_type, path = %path, "Opening storage engine");
         let store = match engine_type {
+            #[cfg(feature = "rocksdb")]
+            EngineType::RocksDB => Self {
+                engine: Arc::new(RocksDBStore::new(path)?),
+                chain_config: Default::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+            },
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
@@ -189,14 +199,16 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        let latest = self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        if block_hash == latest.hash() {
-            return Ok(Some(latest));
+        {
+            let latest = self
+                .latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+            if block_hash == latest.hash() {
+                return Ok(Some(latest.clone()));
+            }
         }
+
         self.engine.get_block_header_by_hash(block_hash)
     }
 
@@ -1389,6 +1401,12 @@ mod tests {
     #[tokio::test]
     async fn test_libmdbx_store() {
         test_store_suite(EngineType::Libmdbx).await;
+    }
+
+    #[cfg(feature = "rocksdb")]
+    #[tokio::test]
+    async fn test_rocksdb_store() {
+        test_store_suite(EngineType::RocksDB).await;
     }
 
     // Creates an empty store, runs the test and then removes the store (if needed)

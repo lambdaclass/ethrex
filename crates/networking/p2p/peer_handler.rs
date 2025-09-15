@@ -1932,11 +1932,20 @@ fn format_duration(duration: Duration) -> String {
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
 
-#[derive(Debug)]
 pub struct DumpError {
     pub path: String,
     pub contents: Vec<u8>,
     pub error: ErrorKind,
+}
+
+impl core::fmt::Debug for DumpError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DumpError")
+            .field("path", &self.path)
+            .field("contents_len", &self.contents.len())
+            .field("error", &self.error)
+            .finish()
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

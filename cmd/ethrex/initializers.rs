@@ -103,13 +103,15 @@ pub fn open_store(data_dir: &str) -> Store {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
-            if #[cfg(feature = "libmdbx")] {
+            if #[cfg(feature = "rocksdb")] {
+                let engine_type = EngineType::RocksDB;
+            } else if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
             } else {
-                error!("No database specified. The feature flag `libmdbx` should've been set while building.");
+                error!("No database specified. The feature flag `rocksdb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
-        }
+        };
         Store::new(data_dir, engine_type).expect("Failed to create Store")
     }
 }
@@ -202,7 +204,9 @@ pub async fn init_network(
         blockchain.clone(),
         get_client_version(),
         based_context,
-    );
+    )
+    .await
+    .expect("P2P context could not be created");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
