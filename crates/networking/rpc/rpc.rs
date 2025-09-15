@@ -71,7 +71,13 @@ use tracing_subscriber::{EnvFilter, Registry, reload};
 use axum::response::IntoResponse;
 
 pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
-    let mut prof_ctl = jemalloc_pprof::PROF_CTL.as_ref().unwrap().lock().await;
+    let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "jemalloc profiling is not available (compile with `jemalloc_profiling` and enable via MALLOC_CONF)".into(),
+        ));
+    };
+    let mut prof_ctl = mutex.lock().await;
     require_profiling_activated(&prof_ctl)?;
     let pprof = prof_ctl
         .dump_pprof()
@@ -98,7 +104,13 @@ pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCo
     use axum::http::header::CONTENT_TYPE;
     use axum::response::Response;
 
-    let mut prof_ctl = jemalloc_pprof::PROF_CTL.as_ref().unwrap().lock().await;
+    let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "jemalloc profiling is not available (compile with `jemalloc_profiling` and enable via MALLOC_CONF)".into(),
+        ));
+    };
+    let mut prof_ctl = mutex.lock().await;
     require_profiling_activated(&prof_ctl)?;
     let svg = prof_ctl
         .dump_flamegraph()
