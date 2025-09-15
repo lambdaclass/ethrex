@@ -202,10 +202,9 @@ impl Store {
         let latest = self
             .latest_block_header
             .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+            .map_err(|_| StoreError::LockError)?;
         if block_hash == latest.hash() {
-            return Ok(Some(latest));
+            return Ok(Some(latest.clone()));
         }
         self.engine.get_block_header_by_hash(block_hash)
     }
