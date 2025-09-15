@@ -179,7 +179,7 @@ def block_production_loop(
         except Exception as e:
             print(f"⚠️ Node did stopped. Stopping.")
             print("Error:", e)
-            send_slack_message_failed("⚠️ Node failed to finish snap sync", hostname, args.network, None, f"{logs_file}_{start_time}.log")
+            send_slack_message_failed("⚠️ Node stopped running after snap sync", hostname, args.network, None, f"{logs_file}_{start_time}.log")
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
             return False
