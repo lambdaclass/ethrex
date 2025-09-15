@@ -30,7 +30,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 2.3.1
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
           ~/.risc0/bin/rzup install rust
 
       - name: Create placeholder SP1 ELF
@@ -109,14 +110,14 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
+      HIVE_COMMIT_HASH: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
         # TODO: Change repo back to https://github.com/ethereum/hive when
         # https://github.com/ethereum/hive/pull/1325 is merged
         run: |
-          git clone --single-branch --branch update_dockerfile https://github.com/lambdaclass/hive
+          git clone --single-branch --branch master https://github.com/lambdaclass/hive
           cd hive
           git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
           go build .
@@ -184,7 +185,7 @@ jobs:
           - name: "Devp2p tests"
             hive_version: "fork"
             simulation: devp2p
-            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
+            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate
             # AccountRange and GetTrieNodes don't pass anymore.
             #|BlobViolations
             # Findnode/BasicFindnode fails due to packets being processed out of order
@@ -231,30 +232,6 @@ jobs:
 
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
-
-  run-replay:
-    name: Execute an L1 block
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-
-      - name: Build
-        run: |
-          cd cmd/ethrex_replay
-          cargo b -r
-
-      - name: Run
-        env:
-          # TODO(): use RPC
-          # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
-          RPC_URL: "http://45.76.185.153:8545"
-        run: |
-          cp fixtures/cache/rpc_prover/cache_hoodi_1145479.bin cmd/ethrex_replay
-          cd cmd/ethrex_replay
-          make execute BLOCK_NUMBER=1145479 NETWORK=hoodi
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
