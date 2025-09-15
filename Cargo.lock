@@ -4054,6 +4054,7 @@ dependencies = [
  "ethrex-p2p",
  "hex",
  "keccak-hash",
+ "serde",
  "serde_json",
 ]
 
