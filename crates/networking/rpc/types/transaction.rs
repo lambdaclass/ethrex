@@ -45,6 +45,7 @@ impl RpcTransaction {
     }
 }
 
+#[derive(Debug)]
 pub enum SendRawTransactionRequest {
     Legacy(LegacyTransaction),
     EIP2930(EIP2930Transaction),
