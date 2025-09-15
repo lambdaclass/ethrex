@@ -4,7 +4,6 @@ use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
-use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::{ChainConfig, code_hash};
 use ethrex_common::{
     Address, H256, U256,
@@ -16,6 +15,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::DatabaseError;
 use ethrex_levm::vm::VMType;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rpc::debug::execution_witness::RpcExecutionWitness;
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
 use ethrex_vm::backends::levm::LEVM;
@@ -256,9 +256,7 @@ impl RpcDB {
         tokio::task::block_in_place(|| handle.block_on(self.fetch_accounts(index, from_child)))
     }
 
-    pub fn to_execution_witness(&self, block: &Block) -> eyre::Result<ExecutionWitness> {
-        let chain_config = self.chain_config;
-
+    pub fn to_execution_witness(&self, block: &Block) -> eyre::Result<RpcExecutionWitness> {
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
 
         // pre-execute and get all state changes
@@ -333,18 +331,17 @@ impl RpcDB {
                 None
             }
         });
-        let codes = existing_accs
+        let codes: Vec<Bytes> = existing_accs
             .clone()
-            .map(|(_, account)| account.code.clone().unwrap_or_default().to_vec())
+            .map(|(_, account)| Bytes::from(account.code.clone().unwrap_or_default().to_vec()))
             .collect();
-        let keys = existing_accs
+        let keys: Vec<Bytes> = existing_accs
             .clone()
             .flat_map(|(_, account)| {
                 account
                     .storage
                     .keys()
-                    .map(|value| value.as_bytes().to_vec())
-                    .collect::<Vec<_>>()
+                    .map(|value| Bytes::from(value.as_bytes().to_vec()))
             })
             .collect();
 
@@ -367,7 +364,7 @@ impl RpcDB {
             })
             .wrap_err("failed to fetch block header")?
             .header;
-            block_headers_bytes.push(header.encode_to_vec());
+            block_headers_bytes.push(Bytes::from(header.encode_to_vec()));
         }
 
         let state_root = initial_account_proofs
@@ -383,29 +380,27 @@ impl RpcDB {
         let mut all_nodes = Vec::new();
 
         if let Some(root) = &state_proofs.0 {
-            all_nodes.push(root.clone());
+            all_nodes.push(Bytes::from(root.clone()));
         }
 
-        all_nodes.extend(state_proofs.1.clone());
+        all_nodes.extend(state_proofs.1.clone().into_iter().map(Bytes::from));
 
         for (_, proofs) in initial_storage_proofs {
             if let Some(root) = proofs.iter().next().and_then(|(_, nodes)| nodes.first()) {
-                all_nodes.push(root.clone());
+                all_nodes.push(Bytes::from(root.clone()));
             }
 
             for proof in proofs.values() {
-                all_nodes.extend(proof.iter().skip(1).cloned());
+                all_nodes.extend(proof.iter().skip(1).cloned().map(Bytes::from));
             }
         }
-        all_nodes.extend(potential_storage_child_nodes);
+        all_nodes.extend(potential_storage_child_nodes.into_iter().map(Bytes::from));
 
-        Ok(ExecutionWitness {
-            codes,
-            block_headers_bytes,
-            first_block_number: block.header.number,
-            chain_config,
-            nodes: all_nodes,
+        Ok(RpcExecutionWitness {
+            state: all_nodes,
             keys,
+            codes,
+            headers: block_headers_bytes,
         })
     }
 }
