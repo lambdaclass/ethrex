@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757962143704,
+  "lastUpdate": 1757962450868,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14215,6 +14215,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168157115853,
             "range": "± 413136527",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "36f50db47400d4adc78aa65252c0d44fe9a450ae",
+          "message": "fix(l1): enable SOCKS5(h) proxy support in Reqwest so RPC calls work behind SOCKS proxies (#4481)\n\n**Description**\n\nSome environments (e.g. SSH dynamic port forwarding via ssh -D) expose\nan outbound SOCKS5 proxy. Our binaries were built with `reqwest = {\nfeatures = [\"json\"] }`, which does not include SOCKS support. As a\nresult, when users set ALL_PROXY=socks5h://…, Reqwest read the env var\nbut could not speak SOCKS, leading to connection failures and misleading\nerrors (e.g. “incompatible SOCKS version”, local DNS failures).",
+          "timestamp": "2025-09-15T17:58:57Z",
+          "tree_id": "a9aa6bc7fc14db194072bd182828e2c816d5e58e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/36f50db47400d4adc78aa65252c0d44fe9a450ae"
+        },
+        "date": 1757962429948,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168787416419,
+            "range": "± 257374089",
             "unit": "ns/iter"
           }
         ]
