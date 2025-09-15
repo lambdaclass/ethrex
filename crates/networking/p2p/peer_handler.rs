@@ -171,7 +171,7 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_headers(
-        &mut self,
+        &self,
         start: u64,
         sync_head: H256,
     ) -> Option<Vec<BlockHeader>> {

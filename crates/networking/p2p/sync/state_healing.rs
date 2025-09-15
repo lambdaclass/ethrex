@@ -83,7 +83,7 @@ pub async fn heal_state_trie_wrap(
 async fn heal_state_trie(
     state_root: H256,
     store: Store,
-    mut peers: PeerHandler,
+    peers: PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,

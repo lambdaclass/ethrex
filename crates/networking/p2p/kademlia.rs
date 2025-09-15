@@ -17,7 +17,7 @@ use crate::{
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
-/// Score assigned to peers who are acting maliciously (ej: returning a node with wrong hash)
+/// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 
 #[derive(Debug, Clone)]
@@ -206,7 +206,7 @@ impl Kademlia {
         self.get_score_opt(peer_id).await.unwrap_or(0)
     }
 
-    pub async fn get_score_opt(&self, peer_id: &H256) -> Option<i64> {
+    async fn get_score_opt(&self, peer_id: &H256) -> Option<i64> {
         self.peers
             .lock()
             .await
@@ -214,7 +214,7 @@ impl Kademlia {
             .map(|peer_data| peer_data.score)
     }
 
-    pub async fn record_success(&mut self, peer_id: H256) {
+    pub async fn record_success(&self, peer_id: H256) {
         self.peers
             .lock()
             .await
@@ -222,7 +222,7 @@ impl Kademlia {
             .and_modify(|peer_data| peer_data.score = (peer_data.score + 1).min(MAX_SCORE));
     }
 
-    pub async fn record_failure(&mut self, peer_id: H256) {
+    pub async fn record_failure(&self, peer_id: H256) {
         self.peers
             .lock()
             .await
@@ -230,7 +230,7 @@ impl Kademlia {
             .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
     }
 
-    pub async fn record_critical_failure(&mut self, peer_id: H256) {
+    pub async fn record_critical_failure(&self, peer_id: H256) {
         self.peers
             .lock()
             .await
@@ -238,7 +238,7 @@ impl Kademlia {
             .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
     }
 
-    pub async fn mark_in_use(&mut self, peer_id: H256) {
+    pub async fn mark_in_use(&self, peer_id: H256) {
         self.peers
             .lock()
             .await
@@ -246,7 +246,7 @@ impl Kademlia {
             .and_modify(|peer_data| peer_data.in_use = true);
     }
 
-    pub async fn free_peer(&mut self, peer_id: H256) {
+    pub async fn free_peer(&self, peer_id: H256) {
         self.peers
             .lock()
             .await
@@ -254,7 +254,7 @@ impl Kademlia {
             .and_modify(|peer_data| peer_data.in_use = false);
     }
 
-    /// Returns the peer and it's peer channel with the highest score.
+    /// Returns the peer with the highest score and its peer channel.
     pub async fn get_peer_channel_with_highest_score(
         &self,
         capabilities: &[Capability],
@@ -277,19 +277,19 @@ impl Kademlia {
                     return None;
                 }
 
-                // if the peer doesn't have the channel open, we skip it
+                // if the peer doesn't have the channel open, we skip it.
                 let peer_channel = peer_data.channels.clone()?;
 
-                // We return the id, the score and the channel to connect with
+                // We return the id, the score and the channel to connect with.
                 Some((*id, peer_data.score, peer_channel))
             })
-            .max_by(|v1, v2| v1.1.cmp(&v2.1))
+            .max_by_key(|(_, score, _)| *score)
             .map(|(k, _, v)| (k, v))
     }
 
-    /// Returns the peer and it's peer channel with the highest score and if found marks it as used
+    /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
     pub async fn get_peer_channel_with_highest_score_and_mark_as_used(
-        &mut self,
+        &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
         let (peer_id, peer_channel) = self
