@@ -383,6 +383,13 @@ impl Command {
                     }
                 };
                 cfg_if::cfg_if! {
+                    if #[cfg(feature = "rocksdb")] {
+                        let store_type = EngineType::RocksDB;
+                    } else {
+                        eyre::bail!("Expected rocksdb store engine");
+                    }
+                };
+                cfg_if::cfg_if! {
                     if #[cfg(feature = "rollup_storage_sql")] {
                         let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
                     } else {
