@@ -360,7 +360,7 @@ async fn replay_no_backend(mut cache: Cache, opts: &EthrexReplayOptions) -> eyre
     let start = Instant::now();
     info!("Preparing Storage for execution without prover backend");
 
-    // TODO: handle this better?
+    // We don't want empty nodes (0x80)
     cache.witness.nodes.retain(|v| v != &[0x80]);
 
     let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
