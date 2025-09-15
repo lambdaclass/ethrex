@@ -49,6 +49,9 @@ const SECONDS_PER_BLOCK: u64 = 12;
 
 /// Bytecodes to downloader per batch
 const BYTECODE_CHUNK_SIZE: usize = 50_000;
+// Buffer for collecting bytecode hashes before writing to disk
+// TODO: Check if this is the correct size
+const BYTECODE_WRITE_BUFFER_SIZE: usize = 100_000;
 
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
 
@@ -814,9 +817,6 @@ impl Syncer {
         // Bytecode hashes snapshots directory and index file
         let bytecode_hashes_snapshots_dir = get_bytecode_hashes_snapshots_dir(&self.datadir);
         let mut bytecode_index_file = 0_u64;
-
-        // Buffer for collecting bytecode hashes before writing to disk
-        const BYTECODE_WRITE_BUFFER_SIZE: usize = 100_000;
         let mut bytecode_write_buffer = Vec::new();
 
         // Channel for managing async bytecode dump results with retry
