@@ -4131,6 +4131,7 @@ dependencies = [
  "tabwriter",
  "thiserror 2.0.16",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
  "tui-big-text",
