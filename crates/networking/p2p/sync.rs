@@ -816,6 +816,11 @@ impl Syncer {
 
         // Bytecode hashes snapshots directory and index file
         let bytecode_hashes_snapshots_dir = get_bytecode_hashes_snapshots_dir(&self.datadir);
+
+        // Create bytecode hashes snapshots directory if it doesn't exist
+        std::fs::create_dir_all(&bytecode_hashes_snapshots_dir)
+            .map_err(|_| SyncError::BytecodeHashesSnapshotsDirNotFound)?;
+
         let mut bytecode_index_file = 0_u64;
         let mut bytecode_write_buffer = Vec::new();
 
@@ -876,20 +881,28 @@ impl Syncer {
                 info!("Inserting accounts into the state trie");
 
                 // Collect bytecode hashes from current account snapshot and add to buffer
-                let bytecodes_from_snapshot: Vec<H256> =
-                    account_states_snapshot.iter().filter_map(|(_, state)| {
+                let bytecodes_from_snapshot: Vec<H256> = account_states_snapshot
+                    .iter()
+                    .filter_map(|(_, state)| {
                         (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
-                    }).collect();
-                info!("[BYTECODE_DOWNLOAD] Processing {} accounts from snapshot, collected {} bytecodes",
-                    account_states_snapshot.len(), bytecodes_from_snapshot.len());
+                    })
+                    .collect();
+                info!(
+                    "[BYTECODE_DOWNLOAD] Processing {} accounts from snapshot, collected {} bytecodes",
+                    account_states_snapshot.len(),
+                    bytecodes_from_snapshot.len()
+                );
 
                 bytecode_write_buffer.extend(bytecodes_from_snapshot);
 
                 // Flush buffer if it's getting too large
                 if bytecode_write_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
                     let buffer = std::mem::take(&mut bytecode_write_buffer);
-                    info!("[BYTECODE_DOWNLOAD] Flushing buffer with {} entries to file {}",
-                        buffer.len(), bytecode_index_file);
+                    info!(
+                        "[BYTECODE_DOWNLOAD] Flushing buffer with {} entries to file {}",
+                        buffer.len(),
+                        bytecode_index_file
+                    );
                     let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
                         buffer,
                         bytecode_index_file,
@@ -945,8 +958,11 @@ impl Syncer {
 
             // Flush any remaining bytecode hashes in buffer
             if !bytecode_write_buffer.is_empty() {
-                info!("[BYTECODE_DOWNLOAD] Final flush of {} remaining bytecodes to file {}",
-                    bytecode_write_buffer.len(), bytecode_index_file);
+                info!(
+                    "[BYTECODE_DOWNLOAD] Final flush of {} remaining bytecodes to file {}",
+                    bytecode_write_buffer.len(),
+                    bytecode_index_file
+                );
                 let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
                     bytecode_write_buffer,
                     bytecode_index_file,
@@ -1438,6 +1454,8 @@ pub enum SyncError {
     AccountStateSnapshotsDirNotFound,
     #[error("Failed to get account storages snapshots directory")]
     AccountStoragesSnapshotsDirNotFound,
+    #[error("Failed to get bytecode hashes snapshots directory")]
+    BytecodeHashesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
     #[error("We aren't finding get_peer_channel_with_retry")]
