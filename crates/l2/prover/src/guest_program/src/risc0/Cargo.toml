@@ -15,6 +15,7 @@ risc0-zkvm-platform = { version = "=2.2.1", default-features = false, features =
 guest_program = { path = "../../", default-features = false, features = [
     "c-kzg",
 ] }
+rkyv = { version = "0.8.10", features = ["unaligned"] }
 
 
 ethrex-common = { path = "../../../../../../common", default-features = false }
