@@ -13,8 +13,12 @@ use sp1_sdk::{
 use std::time::Instant;
 use tracing::info;
 
+#[cfg(not(clippy))]
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
+
+#[cfg(clippy)]
+static PROGRAM_ELF: &[u8] = &[];
 
 struct ProverSetup {
     client: EnvProver,
