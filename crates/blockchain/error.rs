@@ -17,7 +17,7 @@ pub enum ChainError {
     #[error("DB error: {0}")]
     StoreError(#[from] StoreError),
     #[error("EVM error: {0}")]
-    EvmError(#[from] EvmError),
+    EvmError(EvmError),
     #[error("Invalid Transaction: {0}")]
     InvalidTransaction(String),
     #[error("Failed to generate witness: {0}")]
@@ -26,6 +26,20 @@ pub enum ChainError {
     Custom(String),
     #[error("Unknown Payload")]
     UnknownPayload,
+}
+
+impl From<EvmError> for ChainError {
+    fn from(value: EvmError) -> Self {
+        match value {
+            EvmError::Transaction(err) => {
+                ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(err))
+            }
+            EvmError::InvalidDepositRequest => ChainError::InvalidBlock(
+                InvalidBlockError::InvalidTransaction("Invalid deposit request layout".to_string()),
+            ),
+            other_errors => ChainError::EvmError(other_errors),
+        }
+    }
 }
 
 #[cfg(feature = "metrics")]
@@ -67,6 +81,8 @@ pub enum InvalidBlockError {
     BlobGasUsedMismatch,
     #[error("Invalid transaction: {0}")]
     InvalidTransaction(String),
+    #[error("Maximum block size exceeded: Maximum is {0} MiB, but block was {1} MiB")]
+    MaximumRlpSizeExceeded(u64, u64),
 }
 
 #[derive(Debug, thiserror::Error)]
