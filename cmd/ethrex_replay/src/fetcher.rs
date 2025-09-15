@@ -112,7 +112,11 @@ pub async fn get_blockdata(
                 .to_execution_witness(&block)
                 .wrap_err("failed to build execution db")?
         }
-        Err(e) => panic!("Unexpected response from get_witness: {e}"),
+        Err(e) => {
+            return Err(eyre::eyre!(format!(
+                "Unexpected response from get_witness: {e}"
+            )));
+        }
     };
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
