@@ -991,7 +991,7 @@ impl Syncer {
                 }
                 // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
                 // We just need to update the pivot and start again
-                let healing_done = heal_state_trie_wrap(
+                if !heal_state_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
                     &self.peers,
@@ -1001,8 +1001,8 @@ impl Syncer {
                     &mut bytecode_index_file,
                     &self.datadir,
                 )
-                .await?;
-                if !healing_done {
+                .await?
+                {
                     continue;
                 };
 
