@@ -4,7 +4,7 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, store_node_config_file},
 };
-use ethrex_p2p::{kademlia::KademliaTable, types::NodeRecord};
+use ethrex_p2p::{kademlia::Kademlia, types::NodeRecord};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -16,7 +16,7 @@ use tracing::info;
 async fn server_shutdown(
     data_dir: String,
     cancel_token: &CancellationToken,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");
@@ -37,9 +37,10 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    init_tracing(&opts);
+    let log_filter_handler = init_tracing(&opts);
 
-    let (data_dir, cancel_token, peer_table, local_node_record) = init_l1(opts).await?;
+    let (data_dir, cancel_token, peer_table, local_node_record) =
+        init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
 

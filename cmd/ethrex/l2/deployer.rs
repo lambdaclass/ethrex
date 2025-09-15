@@ -7,30 +7,29 @@ use std::{
 };
 
 use bytes::Bytes;
-use clap::Parser;
-use ethrex_common::{Address, U256, types::Genesis};
-use ethrex_l2::sequencer::utils::DEV_MODE_ADDRESS;
+use clap::{ArgAction, Parser};
+use ethrex_common::{
+    Address, H160, U256,
+    types::{Genesis, TxType},
+};
+use ethrex_l2::{sequencer::utils::DEV_MODE_ADDRESS, utils::test_data_io::read_genesis_file};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{
     clients::send_eip1559_transaction,
     signer::{LocalSigner, Signer},
 };
 use ethrex_l2_sdk::{
-    call_contract, deploy_contract_from_bytecode, deploy_with_proxy_from_bytecode,
+    DeployError, build_generic_tx, call_contract, deploy_contract_from_bytecode,
+    send_generic_transaction,
 };
 use ethrex_rpc::{
     EthClient,
-    clients::Overrides,
+    clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;
 use tracing::{debug, error, info, trace, warn};
 
-use ethrex_l2_sdk::DeployError;
-use ethrex_rpc::clients::{EthClientError, eth::errors::CalldataEncodeError};
-
-use clap::ArgAction;
-use ethrex_common::H160;
 use secp256k1::SecretKey;
 
 use crate::{l2::EthOptions, networks::LOCAL_DEVNETL2_GENESIS_CONTENTS, utils::parse_private_key};
@@ -973,18 +972,17 @@ async fn make_deposits(
             ..Overrides::default()
         };
 
-        let Ok(deposit_tx) = eth_client
-            .build_eip1559_transaction(bridge, signer.address(), Bytes::new(), overrides)
-            .await
-        else {
-            debug!(
-                address =? signer.address(),
-                "Deposit simulation failed. This can be caused by low funds."
-            );
-            continue;
-        };
+        let build = build_generic_tx(
+            eth_client,
+            TxType::EIP1559,
+            bridge,
+            signer.address(),
+            Bytes::new(),
+            overrides,
+        )
+        .await?;
 
-        match send_eip1559_transaction(eth_client, &deposit_tx, &signer).await {
+        match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {
                 successful_deposits += 1;
                 debug!(

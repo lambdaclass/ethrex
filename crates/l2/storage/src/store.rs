@@ -150,6 +150,10 @@ impl Store {
             .await
     }
 
+    pub async fn get_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
+        self.engine.get_last_batch_number().await
+    }
+
     pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, RollupStoreError> {
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
@@ -343,6 +347,15 @@ impl Store {
         self.engine.revert_to_batch(batch_number).await
     }
 
+    pub async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .delete_proof_by_batch_and_type(batch_number, proof_type)
+            .await
+    }
     /// Returns privileged transactions about to be included in the next batch
     pub async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
         self.engine.precommit_privileged().await

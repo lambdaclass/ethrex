@@ -3,55 +3,63 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountInfo, AccountUpdate, BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
+        AccountInfo, AccountUpdate, Block, BlockHeader, ChainConfig,
+        block_execution_witness::{GuestProgramState, GuestProgramStateError},
     },
 };
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
-pub struct ExecutionWitnessWrapper {
-    inner: Arc<Mutex<ExecutionWitnessResult>>,
+pub struct GuestProgramStateWrapper {
+    inner: Arc<Mutex<GuestProgramState>>,
 }
 
-impl ExecutionWitnessWrapper {
-    pub fn new(db: ExecutionWitnessResult) -> Self {
+impl GuestProgramStateWrapper {
+    pub fn new(db: GuestProgramState) -> Self {
         Self {
             inner: Arc::new(Mutex::new(db)),
         }
     }
 
-    fn lock_mutex(&self) -> Result<MutexGuard<ExecutionWitnessResult>, ExecutionWitnessError> {
+    fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, GuestProgramStateError> {
         self.inner
             .lock()
-            .map_err(|_| ExecutionWitnessError::Database("Failed to lock DB".to_string()))
+            .map_err(|_| GuestProgramStateError::Database("Failed to lock DB".to_string()))
     }
 
     pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
-    ) -> Result<(), ExecutionWitnessError> {
+    ) -> Result<(), GuestProgramStateError> {
         self.lock_mutex()?.apply_account_updates(account_updates)
     }
 
-    pub fn state_trie_root(&self) -> Result<H256, ExecutionWitnessError> {
+    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
         self.lock_mutex()?.state_trie_root()
     }
-    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, ExecutionWitnessError> {
+
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
         self.lock_mutex()?.get_first_invalid_block_hash()
     }
 
     pub fn get_block_parent_header(
         &self,
         block_number: u64,
-    ) -> Result<BlockHeader, ExecutionWitnessError> {
+    ) -> Result<BlockHeader, GuestProgramStateError> {
         self.lock_mutex()?
             .get_block_parent_header(block_number)
             .cloned()
     }
+
+    pub fn initialize_block_header_hashes(
+        &self,
+        blocks: &[Block],
+    ) -> Result<(), GuestProgramStateError> {
+        self.lock_mutex()?.initialize_block_header_hashes(blocks)
+    }
 }
 
-impl VmDatabase for ExecutionWitnessWrapper {
+impl VmDatabase for GuestProgramStateWrapper {
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?

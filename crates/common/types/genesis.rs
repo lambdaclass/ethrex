@@ -85,18 +85,36 @@ impl TryFrom<&Path> for Genesis {
             warn!("Invalid fork, only post-merge networks are supported.");
         }
 
+        if genesis.config.bpo1_time.is_some() && genesis.config.blob_schedule.bpo1.is_none()
+            || genesis.config.bpo2_time.is_some() && genesis.config.blob_schedule.bpo2.is_none()
+            || genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
+            || genesis.config.bpo4_time.is_some() && genesis.config.blob_schedule.bpo4.is_none()
+            || genesis.config.bpo5_time.is_some() && genesis.config.blob_schedule.bpo5.is_none()
+        {
+            warn!("BPO time set but no BPO BlobSchedule found in ChainConfig")
+        }
+
         Ok(genesis)
     }
 }
 
 #[allow(unused)]
 #[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, RSerialize, RDeserialize, Archive,
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    RSerialize,
+    RDeserialize,
+    Archive,
+    Default,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
-    pub target: u64,
-    pub max: u64,
+    pub target: u32,
+    pub max: u32,
     pub base_fee_update_fraction: u64,
 }
 
@@ -110,6 +128,18 @@ pub struct BlobSchedule {
     pub cancun: ForkBlobSchedule,
     #[serde(default = "default_prague_schedule")]
     pub prague: ForkBlobSchedule,
+    #[serde(default = "default_osaka_schedule")]
+    pub osaka: ForkBlobSchedule,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo1: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo2: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo3: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo4: Option<ForkBlobSchedule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpo5: Option<ForkBlobSchedule>,
 }
 
 impl Default for BlobSchedule {
@@ -117,6 +147,12 @@ impl Default for BlobSchedule {
         BlobSchedule {
             cancun: default_cancun_schedule(),
             prague: default_prague_schedule(),
+            osaka: default_osaka_schedule(),
+            bpo1: None,
+            bpo2: None,
+            bpo3: None,
+            bpo4: None,
+            bpo5: None,
         }
     }
 }
@@ -130,6 +166,14 @@ fn default_cancun_schedule() -> ForkBlobSchedule {
 }
 
 fn default_prague_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 6,
+        max: 9,
+        base_fee_update_fraction: 5007716,
+    }
+}
+
+fn default_osaka_schedule() -> ForkBlobSchedule {
     ForkBlobSchedule {
         target: 6,
         max: 9,
@@ -186,6 +230,13 @@ pub struct ChainConfig {
     pub cancun_time: Option<u64>,
     pub prague_time: Option<u64>,
     pub verkle_time: Option<u64>,
+    pub osaka_time: Option<u64>,
+
+    pub bpo1_time: Option<u64>,
+    pub bpo2_time: Option<u64>,
+    pub bpo3_time: Option<u64>,
+    pub bpo4_time: Option<u64>,
+    pub bpo5_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     pub terminal_total_difficulty: Option<u128>,
@@ -197,6 +248,22 @@ pub struct ChainConfig {
     #[rkyv(with = rkyv_utils::H160Wrapper)]
     // Deposits system contract address
     pub deposit_contract_address: Address,
+
+    #[serde(default)]
+    pub enable_verkle_at_genesis: bool,
+}
+
+lazy_static::lazy_static! {
+    pub static ref NETWORK_NAMES: HashMap<u64, &'static str> = {
+        HashMap::from([
+            (1, "mainnet"),
+            (11155111, "sepolia"),
+            (17000, "holesky"),
+            (560048, "hoodi"),
+            (9, "L1 local devnet"),
+            (65536999, "L2 local devnet"),
+        ])
+    };
 }
 
 #[repr(u8)]
@@ -253,6 +320,30 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
+    pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo1_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo2_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo2_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo3_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo3_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo4_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo4_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
+        self.bpo5_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_osaka_activated(&self, block_timestamp: u64) -> bool {
+        self.osaka_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_prague_activated(&self, block_timestamp: u64) -> bool {
         self.prague_time.is_some_and(|time| time <= block_timestamp)
     }
@@ -278,8 +369,38 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
+    pub fn display_config(&self) -> String {
+        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
+        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
+
+        let post_merge_forks = [
+            ("Shanghai", self.shanghai_time),
+            ("Cancun", self.cancun_time),
+            ("Prague", self.prague_time),
+            ("Verkle", self.verkle_time),
+            ("Osaka", self.osaka_time),
+        ];
+
+        let active_forks: Vec<_> = post_merge_forks
+            .iter()
+            .filter_map(|(name, t)| t.map(|time| format!("- {}: @{:<10}", name, time)))
+            .collect();
+
+        if !active_forks.is_empty() {
+            output.push_str("Network is post-merge\n\n");
+            output.push_str("Post-Merge hard forks (timestamp based):\n");
+            output.push_str(&active_forks.join("\n"));
+        } else {
+            output.push_str("Network is at Paris\n\n");
+        }
+
+        output
+    }
+
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_prague_activated(block_timestamp) {
+        if self.is_osaka_activated(block_timestamp) {
+            Fork::Osaka
+        } else if self.is_prague_activated(block_timestamp) {
             Fork::Prague
         } else if self.is_cancun_activated(block_timestamp) {
             Fork::Cancun
@@ -291,7 +412,19 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_prague_activated(block_timestamp) {
+        if self.is_bpo5_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo5.unwrap_or_default())
+        } else if self.is_bpo4_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo4.unwrap_or_default())
+        } else if self.is_bpo3_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo3.unwrap_or_default())
+        } else if self.is_bpo2_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo2.unwrap_or_default())
+        } else if self.is_bpo1_activated(block_timestamp) {
+            Some(self.blob_schedule.bpo1.unwrap_or_default())
+        } else if self.is_osaka_activated(block_timestamp) {
+            Some(self.blob_schedule.osaka)
+        } else if self.is_prague_activated(block_timestamp) {
             Some(self.blob_schedule.prague)
         } else if self.is_cancun_activated(block_timestamp) {
             Some(self.blob_schedule.cancun)
@@ -502,6 +635,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 13353908,
                 },
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -677,6 +811,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 20000,
                 },
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -709,6 +844,7 @@ mod tests {
                     max: 9,
                     base_fee_update_fraction: 5007716,
                 },
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -748,6 +884,7 @@ mod tests {
                     max: 4,
                     base_fee_update_fraction: 20000,
                 },
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),
@@ -787,6 +924,7 @@ mod tests {
                     max: 9,
                     base_fee_update_fraction: 5007716,
                 },
+                ..Default::default()
             },
             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
                 .unwrap(),

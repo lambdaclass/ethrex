@@ -1,18 +1,15 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use ethrex::{
     cli::{import_blocks, remove_db},
-    networks::Network,
     utils::{default_datadir, init_datadir},
 };
 use ethrex_blockchain::BlockchainType;
-use ethrex_vm::EvmEngine;
+use ethrex_config::networks::Network;
 
 #[inline]
 fn block_import() {
     let data_dir = init_datadir(&default_datadir());
     remove_db(&data_dir, true);
-
-    let evm_engine = EvmEngine::default();
 
     let blockchain_type = BlockchainType::default(); // TODO: Should we support L2?
 
@@ -25,7 +22,6 @@ fn block_import() {
         "../../fixtures/blockchain/l2-1k-erc20.rlp",
         &data_dir,
         genesis,
-        evm_engine,
         blockchain_type,
     ))
     .expect("Failed to import blocks on the Tokio runtime");

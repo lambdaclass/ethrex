@@ -222,12 +222,16 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    let selfdestruct_set = vm.substate.selfdestruct_set.clone();
-    for address in selfdestruct_set {
-        let account_to_remove = vm.get_account_mut(address)?;
+    for address in vm.substate.iter_selfdestruct() {
+        let account_to_remove = vm.db.get_account_mut(*address)?;
+        vm.current_call_frame
+            .call_frame_backup
+            .backup_account_info(*address, account_to_remove)?;
+
         *account_to_remove = LevmAccount::default();
-        vm.db.destroyed_accounts.insert(address);
+        vm.db.destroyed_accounts.insert(*address);
     }
+
     Ok(())
 }
 
@@ -328,6 +332,13 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     if blob_count > max_blob_count {
         return Err(TxValidationError::Type3TxBlobCountExceeded {
             max_blob_count,
+            actual_blob_count: blob_count,
+        }
+        .into());
+    }
+    if vm.env.config.fork >= Fork::Osaka && blob_count > MAX_BLOB_COUNT_TX {
+        return Err(TxValidationError::Type3TxBlobCountExceeded {
+            max_blob_count: MAX_BLOB_COUNT_TX,
             actual_blob_count: blob_count,
         }
         .into());

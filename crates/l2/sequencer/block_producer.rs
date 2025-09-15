@@ -16,7 +16,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
-use payload_builder::build_payload;
+pub use payload_builder::build_payload;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
@@ -92,11 +92,11 @@ impl BlockProducer {
             blockchain,
             sequencer_state,
         )
-        .start();
+        .start_blocking();
         block_producer
             .cast(InMessage::Produce)
             .await
-            .map_err(BlockProducerError::GenServerError)?;
+            .map_err(BlockProducerError::InternalError)?;
         Ok(())
     }
 

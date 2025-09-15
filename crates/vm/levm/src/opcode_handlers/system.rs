@@ -4,6 +4,7 @@ use crate::{
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::calculate_memory_size,
+    precompiles,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -11,7 +12,7 @@ use bytes::Bytes;
 use ethrex_common::tracing::CallType::{
     self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
 };
-use ethrex_common::{Address, U256, types::Fork};
+use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -234,7 +235,7 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
+        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
 
         Ok(OpcodeResult::Halt)
     }
@@ -508,7 +509,7 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
+        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
 
         Err(VMError::RevertOpcode)
     }
@@ -541,7 +542,7 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
-        let target_account_is_cold = self.substate.accessed_addresses.insert(beneficiary);
+        let target_account_is_cold = !self.substate.add_accessed_address(beneficiary);
         let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
 
         let current_account = self.db.get_account(to)?;
@@ -559,17 +560,17 @@ impl<'a> VM<'a> {
             self.transfer(to, beneficiary, balance)?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
-            if self.substate.created_accounts.contains(&to) {
+            if self.substate.is_account_created(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.get_account_mut(to)?.info.balance = U256::zero();
 
-                self.substate.selfdestruct_set.insert(to);
+                self.substate.add_selfdestruct(to);
             }
         } else {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
-            self.substate.selfdestruct_set.insert(to);
+            self.substate.add_selfdestruct(to);
         }
 
         self.tracer
@@ -608,11 +609,10 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Load code from memory
-        let code = Bytes::from(
-            self.current_call_frame
-                .memory
-                .load_range(code_offset_in_memory, code_size_in_memory)?,
-        );
+        let code = self
+            .current_call_frame
+            .memory
+            .load_range(code_offset_in_memory, code_size_in_memory)?;
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
@@ -624,11 +624,11 @@ impl<'a> VM<'a> {
         // Calculate create address
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer, &code, salt)?,
-            None => calculate_create_address(deployer, deployer_nonce)?,
+            None => calculate_create_address(deployer, deployer_nonce),
         };
 
         // Add new contract to accessed addresses
-        self.substate.accessed_addresses.insert(new_address);
+        self.substate.add_accessed_address(new_address);
 
         // Log CREATE in tracer
         let call_type = match salt {
@@ -700,9 +700,8 @@ impl<'a> VM<'a> {
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
 
-        self.backup_substate();
-
-        self.substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
+        self.substate.push_backup();
+        self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
@@ -753,14 +752,16 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        if self.is_precompile(&code_address) && !is_delegation_7702 {
+        if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
+            && !is_delegation_7702
+        {
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
-                self.vm_type,
                 code_address,
                 &calldata,
                 gas_limit,
                 &mut gas_remaining,
+                self.env.config.fork,
             )?;
 
             let call_frame = &mut self.current_call_frame;
@@ -836,7 +837,7 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
             }
 
-            self.backup_substate();
+            self.substate.push_backup();
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
@@ -844,14 +845,13 @@ impl<'a> VM<'a> {
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
     pub fn handle_state_backup(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
-        let backup = self
-            .substate_backups
-            .pop()
-            .ok_or(InternalError::CallFrame)?;
-        if !ctx_result.is_success() {
-            self.substate = backup;
+        if ctx_result.is_success() {
+            self.substate.commit_backup();
+        } else {
+            self.substate.revert_backup();
             self.restore_cache_state()?;
         }
+
         Ok(())
     }
 
@@ -996,7 +996,7 @@ impl<'a> VM<'a> {
         address: Address,
     ) -> Result<(usize, u64, bool, bool), VMError> {
         // Creation of previously empty accounts and cold addresses have higher gas cost
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account_is_empty = self.db.get_account(address)?.is_empty();
 
         // Calculated here for memory expansion gas cost
@@ -1020,9 +1020,7 @@ impl<'a> VM<'a> {
     }
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
-        Ok(Bytes::from(
-            self.current_call_frame.memory.load_range(offset, size)?,
-        ))
+        self.current_call_frame.memory.load_range(offset, size)
     }
 
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {

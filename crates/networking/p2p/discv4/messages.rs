@@ -1,7 +1,6 @@
-use super::helpers::current_unix_time;
 use crate::{
-    rlpx::utils::node_id,
     types::{Endpoint, Node, NodeRecord},
+    utils::{current_unix_time, node_id},
 };
 use bytes::BufMut;
 use ethrex_common::{H256, H512, H520};
@@ -16,17 +15,31 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
+use std::{convert::Into, io::ErrorKind};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, thiserror::Error)]
 pub enum PacketDecodeErr {
-    #[allow(unused)]
-    RLPDecodeError(RLPDecodeError),
+    #[error("RLP decoding error")]
+    RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Invalid packet size")]
     InvalidSize,
+    #[error("Hash mismatch")]
     HashMismatch,
+    #[error("Invalid signature")]
     InvalidSignature,
+    #[error("Discv4 decoding error: {0}")]
+    Discv4DecodingError(String),
+    #[error("Io Error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
-#[derive(Debug)]
+impl From<PacketDecodeErr> for std::io::Error {
+    fn from(error: PacketDecodeErr) -> Self {
+        std::io::Error::new(ErrorKind::InvalidData, error.to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Packet {
     hash: H256,
     signature: H520,
@@ -108,8 +121,8 @@ impl Packet {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum Message {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum Message {
     Ping(PingMessage),
     Pong(PongMessage),
     FindNode(FindNodeMessage),
@@ -210,10 +223,10 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PingMessage {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PingMessage {
     /// The Ping message version. Should be set to 4, but mustn't be enforced.
-    version: u8,
+    pub version: u8,
     /// The endpoint of the sender.
     pub from: Endpoint,
     /// The endpoint of the receiver.
@@ -258,8 +271,8 @@ impl RLPEncode for PingMessage {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct FindNodeMessage {
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct FindNodeMessage {
     /// The target is a 64-byte secp256k1 public key.
     pub target: H512,
     /// The expiration time of the message. If the message is older than this time,
@@ -298,7 +311,7 @@ impl RLPDecode for FindNodeMessage {
 pub struct FindNodeRequest {
     /// the number of nodes sent
     /// we keep track of this number since we will accept neighbor messages until the max_per_bucket
-    pub nodes_sent: usize,
+    pub nodes_sent: u64,
     /// unix timestamp tracking when we have sent the request
     pub sent_at: u64,
     /// if present, server will send the nodes through this channel when receiving neighbors
@@ -348,7 +361,7 @@ impl RLPDecode for PingMessage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PongMessage {
+pub struct PongMessage {
     /// The endpoint of the receiver.
     pub to: Endpoint,
     /// The hash of the corresponding ping packet.
@@ -411,7 +424,7 @@ impl RLPDecode for PongMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NeighborsMessage {
+pub struct NeighborsMessage {
     // nodes is the list of neighbors
     pub nodes: Vec<Node>,
     pub expiration: u64,
@@ -444,7 +457,7 @@ impl RLPEncode for NeighborsMessage {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ENRResponseMessage {
     pub request_hash: H256,
     pub node_record: NodeRecord,
@@ -474,7 +487,7 @@ impl RLPDecode for ENRResponseMessage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ENRRequestMessage {
+pub struct ENRRequestMessage {
     pub expiration: u64,
 }
 
@@ -1042,7 +1055,10 @@ mod tests {
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
-        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+        assert!(matches!(
+            decoded_packet.err().unwrap(),
+            PacketDecodeErr::InvalidSignature
+        ));
     }
 
     #[test]
@@ -1078,6 +1094,9 @@ mod tests {
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
-        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+        assert!(matches!(
+            decoded_packet.err().unwrap(),
+            PacketDecodeErr::InvalidSignature
+        ));
     }
 }
