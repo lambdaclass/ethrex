@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::{H256, types::AccountState, constants::EMPTY_KECCACK_HASH};
+use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
@@ -26,7 +26,10 @@ use crate::{
     peer_handler::{DumpError, PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     sync::AccountStorageRoots,
-    utils::{current_unix_time, dump_to_file, get_bytecode_hashes_snapshots_dir, prepare_bytecode_buffer_for_dump},
+    utils::{
+        current_unix_time, dump_to_file, get_bytecode_hashes_snapshots_dir,
+        prepare_bytecode_buffer_for_dump,
+    },
 };
 
 /// Max size of a bach to start a storage fetch request in queues
@@ -47,6 +50,7 @@ pub struct MembatchEntryValue {
     parent_path: Nibbles,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn heal_state_trie_wrap(
     state_root: H256,
     store: Store,
@@ -54,9 +58,9 @@ pub async fn heal_state_trie_wrap(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     storage_accounts: &mut AccountStorageRoots,
-    bytecode_index_file: u64,
+    bytecode_index_file: &mut u64,
     datadir: &str,
-) -> Result<(bool, u64), SyncError> {
+) -> Result<bool, SyncError> {
     let mut healing_done = false;
     *METRICS.current_step.lock().await = "Healing State".to_string();
     info!("Starting state healing");
@@ -65,7 +69,6 @@ pub async fn heal_state_trie_wrap(
     let (healing_bytecode_sender, mut healing_bytecode_receiver) =
         tokio::sync::mpsc::channel::<Result<(), DumpError>>(50);
     let mut healing_bytecode_buffer = Vec::new();
-    let mut healing_bytecode_index = bytecode_index_file;
     let bytecode_hashes_snapshots_dir = get_bytecode_hashes_snapshots_dir(&datadir.to_string());
 
     while !healing_done {
@@ -80,7 +83,7 @@ pub async fn heal_state_trie_wrap(
             &mut healing_bytecode_buffer,
             &healing_bytecode_sender,
             &mut healing_bytecode_receiver,
-            &mut healing_bytecode_index,
+            bytecode_index_file,
             &bytecode_hashes_snapshots_dir,
         )
         .await?;
@@ -93,9 +96,11 @@ pub async fn heal_state_trie_wrap(
 
     // Flush remaining buffer
     if !healing_bytecode_buffer.is_empty() {
+        info!("[BYTECODE_DOWNLOAD] Final healing flush of {} bytecodes to file {}",
+            healing_bytecode_buffer.len(), *bytecode_index_file);
         let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
             healing_bytecode_buffer,
-            healing_bytecode_index,
+            *bytecode_index_file,
             bytecode_hashes_snapshots_dir.clone(),
         );
 
@@ -104,7 +109,7 @@ pub async fn heal_state_trie_wrap(
             let result = dump_to_file(file_name, encoded_buffer);
             sender_clone.send(result).await.ok();
         });
-        healing_bytecode_index += 1;
+        *bytecode_index_file += 1;
     }
 
     // Wait for all pending writes
@@ -122,13 +127,14 @@ pub async fn heal_state_trie_wrap(
         }
     }
 
-    Ok((healing_done, healing_bytecode_index))
+    Ok(healing_done)
 }
 
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 /// This method also stores modified storage roots in the db for heal_storage_trie
 /// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
+#[allow(clippy::too_many_arguments)]
 async fn heal_state_trie(
     state_root: H256,
     store: Store,
@@ -233,16 +239,20 @@ async fn heal_state_trie(
 
                             // Collect bytecode hash if not empty
                             if account.code_hash != *EMPTY_KECCACK_HASH {
+                                info!("[BYTECODE_DOWNLOAD] Collected bytecode {} during healing", account.code_hash);
                                 healing_bytecode_buffer.push(account.code_hash);
 
                                 // Flush if buffer is full
                                 if healing_bytecode_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
                                     let buffer = std::mem::take(healing_bytecode_buffer);
-                                    let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
-                                        buffer,
-                                        *healing_bytecode_index,
-                                        bytecode_hashes_snapshots_dir.to_string(),
-                                    );
+                                    info!("[BYTECODE_DOWNLOAD] Flushing healing buffer with {} entries to file {}",
+                                        buffer.len(), *healing_bytecode_index);
+                                    let (encoded_buffer, file_name) =
+                                        prepare_bytecode_buffer_for_dump(
+                                            buffer,
+                                            *healing_bytecode_index,
+                                            bytecode_hashes_snapshots_dir.to_string(),
+                                        );
 
                                     let sender_clone = healing_bytecode_sender.clone();
                                     tokio::task::spawn(async move {

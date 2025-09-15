@@ -876,17 +876,20 @@ impl Syncer {
                 info!("Inserting accounts into the state trie");
 
                 // Collect bytecode hashes from current account snapshot and add to buffer
-                let bytecodes_from_snapshot =
+                let bytecodes_from_snapshot: Vec<H256> =
                     account_states_snapshot.iter().filter_map(|(_, state)| {
                         (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
-                    });
-                info!("[DEBUG]: Total accounts: {}", account_states_snapshot.len());
+                    }).collect();
+                info!("[BYTECODE_DOWNLOAD] Processing {} accounts from snapshot, collected {} bytecodes",
+                    account_states_snapshot.len(), bytecodes_from_snapshot.len());
 
                 bytecode_write_buffer.extend(bytecodes_from_snapshot);
 
                 // Flush buffer if it's getting too large
                 if bytecode_write_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
                     let buffer = std::mem::take(&mut bytecode_write_buffer);
+                    info!("[BYTECODE_DOWNLOAD] Flushing buffer with {} entries to file {}",
+                        buffer.len(), bytecode_index_file);
                     let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
                         buffer,
                         bytecode_index_file,
@@ -935,13 +938,15 @@ impl Syncer {
                             error!(
                                 "Failed to send bytecode dump result through channel. Error: {err}"
                             )
-                        })
+                        }).ok();
                     });
                 }
             }
 
             // Flush any remaining bytecode hashes in buffer
             if !bytecode_write_buffer.is_empty() {
+                info!("[BYTECODE_DOWNLOAD] Final flush of {} remaining bytecodes to file {}",
+                    bytecode_write_buffer.len(), bytecode_index_file);
                 let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
                     bytecode_write_buffer,
                     bytecode_index_file,
@@ -985,20 +990,18 @@ impl Syncer {
                 }
                 // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
                 // We just need to update the pivot and start again
-                let (healing_done, new_bytecode_index) = heal_state_trie_wrap(
+                let healing_done = heal_state_trie_wrap(
                     pivot_header.state_root,
                     store.clone(),
                     &self.peers,
                     calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut state_leafs_healed,
                     &mut storage_accounts,
-                    bytecode_index_file,
+                    &mut bytecode_index_file,
                     &self.datadir,
                 )
                 .await?;
-                bytecode_index_file = new_bytecode_index;
-                if !healing_done
-                {
+                if !healing_done {
                     continue;
                 };
 
@@ -1112,19 +1115,18 @@ impl Syncer {
                 )
                 .await?;
             }
-            let (healing_result, new_bytecode_index) = heal_state_trie_wrap(
+            let healing_result = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
                 &self.peers,
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_state_leafs_healed,
                 &mut storage_accounts,
-                bytecode_index_file,
+                &mut bytecode_index_file,
                 &self.datadir,
             )
             .await?;
             healing_done = healing_result;
-            bytecode_index_file = new_bytecode_index;
             if !healing_done {
                 continue;
             }
@@ -1161,7 +1163,7 @@ impl Syncer {
                     .map_err(|_| SyncError::BytecodeFileError)?;
             }
         }
-        info!("All bytecode hash files have been written to disk");
+        info!("[BYTECODE_DOWNLOAD] All bytecode hash files have been written to disk");
 
         // Bytecode download
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
@@ -1172,7 +1174,7 @@ impl Syncer {
         let mut bytecodes_to_download = Vec::new();
         let mut total_unique_hashes = 0;
 
-        info!("Starting download of bytecodes");
+        info!("[BYTECODE_DOWNLOAD] Starting download phase - reading bytecode hash files");
 
         for entry in std::fs::read_dir(&bytecode_dir).map_err(|_| SyncError::CorruptPath)? {
             let entry = entry.map_err(|_| SyncError::CorruptPath)?;
@@ -1189,7 +1191,7 @@ impl Syncer {
 
                     if bytecodes_to_download.len() >= BYTECODE_CHUNK_SIZE {
                         info!(
-                            "Downloading bytecode batch of {} hashes (processed {}/{} unique so far) from {entry:?}",
+                            "[BYTECODE_DOWNLOAD] Downloading batch of {} hashes (processed {}/{} unique so far) from {entry:?}",
                             bytecodes_to_download.len(),
                             total_unique_hashes,
                             seen_bytecodes.len()
@@ -1215,7 +1217,7 @@ impl Syncer {
         // Download remaining bytecodes if any
         if !bytecodes_to_download.is_empty() {
             info!(
-                "Downloading final bytecode batch of {} hashes",
+                "[BYTECODE_DOWNLOAD] Downloading final batch of {} hashes",
                 bytecodes_to_download.len()
             );
             let bytecodes = self
@@ -1232,7 +1234,7 @@ impl Syncer {
         }
 
         info!(
-            "Bytecode download completed. Total unique hashes processed: {}",
+            "[BYTECODE_DOWNLOAD] Download completed. Total unique hashes processed: {}",
             total_unique_hashes
         );
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
