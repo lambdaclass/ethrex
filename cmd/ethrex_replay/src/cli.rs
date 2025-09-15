@@ -130,7 +130,7 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source")]
     pub cached: bool,
-    #[arg(long)]
+    #[arg(long, help = "Execute with `add_block`, no prover backend")]
     pub no_backend: bool,
     #[arg(long, required = false)]
     pub bench: bool,
