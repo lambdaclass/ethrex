@@ -54,7 +54,7 @@ pub async fn run_tx(
     let mut remaining_gas = block.header.gas_limit;
 
     let execution_witness = cache.witness;
-    let network = cache.network.unwrap();
+    let network = cache.network.ok_or_else(|| eyre::Error::msg("missing network data in cache"))?;
     let chain_config = network
         .get_genesis()
         .map_err(|_| eyre::Error::msg("Failed to get genesis block"))?
