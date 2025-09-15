@@ -54,7 +54,9 @@ pub async fn run_tx(
     let mut remaining_gas = block.header.gas_limit;
 
     let execution_witness = cache.witness;
-    let network = cache.network.ok_or_else(|| eyre::Error::msg("missing network data in cache"))?;
+    let network = cache
+        .network
+        .ok_or_else(|| eyre::Error::msg("missing network data in cache"))?;
     let chain_config = network
         .get_genesis()
         .map_err(|_| eyre::Error::msg("Failed to get genesis block"))?
@@ -119,13 +121,15 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
         .get_genesis()
         .map_err(|_| eyre::Error::msg("Failed to get genesis block"))?
         .config;
+    let first_block_number = blocks
+        .first()
+        .ok_or_else(|| eyre::eyre!("No blocks in cache"))?
+        .header
+        .number;
 
-    let execution_witness = execution_witness_from_rpc_chain_config(
-        db,
-        chain_config,
-        blocks.first().unwrap().header.number,
-    )
-    .wrap_err("Failed to convert execution witness")?;
+    let execution_witness =
+        execution_witness_from_rpc_chain_config(db, chain_config, first_block_number)
+            .wrap_err("Failed to convert execution witness")?;
 
     Ok(ProgramInput {
         blocks,
@@ -158,12 +162,14 @@ fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
     if network.is_some() {
         return Err(eyre::eyre!("Unexpected network in cache"));
     }
-    let execution_witness = execution_witness_from_rpc_chain_config(
-        db,
-        chain_config,
-        blocks.first().unwrap().header.number,
-    )
-    .wrap_err("Failed to convert execution witness")?;
+    let first_block_number = blocks
+        .first()
+        .ok_or_else(|| eyre::eyre!("No blocks in cache"))?
+        .header
+        .number;
+    let execution_witness =
+        execution_witness_from_rpc_chain_config(db, chain_config, first_block_number)
+            .wrap_err("Failed to convert execution witness")?;
 
     Ok(ProgramInput {
         blocks,
