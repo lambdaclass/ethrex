@@ -796,7 +796,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                         );
                         continue;
                     }
-                    
+
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
@@ -887,7 +887,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     }
                 }
                 let is_l2_mode = state.l2_state.is_supported();
-                msg.handle(&state.node, &state.blockchain, is_l2_mode).await?;
+                msg.handle(&state.node, &state.blockchain, is_l2_mode)
+                    .await?;
             }
         }
         Message::GetStorageRanges(req) => {
