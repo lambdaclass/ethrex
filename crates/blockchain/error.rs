@@ -81,6 +81,8 @@ pub enum InvalidBlockError {
     BlobGasUsedMismatch,
     #[error("Invalid transaction: {0}")]
     InvalidTransaction(String),
+    #[error("Maximum block size exceeded: Maximum is {0} MiB, but block was {1} MiB")]
+    MaximumRlpSizeExceeded(u64, u64),
 }
 
 #[derive(Debug, thiserror::Error)]
