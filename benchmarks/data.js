@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757962450868,
+  "lastUpdate": 1757962552974,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14245,6 +14245,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168787416419,
             "range": "± 257374089",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "FredrikaPhililip@proton.me",
+            "name": "Suuuuuuperrrrr fred",
+            "username": "FredPhilipy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "52eefc01dd1ef5ba6a1828badd8b142b678e599c",
+          "message": "feat(l2): reject Blob transaction in the L2 from P2P (#4146)\n\nCloses https://github.com/lambdaclass/ethrex/issues/2857",
+          "timestamp": "2025-09-15T18:01:12Z",
+          "tree_id": "b2ba788be8159bf6b6a1cb265dec3b88118c70b7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/52eefc01dd1ef5ba6a1828badd8b142b678e599c"
+        },
+        "date": 1757962532120,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168853621759,
+            "range": "± 434154298",
             "unit": "ns/iter"
           }
         ]
