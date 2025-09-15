@@ -93,20 +93,6 @@ pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
         })
 }
 
-/// Sort and deduplicate bytecode hashes and encode them to a vector
-pub fn prepare_bytecode_buffer_for_dump(
-    buffer: Vec<H256>,
-    file_index: u64,
-    dir: String,
-) -> (Vec<u8>, String) {
-    let mut sorted_buffer = buffer;
-    sorted_buffer.sort();
-    sorted_buffer.dedup();
-    let encoded = sorted_buffer.encode_to_vec();
-    let filename = get_bytecode_hashes_snapshot_file(dir, file_index);
-    (encoded, filename)
-}
-
 /// TODO: make it more generic
 pub async fn send_message_and_wait_for_response(
     peer_channel: &mut PeerChannels,

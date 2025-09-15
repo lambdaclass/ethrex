@@ -1,14 +1,15 @@
+mod bytecode_collector;
 mod state_healing;
 mod storage_healing;
 
-use crate::peer_handler::{BlockRequestOrder, DumpError, PeerHandlerError, SNAP_LIMIT};
+use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::sync::bytecode_collector::BytecodeCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
-    current_unix_time, dump_to_file, get_account_state_snapshots_dir,
-    get_account_storages_snapshots_dir, get_bytecode_hashes_snapshots_dir,
-    prepare_bytecode_buffer_for_dump,
+    current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
+    get_bytecode_hashes_snapshots_dir,
 };
 use crate::{
     metrics::METRICS,
@@ -49,9 +50,6 @@ const SECONDS_PER_BLOCK: u64 = 12;
 
 /// Bytecodes to downloader per batch
 const BYTECODE_CHUNK_SIZE: usize = 50_000;
-// Buffer for collecting bytecode hashes before writing to disk
-// TODO: Check if this is the correct size
-const BYTECODE_WRITE_BUFFER_SIZE: usize = 100_000;
 
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
 
@@ -845,12 +843,9 @@ impl Syncer {
         std::fs::create_dir_all(&bytecode_hashes_snapshots_dir)
             .map_err(|_| SyncError::BytecodeHashesSnapshotsDirNotFound)?;
 
+        let mut bytecode_collector =
+            BytecodeCollector::new(0, bytecode_hashes_snapshots_dir.clone());
         let mut bytecode_index_file = 0_u64;
-        let mut bytecode_write_buffer = Vec::new();
-
-        // Channel for managing async bytecode dump results with retry
-        let (bytecode_dump_sender, mut bytecode_dump_receiver) =
-            tokio::sync::mpsc::channel::<Result<(), DumpError>>(100);
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -904,7 +899,7 @@ impl Syncer {
 
                 info!("Inserting accounts into the state trie");
 
-                // Collect bytecode hashes from current account snapshot and add to buffer
+                // Collect bytecode hashes from current account snapshot
                 let bytecodes_from_snapshot: Vec<H256> = account_states_snapshot
                     .iter()
                     .filter_map(|(_, state)| {
@@ -912,24 +907,8 @@ impl Syncer {
                     })
                     .collect();
 
-                bytecode_write_buffer.extend(bytecodes_from_snapshot);
-
-                // Flush buffer if it's getting too large
-                if bytecode_write_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
-                    let buffer = std::mem::take(&mut bytecode_write_buffer);
-                    let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
-                        buffer,
-                        bytecode_index_file,
-                        bytecode_hashes_snapshots_dir.clone(),
-                    );
-
-                    let sender_clone = bytecode_dump_sender.clone();
-                    tokio::task::spawn(async move {
-                        let result = dump_to_file(file_name, encoded_buffer);
-                        sender_clone.send(result).await.ok();
-                    });
-                    bytecode_index_file += 1;
-                }
+                bytecode_collector.extend(bytecodes_from_snapshot);
+                bytecode_collector.flush_if_needed().await?;
 
                 let store_clone = store.clone();
                 let current_state_root =
@@ -952,38 +931,11 @@ impl Syncer {
                 computed_state_root = current_state_root;
 
                 // Check if any bytecode dump task failed and retry if necessary
-                if let Ok(Err(dump_error)) = bytecode_dump_receiver.try_recv() {
-                    if dump_error.error == std::io::ErrorKind::StorageFull {
-                        // TODO: Improve error handling
-                        return Err(SyncError::BytecodeFileError);
-                    }
-                    // Retry the failed dump
-                    let sender_clone = bytecode_dump_sender.clone();
-                    tokio::task::spawn(async move {
-                        let result = dump_to_file(dump_error.path, dump_error.contents);
-                        sender_clone.send(result).await.inspect_err(|err| {
-                            error!(
-                                "Failed to send bytecode dump result through channel. Error: {err}"
-                            )
-                        }).ok();
-                    });
-                }
+                bytecode_collector.handle_errors().await?;
             }
 
-            // Flush any remaining bytecode hashes in buffer
-            if !bytecode_write_buffer.is_empty() {
-                let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
-                    bytecode_write_buffer,
-                    bytecode_index_file,
-                    bytecode_hashes_snapshots_dir.clone(),
-                );
-
-                let sender_clone = bytecode_dump_sender.clone();
-                tokio::task::spawn(async move {
-                    let result = dump_to_file(file_name, encoded_buffer);
-                    sender_clone.send(result).await.ok();
-                });
-            }
+            // Finish bytecode collection and get final index
+            bytecode_index_file = bytecode_collector.finish().await?;
 
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
@@ -1171,23 +1123,6 @@ impl Syncer {
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
-
-        // Wait for all pending bytecode disk writes to complete
-        drop(bytecode_dump_sender);
-        while let Some(result) = bytecode_dump_receiver.recv().await {
-            if let Err(dump_error) = result {
-                if dump_error.error == std::io::ErrorKind::StorageFull {
-                    // TODO: Improve error handling
-                    return Err(SyncError::BytecodeFileError);
-                }
-                // Final retry attempt
-                dump_to_file(dump_error.path, dump_error.contents)
-                    .inspect_err(|err| {
-                        error!("Failed final retry for bytecode dump: {:?}", err);
-                    })
-                    .map_err(|_| SyncError::BytecodeFileError)?;
-            }
-        }
 
         // Bytecode download
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
