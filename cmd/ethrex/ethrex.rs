@@ -63,6 +63,8 @@ async fn main() -> eyre::Result<()> {
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
 
+    log_global_allocator();
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
@@ -71,8 +73,6 @@ async fn main() -> eyre::Result<()> {
             server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
     }
-
-    log_global_allocator();
 
     Ok(())
 }
