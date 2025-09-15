@@ -199,13 +199,16 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        let latest = self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?;
-        if block_hash == latest.hash() {
-            return Ok(Some(latest.clone()));
+        {
+            let latest = self
+                .latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+            if block_hash == latest.hash() {
+                return Ok(Some(latest.clone()));
+            }
         }
+
         self.engine.get_block_header_by_hash(block_hash)
     }
 
