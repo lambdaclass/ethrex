@@ -1,7 +1,7 @@
 mod state_healing;
 mod storage_healing;
 
-use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
+use crate::peer_handler::{DumpError, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
@@ -819,6 +819,10 @@ impl Syncer {
         const BYTECODE_WRITE_BUFFER_SIZE: usize = 100_000;
         let mut bytecode_write_buffer = Vec::new();
 
+        // Channel for managing async bytecode dump results with retry
+        let (bytecode_dump_sender, mut bytecode_dump_receiver) =
+            tokio::sync::mpsc::channel::<Result<(), DumpError>>(100);
+
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // We start by downloading all of the leafs of the trie of accounts
@@ -876,16 +880,29 @@ impl Syncer {
                     account_states_snapshot.iter().filter_map(|(_, state)| {
                         (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
                     });
+                info!("[DEBUG]: Total accounts: {}", account_states_snapshot.len());
 
                 bytecode_write_buffer.extend(bytecodes_from_snapshot);
 
                 // Flush buffer if it's getting too large
                 if bytecode_write_buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
-                    flush_bytecode_buffer(
-                        &mut bytecode_write_buffer,
-                        bytecode_index_file,
+                    // Prepare buffer data
+                    let mut buffer_to_write = std::mem::take(&mut bytecode_write_buffer);
+                    buffer_to_write.sort();
+                    buffer_to_write.dedup();
+
+                    let encoded_buffer = buffer_to_write.encode_to_vec();
+                    let file_name = get_bytecode_hashes_snapshot_file(
                         bytecode_hashes_snapshots_dir.clone(),
-                    )?;
+                        bytecode_index_file,
+                    );
+
+                    // Spawn async write task
+                    let sender_clone = bytecode_dump_sender.clone();
+                    tokio::task::spawn(async move {
+                        let result = dump_to_file(file_name, encoded_buffer);
+                        sender_clone.send(result).await.ok();
+                    });
                     bytecode_index_file += 1;
                 }
 
@@ -908,14 +925,46 @@ impl Syncer {
                     .await??;
 
                 computed_state_root = current_state_root;
+
+                // Check if any bytecode dump task failed and retry if necessary
+                if let Ok(Err(dump_error)) = bytecode_dump_receiver.try_recv() {
+                    if dump_error.error == std::io::ErrorKind::StorageFull {
+                        return Err(SyncError::BytecodeFileError);
+                    }
+                    // Retry the failed dump
+                    let sender_clone = bytecode_dump_sender.clone();
+                    tokio::task::spawn(async move {
+                        let DumpError { path, contents, .. } = dump_error;
+                        let result = dump_to_file(path, contents);
+                        sender_clone.send(result).await.inspect_err(|err| {
+                            error!(
+                                "Failed to send bytecode dump result through channel. Error: {err}"
+                            )
+                        })
+                    });
+                }
             }
 
             // Flush any remaining bytecode hashes in buffer
-            flush_bytecode_buffer(
-                &mut bytecode_write_buffer,
-                bytecode_index_file,
-                bytecode_hashes_snapshots_dir.clone(),
-            )?;
+            if !bytecode_write_buffer.is_empty() {
+                // Prepare remaining buffer data
+                let mut buffer_to_write = std::mem::take(&mut bytecode_write_buffer);
+                buffer_to_write.sort();
+                buffer_to_write.dedup();
+
+                let encoded_buffer = buffer_to_write.encode_to_vec();
+                let file_name = get_bytecode_hashes_snapshot_file(
+                    bytecode_hashes_snapshots_dir.clone(),
+                    bytecode_index_file,
+                );
+
+                // Spawn final async write task
+                let sender_clone = bytecode_dump_sender.clone();
+                tokio::task::spawn(async move {
+                    let result = dump_to_file(file_name, encoded_buffer);
+                    sender_clone.send(result).await.ok();
+                });
+            }
 
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
@@ -1098,6 +1147,22 @@ impl Syncer {
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
+
+        // Wait for all pending bytecode disk writes to complete
+        while let Some(result) = bytecode_dump_receiver.recv().await {
+            if let Err(dump_error) = result {
+                if dump_error.error == std::io::ErrorKind::StorageFull {
+                    return Err(SyncError::BytecodeFileError);
+                }
+                // Final retry attempt
+                dump_to_file(dump_error.path, dump_error.contents)
+                    .inspect_err(|err| {
+                        error!("Failed final retry for bytecode dump: {:?}", err);
+                    })
+                    .map_err(|_| SyncError::BytecodeFileError)?;
+            }
+        }
+        info!("All bytecode hash files have been written to disk");
 
         // Bytecode download
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
@@ -1448,35 +1513,4 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     .all(|valid| valid);
     info!("Finished validate_storage_root");
     is_valid
-}
-
-fn flush_bytecode_buffer(
-    buffer: &mut Vec<H256>,
-    file_index: u64,
-    dir: String,
-) -> Result<(), SyncError> {
-    if buffer.is_empty() {
-        return Ok(());
-    }
-
-    buffer.sort();
-    buffer.dedup();
-    let file_name = get_bytecode_hashes_snapshot_file(dir.clone(), file_index);
-
-    info!(
-        "Flushing bytecode buffer with {} hashes to {}",
-        buffer.len(),
-        file_name
-    );
-    dump_to_file(file_name.clone(), buffer.encode_to_vec())
-        .map_err(|_| SyncError::BytecodeFileError)
-        .inspect_err(|err| {
-            error!(
-                "Failed to flush bytecode buffer to file {}: {}",
-                file_name, err
-            );
-        })?;
-
-    buffer.clear();
-    Ok(())
 }
