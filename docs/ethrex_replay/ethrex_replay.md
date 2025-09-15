@@ -43,7 +43,8 @@ Make sure to read each zkVM's install docs first to ensure you have all needed p
 
 ```sh
 curl -L https://risczero.com/install | bash
-rzup install cargo-risczero 2.3.1
+rzup install cargo-risczero 3.0.3
+rzup install risc0-groth16
 rzup install rust
 ```
 

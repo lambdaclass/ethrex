@@ -35,7 +35,9 @@ Make sure to read each zkVM's install docs first to ensure you have all needed p
 
 - [RISC0](https://dev.risczero.com/api/zkvm/install)
   1. `curl -L https://risczero.com/install | bash`
-  2. `rzup install cargo-risczero 2.3.1`
+  2. `rzup install cargo-risczero 3.0.3`
+  3. `rzup install risc0-groth16`
+  4. `rzup install rust`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
   2. `sp1up --version 5.0.8`
