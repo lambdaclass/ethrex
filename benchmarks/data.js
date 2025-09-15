@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757970093341,
+  "lastUpdate": 1757971527563,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14335,6 +14335,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166969544110,
             "range": "± 309540058",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e9e81274dadd9df98166105833b5f196a927642",
+          "message": "refactor(l1): update snap sync slack messages (#4442)\n\n**Description**\n\nUpdates both success and failure slack messages in server runner script\n\n**Examples**\n\n<img width=\"569\" height=\"171\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/167daf31-1248-41cb-bef9-4a8b10c96532\"\n/>\n\n<img width=\"483\" height=\"400\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/d827e8bd-30cd-4546-b1bb-a9302f9364d6\"\n/>\n\n---------\n\nCo-authored-by: Gianbelinche <39842759+gianbelinche@users.noreply.github.com>",
+          "timestamp": "2025-09-15T20:31:10Z",
+          "tree_id": "2c73a5dcc2cbf328ef53162653af5cfb24da7f8f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1e9e81274dadd9df98166105833b5f196a927642"
+        },
+        "date": 1757971504828,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169680891345,
+            "range": "± 423160309",
             "unit": "ns/iter"
           }
         ]
