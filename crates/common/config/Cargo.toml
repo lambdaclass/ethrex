@@ -7,6 +7,8 @@ edition.workspace = true
 ethrex-p2p.workspace = true
 ethrex-common.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+rkyv.workspace = true
 keccak-hash.workspace = true
 hex.workspace = true
 
