@@ -15,8 +15,9 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
+use std::{convert::Into, io::ErrorKind};
 
-#[derive(Debug, PartialEq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum PacketDecodeErr {
     #[error("RLP decoding error")]
     RLPDecodeError(#[from] RLPDecodeError),
@@ -26,6 +27,16 @@ pub enum PacketDecodeErr {
     HashMismatch,
     #[error("Invalid signature")]
     InvalidSignature,
+    #[error("Discv4 decoding error: {0}")]
+    Discv4DecodingError(String),
+    #[error("Io Error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
+impl From<PacketDecodeErr> for std::io::Error {
+    fn from(error: PacketDecodeErr) -> Self {
+        std::io::Error::new(ErrorKind::InvalidData, error.to_string())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1044,7 +1055,10 @@ mod tests {
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
-        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+        assert!(matches!(
+            decoded_packet.err().unwrap(),
+            PacketDecodeErr::InvalidSignature
+        ));
     }
 
     #[test]
@@ -1080,6 +1094,9 @@ mod tests {
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
-        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+        assert!(matches!(
+            decoded_packet.err().unwrap(),
+            PacketDecodeErr::InvalidSignature
+        ));
     }
 }

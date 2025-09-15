@@ -696,7 +696,7 @@ async fn estimate_blob_gas(
     headroom: u64,
 ) -> Result<u64, CommitterError> {
     let latest_block = eth_client
-        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest))
+        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
         .await?;
 
     let blob_gas_used = latest_block.header.blob_gas_used.unwrap_or(0);
