@@ -57,6 +57,29 @@ pub async fn get_blockdata(
         ));
     }
 
+    debug!("Getting block data from RPC for block {requested_block_number}");
+
+    let block_retrieval_start_time = SystemTime::now();
+
+    let rpc_block = eth_client
+        .get_block_by_number(BlockIdentifier::Number(requested_block_number), true)
+        .await
+        .wrap_err("Failed to retrieve requested block")?;
+
+    let block = rpc_block
+        .try_into()
+        .map_err(|e| eyre::eyre!("{}", e))
+        .wrap_err("Failed to convert from rpc block to block")?;
+
+    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    debug!(
+        "Got block {requested_block_number} in {}",
+        format_duration(block_retrieval_duration)
+    );
+
     debug!("Getting execution witness from RPC for block {requested_block_number}");
 
     let execution_witness_retrieval_start_time = SystemTime::now();
