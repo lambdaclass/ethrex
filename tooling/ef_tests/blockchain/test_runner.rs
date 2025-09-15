@@ -34,7 +34,7 @@ pub fn parse_and_execute(
     //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
     //EIPs should be added as strings in the format 'eip-XXXX'
     let fusaka_eips_to_test: Vec<&str> = vec![
-        "eip-7594", "eip-7883", "eip-7918", "eip-7892", "eip-7939", "eip-7951", "eip-7594",
+        "eip-7883", "eip-7918", "eip-7892", "eip-7939", "eip-7951", "eip-7594",
     ];
 
     //Hashes of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)

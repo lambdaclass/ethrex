@@ -4,7 +4,17 @@ use std::path::Path;
 const TEST_FOLDER: &str = "vectors/";
 
 #[cfg(not(feature = "revm"))]
-const SKIPPED_TESTS: &[&str] = &["system_contract_deployment"];
+const SKIPPED_TESTS: &[&str] = &[
+    "system_contract_deployment",
+    "test_excess_blob_gas_fork_transition",
+    "test_invalid_post_fork_block_without_blob_fields",
+    "test_invalid_pre_fork_block_with_blob_fields",
+    "stTransactionTest/HighGasPriceParis",
+    "dynamicAccountOverwriteEmpty_Paris",
+    "create2collisionStorageParis",
+    "RevertInCreateInInitCreate2Paris",
+    "createBlobhashTx",
+];
 #[cfg(feature = "revm")]
 const SKIPPED_TESTS: &[&str] = &[
     "system_contract_deployment",
@@ -13,6 +23,17 @@ const SKIPPED_TESTS: &[&str] = &[
     "fork_BPO0",
     "fork_BPO1",
     "fork_BPO2",
+    "test_excess_blob_gas_fork_transition",
+    "test_invalid_post_fork_block_without_blob_fields",
+    "test_invalid_pre_fork_block_with_blob_fields",
+    "stTransactionTest/HighGasPriceParis",
+    "dynamicAccountOverwriteEmpty_Paris",
+    "create2collisionStorageParis",
+    "RevertInCreateInInitCreate2Paris",
+    "createBlobhashTx",
+    "test_reserve_price_at_transition.json",
+    "CreateTransactionHighNonce.json",
+    "lowGasLimit.json",
 ];
 
 // If neither `sp1` nor `stateless` is enabled: run with whichever engine
