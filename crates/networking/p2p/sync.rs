@@ -572,11 +572,14 @@ impl FullBlockSyncState {
     /// Saves incoming headers, requests as many block bodies as needed to complete
     /// an execution batch and executes it.
     /// An incomplete batch may be executed if the sync_head was already found
+    /// Returns bool finish to know wether the amount of block headers was less than MAX_BLOCK_BODIES_TO_REQUEST
+    /// to determine if there's still more blocks to download.
+    /// Returns bool sync_head_found to know wether full sync was completed.
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
         sync_head: H256,
-        sync_head_found: bool,
+        sync_head_found_in_block_headers: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
         cancel_token: CancellationToken,
@@ -584,7 +587,7 @@ impl FullBlockSyncState {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
 
-        let mut found_sync_head = sync_head_found;
+        let mut sync_head_found = sync_head_found_in_block_headers;
         let finished = self.current_headers.len() <= MAX_BLOCK_BODIES_TO_REQUEST;
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
         //     // We don't have enough headers to fill up a batch, lets request more
@@ -616,7 +619,7 @@ impl FullBlockSyncState {
             if let Some(last_block) = self.current_blocks.last() {
                 if last_block.hash() == block.header.parent_hash {
                     self.current_blocks.push(block);
-                    found_sync_head = true;
+                    sync_head_found = true;
                 }
             }
         }
@@ -667,7 +670,7 @@ impl FullBlockSyncState {
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
             block_batch,
-            found_sync_head,
+            sync_head_found,
             cancel_token.clone(),
         )
         .await
@@ -727,7 +730,7 @@ impl FullBlockSyncState {
             blocks_per_second
         );
         // }
-        Ok((finished, found_sync_head))
+        Ok((finished, sync_head_found))
     }
 }
 
