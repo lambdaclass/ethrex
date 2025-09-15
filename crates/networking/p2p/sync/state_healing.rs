@@ -22,7 +22,6 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
 use tracing::{debug, error, info};
 
 use crate::{
-    kademlia::PeerChannels,
     metrics::METRICS,
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -36,7 +35,6 @@ pub const STORAGE_BATCH_SIZE: usize = 300;
 pub const NODE_BATCH_SIZE: usize = 500;
 /// Pace at which progress is shown via info tracing
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
-const MAX_SCORE: i64 = 10;
 
 use super::SyncError;
 
@@ -114,53 +112,35 @@ async fn heal_state_trie(
         Result<Vec<Node>, RequestStateTrieNodesError>,
         Vec<RequestMetadata>,
     )>(1000);
-
-    let peers_table = peers
-        .peer_table
-        .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-        .await;
-    let mut downloaders: HashMap<H256, bool> = HashMap::from_iter(
-        peers_table
-            .iter()
-            .map(|(peer_id, _peer_data)| (*peer_id, true)),
-    );
-    let mut scores: HashMap<H256, i64> =
-        HashMap::from_iter(peers_table.iter().map(|(peer_id, _)| (*peer_id, 0)));
-
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
     loop {
-        let peers_table = peers
-            .peer_table
-            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
-            .await;
-        let peers_table_2 = peers.peer_table.get_peer_channels(&[]).await;
-
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            let num_peers = peers
+                .peer_table
+                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+                .await
+                .len();
             last_update = Instant::now();
             let downloads_rate =
                 downloads_success as f64 / (downloads_success + downloads_fail) as f64;
 
             METRICS
                 .global_state_trie_leafs_healed
-                .fetch_add(*global_leafs_healed, Ordering::Relaxed);
+                .store(*global_leafs_healed, Ordering::Relaxed);
             METRICS
                 .healing_empty_try_recv
                 .store(empty_try_recv, Ordering::Relaxed);
             if is_stale {
                 debug!(
-                    "State Healing stopping due to staleness, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
-                    peers_table.len(),
-                    peers_table_2.len(),
+                    "State Healing stopping due to staleness, snap peers available {num_peers}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
                     global_leafs_healed,
                     paths.len(),
                     membatch.len()
                 );
             } else {
                 debug!(
-                    "State Healing in Progress, snap peers available {}, peers available {}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
-                    peers_table.len(),
-                    peers_table_2.len(),
+                    "State Healing in Progress, snap peers available {num_peers}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
                     global_leafs_healed,
                     paths.len(),
                     membatch.len()
@@ -169,10 +149,12 @@ async fn heal_state_trie(
             downloads_success = 0;
             downloads_fail = 0;
 
-            for (peer_id, _) in peers_table {
-                downloaders.entry(peer_id).or_insert(true);
-                scores.entry(peer_id).or_insert(0);
-            }
+            peers
+                .peer_scores
+                .lock()
+                .await
+                .update_peers(&peers.peer_table)
+                .await;
         }
 
         // Attempt to receive a response from one of the peers
@@ -184,9 +166,7 @@ async fn heal_state_trie(
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
             // Mark the peer as available
-            downloaders
-                .entry(peer_id)
-                .and_modify(|is_free| *is_free = true);
+            peers.peer_scores.lock().await.free_peer(peer_id);
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -214,11 +194,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    scores.entry(peer_id).and_modify(|score| {
-                        if *score < MAX_SCORE {
-                            *score += 1;
-                        }
-                    });
+                    peers.peer_scores.lock().await.record_success(peer_id);
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -227,7 +203,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    scores.entry(peer_id).and_modify(|score| *score -= 1);
+                    peers.peer_scores.lock().await.record_failure(peer_id);
                 }
             }
         }
@@ -244,11 +220,13 @@ async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
-                let Some((peer_id, mut peer_channel)) =
-                    get_peer_with_highest_score_and_mark_it_as_occupied(
-                        &peers,
-                        &mut downloaders,
-                        &scores,
+                let Some((peer_id, mut peer_channel)) = peers
+                    .peer_scores
+                    .lock()
+                    .await
+                    .get_peer_channel_with_highest_score_and_mark_as_used(
+                        &peers.peer_table,
+                        &SUPPORTED_SNAP_CAPABILITIES,
                     )
                     .await
                 else {
@@ -416,47 +394,6 @@ fn commit_node(
     } else {
         membatch.insert(parent_path.clone(), membatch_entry);
     }
-}
-
-async fn get_peer_with_highest_score_and_mark_it_as_occupied(
-    peers: &PeerHandler,
-    downloaders: &mut HashMap<H256, bool>,
-    scores: &HashMap<H256, i64>,
-) -> Option<(H256, PeerChannels)> {
-    // Filter the free downloaders
-    let free_downloaders: Vec<H256> = downloaders
-        .iter()
-        .filter(|(_peer_id, is_free)| **is_free)
-        .map(|(peer_id, _is_free)| *peer_id)
-        .collect();
-
-    // Get the peer with the highest score
-    let mut peer_with_highest_score = free_downloaders.first()?;
-    let mut highest_score = i64::MIN;
-    for peer_id in &free_downloaders {
-        let Some(score) = scores.get(peer_id) else {
-            continue;
-        };
-        if *score > highest_score {
-            highest_score = *score;
-            peer_with_highest_score = peer_id;
-        }
-    }
-    let Some(peer_channel) = peers
-        .peer_table
-        .get_peer_channel(*peer_with_highest_score)
-        .await
-    else {
-        downloaders.remove(peer_with_highest_score);
-        return None;
-    };
-
-    // Mark it as occupied
-    downloaders
-        .entry(*peer_with_highest_score)
-        .and_modify(|is_free| *is_free = false);
-
-    Some((*peer_with_highest_score, peer_channel))
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state

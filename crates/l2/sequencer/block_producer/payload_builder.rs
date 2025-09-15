@@ -24,7 +24,6 @@ use ethrex_metrics::{
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{Evm, EvmError};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
 use std::sync::Arc;
@@ -32,7 +31,7 @@ use tokio::time::Instant;
 use tracing::{debug, error};
 
 /// Max privileged tx to allow per batch
-const PRIVILEGED_TX_BUDGET: usize = 300;
+const PRIVILEGED_TX_BUDGET: u64 = 300;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -47,12 +46,7 @@ pub async fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(
-        payload,
-        blockchain.evm_engine,
-        store,
-        blockchain.r#type.clone(),
-    )?;
+    let mut context = PayloadBuildContext::new(payload, store, blockchain.r#type.clone())?;
 
     fill_transactions(blockchain.clone(), &mut context, store, rollup_store).await?;
     blockchain.finalize_payload(&mut context).await?;
@@ -134,26 +128,6 @@ pub async fn fill_transactions(
             break;
         };
 
-        // Check we don't have an excessive number of privileged transactions
-        if head_tx.tx_type() == TxType::Privileged {
-            let id = head_tx.nonce();
-            if let Some(range) = privileged_range.as_mut() {
-                if range.clone().count() > PRIVILEGED_TX_BUDGET {
-                    debug!("Ran out of space for privileged transactions");
-                    txs.pop();
-                    continue;
-                }
-                if id != range.end {
-                    debug!("Ignoring out-of-order privileged transaction");
-                    txs.pop();
-                    continue;
-                }
-                range.end += 1;
-            } else {
-                privileged_range = Some(id..(id + 1));
-            }
-        }
-
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
             debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
@@ -224,6 +198,28 @@ pub async fn fill_transactions(
             continue;
         }
 
+        // Check we don't have an excessive number of privileged transactions
+        if head_tx.tx_type() == TxType::Privileged {
+            let id = head_tx.nonce();
+            if let Some(range) = privileged_range.as_mut() {
+                if range.end - range.start > PRIVILEGED_TX_BUDGET {
+                    debug!("Ran out of space for privileged transactions");
+                    txs.pop();
+                    undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                    continue;
+                }
+                if id != range.end {
+                    debug!("Ignoring out-of-order privileged transaction");
+                    txs.pop();
+                    undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                    continue;
+                }
+                range.end += 1;
+            } else {
+                privileged_range = Some(id..(id + 1));
+            }
+        }
+
         txs.shift()?;
         // Pull transaction from the mempool
         blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
@@ -277,91 +273,87 @@ fn get_account_diffs_in_tx(
     context: &PayloadBuildContext,
 ) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
     let mut modified_accounts = HashMap::new();
-    match &context.vm {
-        Evm::REVM { .. } => {
-            return Err(BlockProducerError::EvmError(EvmError::InvalidEVM(
-                "REVM not supported for L2".to_string(),
-            )));
-        }
-        Evm::LEVM { db, .. } => {
-            let transaction_backup = db.get_tx_backup().map_err(|e| {
-                BlockProducerError::FailedToGetDataFrom(format!("TransactionBackup: {e}"))
+
+    let db = &context.vm.db;
+    let transaction_backup = db
+        .get_tx_backup()
+        .map_err(|e| BlockProducerError::FailedToGetDataFrom(format!("TransactionBackup: {e}")))?;
+    // First we add the account info
+    for (address, original_account) in transaction_backup.original_accounts_info.iter() {
+        let new_account = db.current_accounts_state.get(address).ok_or(
+            BlockProducerError::FailedToGetDataFrom("DB Cache".to_owned()),
+        )?;
+
+        let nonce_diff: u16 = (new_account.info.nonce - original_account.info.nonce)
+            .try_into()
+            .map_err(BlockProducerError::TryIntoError)?;
+
+        let new_balance = if new_account.info.balance != original_account.info.balance {
+            Some(new_account.info.balance)
+        } else {
+            None
+        };
+
+        let bytecode = if new_account.info.code_hash != original_account.info.code_hash {
+            // After execution the code should be in db.codes
+            let code = db.codes.get(&new_account.info.code_hash).ok_or_else(|| {
+                BlockProducerError::FailedToGetDataFrom("Code DB Cache".to_owned())
             })?;
-            // First we add the account info
-            for (address, original_account) in transaction_backup.original_accounts_info.iter() {
-                let new_account = db.current_accounts_state.get(address).ok_or(
-                    BlockProducerError::FailedToGetDataFrom("DB Cache".to_owned()),
-                )?;
+            Some(code.clone())
+        } else {
+            None
+        };
 
-                let nonce_diff: u16 = (new_account.info.nonce - original_account.info.nonce)
-                    .try_into()
-                    .map_err(BlockProducerError::TryIntoError)?;
+        let account_state_diff = AccountStateDiff {
+            new_balance,
+            nonce_diff,
+            storage: BTreeMap::new(), // We add the storage later
+            bytecode,
+            bytecode_hash: None,
+        };
 
-                let new_balance = if new_account.info.balance != original_account.info.balance {
-                    Some(new_account.info.balance)
-                } else {
-                    None
-                };
+        modified_accounts.insert(*address, account_state_diff);
+    }
 
-                let bytecode = if new_account.info.code_hash != original_account.info.code_hash {
-                    // After execution the code should be in db.codes
-                    let code = db.codes.get(&new_account.info.code_hash).ok_or_else(|| {
-                        BlockProducerError::FailedToGetDataFrom("Code DB Cache".to_owned())
-                    })?;
-                    Some(code.clone())
-                } else {
-                    None
-                };
+    // Then if there is any storage change, we add it to the account state diff
+    for (address, original_storage_slots) in
+        transaction_backup.original_account_storage_slots.iter()
+    {
+        let account_info = db.current_accounts_state.get(address).ok_or(
+            BlockProducerError::FailedToGetDataFrom("DB Cache".to_owned()),
+        )?;
 
-                let account_state_diff = AccountStateDiff {
-                    new_balance,
-                    nonce_diff,
-                    storage: BTreeMap::new(), // We add the storage later
-                    bytecode,
-                    bytecode_hash: None,
-                };
+        let mut added_storage = BTreeMap::new();
+        for key in original_storage_slots.keys() {
+            added_storage.insert(
+                *key,
+                *account_info
+                    .storage
+                    .get(key)
+                    .ok_or(BlockProducerError::FailedToGetDataFrom(
+                        "Account info Storage".to_owned(),
+                    ))?,
+            );
+        }
+        if let Some(account_state_diff) = modified_accounts.get_mut(address) {
+            account_state_diff.storage = added_storage;
+        } else {
+            // If the account is not in the modified accounts, we create a new one
+            let account_state_diff = AccountStateDiff {
+                new_balance: None,
+                nonce_diff: 0,
+                storage: added_storage,
+                bytecode: None,
+                bytecode_hash: None,
+            };
 
-                // If account state diff is NOT empty
-                if account_state_diff != AccountStateDiff::default() {
-                    modified_accounts.insert(*address, account_state_diff);
-                }
-            }
-
-            // Then if there is any storage change, we add it to the account state diff
-            for (address, original_storage_slots) in
-                transaction_backup.original_account_storage_slots.iter()
-            {
-                let account_info = db.current_accounts_state.get(address).ok_or(
-                    BlockProducerError::FailedToGetDataFrom("DB Cache".to_owned()),
-                )?;
-
-                let mut added_storage = BTreeMap::new();
-                for key in original_storage_slots.keys() {
-                    added_storage.insert(
-                        *key,
-                        *account_info.storage.get(key).ok_or(
-                            BlockProducerError::FailedToGetDataFrom(
-                                "Account info Storage".to_owned(),
-                            ),
-                        )?,
-                    );
-                }
-                if let Some(account_state_diff) = modified_accounts.get_mut(address) {
-                    account_state_diff.storage = added_storage;
-                } else {
-                    // If the account is not in the modified accounts, we create a new one
-                    let account_state_diff = AccountStateDiff {
-                        new_balance: None,
-                        nonce_diff: 0,
-                        storage: added_storage,
-                        bytecode: None,
-                        bytecode_hash: None,
-                    };
-                    modified_accounts.insert(*address, account_state_diff);
-                }
+            // If account state diff is NOT empty
+            if account_state_diff != AccountStateDiff::default() {
+                modified_accounts.insert(*address, account_state_diff);
             }
         }
     }
+
     Ok(modified_accounts)
 }
 

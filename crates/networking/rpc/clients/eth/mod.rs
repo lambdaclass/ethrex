@@ -27,6 +27,7 @@ use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tracing::{debug, trace, warn};
 
 pub mod errors;
 
@@ -128,52 +129,70 @@ impl EthClient {
         )
     }
 
+    /// Send a request to the RPC. Tries each URL until one succeeds.
     pub async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+        let mut response = Err(EthClientError::FailedAllRPC);
 
         for url in self.urls.iter() {
             response = self.send_request_to_url(url, &request).await;
-            if response.is_ok() {
-                // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
-                // so if the server returns Ok(RpcResponse::Error) we retry with the others
-                if let Ok(RpcResponse::Success(ref _a)) = response {
+            // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
+            // so if the server returns Ok(RpcResponse::Error) we retry with the others
+            match &response {
+                Ok(RpcResponse::Success(_)) => {
+                    debug!(endpoint = %url, "RPC request successful");
                     return response;
+                }
+                Ok(RpcResponse::Error(err)) => {
+                    debug!(endpoint = %url, error = ?err.error, "RPC server returned an error");
+                }
+                Err(error) => {
+                    warn!(endpoint = %url, %error, "Could not request RPC server");
                 }
             }
         }
+
         response
     }
 
+    /// Send a request to **all** RPC URLs.
+    ///
+    /// Return the first successful response, or the last error if all fail.
     async fn send_request_to_all(
         &self,
         request: RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::FailedAllRPC("No RPC endpoints".to_string()));
+        let mut response = Err(EthClientError::FailedAllRPC);
 
         for url in self.urls.iter() {
             let maybe_response = self.send_request_to_url(url, &request).await;
 
-            if response.is_ok() {
-                continue;
-            }
-
-            response = match &maybe_response {
-                Ok(RpcResponse::Success(_)) => maybe_response,
-                Ok(RpcResponse::Error(err)) => {
-                    Err(EthClientError::FailedAllRPC(err.error.message.clone()))
+            match &maybe_response {
+                Ok(RpcResponse::Success(_)) => {
+                    debug!(endpoint = %url, "RPC request successful");
                 }
-                Err(_) => maybe_response,
+                Ok(RpcResponse::Error(err)) => {
+                    debug!(endpoint = %url, error = ?err.error, "RPC server returned an error");
+                }
+                Err(error) => {
+                    warn!(endpoint = %url, %error, "Could not request RPC server");
+                }
             };
+
+            response = response.or(maybe_response);
         }
 
         response
     }
 
+    /// Send a request to a specific URL.
     async fn send_request_to_url(
         &self,
         rpc_url: &Url,
         request: &RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
+        let id = uuid::Uuid::new_v4();
+        trace!(endpoint = %rpc_url, ?request, %id, "Sending RPC request");
+
         self.client
             .post(rpc_url.as_str())
             .header("content-type", "application/json")
@@ -181,9 +200,12 @@ impl EthClient {
                 EthClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))
             })?)
             .send()
-            .await?
+            .await
+            .inspect(|_| trace!(endpoint = %rpc_url, %id, "Request finished successfully"))?
             .json::<RpcResponse>()
             .await
+            .inspect(|body| trace!(endpoint = %rpc_url, %id, ?body, "Response deserialized successfully"))
+            .inspect_err(|err| trace!(endpoint = %rpc_url, %id, %err, "Failed to deserialize response"))
             .map_err(EthClientError::from)
     }
 
@@ -424,8 +446,9 @@ impl EthClient {
     pub async fn get_block_by_number(
         &self,
         block: BlockIdentifier,
+        hydrated: bool,
     ) -> Result<RpcBlock, EthClientError> {
-        let params = Some(vec![block.into(), json!(false)]); // With false it just returns the hash of the transactions.
+        let params = Some(vec![block.into(), json!(hydrated)]);
         let request = RpcRequest::new("eth_getBlockByNumber", params);
 
         match self.send_request(request).await? {

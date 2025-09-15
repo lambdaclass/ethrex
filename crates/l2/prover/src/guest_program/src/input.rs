@@ -1,7 +1,7 @@
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use ethrex_common::types::{Block, block_execution_witness::ExecutionWitness};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
-use serde_with::{DeserializeAs, SerializeAs, serde_as};
+use serde_with::serde_as;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::blobs_bundle;
@@ -13,7 +13,7 @@ pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,
     /// database containing all the data necessary to execute
-    pub db: ExecutionWitnessResult,
+    pub db: ExecutionWitness,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
@@ -26,13 +26,6 @@ pub struct ProgramInput {
     pub blob_proof: blobs_bundle::Proof,
 }
 
-/// JSON serializable program input. This struct is forced to serialize into JSON format.
-///
-// This is necessary because SP1 uses bincode for serialization into zkVM, which does not play well with
-// serde attributes like #[serde(skip)], failing to deserialize with an unrelated error message (this is an old bug).
-// As a patch we force serialization into JSON first (which is a format that works well with these attributes).
-pub struct JSONProgramInput(pub ProgramInput);
-
 impl Default for ProgramInput {
     fn default() -> Self {
         Self {
@@ -44,27 +37,5 @@ impl Default for ProgramInput {
             #[cfg(feature = "l2")]
             blob_proof: [0; 48],
         }
-    }
-}
-
-impl Serialize for JSONProgramInput {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut encoded = Vec::new();
-        serde_json::to_writer(&mut encoded, &self.0).map_err(serde::ser::Error::custom)?;
-        serde_with::Bytes::serialize_as(&encoded, serializer)
-    }
-}
-impl<'de> Deserialize<'de> for JSONProgramInput {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let encoded: Vec<u8> = serde_with::Bytes::deserialize_as(deserializer)?;
-        let decoded: ProgramInput =
-            serde_json::from_reader(&encoded[..]).map_err(serde::de::Error::custom)?;
-        Ok(JSONProgramInput(decoded))
     }
 }

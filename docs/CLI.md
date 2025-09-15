@@ -52,12 +52,6 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
@@ -90,7 +84,7 @@ RPC options:
           Listening address for the http rpc server.
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: localhost]
+          [default: 0.0.0.0]
 
       --http.port <PORT>
           Listening port for the http rpc server.
@@ -101,7 +95,7 @@ RPC options:
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
 
-          [default: localhost]
+          [default: 127.0.0.1]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
@@ -170,12 +164,6 @@ Node options:
 
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
-
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
