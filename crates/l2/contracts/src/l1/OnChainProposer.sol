@@ -323,7 +323,7 @@ contract OnChainProposer is
                 );
             }
             try
-                ISP1Verifier(SP1_VERIFICATION_KEY).verifyProof(
+                ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
                     SP1_VERIFICATION_KEY,
                     sp1PublicValues,
                     sp1ProofBytes

@@ -313,7 +313,7 @@ contract OnChainProposer is
                 );
             }
             try
-                IRiscZeroVerifier(R0VERIFIER).verify(
+                IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                     risc0BlockProof,
                     RISC0_VERIFICATION_KEY,
                     sha256(risc0Journal)
@@ -340,7 +340,7 @@ contract OnChainProposer is
                 );
             }
             try
-                ISP1Verifier(SP1VERIFIER).verifyProof(
+                ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
                     SP1_VERIFICATION_KEY,
                     sp1PublicValues,
                     sp1ProofBytes
@@ -367,7 +367,7 @@ contract OnChainProposer is
                 );
             }
             try
-                ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature)
+                ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(tdxPublicValues, tdxSignature)
             {} catch {
                 revert(
                     "OnChainProposer: Invalid TDX proof failed proof verification"
