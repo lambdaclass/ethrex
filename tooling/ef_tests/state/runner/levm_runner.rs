@@ -371,7 +371,10 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
             ) | (
                 TransactionExpectedException::TxMaxGasLimitExceeded,
-                VMError::TxValidation(TxValidationError::TxMaxGasLimitExceeded)
+                VMError::TxValidation(TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: _,
+                    tx_gas_limit: _
+                })
             ) | (
                 TransactionExpectedException::Other,
                 VMError::TxValidation(_) //TODO: Decide whether to support more specific errors, I think this is enough.

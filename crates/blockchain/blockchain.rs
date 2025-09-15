@@ -764,7 +764,10 @@ impl Blockchain {
         }
 
         if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > OSAKA_MAX_GAS_LIMIT {
-            return Err(MempoolError::TxMaxGasLimitExceededError);
+            return Err(MempoolError::TxMaxGasLimitExceededError(
+                tx.hash(),
+                tx.gas_limit(),
+            ));
         }
 
         // Check gas limit is less than header's gas limit
@@ -1087,9 +1090,11 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
     for transaction in block.body.transactions.iter() {
         if transaction.gas_limit() > OSAKA_MAX_GAS_LIMIT {
-            return Err(ChainError::InvalidTransaction(
-                "Transaction gas max limit exceeded for Osaka".to_string(),
-            ));
+            return Err(ChainError::InvalidTransaction(format!(
+                "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
+                transaction.hash(),
+                transaction.gas_limit()
+            )));
         }
     }
     Ok(())

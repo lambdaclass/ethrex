@@ -88,7 +88,7 @@ where
                 }
                 "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM" => {
                     BlockChainExpectedException::TxtException(
-                        "Transaction gas max limit exceeded for Osaka".to_string(),
+                        "Transaction gas limit exceeds maximum.".to_string(),
                     )
                 }
                 "BlockException.RLP_STRUCTURES_ENCODING" => {

@@ -34,7 +34,10 @@ impl Hook for DefaultHook {
             validate_min_gas_limit(vm)?;
             if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > OSAKA_MAX_GAS_LIMIT {
                 return Err(VMError::TxValidation(
-                    TxValidationError::TxMaxGasLimitExceeded,
+                    TxValidationError::TxMaxGasLimitExceeded {
+                        tx_hash: vm.tx.hash(),
+                        tx_gas_limit: vm.tx.gas_limit(),
+                    },
                 ));
             }
         }
