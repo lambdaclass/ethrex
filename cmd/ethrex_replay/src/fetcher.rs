@@ -166,7 +166,7 @@ async fn fetch_rangedata_from_client(
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness = eth_client
+    let witness_rpc = eth_client
         .get_witness(from_identifier, Some(to_identifier))
         .await
         .wrap_err("Failed to get execution witness for range")?;
@@ -186,7 +186,7 @@ async fn fetch_rangedata_from_client(
         eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
     })?;
 
-    let cache = Cache::new(blocks, witness, Some(network));
+    let cache = Cache::new(blocks, witness_rpc, Some(network));
 
     Ok(cache)
 }
