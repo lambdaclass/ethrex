@@ -93,6 +93,7 @@ pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
         })
 }
 
+/// Sort and deduplicate bytecode hashes and encode them to a vector
 pub fn prepare_bytecode_buffer_for_dump(
     buffer: Vec<H256>,
     file_index: u64,
