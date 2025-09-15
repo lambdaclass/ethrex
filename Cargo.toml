@@ -77,7 +77,7 @@ tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
 async-trait = "0.1.88"
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
 serde = { version = "<1.0.220", features = ["derive"] }
-# serde >=1.0.22 contains a breaking change for alloy-consensus
+# serde >=1.0.220 contains a breaking change for alloy-consensus
 # https://github.com/alloy-rs/alloy/issues/2876
 serde_with = "3.11.0"
 serde_json = "1.0.117"
