@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757966177186,
+  "lastUpdate": 1757970093341,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14305,6 +14305,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166849041329,
             "range": "± 595443025",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "fa328e240666b96d82119a4e83d8a9427937d9e1",
+          "message": "fix(l1): use `try_lock` instead of `lock` in state healing (#4488)\n\n**Motivation**\n\nThis is most likely the source of a deadlock we've been seeing during\nstate healing. Regardless, it's what we should be doing anyways (and\nwhat's currently done during storage healing). All this locking should\ngo away once we've properly migrated this part of the codebase to use\n`spawned`\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-15T20:06:49Z",
+          "tree_id": "1bf7d9f65ff0bb5bd7aee369e08b64d06bfc0239",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fa328e240666b96d82119a4e83d8a9427937d9e1"
+        },
+        "date": 1757970072180,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166969544110,
+            "range": "± 309540058",
             "unit": "ns/iter"
           }
         ]
