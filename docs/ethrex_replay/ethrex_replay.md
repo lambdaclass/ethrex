@@ -41,7 +41,8 @@ Currently ethrex replay only works against ethrex nodes with the `debug_executio
 
 ```sh
 curl -L https://risczero.com/install | bash
-rzup install cargo-risczero 2.3.1
+rzup install cargo-risczero 3.0.3
+rzup install risc0-groth16
 rzup install rust
 ```
 

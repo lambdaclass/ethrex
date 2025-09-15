@@ -6,7 +6,7 @@ use std::{
 };
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -786,7 +786,17 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
+                let is_l2_mode = state.l2_state.is_supported();
                 for tx in &txs.transactions {
+                    // Reject blob transactions in L2 mode
+                    if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
+                        log_peer_debug(
+                            &state.node,
+                            "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                        );
+                        continue;
+                    }
+
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
                         log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
@@ -876,7 +886,9 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                         state.requested_pooled_txs.remove(&msg.id);
                     }
                 }
-                msg.handle(&state.node, &state.blockchain).await?;
+                let is_l2_mode = state.l2_state.is_supported();
+                msg.handle(&state.node, &state.blockchain, is_l2_mode)
+                    .await?;
             }
         }
         Message::GetStorageRanges(req) => {

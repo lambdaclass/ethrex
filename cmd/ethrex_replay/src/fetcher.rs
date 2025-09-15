@@ -62,10 +62,15 @@ pub async fn get_blockdata(
 
     let block_retrieval_start_time = SystemTime::now();
 
-    // TODO: we could change this to use eth_getBlockByNumber to not use any debug endpoint
-    let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(requested_block_number))
-        .await?;
+    let rpc_block = eth_client
+        .get_block_by_number(BlockIdentifier::Number(requested_block_number), true)
+        .await
+        .wrap_err("Failed to retrieve requested block")?;
+
+    let block = rpc_block
+        .try_into()
+        .map_err(|e| eyre::eyre!("{}", e))
+        .wrap_err("Failed to convert from rpc block to block")?;
 
     let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
         panic!("SystemTime::elapsed failed: {e}");
@@ -80,7 +85,10 @@ pub async fn get_blockdata(
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness = match eth_client.get_witness(block_number.clone(), None).await {
+    let witness = match eth_client
+        .get_witness(BlockIdentifier::Number(requested_block_number), None)
+        .await
+    {
         Ok(witness) => {
             execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
                 .expect("Failed to convert witness")
