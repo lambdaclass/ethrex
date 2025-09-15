@@ -52,17 +52,16 @@ impl Cache {
             l2_fields: None,
         }
     }
-}
-
-pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
-    let file = BufReader::new(File::open(file_name)?);
-    Ok(serde_json::from_reader(file)?)
-}
-
-pub fn write_cache(cache: &Cache, file_name: &str) -> eyre::Result<()> {
-    if cache.blocks.is_empty() {
-        return Err(eyre::Error::msg("cache can't be empty"));
+    pub fn load_cache(file_name: &str) -> eyre::Result<Self> {
+        let file = BufReader::new(File::open(file_name)?);
+        Ok(serde_json::from_reader(file)?)
     }
-    let file = BufWriter::new(File::create(file_name)?);
-    Ok(serde_json::to_writer_pretty(file, cache)?)
+
+    pub fn write_cache(&self, file_name: &str) -> eyre::Result<()> {
+        if self.blocks.is_empty() {
+            return Err(eyre::Error::msg("cache can't be empty"));
+        }
+        let file = BufWriter::new(File::create(file_name)?);
+        Ok(serde_json::to_writer_pretty(file, self)?)
+    }
 }
