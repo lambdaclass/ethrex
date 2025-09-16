@@ -43,6 +43,7 @@ jobs:
             l1
             l2
             levm
+            replay
 
           # Configure that a scope must always be provided.
           requireScope: true

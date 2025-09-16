@@ -1,6 +1,6 @@
 // Storage API for L2
 
-use std::{fmt::Debug, ops::Range};
+use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
@@ -59,6 +59,8 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<(), RollupStoreError>;
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError>;
+
+    async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError>;
 
     async fn get_verify_tx_by_batch(
         &self,
@@ -145,11 +147,4 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<(), RollupStoreError>;
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
-
-    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError>;
-
-    async fn update_precommit_privileged(
-        &self,
-        range: Option<Range<u64>>,
-    ) -> Result<(), RollupStoreError>;
 }
