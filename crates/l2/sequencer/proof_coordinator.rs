@@ -41,7 +41,7 @@ use tokio::sync::Mutex;
 #[derive(Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub db: ExecutionWitness,
+    pub execution_witness: ExecutionWitness,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
@@ -494,7 +494,7 @@ impl ProofCoordinator {
         debug!("Created prover input for batch {batch_number}");
 
         Ok(ProverInputData {
-            db: witness,
+            execution_witness: witness,
             blocks,
             elasticity_multiplier: self.elasticity_multiplier,
             #[cfg(feature = "l2")]

@@ -29,8 +29,8 @@ def parse_args():
     parser.add_argument(
         "--branch",
         type=str,
-        default="snap_sync",
-        help="Branch variable (default: snap_sync)",
+        default="main",
+        help="Branch variable (default: main)",
     )
     parser.add_argument(
         "--logs_file",
@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument(
         "--block_wait_time",
         type=int,
-        default=60,
+        default=120,
         help="Time to wait until new block in seconds (default: 60)",
     )
     parser.add_argument(
