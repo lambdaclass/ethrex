@@ -56,7 +56,9 @@ impl Cache {
         }
     }
     pub fn load(file_name: &str) -> eyre::Result<Self> {
-        let file = BufReader::new(File::open(file_name)?);
+        let file = BufReader::new(
+            File::open(file_name).map_err(|e| eyre::Error::msg(format!("{e} ({file_name})")))?,
+        );
         Ok(serde_json::from_reader(file)?)
     }
 
