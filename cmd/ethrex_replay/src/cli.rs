@@ -150,7 +150,7 @@ pub struct BlockOptions {
 
 #[cfg(not(feature = "l2"))]
 #[derive(Parser)]
-#[command(group(ArgGroup::new("blocks").required(true).args(["blocks", "from"])))]
+#[command(group(ArgGroup::new("block_list").required(true).args(["blocks", "from"])))]
 pub struct BlocksOptions {
     #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"])]
     blocks: Vec<u64>,
