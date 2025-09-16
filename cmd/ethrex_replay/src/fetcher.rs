@@ -111,7 +111,7 @@ pub async fn get_blockdata(
         }
         Err(e) => {
             return Err(eyre::eyre!(format!(
-                "Unexpected response from get_witness: {e}"
+                "Unexpected response from debug_executionWitness: {e}"
             )));
         }
     };
