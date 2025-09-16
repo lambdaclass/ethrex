@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758033179726,
+  "lastUpdate": 1758035071061,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -29721,6 +29721,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0016469182628062362,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "41700f501891124a15a9a613f42f0ced34f7ba7f",
+          "message": "feat(l2): aligned mode support for multiprover",
+          "timestamp": "2025-09-16T13:30:55Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/3429/commits/41700f501891124a15a9a613f42f0ced34f7ba7f"
+        },
+        "date": 1758035070357,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004445180398959237,
             "unit": "Mgas/s"
           }
         ]
