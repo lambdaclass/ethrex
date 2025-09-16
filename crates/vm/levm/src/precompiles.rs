@@ -1028,10 +1028,12 @@ pub fn bls12_g1add(
             let x = BLS12381FieldElement::from_bytes_be(x_data).unwrap();
             let y = BLS12381FieldElement::from_bytes_be(y_data).unwrap();
 
-            if BLS12381Curve::defining_equation(&x, &y) == BLS12381FieldElement::zero() {
-                Err(PrecompileError::BLS12381G1PointNotInCurve)
-            } else {
+            if (x == BLS12381FieldElement::zero() && y == BLS12381FieldElement::zero())
+                || BLS12381Curve::defining_equation(&x, &y) == BLS12381FieldElement::zero()
+            {
                 Ok((x, y))
+            } else {
+                Err(PrecompileError::BLS12381G1PointNotInCurve)
             }
         }
 
