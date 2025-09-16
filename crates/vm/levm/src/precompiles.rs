@@ -5,7 +5,7 @@ use bls12_381::{
     Fp, Fp2, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
@@ -63,6 +63,7 @@ use crate::{
         G2_MUL_COST, POINT_EVALUATION_COST,
     },
 };
+use lambdaworks_math::elliptic_curve::short_weierstrass::traits::Compress;
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1007,22 +1008,56 @@ pub fn bls12_g1add(
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    let first_g1_point = parse_g1_point(&calldata[0..128], true)?;
-    let second_g1_point = parse_g1_point(&calldata[128..256], true)?;
+    #[expect(clippy::arithmetic_side_effects, clippy::unwrap_used)]
+    {
+        use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
+            BLS12381Curve, BLS12381FieldElement,
+        };
 
-    let result_of_addition = first_g1_point.add(&second_g1_point);
+        assert_eq!(calldata[0..16], [0; 16]);
+        assert_eq!(calldata[64..80], [0; 16]);
+        assert_eq!(calldata[128..144], [0; 16]);
+        assert_eq!(calldata[192..208], [0; 16]);
+        let p0 = BLS12381Curve::create_point_from_affine(
+            BLS12381FieldElement::from_bytes_be(&calldata[16..64]).unwrap(),
+            BLS12381FieldElement::from_bytes_be(&calldata[80..128]).unwrap(),
+        )
+        .unwrap();
+        let p1 = BLS12381Curve::create_point_from_affine(
+            BLS12381FieldElement::from_bytes_be(&calldata[144..192]).unwrap(),
+            BLS12381FieldElement::from_bytes_be(&calldata[208..256]).unwrap(),
+        )
+        .unwrap();
 
-    if result_of_addition.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
+        let p2 = {
+            let y10 = p1.y() - p0.y();
+            let x10 = p1.x() - p0.x();
+            let l = y10 / x10;
+
+            let x = l.square() - p0.x() - p1.x();
+            let y = l * (p0.x() - &x) - p0.y();
+
+            BLS12381Curve::create_point_from_affine(x, y).unwrap()
+        };
+
+        let mut buffer = BytesMut::with_capacity(128);
+        buffer.put_u128(0);
+        buffer.put_u64(p2.x().value().limbs[5]);
+        buffer.put_u64(p2.x().value().limbs[4]);
+        buffer.put_u64(p2.x().value().limbs[3]);
+        buffer.put_u64(p2.x().value().limbs[2]);
+        buffer.put_u64(p2.x().value().limbs[1]);
+        buffer.put_u64(p2.x().value().limbs[0]);
+        buffer.put_u128(0);
+        buffer.put_u64(p2.y().value().limbs[5]);
+        buffer.put_u64(p2.y().value().limbs[4]);
+        buffer.put_u64(p2.y().value().limbs[3]);
+        buffer.put_u64(p2.y().value().limbs[2]);
+        buffer.put_u64(p2.y().value().limbs[1]);
+        buffer.put_u64(p2.y().value().limbs[0]);
+
+        Ok(buffer.freeze())
     }
-
-    let result_bytes = G1Affine::from(result_of_addition).to_uncompressed();
-
-    let mut padded_result = Vec::with_capacity(128);
-    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
-
-    Ok(Bytes::from(padded_result))
 }
 
 /// Signature verification in the “secp256r1” elliptic curve
