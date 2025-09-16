@@ -9,7 +9,6 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountInfo, Block, TxKind},
 };
-// use ethrex_l2::utils::prover::db::get_potential_child_nodes;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::DatabaseError;
