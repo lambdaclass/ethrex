@@ -205,7 +205,7 @@ impl EthrexReplayCommand {
             Self::Block(block_opts) => replay_block(block_opts).await?,
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions {
-                mut blocks,
+                blocks,
                 from,
                 to,
                 opts,
@@ -214,18 +214,7 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                if let (Some(start), Some(end)) = (from, to) {
-                    if start >= end {
-                        return Err(eyre::Error::msg(
-                            "starting point can't be greater than ending point",
-                        ));
-                    }
-                    for block in start..=end {
-                        blocks.push(block);
-                    }
-                } else {
-                    blocks.sort();
-                }
+                let blocks = resolve_blocks(blocks, from, to)?;
 
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!(
@@ -258,23 +247,12 @@ impl EthrexReplayCommand {
             }
             #[cfg(not(feature = "l2"))]
             Self::Cache(CacheSubcommand::Blocks(BlocksOptions {
-                mut blocks,
+                blocks,
                 from,
                 to,
                 opts,
             })) => {
-                if let (Some(start), Some(end)) = (from, to) {
-                    if start >= end {
-                        return Err(eyre::Error::msg(
-                            "starting point can't be greater than ending point",
-                        ));
-                    }
-                    for block in start..=end {
-                        blocks.push(block);
-                    }
-                } else {
-                    blocks.sort();
-                }
+                let blocks = resolve_blocks(blocks, from, to)?;
 
                 let (eth_client, network) = setup(&opts, false).await?;
 
@@ -575,6 +553,27 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
         Some(n) => BlockIdentifier::Number(n),
         None => BlockIdentifier::Tag(BlockTag::Latest),
     })
+}
+
+fn resolve_blocks(
+    mut blocks: Vec<u64>,
+    from: Option<u64>,
+    to: Option<u64>,
+) -> eyre::Result<Vec<u64>> {
+    if let (Some(start), Some(end)) = (from, to) {
+        if start >= end {
+            return Err(eyre::Error::msg(
+                "starting point can't be greater than ending point",
+            ));
+        }
+        for block in start..=end {
+            blocks.push(block);
+        }
+    } else {
+        blocks.sort();
+    }
+
+    Ok(blocks)
 }
 
 fn print_transition(update: AccountUpdate) {
