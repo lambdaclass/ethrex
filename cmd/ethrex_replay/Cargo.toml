@@ -22,6 +22,9 @@ ethrex-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
+ethrex-p2p.workspace = true
+ethrex-trie.workspace = true
+ethrex-rlp.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-storage-rollup = { workspace = true, optional = true }
@@ -43,8 +46,14 @@ eyre.workspace = true
 tokio = { workspace = true, features = ["full"] }
 clap.workspace = true
 charming = { version = "0.4.0", features = ["ssr"] }
+lazy_static.workspace = true
+bytes.workspace = true
+again = "0.1.2"
+futures-util = "0.3.31"
+tokio-utils = "0.1.2"
 futures.workspace = true
 rkyv.workspace = true
+sha3.workspace = true
 
 jemallocator = { version = "0.5.4", optional = true }
 
