@@ -1,28 +1,28 @@
 use crate::peer_handler::DumpError;
 use crate::sync::SyncError;
-use crate::utils::{dump_to_file, get_bytecode_hashes_snapshot_file};
+use crate::utils::{dump_to_file, get_code_hashes_snapshot_file};
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 
-/// Size of the buffer to store bytecode hashes before flushing to a file
-const BYTECODE_WRITE_BUFFER_SIZE: usize = 100_000;
+/// Size of the buffer to store code hashes before flushing to a file
+const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 
-/// Manages bytecode hash collection and async file writing
-pub struct BytecodeCollector {
-    // Buffer to store bytecode hashes
+/// Manages code hash collection and async file writing
+pub struct CodeHashCollector {
+    // Buffer to store code hashes
     buffer: Vec<H256>,
-    // Directory to store bytecode hashes
+    // Directory to store code hashes
     snapshots_dir: String,
-    // Index of the current bytecode hash file
+    // Index of the current code hash file
     file_index: u64,
-    // Sender to send bytecode hash dump results
+    // Sender to send code hash dump results
     sender: tokio::sync::mpsc::Sender<Result<(), DumpError>>,
-    // Receiver to receive bytecode hash dump results
+    // Receiver to receive code hash dump results
     receiver: tokio::sync::mpsc::Receiver<Result<(), DumpError>>,
 }
 
-impl BytecodeCollector {
-    /// Creates a new bytecode collector
+impl CodeHashCollector {
+    /// Creates a new code collector
     pub fn new(initial_index: u64, snapshots_dir: String) -> Self {
         let (sender, receiver) = tokio::sync::mpsc::channel(100);
         Self {
@@ -34,19 +34,19 @@ impl BytecodeCollector {
         }
     }
 
-    /// Adds a bytecode hash to the buffer
+    /// Adds a code hash to the buffer
     pub fn add(&mut self, hash: H256) {
         self.buffer.push(hash);
     }
 
-    /// Extends the buffer with a list of bytecode hashes
+    /// Extends the buffer with a list of code hashes
     pub fn extend(&mut self, hashes: impl IntoIterator<Item = H256>) {
         self.buffer.extend(hashes);
     }
 
-    /// Flushes the buffer to a file if the buffer is larger than [`BYTECODE_WRITE_BUFFER_SIZE`]
+    /// Flushes the buffer to a file if the buffer is larger than [`CODE_HASH_WRITE_BUFFER_SIZE`]
     pub async fn flush_if_needed(&mut self) -> Result<(), SyncError> {
-        if self.buffer.len() >= BYTECODE_WRITE_BUFFER_SIZE {
+        if self.buffer.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
             let buffer = std::mem::take(&mut self.buffer);
             let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
                 buffer,
@@ -80,7 +80,7 @@ impl BytecodeCollector {
         Ok(())
     }
 
-    /// Finishes the bytecode collector and returns the final index of the bytecode hash file
+    /// Finishes the code collector and returns the final index of file
     pub async fn finish(mut self) -> Result<u64, SyncError> {
         // Final flush if needed
         if !self.buffer.is_empty() {
@@ -117,7 +117,7 @@ impl BytecodeCollector {
     }
 }
 
-/// Sort and deduplicate bytecode hashes and encode them to a vector
+/// Sort and deduplicate code hashes and encode them to a vector
 fn prepare_bytecode_buffer_for_dump(
     buffer: Vec<H256>,
     file_index: u64,
@@ -127,6 +127,6 @@ fn prepare_bytecode_buffer_for_dump(
     sorted_buffer.sort();
     sorted_buffer.dedup();
     let encoded = sorted_buffer.encode_to_vec();
-    let filename = get_bytecode_hashes_snapshot_file(dir, file_index);
+    let filename = get_code_hashes_snapshot_file(dir, file_index);
     (encoded, filename)
 }

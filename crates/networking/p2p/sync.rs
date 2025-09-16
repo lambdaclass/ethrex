@@ -4,7 +4,7 @@ mod storage_healing;
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
-use crate::sync::bytecode_collector::BytecodeCollector;
+use crate::sync::bytecode_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
@@ -844,7 +844,7 @@ impl Syncer {
             .map_err(|_| SyncError::BytecodeHashesSnapshotsDirNotFound)?;
 
         let mut bytecode_collector =
-            BytecodeCollector::new(0, bytecode_hashes_snapshots_dir.clone());
+            CodeHashCollector::new(0, bytecode_hashes_snapshots_dir.clone());
         let mut bytecode_index_file = 0_u64;
 
         let mut storage_accounts = AccountStorageRoots::default();

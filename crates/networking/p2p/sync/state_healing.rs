@@ -25,7 +25,7 @@ use crate::{
     metrics::METRICS,
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
-    sync::{AccountStorageRoots, bytecode_collector::BytecodeCollector},
+    sync::{AccountStorageRoots, bytecode_collector::CodeHashCollector},
     utils::{current_unix_time, get_bytecode_hashes_snapshots_dir},
 };
 
@@ -63,7 +63,7 @@ pub async fn heal_state_trie_wrap(
     // Setup bytecode collector for healing
     let bytecode_hashes_snapshots_dir = get_bytecode_hashes_snapshots_dir(&datadir.to_string());
     let mut bytecode_collector =
-        BytecodeCollector::new(*bytecode_index_file, bytecode_hashes_snapshots_dir);
+        CodeHashCollector::new(*bytecode_index_file, bytecode_hashes_snapshots_dir);
 
     while !healing_done {
         healing_done = heal_state_trie(
@@ -102,7 +102,7 @@ async fn heal_state_trie(
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
-    bytecode_collector: &mut BytecodeCollector,
+    bytecode_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {

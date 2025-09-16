@@ -77,7 +77,7 @@ pub fn get_bytecode_hashes_snapshots_dir(datadir: &String) -> String {
     format!("{datadir}/bytecode_hashes_snapshots")
 }
 
-pub fn get_bytecode_hashes_snapshot_file(directory: String, chunk_index: u64) -> String {
+pub fn get_code_hashes_snapshot_file(directory: String, chunk_index: u64) -> String {
     format!("{directory}/bytecode_hashes_chunk.rlp.{chunk_index}")
 }
 
