@@ -28,7 +28,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, instrument};
 
 use crate::{
     kademlia::{Kademlia, PeerChannels},
@@ -745,6 +745,8 @@ where
     stream.next().await
 }
 
+// NOTE: skip state to avoid printing the signing key to logs
+#[instrument(level = "trace", skip(state), fields(node = ?state.node, capabilities = ?state.capabilities))]
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
     let peer_supports_l2 = state.l2_state.connection_state().is_ok();

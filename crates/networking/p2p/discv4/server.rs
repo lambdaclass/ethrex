@@ -20,7 +20,7 @@ use spawned_concurrency::{
 use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::udp::UdpFramed;
 
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, instrument, trace};
 
 use crate::{
     discv4::{
@@ -133,6 +133,7 @@ impl DiscoveryServer {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn handle_message(
         &mut self,
         Discv4Message {
@@ -559,6 +560,7 @@ impl GenServer for DiscoveryServer {
         Ok(Success(self))
     }
 
+    #[instrument(skip(self, handle))]
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
