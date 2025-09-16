@@ -1018,9 +1018,11 @@ async fn test_deposit(
     let deposit_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, l1_client, 5).await?;
 
+    let gas_used = deposit_tx_receipt.tx_info.gas_used;
+
     assert!(
         deposit_tx_receipt.receipt.status,
-        "Deposit transaction failed"
+        "Deposit transaction failed. Gas used: {gas_used}",
     );
 
     let depositor_l1_balance_after_deposit = l1_client
