@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758046735840,
+  "lastUpdate": 1758047991587,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14725,6 +14725,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170207658745,
             "range": "± 604607477",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bf5c671fa26e772e392abdac1143ff403cffa0d3",
+          "message": "test(l2): run integration tests concurrently (#4445)\n\n> [!CAUTION]\n> Merge after #4394 \n\n**Motivation**\n\nRunning our integration tests sequentially takes a lot of time and\nlimits us in adding more tests since we don’t want to add more wait time\nto the CI.\n\n**Description**\n\n- Runs integration tests concurrently.\n- Improves test logs and descriptions.\n- Tests that check the fee vault balance variations now return the\nexpected balance change, and we verify the fee vault balance only once\nat the end.\n- Tests that check the bridge balance are run separately.\n- Updates the privileged spammer to send 3000 privileged transactions\ninstead of 600.\n- Reduces the commit time to 30 seconds in the CI jobs.\n\nAs a result, the \"Run tests\" step now takes ~4 minutes instead of ~9,\neven while spamming more privileged transactions than before.\n\n\nCloses #3864\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-09-16T17:44:37Z",
+          "tree_id": "72eec794b5ddbd82df39e89d647ec09f6d0397cc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bf5c671fa26e772e392abdac1143ff403cffa0d3"
+        },
+        "date": 1758047970776,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168936511164,
+            "range": "± 321978153",
             "unit": "ns/iter"
           }
         ]
