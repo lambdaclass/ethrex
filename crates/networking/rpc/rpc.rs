@@ -49,6 +49,7 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -66,6 +67,7 @@ use std::{
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
+use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -83,6 +85,8 @@ pub struct RpcApiContext {
     pub peer_handler: PeerHandler,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
+    pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    pub gas_ceil: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +129,8 @@ pub async fn start_api(
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -142,6 +148,8 @@ pub async fn start_api(
             client_version,
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
+        log_filter_handler,
+        gas_ceil: gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -386,6 +394,7 @@ pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Res
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         "admin_peers" => admin::peers(&context).await,
+        "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -473,7 +482,8 @@ mod tests {
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
-            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
+            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",

@@ -15,6 +15,11 @@ use crate::{
     types::{Node, NodeRecord},
 };
 
+const MAX_SCORE: i64 = 50;
+const MIN_SCORE: i64 = -50;
+/// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
+const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
+
 #[derive(Debug, Clone)]
 pub struct Contact {
     pub node: Node,
@@ -30,6 +35,8 @@ pub struct Contact {
     pub disposable: bool,
     // Set to true after we send a successful ENRResponse to it.
     pub knows_us: bool,
+    // This is a known-bad peer (on another network, no matching capabilities, etc)
+    pub unwanted: bool,
 }
 
 impl Contact {
@@ -56,6 +63,7 @@ impl From<Node> for Contact {
             n_find_node_sent: 0,
             disposable: false,
             knows_us: true,
+            unwanted: false,
         }
     }
 }
@@ -70,6 +78,11 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
     pub channels: Option<PeerChannels>,
+    /// This tracks if a peer is being used by a task
+    /// So we can't use it yet
+    in_use: bool,
+    /// This tracks the score of a peer
+    score: i64,
 }
 
 impl PeerData {
@@ -85,6 +98,8 @@ impl PeerData {
             supported_capabilities: capabilities,
             is_connection_inbound: false,
             channels: Some(channels),
+            in_use: false,
+            score: Default::default(),
         }
     }
 }
@@ -159,10 +174,131 @@ impl Kademlia {
             .collect()
     }
 
+    pub async fn get_peer_channels_with_capabilities(
+        &self,
+        _capabilities: &[Capability],
+    ) -> Vec<(H256, PeerChannels, Vec<Capability>)> {
+        self.peers
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(peer_id, peer_data)| {
+                peer_data.channels.clone().map(|peer_channels| {
+                    (
+                        *peer_id,
+                        peer_channels,
+                        peer_data.supported_capabilities.clone(),
+                    )
+                })
+            })
+            .collect()
+    }
+
     pub async fn get_peer_channel(&self, peer_id: H256) -> Option<PeerChannels> {
         let peers = self.peers.lock().await;
         let peer_data = peers.get(&peer_id)?;
         peer_data.channels.clone()
+    }
+
+    //// Score management functions ////
+
+    pub async fn get_score(&self, peer_id: &H256) -> i64 {
+        self.get_score_opt(peer_id).await.unwrap_or(0)
+    }
+
+    async fn get_score_opt(&self, peer_id: &H256) -> Option<i64> {
+        self.peers
+            .lock()
+            .await
+            .get(peer_id)
+            .map(|peer_data| peer_data.score)
+    }
+
+    pub async fn record_success(&self, peer_id: H256) {
+        self.peers
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|peer_data| peer_data.score = (peer_data.score + 1).min(MAX_SCORE));
+    }
+
+    pub async fn record_failure(&self, peer_id: H256) {
+        self.peers
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
+    }
+
+    pub async fn record_critical_failure(&self, peer_id: H256) {
+        self.peers
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
+    }
+
+    pub async fn mark_in_use(&self, peer_id: H256) {
+        self.peers
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|peer_data| peer_data.in_use = true);
+    }
+
+    pub async fn free_peer(&self, peer_id: H256) {
+        self.peers
+            .lock()
+            .await
+            .entry(peer_id)
+            .and_modify(|peer_data| peer_data.in_use = false);
+    }
+
+    /// Returns the peer with the highest score and its peer channel.
+    pub async fn get_peer_channel_with_highest_score(
+        &self,
+        capabilities: &[Capability],
+    ) -> Option<(H256, PeerChannels)> {
+        let peer_table = self.peers.lock().await;
+        peer_table
+            .iter()
+            // We filter only to those peers which are useful to us
+            .filter_map(|(id, peer_data)| {
+                // If the peer is already in use right now, we skip it
+                if peer_data.in_use {
+                    return None;
+                }
+
+                // if the peer doesn't have all the capabilities we need, we skip it
+                if !capabilities
+                    .iter()
+                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    return None;
+                }
+
+                // if the peer doesn't have the channel open, we skip it.
+                let peer_channel = peer_data.channels.clone()?;
+
+                // We return the id, the score and the channel to connect with.
+                Some((*id, peer_data.score, peer_channel))
+            })
+            .max_by_key(|(_, score, _)| *score)
+            .map(|(k, _, v)| (k, v))
+    }
+
+    /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
+    pub async fn get_peer_channel_with_highest_score_and_mark_as_used(
+        &self,
+        capabilities: &[Capability],
+    ) -> Option<(H256, PeerChannels)> {
+        let (peer_id, peer_channel) = self
+            .get_peer_channel_with_highest_score(capabilities)
+            .await?;
+
+        self.mark_in_use(peer_id).await;
+
+        Some((peer_id, peer_channel))
     }
 }
 

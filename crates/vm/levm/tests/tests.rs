@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
-use ethrex_levm::l2_precompiles::p_256_verify;
+use ethrex_common::types::Fork;
 use ethrex_levm::precompiles::bls12_pairing_check;
 
 #[test]
@@ -16,7 +16,7 @@ fn pairing_infinity() {
     let calldata_bytes = Bytes::from(calldata.clone());
     let mut remaining_gas = 10000000;
 
-    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas);
+    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas, Fork::Cancun);
     assert_eq!(result.unwrap(), zero);
 
     // Now we add a pair were one point is infinity, the result must not change
@@ -31,48 +31,7 @@ fn pairing_infinity() {
 
     let calldata_bytes = Bytes::from(calldata.clone());
 
-    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas);
+    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas, Fork::Cancun);
 
     assert_eq!(result.unwrap(), zero);
-}
-
-use serde::Deserialize;
-
-use std::fs;
-
-#[derive(Debug, Deserialize)]
-struct P256TestCase {
-    input: String,
-    expected: String,
-    gas: u64,
-    name: String,
-}
-
-#[test]
-fn p_256_verify_test() {
-    // Taken from https://github.com/ulerdogan/go-ethereum/tree/ulerdogan-secp256r1.
-
-    let json_data = fs::read_to_string("./tests/p_256_verify.json").unwrap();
-
-    let tests: Vec<P256TestCase> = serde_json::from_str(&json_data).unwrap();
-
-    for test in tests {
-        let calldata = hex::decode(&test.input).unwrap();
-        let calldata = Bytes::from(calldata);
-        let initial_remaining_gas = 10000;
-        let mut remaining_gas = initial_remaining_gas;
-        let result = p_256_verify(&calldata, &mut remaining_gas).unwrap();
-        let expected_result = Bytes::from(hex::decode(&test.expected).unwrap());
-        assert_eq!(
-            result, expected_result,
-            "Result assertion failed on test: {}.",
-            test.name
-        );
-        assert_eq!(
-            initial_remaining_gas - remaining_gas,
-            test.gas,
-            "Gas assertion failed on test: {}.",
-            test.name
-        );
-    }
 }

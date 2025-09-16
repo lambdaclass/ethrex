@@ -8,7 +8,6 @@ use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-    payload::PayloadBundle,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -16,7 +15,7 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -36,8 +35,6 @@ struct StoreInner {
     state_trie_nodes: NodeMap,
     // A storage trie for each hashed account address
     storage_trie_nodes: HashMap<H256, NodeMap>,
-    // Stores local blocks by payload id
-    payloads: HashMap<u64, PayloadBundle>,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores invalid blocks and their latest valid ancestor
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
@@ -97,8 +94,8 @@ impl StoreEngine for Store {
         }
 
         // store code updates
-        for (hashed_address, code) in update_batch.code_updates {
-            store.account_codes.insert(hashed_address, code);
+        for (code_hash, code) in update_batch.code_updates {
+            store.account_codes.insert(code_hash, code);
         }
 
         for (hashed_address, nodes) in update_batch.storage_updates {
@@ -339,19 +336,15 @@ impl StoreEngine for Store {
 
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         let store = self.inner()?;
-        if let Some(hash) = store.canonical_hashes.get(&block_number) {
-            Ok(store
-                .receipts
-                .get(hash)
-                .and_then(|entry| entry.get(&index))
-                .cloned())
-        } else {
-            Ok(None)
-        }
+        Ok(store
+            .receipts
+            .get(&block_hash)
+            .and_then(|entry| entry.get(&index))
+            .cloned())
     }
 
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
@@ -495,17 +488,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.inner()?
-            .payloads
-            .insert(payload_id, PayloadBundle::from_block(block));
-        Ok(())
-    }
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        Ok(self.inner()?.payloads.get(&payload_id).cloned())
-    }
-
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let store = self.inner()?;
         let Some(receipts_for_block) = store.receipts.get(block_hash) else {
@@ -548,15 +530,6 @@ impl StoreEngine for Store {
                 .push((block_number, block_hash, index));
         }
 
-        Ok(())
-    }
-
-    async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
-    ) -> Result<(), StoreError> {
-        self.inner()?.payloads.insert(payload_id, payload);
         Ok(())
     }
 

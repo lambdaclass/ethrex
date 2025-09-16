@@ -13,19 +13,19 @@ use std::{
 };
 
 #[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = Vec<Bytes>)]
-pub struct BytesVecWrapper {
-    #[rkyv(getter = bytes_vec_to_vec)]
-    bytes_vec: Vec<Vec<u8>>,
+#[rkyv(remote = Vec<Vec<u8>>)]
+pub struct VecVecWrapper {
+    #[rkyv(getter = vec_vec_to_vec)]
+    vec_vec: Vec<Vec<u8>>,
 }
 
-fn bytes_vec_to_vec(bytes_vec: &[Bytes]) -> Vec<Vec<u8>> {
-    bytes_vec.iter().map(|b| b.to_vec()).collect()
+fn vec_vec_to_vec(vec_vec: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    vec_vec.iter().map(|b| b.to_vec()).collect()
 }
 
-impl From<BytesVecWrapper> for Vec<Bytes> {
-    fn from(value: BytesVecWrapper) -> Self {
-        value.bytes_vec.into_iter().map(Bytes::from).collect()
+impl From<VecVecWrapper> for Vec<Vec<u8>> {
+    fn from(value: VecVecWrapper) -> Self {
+        value.vec_vec
     }
 }
 
@@ -63,7 +63,9 @@ impl Hash for ArchivedH160Wrapper {
     }
 }
 
-#[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(
+    Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord,
+)]
 #[rkyv(remote = H256)]
 pub struct H256Wrapper([u8; 32]);
 
@@ -76,6 +78,18 @@ impl From<H256Wrapper> for H256 {
 impl PartialEq for ArchivedH256Wrapper {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
+    }
+}
+
+impl PartialOrd for ArchivedH256Wrapper {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ArchivedH256Wrapper {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
     }
 }
 

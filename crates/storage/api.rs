@@ -1,8 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-    Transaction, payload::PayloadBundle,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -129,10 +128,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError>;
 
-    /// Obtain receipt for a canonical block represented by the block number.
+    /// Obtain receipt by block hash and index
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError>;
 
@@ -268,16 +267,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
-    ) -> Result<(), StoreError>;
-
-    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
-
-    async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
     ) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;

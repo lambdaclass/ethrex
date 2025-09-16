@@ -1,16 +1,20 @@
 use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::ChainConfig;
+use ethrex_config::networks::Network;
+use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
-    debug::execution_witness::execution_witness_from_rpc_chain_config,
+    clients::{EthClientError, eth::errors::GetWitnessError},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
-use crate::cache::{Cache, L2Fields, load_cache, write_cache};
-use ethrex_config::networks::Network;
+use crate::{cache::Cache, rpc::db::RpcDB};
+
+#[cfg(feature = "l2")]
+use crate::cache::L2Fields;
 
 pub async fn get_blockdata(
     eth_client: EthClient,
@@ -32,9 +36,11 @@ pub async fn get_blockdata(
 
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{requested_block_number}.bin");
+    let file_name = format!("cache_{network}_{requested_block_number}.json");
 
-    if let Ok(cache) = load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
+    if let Ok(cache) =
+        Cache::load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}"))
+    {
         info!("Getting block {requested_block_number} data from cache");
         return Ok(cache);
     }
@@ -49,18 +55,77 @@ pub async fn get_blockdata(
         ));
     }
 
+    debug!("Getting block data from RPC for block {requested_block_number}");
+
+    let block_retrieval_start_time = SystemTime::now();
+
+    let rpc_block = eth_client
+        .get_block_by_number(BlockIdentifier::Number(requested_block_number), true)
+        .await
+        .wrap_err("Failed to retrieve requested block")?;
+
+    let block = rpc_block
+        .try_into()
+        .map_err(|e| eyre::eyre!("{}", e))
+        .wrap_err("Failed to convert from rpc block to block")?;
+
+    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
+        panic!("SystemTime::elapsed failed: {e}");
+    });
+
+    debug!(
+        "Got block {requested_block_number} in {}",
+        format_duration(block_retrieval_duration)
+    );
+
     debug!("Getting execution witness from RPC for block {requested_block_number}");
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness = match eth_client.get_witness(block_number.clone(), None).await {
-        Ok(witness) => {
-            execution_witness_from_rpc_chain_config(witness, chain_config, requested_block_number)
-                .expect("Failed to convert witness")
+    let witness_rpc = match eth_client
+        .get_witness(BlockIdentifier::Number(requested_block_number), None)
+        .await
+    {
+        Ok(witness) => witness,
+        Err(EthClientError::GetWitnessError(GetWitnessError::RPCError(_))) => {
+            warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
+
+            #[cfg(feature = "l2")]
+            let vm_type = VMType::L2;
+            #[cfg(not(feature = "l2"))]
+            let vm_type = VMType::L1;
+
+            info!(
+                "Caching callers and recipients state for block {}",
+                requested_block_number - 1
+            );
+            let rpc_db = RpcDB::with_cache(
+                eth_client.urls.first().unwrap().as_str(),
+                chain_config,
+                (requested_block_number - 1).try_into()?,
+                &block,
+                vm_type,
+            )
+            .await
+            .wrap_err("failed to create rpc db")?;
+
+            info!(
+                "Pre executing block {}. This may take a while.",
+                requested_block_number - 1
+            );
+            let rpc_db = rpc_db
+                .to_execution_witness(&block)
+                .wrap_err("failed to build execution db")?;
+            info!(
+                "Finished building execution witness for block {}",
+                requested_block_number - 1
+            );
+            rpc_db
         }
         Err(e) => {
-            warn!("{e}");
-            return Err(eyre::eyre!("Unimplemented: Retry with eth_getProofs"));
+            return Err(eyre::eyre!(format!(
+                "Unexpected response from debug_executionWitness: {e}"
+            )));
         }
     };
 
@@ -75,30 +140,13 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    debug!("Getting block data from RPC for block {requested_block_number}");
-
-    let block_retrieval_start_time = SystemTime::now();
-
-    let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(requested_block_number))
-        .await?;
-
-    let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
-    });
-
-    debug!(
-        "Got block {requested_block_number} in {}",
-        format_duration(block_retrieval_duration)
-    );
-
     debug!("Caching block {requested_block_number}");
 
     let block_cache_start_time = SystemTime::now();
 
-    let cache = Cache::new(vec![block], witness);
+    let cache = Cache::new(vec![block], witness_rpc, Some(network));
 
-    write_cache(&cache, &file_name).expect("failed to write cache");
+    cache.write_cache(&file_name)?;
 
     let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
         panic!("SystemTime::elapsed failed: {e}");
@@ -115,8 +163,8 @@ pub async fn get_blockdata(
 async fn fetch_rangedata_from_client(
     eth_client: EthClient,
     chain_config: ChainConfig,
-    from: usize,
-    to: usize,
+    from: u64,
+    to: u64,
 ) -> eyre::Result<Cache> {
     info!("Validating RPC chain ID");
 
@@ -128,7 +176,7 @@ async fn fetch_rangedata_from_client(
         ));
     }
 
-    let mut blocks = Vec::with_capacity(to - from + 1);
+    let mut blocks = Vec::with_capacity((to - from + 1) as usize);
 
     info!(
         "Retrieving execution data for blocks {from} to {to} ({} blocks in total)",
@@ -139,7 +187,7 @@ async fn fetch_rangedata_from_client(
 
     for block_number in from..=to {
         let block = eth_client
-            .get_raw_block(BlockIdentifier::Number(block_number.try_into()?))
+            .get_raw_block(BlockIdentifier::Number(block_number))
             .await
             .wrap_err("failed to fetch block")?;
         blocks.push(block);
@@ -154,21 +202,18 @@ async fn fetch_rangedata_from_client(
         format_duration(block_retrieval_duration)
     );
 
-    let from_identifier = BlockIdentifier::Number(from.try_into()?);
+    let from_identifier = BlockIdentifier::Number(from);
 
-    let to_identifier = BlockIdentifier::Number(to.try_into()?);
+    let to_identifier = BlockIdentifier::Number(to);
 
     info!("Getting execution witness from RPC for blocks {from} to {to}");
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness = eth_client
+    let witness_rpc = eth_client
         .get_witness(from_identifier, Some(to_identifier))
         .await
         .wrap_err("Failed to get execution witness for range")?;
-
-    let witness = execution_witness_from_rpc_chain_config(witness, chain_config, from as u64)
-        .expect("Failed to convert witness");
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
         .elapsed()
@@ -181,7 +226,11 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let cache = Cache::new(blocks, witness);
+    let network = Network::try_from(chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let cache = Cache::new(blocks, witness_rpc, Some(network));
 
     Ok(cache)
 }
@@ -189,14 +238,14 @@ async fn fetch_rangedata_from_client(
 pub async fn get_rangedata(
     eth_client: EthClient,
     network: Network,
-    from: usize,
-    to: usize,
+    from: u64,
+    to: u64,
 ) -> eyre::Result<Cache> {
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{from}-{to}.bin");
+    let file_name = format!("cache_{network}_{from}-{to}.json");
 
-    if let Ok(cache) = load_cache(&file_name) {
+    if let Ok(cache) = Cache::load_cache(&file_name) {
         info!("Getting block range data from cache");
         return Ok(cache);
     }
@@ -205,30 +254,33 @@ pub async fn get_rangedata(
 
     let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to).await?;
 
-    write_cache(&cache, &file_name).expect("failed to write cache");
+    cache.write_cache(&file_name)?;
 
     Ok(cache)
 }
 
+#[cfg(feature = "l2")]
 pub async fn get_batchdata(
     rollup_client: EthClient,
-    chain_config: ChainConfig,
+    network: Network,
     batch_number: u64,
 ) -> eyre::Result<Cache> {
-    let file_name = format!("cache_batch_{batch_number}.bin");
-    if let Ok(cache) = load_cache(&file_name) {
+    use ethrex_l2_rpc::clients::get_batch_by_number;
+
+    let file_name = format!("cache_batch_{batch_number}.json");
+    if let Ok(cache) = Cache::load_cache(&file_name) {
         info!("Getting batch data from cache");
         return Ok(cache);
     }
     info!("Getting batch data from RPC");
 
-    let rpc_batch = rollup_client.get_batch_by_number(batch_number).await?;
+    let rpc_batch = get_batch_by_number(&rollup_client, batch_number).await?;
 
     let mut cache = fetch_rangedata_from_client(
         rollup_client,
-        chain_config,
-        rpc_batch.batch.first_block as usize,
-        rpc_batch.batch.last_block as usize,
+        network.get_genesis()?.config,
+        rpc_batch.batch.first_block,
+        rpc_batch.batch.last_block,
     )
     .await?;
 
@@ -248,7 +300,7 @@ pub async fn get_batchdata(
             .unwrap_or(&[0_u8; 48]),
     });
 
-    write_cache(&cache, &file_name).expect("failed to write cache");
+    cache.write_cache(&file_name)?;
 
     Ok(cache)
 }

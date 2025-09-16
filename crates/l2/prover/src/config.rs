@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use url::Url;
 
-use crate::backends::Backend;
+use crate::backend::Backend;
 
 #[derive(Deserialize, Debug)]
 pub struct ProverConfig {

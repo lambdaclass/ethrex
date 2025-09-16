@@ -232,12 +232,10 @@ async fn handle_forkchoice(
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             match context.storage.get_block_by_hash(head.hash()).await {
                 Ok(Some(block)) => {
-                    for tx in &block.body.transactions {
-                        context
-                            .blockchain
-                            .remove_transaction_from_pool(&tx.hash())
-                            .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                    }
+                    // Remove executed transactions from mempool
+                    context
+                        .blockchain
+                        .remove_block_transactions_from_pool(&block)?;
                 }
                 Ok(None) => {
                     warn!(
@@ -376,6 +374,7 @@ async fn build_payload(
         beacon_root: attributes.parent_beacon_block_root,
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: context.gas_ceil,
     };
     let payload_id = args
         .id()
@@ -387,7 +386,9 @@ async fn build_payload(
         // so the only errors that may be returned are internal storage errors
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    context.storage.add_payload(payload_id, payload).await?;
-
+    context
+        .blockchain
+        .initiate_payload_build(payload, payload_id)
+        .await;
     Ok(payload_id)
 }

@@ -3,17 +3,17 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::Address;
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::{
-        configs::{AlignedConfig, MonitorConfig},
+        configs::{AdminConfig, AlignedConfig, MonitorConfig},
         utils::resolve_aligned_network,
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backends::Backend, config::ProverConfig};
+use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -76,6 +76,8 @@ pub struct SequencerOptions {
     pub aligned_opts: AlignedOptions,
     #[command(flatten)]
     pub monitor_opts: MonitorOptions,
+    #[command(flatten)]
+    pub admin_opts: AdminOptions,
     #[arg(
         long = "validium",
         default_value = "false",
@@ -159,7 +161,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .coinbase_address
                     .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
-                max_gas_limit: opts.block_producer_opts.max_gas_limit,
+                block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -232,6 +234,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 enabled: !opts.no_monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
                 batch_widget_height: opts.monitor_opts.batch_widget_height,
+            },
+            admin_server: AdminConfig {
+                listen_ip: opts.admin_opts.admin_listen_ip,
+                listen_port: opts.admin_opts.admin_listen_port,
             },
         })
     }
@@ -389,13 +395,14 @@ pub struct BlockProducerOptions {
     )]
     pub elasticity_multiplier: u64,
     #[arg(
-        long = "block-producer.max-gas-limit",
+        long = "block-producer.block-gas-limit",
+        default_value = "30000000",
         value_name = "UINT64",
-        env = "ETHREX_BLOCK_PRODUCER_MAX_GAS_LIMIT",
+        env = "ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT",
         help = "Maximum gas limit for the L2 blocks.",
         help_heading = "Block producer options"
     )]
-    pub max_gas_limit: Option<u64>,
+    pub block_gas_limit: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -408,7 +415,7 @@ impl Default for BlockProducerOptions {
                     .unwrap(),
             ),
             elasticity_multiplier: 2,
-            max_gas_limit: None,
+            block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }
@@ -752,6 +759,36 @@ impl Default for MonitorOptions {
         Self {
             tick_rate: 1000,
             batch_widget_height: None,
+        }
+    }
+}
+
+#[derive(Parser, Debug)]
+pub struct AdminOptions {
+    #[arg(
+        long = "admin-server.addr",
+        env = "ETHREX_ADMIN_SERVER_LISTEN_ADDRESS",
+        default_value = "127.0.0.1",
+        value_name = "IP_ADDRESS",
+        help_heading = "Admin server options"
+    )]
+    pub admin_listen_ip: IpAddr,
+
+    #[arg(
+        long = "admin-server.port",
+        env = "ETHREX_ADMIN_SERVER_LISTEN_PORT",
+        default_value_t = 5555,
+        value_name = "UINT16",
+        help_heading = "Admin server options"
+    )]
+    pub admin_listen_port: u16,
+}
+
+impl Default for AdminOptions {
+    fn default() -> Self {
+        Self {
+            admin_listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            admin_listen_port: 5555,
         }
     }
 }

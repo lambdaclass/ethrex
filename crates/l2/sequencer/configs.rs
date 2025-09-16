@@ -15,6 +15,7 @@ pub struct SequencerConfig {
     pub based: BasedConfig,
     pub aligned: AlignedConfig,
     pub monitor: MonitorConfig,
+    pub admin_server: AdminConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -23,7 +24,7 @@ pub struct BlockProducerConfig {
     pub block_time_ms: u64,
     pub coinbase_address: Address,
     pub elasticity_multiplier: u64,
-    pub max_gas_limit: Option<u64>,
+    pub block_gas_limit: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -102,4 +103,10 @@ pub struct MonitorConfig {
     pub tick_rate: u64,
     /// height in lines of the batch widget
     pub batch_widget_height: Option<u16>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AdminConfig {
+    pub listen_ip: IpAddr,
+    pub listen_port: u16,
 }

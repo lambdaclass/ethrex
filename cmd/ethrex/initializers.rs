@@ -1,8 +1,8 @@
 use crate::{
     cli::Options,
     utils::{
-        get_client_version, init_datadir, parse_socket_addr, read_jwtsecret_file,
-        read_node_config_file,
+        display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
+        read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
@@ -20,15 +20,14 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
-use local_ip_address::local_ip;
+use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
     fs,
-    net::{Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -37,16 +36,18 @@ use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
-    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt,
+    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
 
-pub fn init_tracing(opts: &Options) {
+pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy()
         .add_directive(Directive::from(opts.log_level));
 
-    let fmt_layer = fmt::layer().with_filter(log_filter);
+    let (filter, filter_handle) = reload::Layer::new(log_filter);
+
+    let fmt_layer = fmt::layer().with_filter(filter);
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
@@ -55,6 +56,8 @@ pub fn init_tracing(opts: &Options) {
     };
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    filter_handle
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
@@ -100,40 +103,44 @@ pub fn open_store(data_dir: &str) -> Store {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
-            if #[cfg(feature = "libmdbx")] {
+            if #[cfg(feature = "rocksdb")] {
+                let engine_type = EngineType::RocksDB;
+            } else if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
             } else {
-                error!("No database specified. The feature flag `libmdbx` should've been set while building.");
+                error!("No database specified. The feature flag `rocksdb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
-        }
+        };
         Store::new(data_dir, engine_type).expect("Failed to create Store")
     }
 }
 
 pub fn init_blockchain(
-    evm_engine: EvmEngine,
     store: Store,
     blockchain_type: BlockchainType,
     perf_logs_enabled: bool,
 ) -> Arc<Blockchain> {
-    info!(evm = %evm_engine, "Initiating blockchain");
-    Blockchain::new(evm_engine, store, blockchain_type, perf_logs_enabled).into()
+    #[cfg(feature = "revm")]
+    info!("Initiating blockchain with revm");
+    #[cfg(not(feature = "revm"))]
+    info!("Initiating blockchain with levm");
+    Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    peer_table: Kademlia,
+    peer_handler: PeerHandler,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
-
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
@@ -156,6 +163,8 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
+        log_filter_handler,
+        gas_ceil,
     );
 
     tracker.spawn(rpc_api);
@@ -170,7 +179,7 @@ pub async fn init_network(
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    peer_table: Kademlia,
+    peer_handler: PeerHandler,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
@@ -190,12 +199,14 @@ pub async fn init_network(
         local_node_record,
         tracker.clone(),
         signer,
-        peer_table.clone(),
+        peer_handler.peer_table.clone(),
         store,
         blockchain.clone(),
         get_client_version(),
         based_context,
-    );
+    )
+    .await
+    .expect("P2P context could not be created");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
@@ -203,7 +214,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_table.peers.clone(),
+        peer_handler.peer_table.peers.clone(),
     ));
 }
 
@@ -290,18 +301,13 @@ pub fn get_signer(data_dir: &str) -> SecretKey {
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
-    let udp_socket_addr = parse_socket_addr(&opts.discovery_addr, &opts.discovery_port)
+    let udp_socket_addr = parse_socket_addr("::", &opts.discovery_port)
         .expect("Failed to parse discovery address and port");
     let tcp_socket_addr =
-        parse_socket_addr(&opts.p2p_addr, &opts.p2p_port).expect("Failed to parse addr and port");
+        parse_socket_addr("::", &opts.p2p_port).expect("Failed to parse addr and port");
 
-    // TODO: If hhtp.addr is 0.0.0.0 we get the local ip as the one of the node, otherwise we use the provided one.
-    // This is fine for now, but we might need to support more options in the future.
-    let p2p_node_ip = if udp_socket_addr.ip() == Ipv4Addr::new(0, 0, 0, 0) {
-        local_ip().expect("Failed to get local ip")
-    } else {
-        udp_socket_addr.ip()
-    };
+    let p2p_node_ip = local_ip()
+        .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"));
 
     let local_public_key = public_key_from_signing_key(signer);
 
@@ -371,18 +377,20 @@ async fn set_sync_block(store: &Store) {
 
 pub async fn init_l1(
     opts: Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
     let data_dir = init_datadir(&opts.datadir);
 
     let network = get_network(&opts);
 
     let genesis = network.get_genesis()?;
+    display_chain_initialization(&genesis);
     let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1, true);
+    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
 
     let signer = get_signer(&data_dir);
 
@@ -394,7 +402,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_table = peer_table();
+    let peer_handler = PeerHandler::new(peer_table());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -403,13 +411,16 @@ pub async fn init_l1(
 
     init_rpc_api(
         &opts,
-        peer_table.clone(),
+        peer_handler.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
+        log_filter_handler,
+        // TODO (#4482): Make this configurable.
+        None,
     )
     .await;
 
@@ -428,7 +439,7 @@ pub async fn init_l1(
             local_p2p_node,
             local_node_record.clone(),
             signer,
-            peer_table.clone(),
+            peer_handler.clone(),
             store.clone(),
             tracker.clone(),
             blockchain.clone(),
@@ -439,5 +450,10 @@ pub async fn init_l1(
         info!("P2P is disabled");
     }
 
-    Ok((data_dir, cancel_token, peer_table, local_node_record))
+    Ok((
+        data_dir,
+        cancel_token,
+        peer_handler.peer_table,
+        local_node_record,
+    ))
 }

@@ -1,4 +1,4 @@
-use crate::l2::batch::GetBatchByBatchNumberRequest;
+use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
 use crate::l2::l1_message::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
@@ -28,6 +28,7 @@ use std::{
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
+use tracing_subscriber::{EnvFilter, Registry, reload};
 
 use crate::l2::transaction::SponsoredTx;
 use ethrex_common::Address;
@@ -76,6 +77,8 @@ pub async fn start_api(
     valid_delegation_addresses: Vec<Address>,
     sponsor_pk: SecretKey,
     rollup_store: StoreRollup,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: u64,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -94,6 +97,8 @@ pub async fn start_api(
                 client_version,
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
+            log_filter_handler,
+            gas_ceil,
         },
         valid_delegation_addresses,
         sponsor_pk,
@@ -208,6 +213,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
         "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
+        "ethrex_batchNumber" => BatchNumberRequest::call(req, context).await,
         "ethrex_getBatchByNumber" => GetBatchByBatchNumberRequest::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())

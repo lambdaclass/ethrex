@@ -41,7 +41,8 @@ Currently ethrex replay only works against ethrex nodes with the `debug_executio
 
 ```sh
 curl -L https://risczero.com/install | bash
-rzup install cargo-risczero 2.3.1
+rzup install cargo-risczero 3.0.3
+rzup install risc0-groth16
 rzup install rust
 ```
 
@@ -169,7 +170,7 @@ The following table lists the available features for `ethrex-replay`. To enable 
 > If `BLOCK_NUMBER` is not provided, the latest block will be executed.
 
 ```
-ethrex-replay execute block <BLOCK_NUMBER> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay block --block <BLOCK_NUMBER> --execute --rpc-url <RPC_URL>
 ```
 
 ### Prove a single block
@@ -182,13 +183,13 @@ ethrex-replay execute block <BLOCK_NUMBER> --rpc-url <RPC_URL> --network <NETWOR
 > 4. If proving with SP1, add `SP1_PROVER=cuda` to the command to enable GPU support.
 
 ```
-ethrex-replay prove block <BLOCK_NUMBER> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay block --block <BLOCK_NUMBER> --prove --rpc-url <RPC_URL>
 ```
 
 ### Execute an L2 batch
 
 ```
-ethrex-replay execute batch <BATCH_NUMBER> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay l2 batch --batch <BATCH_NUMBER> --execute --rpc-url <RPC_URL>
 ```
 
 ### Prove an L2 batch
@@ -197,21 +198,27 @@ ethrex-replay execute batch <BATCH_NUMBER> --rpc-url <RPC_URL> --network <NETWOR
 >
 > 1. Proving requires a prover backend to be enabled during installation (e.g., `sp1` or `risc0`). Proving with GPU requires the `gpu` feature to be enabled during installation.
 > 2. If proving with SP1, add `SP1_PROVER=cuda` to the command to enable GPU support.
+> 3. Batch replay requires the binary to be run/compiled with the `l2` feature.
 
 ```
-ethrex-replay prove batch <BATCH_NUMBER> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay l2 batch --batch <BATCH_NUMBER> --prove --rpc-url <RPC_URL>
 ```
 
 ### Execute a transaction
 
+> [!NOTE]
+> L2 transaction replay requires the binary to be run/compiled with the `l2` feature.
+
 ```
-ethrex-replay execute transaction <TX_HASH> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay transaction --tx-hash <TX_HASH> --execute --rpc-url <RPC_URL>
+
+ethrex-replay l2 transaction --tx-hash <TX_HASH> --execute --rpc-url <RPC_URL>
 ```
 
 ### Plot block composition
 
 ```
-ethrex-replay block-composition <START_BLOCK> <END_BLOCK> --rpc-url <RPC_URL> --network <NETWORK>
+ethrex-replay block-composition --start-block <START_BLOCK> --end-block <END_BLOCK> --rpc-url <RPC_URL> --network <NETWORK>
 ```
 
 ---
