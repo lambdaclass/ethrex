@@ -271,7 +271,7 @@ impl EthrexReplayCommand {
 
                 let block_identifier = or_latest(block)?;
 
-                get_blockdata(eth_client, network.clone(), block_identifier, false).await?;
+                get_blockdata(eth_client, network.clone(), block_identifier).await?;
 
                 if let Some(block_number) = block {
                     info!("Block {block_number} data cached successfully.");
@@ -290,7 +290,6 @@ impl EthrexReplayCommand {
                         eth_client.clone(),
                         network.clone(),
                         BlockIdentifier::Number(block_number),
-                        false,
                     )
                     .await?;
                 }
@@ -471,7 +470,6 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
         eth_client,
         network,
         BlockIdentifier::Number(tx.block_number.as_u64()),
-        tx_opts.l2,
     )
     .await?;
 
@@ -504,7 +502,7 @@ async fn replay_block(block_opts: BlockOptions, l2: bool) -> eyre::Result<()> {
         ));
     }
 
-    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?, l2).await?;
+    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
