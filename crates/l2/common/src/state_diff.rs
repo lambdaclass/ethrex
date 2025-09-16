@@ -31,8 +31,6 @@ pub const SIMPLE_TX_STATE_DIFF_SIZE: u64 = 108;
 pub enum StateDiffError {
     #[error("StateDiff failed to deserialize: {0}")]
     FailedToDeserializeStateDiff(String),
-    #[error("StateDiff failed to serialize: {0}")]
-    FailedToSerializeStateDiff(String),
     #[error("StateDiff invalid account state diff type: {0}")]
     InvalidAccountStateDiffType(u8),
     #[error("StateDiff unsupported version: {0}")]
