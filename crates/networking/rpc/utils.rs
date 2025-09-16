@@ -329,7 +329,7 @@ pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
     use ethrex_blockchain::Blockchain;
-    use ethrex_common::H512;
+    use ethrex_common::{H512, types::DEFAULT_BUILDER_GAS_CEIL};
     use ethrex_p2p::{
         peer_handler::PeerHandler,
         sync_manager::SyncManager,
@@ -394,6 +394,7 @@ pub mod test_utils {
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -416,6 +417,7 @@ pub mod test_utils {
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }

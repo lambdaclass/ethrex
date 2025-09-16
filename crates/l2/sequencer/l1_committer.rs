@@ -42,12 +42,12 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use std::{collections::HashMap, sync::Arc};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
@@ -55,6 +55,13 @@ const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 /// Default wake up time for the committer to check if it should send a commit tx
 const COMMITTER_DEFAULT_WAKE_TIME_MS: u64 = 60_000;
+
+#[derive(Clone)]
+pub enum CallMessage {
+    Stop,
+    /// time to wait in ms before sending commit
+    Start(u64),
+}
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -65,7 +72,9 @@ pub enum InMessage {
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
-    Error,
+    Error(String),
+    Stopped,
+    Started,
 }
 
 pub struct L1Committer {
@@ -86,6 +95,8 @@ pub struct L1Committer {
     last_committed_batch_timestamp: u128,
     /// Last succesful committed batch number
     last_committed_batch: u64,
+    /// Cancellation token for the next inbound InMessage::Commit
+    cancellation_token: Option<CancellationToken>,
 }
 
 impl L1Committer {
@@ -128,6 +139,7 @@ impl L1Committer {
                 .min(COMMITTER_DEFAULT_WAKE_TIME_MS),
             last_committed_batch_timestamp: 0,
             last_committed_batch,
+            cancellation_token: None,
         })
     }
 
@@ -137,7 +149,7 @@ impl L1Committer {
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
-    ) -> Result<(), CommitterError> {
+    ) -> Result<GenServerHandle<L1Committer>, CommitterError> {
         let state = Self::new(
             &cfg.l1_committer,
             &cfg.eth,
@@ -149,12 +161,17 @@ impl L1Committer {
         )
         .await?;
         let l1_committer = state.start();
-        send_after(
-            random_duration(cfg.l1_committer.first_wake_up_time_ms),
-            l1_committer,
-            InMessage::Commit,
-        );
-        Ok(())
+        if let OutMessage::Error(reason) = l1_committer
+            .clone()
+            .call(CallMessage::Start(cfg.l1_committer.first_wake_up_time_ms))
+            .await?
+        {
+            Err(CommitterError::UnexpectedError(format!(
+                "Failed to send first wake up message to committer {reason}"
+            )))
+        } else {
+            Ok(l1_committer)
+        }
     }
 
     async fn commit_next_batch_to_l1(&mut self) -> Result<(), CommitterError> {
@@ -605,10 +622,42 @@ impl L1Committer {
 
         Ok(commit_tx_hash)
     }
+
+    async fn stop_committer(&mut self) -> CallResponse<Self> {
+        if let Some(token) = self.cancellation_token.take() {
+            token.cancel();
+            info!("L1 committer stopped");
+            CallResponse::Reply(OutMessage::Stopped)
+        } else {
+            warn!("L1 committer received stop command but it is already stopped");
+            CallResponse::Reply(OutMessage::Error("Already stopped".to_string()))
+        }
+    }
+
+    async fn start_committer(
+        &mut self,
+        handle: GenServerHandle<Self>,
+        delay: u64,
+    ) -> CallResponse<Self> {
+        if self.cancellation_token.is_none() {
+            self.schedule_commit(delay, handle);
+            info!("L1 committer restarted next commit will be sent in {delay}ms");
+            CallResponse::Reply(OutMessage::Started)
+        } else {
+            warn!("L1 committer received start command but it is already running");
+            CallResponse::Reply(OutMessage::Error("Already started".to_string()))
+        }
+    }
+
+    fn schedule_commit(&mut self, delay: u64, handle: GenServerHandle<Self>) {
+        let check_interval = random_duration(delay);
+        let handle = send_after(check_interval, handle, InMessage::Commit);
+        self.cancellation_token = Some(handle.cancellation_token);
+    }
 }
 
 impl GenServer for L1Committer {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
 
@@ -626,8 +675,7 @@ impl GenServer for L1Committer {
                     .await
                     .unwrap_or(self.last_committed_batch);
             let Some(current_time) = utils::system_now_ms() else {
-                let check_interval = random_duration(self.committer_wake_up_ms);
-                send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
                 return CastResponse::NoReply;
             };
 
@@ -635,8 +683,7 @@ impl GenServer for L1Committer {
             if current_last_committed_batch > self.last_committed_batch {
                 self.last_committed_batch = current_last_committed_batch;
                 self.last_committed_batch_timestamp = current_time;
-                let check_interval = random_duration(self.committer_wake_up_ms);
-                send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+                self.schedule_commit(self.committer_wake_up_ms, handle.clone());
                 return CastResponse::NoReply;
             }
 
@@ -656,9 +703,19 @@ impl GenServer for L1Committer {
                 }
             }
         }
-        let check_interval = random_duration(self.committer_wake_up_ms);
-        send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+        self.schedule_commit(self.commit_time_ms, handle.clone());
         CastResponse::NoReply
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            CallMessage::Stop => self.stop_committer().await,
+            CallMessage::Start(delay) => self.start_committer(handle.clone(), delay).await,
+        }
     }
 }
 
