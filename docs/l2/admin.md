@@ -8,6 +8,47 @@ By default the server is listening on `127.0.0.1:5555` but can be configured wit
 
 ## Endpoints
 
+### Health
+
+---
+
+#### Sequencer Health
+
+**Description**
+
+Performs a healthcheck on all the components of the sequencer returning a json with the status
+
+**Endpoint**
+
+```
+GET /health
+```
+
+**Example**
+
+```
+curl -X GET http://localhost:5555/health
+```
+---
+
+#### Admin server health
+
+**Description**
+
+Performs a healthcheck on the http admin server
+
+**Endpoint**
+
+```
+GET /admin/health
+```
+
+**Example**
+
+```
+curl -X GET http://localhost:5555/admin/health
+```
+
 ### L1 Committer
 
 ---
