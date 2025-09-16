@@ -23,7 +23,10 @@ use crate::{
     rlpx::{
         connection::server::CastMessage,
         eth::{
-            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
+            blocks::{
+                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+                HashOrNumber,
+            },
             receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
@@ -447,7 +450,68 @@ impl PeerHandler {
         Some(ret)
     }
 
-    /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
+    /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
+    /// - No peer returned a valid response in the given time and retry limits
+    ///   Since request_block_headers brought problems in cases of reorg seen in this pr https://github.com/lambdaclass/ethrex/pull/4028, we have this other function to request block headers only for full sync.
+    pub async fn request_block_headers_from_hash(
+        &self,
+        start: H256,
+        order: BlockRequestOrder,
+    ) -> Option<Vec<BlockHeader>> {
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let request_id = rand::random();
+            let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                id: request_id,
+                startblock: start.into(),
+                limit: BLOCK_HEADER_LIMIT,
+                skip: 0,
+                reverse: matches!(order, BlockRequestOrder::NewToOld),
+            });
+            let (peer_id, mut peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+                .await?;
+            let mut receiver = peer_channel.receiver.lock().await;
+            if let Err(err) = peer_channel
+                .connection
+                .cast(CastMessage::BackendMessage(request))
+                .await
+            {
+                debug!("Failed to send message to peer: {err:?}");
+                continue;
+            }
+            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                loop {
+                    match receiver.recv().await {
+                        Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
+                            if id == request_id =>
+                        {
+                            return Some(block_headers);
+                        }
+                        // Ignore replies that don't match the expected id (such as late responses)
+                        Some(_) => continue,
+                        None => return None, // Retry request
+                    }
+                }
+            })
+            .await
+            .ok()
+            .flatten()
+            .and_then(|headers| (!headers.is_empty()).then_some(headers))
+            {
+                if are_block_headers_chained(&block_headers, &order) {
+                    return Some(block_headers);
+                } else {
+                    warn!(
+                        "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+                    );
+                }
+            }
+            warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
+        }
+        None
+    }
+
+    /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
     ///
     /// If it fails, returns an error message.
     async fn download_chunk_from_peer(
@@ -1932,11 +1996,20 @@ fn format_duration(duration: Duration) -> String {
     format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
 
-#[derive(Debug)]
 pub struct DumpError {
     pub path: String,
     pub contents: Vec<u8>,
     pub error: ErrorKind,
+}
+
+impl core::fmt::Debug for DumpError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DumpError")
+            .field("path", &self.path)
+            .field("contents_len", &self.contents.len())
+            .field("error", &self.error)
+            .finish()
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

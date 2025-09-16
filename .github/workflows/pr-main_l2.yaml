@@ -218,11 +218,9 @@ jobs:
       - name: Install rex
         run: |
           cd ..
-          rustup install nightly # Install the nightly toolchain needed by rex, change this in the future
-          rustup default nightly
           git clone https://github.com/lambdaclass/rex.git
           cd rex
-          git checkout 21763774e29e4566ccb831ea8154e94aa2ff7c0e
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
           make cli
           echo "rex install successfully at $(which rex)"
 
@@ -262,6 +260,96 @@ jobs:
           docker logs --follow ethrex_l2 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
+
+  integration-test-tdx:
+    name: Integration Test - TDX
+    runs-on: ubuntu-latest
+    needs: build-docker
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Set up QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils
+
+      - name: Install rex
+        run: |
+          cd /tmp
+          git clone https://github.com/lambdaclass/rex
+          cd rex
+          cargo build --release
+          cp target/release/rex /usr/local/bin
+
+      - name: Build prover
+        run: |
+          sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
+          sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
+          cd crates/l2/tee/quote-gen
+          make image.raw
+
+      - name: Start L1 & Deploy contracts
+        run: |
+          touch cmd/.env
+          cd crates/l2
+          make init-l1-docker;
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
+          ETHREX_TDX_DEV_MODE=true \
+          make deploy-l1
+
+      - name: Start Sequencer and test
+        run: |
+          cd crates/l2
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+          make init-l2 &
+          sleep 30
+          cd tee/quote-gen/
+          qemu-system-x86_64 \
+            -daemonize \
+            -serial file:tdx_prover.log \
+            -name guest=ethrex_tdx_prover \
+            -machine q35,kernel_irqchip=split,hpet=off -smp 2 -m 2G \
+            -accel kvm -cpu host -nographic -nodefaults \
+            -bios OVMF.fd \
+            -no-user-config \
+            -netdev user,id=net0,net=192.168.76.0/24 -device e1000,netdev=net0 \
+            -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
+          tail -f tdx_prover.log &
+          cd ../../
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          pkill -9 -f ethrex_tdx_prover
 
   state-diff-test:
     name: State Reconstruction Tests
@@ -311,7 +399,7 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [integration-test, state-diff-test, integration-test-based]
+    needs: [integration-test, state-diff-test, integration-test-based, integration-test-tdx]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' }}
     steps:

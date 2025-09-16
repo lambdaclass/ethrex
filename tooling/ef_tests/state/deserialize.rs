@@ -56,6 +56,9 @@ where
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerGas
                     }
+                    "TransactionException.RLP_INVALID_VALUE" => {
+                        TransactionExpectedException::RlpInvalidValue
+                    }
                     "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
                         TransactionExpectedException::GasLimitPriceProductOverflow
                     }
