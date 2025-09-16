@@ -25,12 +25,15 @@ use sha3::{Digest, Keccak256};
 use tokio_utils::RateLimiter;
 use tracing::debug;
 
-use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::{Arc, LazyLock};
 
 use super::{Account, NodeRLP};
 
 const RPC_RATE_LIMIT: usize = 15;
+
+static RATE_LIMITER: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(std::time::Duration::from_secs(1)));
 
 /// Structure for a database that fetches data from an RPC endpoint on demand.
 /// Caches already fetched data to minimize RPC calls.
@@ -146,7 +149,6 @@ impl RpcDB {
         index: &[(Address, Vec<H256>)],
         from_child: bool,
     ) -> eyre::Result<HashMap<Address, Account>> {
-        let rate_limiter = RateLimiter::new(std::time::Duration::from_secs(1));
         let block_number = if from_child {
             self.block_number + 1
         } else {
@@ -176,7 +178,7 @@ impl RpcDB {
             });
 
             // Wait for all requests in the chunk to complete
-            let fetched_chunk = rate_limiter
+            let fetched_chunk = RATE_LIMITER
                 .throttle(|| async { join_all(futures).await })
                 .await
                 .into_iter()
