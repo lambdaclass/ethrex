@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758061245579,
+  "lastUpdate": 1758062127559,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14995,6 +14995,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166690185568,
             "range": "± 895674174",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "02baa16307c9505acf1fdeaa8eb6978181f2980f",
+          "message": "feat(replay): add `--cache-level` flag in `ethrex-replay` to decide whether to write the cache or not (#4402)\n\n**Motivation**\n\nThis feature was already implemented in the `ethrex-replayer` but was\nnot available for `ethrex-replay`. As `ethrex-replayer` already makes\nuse of `ethrex-replay` as a library, it is almost free to add this\nfeature to `ethrex-replay` while keeping it in `ethrex-replayer`.\n\n**Description**\n\n- Rename `CacheLevel::All` to `CacheLevel::On` due to the change in the\ncontext in which it is now used.\n- Implements `--cache-level` arg of type `CacheLevel` with 3 variants:\n`on` to cache block replays, `failed` to cache only failed replays, and\n`off` to avoid caching.\n- Refactors cache API\n    - `write_cache` now derives the file name from the cache.\n- Cache file name generation is now centralized in a single function to\nreduce error surface.",
+          "timestamp": "2025-09-16T21:41:26Z",
+          "tree_id": "6765e683c95734462fd165e94715b074ce6e2818",
+          "url": "https://github.com/lambdaclass/ethrex/commit/02baa16307c9505acf1fdeaa8eb6978181f2980f"
+        },
+        "date": 1758062107324,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168103383795,
+            "range": "± 536828463",
             "unit": "ns/iter"
           }
         ]
