@@ -342,7 +342,7 @@ jobs:
 
       - name: Run test
         run: |
-          cd tee/quote-gen/
+          cd crates/l2/tee/quote-gen/
           qemu-system-x86_64 \
             -daemonize \
             -serial file:tdx_prover.log \
