@@ -64,6 +64,9 @@ guest_program = { path = "./prover/src/guest_program/" }
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
 
+[dev-dependencies]
+anyhow = "1.0.86"
+
 [lib]
 path = "./l2.rs"
 
