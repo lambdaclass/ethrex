@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758035071061,
+  "lastUpdate": 1758036930586,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14485,6 +14485,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 171079857262,
             "range": "± 595118598",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "76a773ac668888f17721ee9efc05be6aa7020ec8",
+          "message": "feat(l2): start/pause sequencer admin endpoint (#4367)\n\n**Motivation**\n\nWe want to have more control over the sequencer, for this reason this PR\nimplements a new admin server with an API to start/stop the sequencer\ncommits. In the future this server can be expanded to provide a /health\nendpoint with information about the sequencer status.\n\n**Description**\n\n- This PR adds a new admin http server that starts with the sequencer\nand has access to the L1Committer mailbox to send start/stop messages\n- Add to the L1Committer logic to handle a call message that stops the\nsequencer\n- Add to the L1Committer logic to handle a call message that start the\nsequencer with an optional parameter of a start delay in ms\n- Add 3 endpoints to the admin server they can be tested by running\n`make init-l2-dev` and then using any of the commands:\n- `/committer/start`: starts the committer `curl -i\nlocalhost:5555/committer/start`\n- `/committer/start/{delay}`: starts the committer with a delay in ms\n`curl -i localhost:5555/committer/start/60000`\n- `/committer/stop`: stops the committer `curl -i\nlocalhost:5555/committer/stop`\n- Add new page in docs for the admin server API",
+          "timestamp": "2025-09-16T14:40:42Z",
+          "tree_id": "96d4bca1799c3f1f3965b7c65b6e364a500ae07f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/76a773ac668888f17721ee9efc05be6aa7020ec8"
+        },
+        "date": 1758036909816,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168255871116,
+            "range": "± 787611023",
             "unit": "ns/iter"
           }
         ]
