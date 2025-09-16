@@ -31,6 +31,8 @@ rayon.workspace = true
 url.workspace = true
 rkyv.workspace = true
 
+risc0-ethereum-trie = { git = "https://github.com/risc0/risc0-ethereum.git", tag = "v3.0.0" }
+
 [dev-dependencies]
 hex-literal.workspace = true
 

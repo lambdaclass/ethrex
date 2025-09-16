@@ -12,13 +12,15 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{NodeHash, NodeRLP, Trie};
+use ethrex_trie::{NodeRLP};
 use keccak_hash::keccak;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha3::{Digest, Keccak256};
+
+use risc0_ethereum_trie::CachedTrie as Trie;
 
 /// State produced by the guest program execution inside the zkVM. It is
 /// essentially built from the `ExecutionWitness`.
@@ -185,13 +187,10 @@ impl GuestProgramState {
             return Ok(());
         }
 
-        let state_trie = Trie::from_nodes(
-            NodeHash::Hashed(self.parent_block_header.state_root),
-            &self.nodes_hashed,
-        )
-        .map_err(|e| {
-            GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
-        })?;
+        let root_node = self.nodes_hashed.get(&self.parent_block_header.state_root).expect("root node not found");
+        let nodes = [root_node].into_iter().chain(self.nodes_hashed.values().into_iter());
+        let state_trie =
+            Trie::from_rlp(nodes).expect("failed to create state trie");
 
         self.state_trie = Some(state_trie);
 
@@ -207,15 +206,13 @@ impl GuestProgramState {
             .entry(*address)
             .or_insert_with(|| hash_address(address));
 
-        let account_state_rlp = self.state_trie.as_ref()?.get(account_hash).ok()??;
+        let account_state_rlp = self.state_trie.as_ref()?.get(account_hash)?;
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(
-            NodeHash::Hashed(account_state.storage_root),
-            &self.nodes_hashed,
-        )
-        .ok()
+        let root_node = self.nodes_hashed.get(&account_state.storage_root).expect("account root node not found");
+        let nodes = [root_node].into_iter().chain(self.nodes_hashed.values().into_iter());
+        Some(Trie::from_rlp(nodes).expect("failed to create state trie"))
     }
 
     /// Helper function to apply account updates to the execution witness
@@ -241,14 +238,12 @@ impl GuestProgramState {
             if update.removed {
                 // Remove account from trie
                 state_trie
-                    .remove(hashed_address)
-                    .expect("failed to remove from trie");
+                    .remove(hashed_address);
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
                 let mut account_state = match state_trie
-                    .get(hashed_address)
-                    .expect("failed to get account state from trie")
+                    .get(&hashed_address)
                 {
                     Some(encoded_state) => AccountState::decode(&encoded_state)
                         .expect("failed to decode account state"),
@@ -267,7 +262,7 @@ impl GuestProgramState {
                 if !update.added_storage.is_empty() {
                     let storage_trie = storage_tries
                         .entry(update.address)
-                        .or_insert_with(Trie::empty_in_memory);
+                        .or_insert_with(|| Trie::default());
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -282,21 +277,16 @@ impl GuestProgramState {
                     for (hashed_key, storage_value) in inserts {
                         storage_trie
                             .insert(hashed_key, storage_value.encode_to_vec())
-                            .expect("failed to insert in trie");
                     }
 
                     for (hashed_key, _) in deletes {
                         storage_trie
-                            .remove(&hashed_key)
-                            .expect("failed to remove key");
+                            .remove(&hashed_key);
                     }
-
-                    account_state.storage_root = storage_trie.hash_no_commit();
                 }
 
                 state_trie
                     .insert(hashed_address.clone(), account_state.encode_to_vec())
-                    .expect("failed to insert into storage");
             }
         }
         Ok(())
@@ -304,15 +294,15 @@ impl GuestProgramState {
 
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
-    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
+    pub fn state_trie_root(&mut self) -> Result<H256, GuestProgramStateError> {
         let state_trie = self
             .state_trie
-            .as_ref()
+            .as_mut()
             .ok_or(GuestProgramStateError::RebuildTrie(
                 "Tried to get state trie root before rebuilding tries".to_string(),
             ))?;
 
-        Ok(state_trie.hash_no_commit())
+        Ok(H256(state_trie.hash().0))
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
@@ -381,7 +371,7 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
+        let Some(encoded_state) = state_trie.get(hashed_address) else {
             return Ok(None);
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
@@ -436,9 +426,8 @@ impl GuestProgramState {
         let hashed_key = hash_key(&key);
         if let Some(encoded_key) = storage_trie
             .get(&hashed_key)
-            .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
         {
-            U256::decode(&encoded_key)
+            U256::decode(encoded_key)
                 .map_err(|_| {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
