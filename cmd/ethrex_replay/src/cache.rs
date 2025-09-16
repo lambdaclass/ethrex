@@ -52,7 +52,7 @@ impl Cache {
     }
 
     pub fn get_chain_config(&self) -> eyre::Result<ChainConfig> {
-        if let Some(config) = self.chain_config.clone() {
+        if let Some(config) = self.chain_config {
             return Ok(config);
         }
         if let Some(network) = &self.network {
