@@ -399,13 +399,7 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs:
-      [
-        integration-test,
-        state-diff-test,
-        integration-test-based,
-        integration-test-tdx,
-      ]
+    needs: [integration-test, state-diff-test, integration-test-based, integration-test-tdx]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' }}
     steps:
