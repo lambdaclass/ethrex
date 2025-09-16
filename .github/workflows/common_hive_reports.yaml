@@ -12,11 +12,6 @@ on:
         description: "The name of the hive report artifact"
         value: ${{ jobs.hive-report.outputs.artifact_name }}
 
-# concurrency:
-#   # Serialize all runs to avoid race conditions when consuming hive result files
-#   group: ${{ github.workflow }}
-#   cancel-in-progress: false
-
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
@@ -30,22 +25,22 @@ jobs:
               simulation: ethereum/rpc-compat,
             }
           - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
-          # - {
-          #     name: "Cancun Engine tests",
-          #     file_name: engine,
-          #     simulation: ethereum/engine,
-          #   }
+          - {
+              name: "Engine tests",
+              file_name: engine,
+              simulation: ethereum/engine,
+            }
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
-          # - {
-          #     name: "Consume Engine tests",
-          #     file_name: consume-engine,
-          #     simulation: ethereum/eest/consume-engine,
-          #   }
-          # - {
-          #     name: "Consume RLP tests",
-          #     file_name: consume-rlp,
-          #     simulation: ethereum/eest/consume-rlp,
-          #   }
+          - {
+              name: "Consume Engine tests",
+              file_name: consume-engine,
+              simulation: ethereum/eest/consume-engine,
+            }
+          - {
+              name: "Consume RLP tests",
+              file_name: consume-rlp,
+              simulation: ethereum/eest/consume-rlp,
+            }
 
     steps:
       - name: Verify input parameters
@@ -83,7 +78,8 @@ jobs:
           if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
             FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
             FLAGS+=" --sim.buildarg branch=main"
-            FLAGS+=" --sim.limit \".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*|.*fork_Osaka.*\""
+            # FLAGS+=" --sim.limit \".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*|.*fork_Osaka.*\""
+            FLAGS+=" --sim.limit \".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*\""
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
