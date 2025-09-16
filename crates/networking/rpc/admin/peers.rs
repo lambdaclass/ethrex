@@ -1,7 +1,7 @@
 use crate::{rpc::RpcApiContext, utils::RpcErr};
 use core::net::SocketAddr;
 use ethrex_common::H256;
-use ethrex_p2p::{kademlia::PeerData, rlpx::p2p::Capability};
+use ethrex_p2p::{discv4::kademlia::PeerData, rlpx::p2p::Capability};
 use serde::Serialize;
 use serde_json::Value;
 

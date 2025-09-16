@@ -1208,12 +1208,12 @@ pub async fn update_pivot(
     );
     loop {
         let (peer_id, mut peer_channel) = peers
-            .peer_table
+            .kademlia
             .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES)
             .await
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peers.peer_table.get_score(&peer_id).await;
+        let peer_score = peers.kademlia.get_score(&peer_id).await;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1223,8 +1223,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_table.record_failure(peer_id).await;
-            let peer_score = peers.peer_table.get_score(&peer_id).await;
+            peers.kademlia.record_failure(peer_id).await;
+            let peer_score = peers.kademlia.get_score(&peer_id).await;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1232,7 +1232,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_table.record_success(peer_id).await;
+        peers.kademlia.record_success(peer_id).await;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers

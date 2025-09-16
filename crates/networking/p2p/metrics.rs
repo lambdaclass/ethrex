@@ -246,179 +246,185 @@ impl Metrics {
     ) {
         match failure_reason {
             RLPxError::HandshakeError(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("HandshakeError - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("HandshakeError - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::StateError(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("StateError - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("StateError - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::NoMatchingCapabilities() => {
-                failures_grouped_by_reason
-                    .entry("NoMatchingCapabilities".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("NoMatchingCapabilities".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::Disconnected() => {
-                failures_grouped_by_reason
-                    .entry("Disconnected".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("Disconnected".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::DisconnectReceived(disconnect_reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("DisconnectReceived - {disconnect_reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("DisconnectReceived - {disconnect_reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::DisconnectSent(disconnect_reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("DisconnectSent - {disconnect_reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("DisconnectSent - {disconnect_reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::NotFound(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("NotFound - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("NotFound - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::InvalidPeerId() => {
-                failures_grouped_by_reason
-                    .entry("InvalidPeerId".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("InvalidPeerId".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::InvalidRecoveryId() => {
-                failures_grouped_by_reason
-                    .entry("InvalidRecoveryId".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("InvalidRecoveryId".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::InvalidMessageLength() => {
-                failures_grouped_by_reason
-                    .entry("InvalidMessageLength".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("InvalidMessageLength".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::MessageNotHandled(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("MessageNotHandled - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("MessageNotHandled - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::BadRequest(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("BadRequest - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("BadRequest - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::RLPDecodeError(rlpdecode_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("RLPDecodeError - {rlpdecode_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("RLPDecodeError - {rlpdecode_error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::RLPEncodeError(rlpencode_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("RLPEncodeError - {rlpencode_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("RLPEncodeError - {rlpencode_error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::StoreError(store_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("StoreError - {store_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("StoreError - {store_error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::CryptographyError(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("CryptographyError - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("CryptographyError - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::BroadcastError(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("BroadcastError - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("BroadcastError - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::RecvError(recv_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("RecvError - {recv_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("RecvError - {recv_error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::SendMessage(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("SendMessage - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("SendMessage - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::MempoolError(mempool_error) => {
-                failures_grouped_by_reason
-                    .entry(format!("MempoolError - {mempool_error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("MempoolError - {mempool_error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::IoError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("IoError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("IoError - {error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::InvalidMessageFrame(reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("InvalidMessageFrame - {reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("InvalidMessageFrame - {reason}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::IncompatibleProtocol => {
-                failures_grouped_by_reason
-                    .entry("IncompatibleProtocol".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("IncompatibleProtocol".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::InvalidBlockRange => {
-                failures_grouped_by_reason
-                    .entry("InvalidBlockRange".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("InvalidBlockRange".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::RollupStoreError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("RollupStoreError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("RollupStoreError - {error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::BlockchainError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("BlockchainError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("BlockchainError - {error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::InternalError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("InternalError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry(format!("InternalError - {error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::L2CapabilityNotNegotiated => {
-                failures_grouped_by_reason
-                    .entry("L2CapabilityNotNegotiated".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("L2CapabilityNotNegotiated".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
             RLPxError::InvalidBlockRangeUpdate => {
-                failures_grouped_by_reason
-                    .entry("InvalidBlockRangeUpdate".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
+                        failures_grouped_by_reason
+                            .entry("InvalidBlockRangeUpdate".to_owned())
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
+            RLPxError::KademliaError(error) => {
+                        failures_grouped_by_reason
+                            .entry(format!("InternalError - {error}"))
+                            .and_modify(|e| *e += 1)
+                            .or_insert(1);
+                    }
         }
     }
 }

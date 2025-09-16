@@ -1,24 +1,25 @@
+use crate::{
+    rlpx::{self, connection::server::RLPxConnection, p2p::Capability},
+    types::{Node, NodeRecord},
+};
+use ethrex_common::H256;
+use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
+use spawned_rt::tasks::mpsc;
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,
     time::Instant,
 };
-
-use ethrex_common::H256;
-use spawned_concurrency::tasks::GenServerHandle;
-use spawned_rt::tasks::mpsc;
+use thiserror::Error;
 use tokio::sync::Mutex;
 use tracing::debug;
-
-use crate::{
-    rlpx::{self, connection::server::RLPxConnection, p2p::Capability},
-    types::{Node, NodeRecord},
-};
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
 /// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
+
+pub type PeerTableHandle = GenServerHandle<PeerTable>;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -128,33 +129,95 @@ impl PeerChannels {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Kademlia {
-    pub table: Arc<Mutex<BTreeMap<H256, Contact>>>,
-    pub peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
-    pub already_tried_peers: Arc<Mutex<HashSet<H256>>>,
-    pub discarded_contacts: Arc<Mutex<HashSet<H256>>>,
-    pub discovered_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+#[derive(Debug)]
+pub struct PeerTable {
+    pub table: BTreeMap<H256, Contact>,
+    pub peers: BTreeMap<H256, PeerData>,
+    pub already_tried_peers: HashSet<H256>,
+    pub discarded_contacts: HashSet<H256>,
 }
 
-impl Kademlia {
+impl PeerTable {
+    pub fn spawn() -> PeerTableHandle {
+        let peer_table = Self::new();
+        peer_table.start()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub async fn set_connected_peer(
-        &mut self,
+    pub async fn new_connected_peer(
+        peer_table: &mut PeerTableHandle,
         node: Node,
         channels: PeerChannels,
         capabilities: Vec<Capability>,
-    ) {
-        debug!("New peer connected");
+    ) -> Result<(), PeerTableError> {
+        peer_table
+            .call(CallMessage::NewConnectedPeer {
+                node,
+                channels,
+                capabilities,
+            })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
+    }
 
-        let new_peer_id = node.node_id();
+    pub async fn remove_peer(
+        peer_table: &mut PeerTableHandle,
+        node_id: H256,
+    ) -> Result<(), PeerTableError> {
+        peer_table
+            .call(CallMessage::RemovePeer { node_id })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
+    }
 
-        let new_peer = PeerData::new(node, None, channels, capabilities);
+    pub async fn new_contact(
+        peer_table: &mut PeerTableHandle,
+        node_id: H256,
+        contact: Contact,
+    ) -> Result<(), PeerTableError> {
+        peer_table
+            .call(CallMessage::NewContact { node_id, contact })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
+    }
 
-        self.peers.lock().await.insert(new_peer_id, new_peer);
+    pub async fn set_unwanted(
+        peer_table: &mut PeerTableHandle,
+        node_id: &H256,
+    ) -> Result<(), PeerTableError> {
+        peer_table
+            .call(CallMessage::SetUnwanted { node_id: *node_id })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn peer_count(peer_table: &mut PeerTableHandle) -> Result<usize, PeerTableError> {
+        if let OutMessage::PeerCount(peer_count) = peer_table
+            .call(CallMessage::PeerCount)
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            Ok(peer_count)
+        } else {
+            Err(PeerTableError::InternalError(
+                "Failed to obtain peers".to_owned(),
+            ))
+        }
+    }
+
+    pub async fn prune(peer_table: &mut PeerTableHandle) -> Result<(), PeerTableError> {
+        peer_table
+            .cast(CastMessage::Prune)
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
     }
 
     pub async fn get_peer_channels(
@@ -162,8 +225,6 @@ impl Kademlia {
         _capabilities: &[Capability],
     ) -> Vec<(H256, PeerChannels)> {
         self.peers
-            .lock()
-            .await
             .iter()
             .filter_map(|(peer_id, peer_data)| {
                 peer_data
@@ -179,8 +240,6 @@ impl Kademlia {
         _capabilities: &[Capability],
     ) -> Vec<(H256, PeerChannels, Vec<Capability>)> {
         self.peers
-            .lock()
-            .await
             .iter()
             .filter_map(|(peer_id, peer_data)| {
                 peer_data.channels.clone().map(|peer_channels| {
@@ -195,8 +254,7 @@ impl Kademlia {
     }
 
     pub async fn get_peer_channel(&self, peer_id: H256) -> Option<PeerChannels> {
-        let peers = self.peers.lock().await;
-        let peer_data = peers.get(&peer_id)?;
+        let peer_data = self.peers.get(&peer_id)?;
         peer_data.channels.clone()
     }
 
@@ -207,49 +265,35 @@ impl Kademlia {
     }
 
     async fn get_score_opt(&self, peer_id: &H256) -> Option<i64> {
-        self.peers
-            .lock()
-            .await
-            .get(peer_id)
-            .map(|peer_data| peer_data.score)
+        self.peers.get(peer_id).map(|peer_data| peer_data.score)
     }
 
-    pub async fn record_success(&self, peer_id: H256) {
+    pub async fn record_success(&mut self, peer_id: H256) {
         self.peers
-            .lock()
-            .await
             .entry(peer_id)
             .and_modify(|peer_data| peer_data.score = (peer_data.score + 1).min(MAX_SCORE));
     }
 
-    pub async fn record_failure(&self, peer_id: H256) {
+    pub async fn record_failure(&mut self, peer_id: H256) {
         self.peers
-            .lock()
-            .await
             .entry(peer_id)
             .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
     }
 
-    pub async fn record_critical_failure(&self, peer_id: H256) {
+    pub async fn record_critical_failure(&mut self, peer_id: H256) {
         self.peers
-            .lock()
-            .await
             .entry(peer_id)
             .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
     }
 
-    pub async fn mark_in_use(&self, peer_id: H256) {
+    pub async fn mark_in_use(&mut self, peer_id: H256) {
         self.peers
-            .lock()
-            .await
             .entry(peer_id)
             .and_modify(|peer_data| peer_data.in_use = true);
     }
 
-    pub async fn free_peer(&self, peer_id: H256) {
+    pub async fn free_peer(&mut self, peer_id: H256) {
         self.peers
-            .lock()
-            .await
             .entry(peer_id)
             .and_modify(|peer_data| peer_data.in_use = false);
     }
@@ -259,8 +303,7 @@ impl Kademlia {
         &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
-        let peer_table = self.peers.lock().await;
-        peer_table
+        self.peers
             .iter()
             // We filter only to those peers which are useful to us
             .filter_map(|(id, peer_data)| {
@@ -289,7 +332,7 @@ impl Kademlia {
 
     /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
     pub async fn get_peer_channel_with_highest_score_and_mark_as_used(
-        &self,
+        &mut self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
         let (peer_id, peer_channel) = self
@@ -300,16 +343,117 @@ impl Kademlia {
 
         Some((peer_id, peer_channel))
     }
+
+    fn prune_internal(&mut self) {
+        let disposable_contacts = self
+            .table
+            .iter()
+            .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
+            .collect::<Vec<_>>();
+
+        for contact_to_discard_id in disposable_contacts {
+            self.table.remove(&contact_to_discard_id);
+            self.discarded_contacts.insert(contact_to_discard_id);
+        }
+    }
 }
 
-impl Default for Kademlia {
+impl Default for PeerTable {
     fn default() -> Self {
         Self {
-            table: Arc::new(Mutex::new(BTreeMap::new())),
-            peers: Arc::new(Mutex::new(BTreeMap::new())),
-            already_tried_peers: Arc::new(Mutex::new(HashSet::new())),
-            discarded_contacts: Arc::new(Mutex::new(HashSet::new())),
-            discovered_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            table: BTreeMap::new(),
+            peers: BTreeMap::new(),
+            already_tried_peers: HashSet::new(),
+            discarded_contacts: HashSet::new(),
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum CallMessage {
+    NewConnectedPeer {
+        node: Node,
+        channels: PeerChannels,
+        capabilities: Vec<Capability>,
+    },
+    RemovePeer {
+        node_id: H256,
+    },
+    SetUnwanted {
+        node_id: H256,
+    },
+    NewContact {
+        node_id: H256,
+        contact: Contact,
+    },
+    PeerCount,
+}
+
+#[derive(Debug)]
+pub enum OutMessage {
+    Ok,
+    PeerCount(usize),
+}
+
+#[derive(Clone, Debug)]
+pub enum CastMessage {
+    Prune,
+}
+
+#[derive(Debug, Error)]
+pub enum PeerTableError {
+    #[error("{0}")]
+    InternalError(String),
+}
+
+impl GenServer for PeerTable {
+    type CallMsg = CallMessage;
+    type CastMsg = CastMessage;
+    type OutMsg = OutMessage;
+    type Error = PeerTableError;
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &PeerTableHandle,
+    ) -> CallResponse<Self> {
+        match message {
+            CallMessage::NewConnectedPeer {
+                node,
+                channels,
+                capabilities,
+            } => {
+                debug!("New peer connected");
+                let new_peer_id = node.node_id();
+                let new_peer = PeerData::new(node, None, channels, capabilities);
+                self.peers.insert(new_peer_id, new_peer);
+            }
+            CallMessage::RemovePeer { node_id } => {
+                self.peers.remove(&node_id);
+            }
+            CallMessage::SetUnwanted { node_id } => {
+                if let Some(contact) = self.table.get_mut(&node_id) {
+                    contact.unwanted = true;
+                }
+            }
+            CallMessage::NewContact { node_id, contact } => {
+                self.table.insert(node_id, contact);
+            }
+            CallMessage::PeerCount => {
+                return CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()));
+            }
+        }
+        CallResponse::Reply(Self::OutMsg::Ok)
+    }
+
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        _handle: &PeerTableHandle,
+    ) -> CastResponse {
+        match message {
+            CastMessage::Prune => self.prune_internal(),
+        }
+        CastResponse::NoReply
     }
 }

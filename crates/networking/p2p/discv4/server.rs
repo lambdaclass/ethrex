@@ -29,8 +29,8 @@ use crate::{
             ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
             PacketDecodeErr, PingMessage, PongMessage,
         },
+        peer_table::{Contact, PeerTable, PeerTableHandle},
     },
-    kademlia::{Contact, Kademlia},
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::{
@@ -53,7 +53,7 @@ const LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// The target number of RLPx connections to reach.
 const TARGET_PEERS: u64 = 100;
-/// The target number of contacts to maintain in the Kademlia table.
+/// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: u64 = 100_000;
 
 #[derive(Debug, thiserror::Error)]
@@ -92,7 +92,7 @@ pub struct DiscoveryServer {
     udp_socket: Arc<UdpSocket>,
     /// Sink end of the UdpFramed stream to send messages to peers
     sink: Option<Arc<Mutex<UdpFramedSplitSink>>>,
-    kademlia: Kademlia,
+    peer_table: PeerTableHandle,
 }
 
 impl DiscoveryServer {
@@ -100,7 +100,7 @@ impl DiscoveryServer {
         local_node: Node,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
-        kademlia: Kademlia,
+        mut peer_table: PeerTableHandle,
         bootnodes: Vec<Node>,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
@@ -115,18 +115,16 @@ impl DiscoveryServer {
             signer,
             udp_socket,
             sink: None,
-            kademlia: kademlia.clone(),
+            peer_table: peer_table.clone(),
         };
 
         info!(count = bootnodes.len(), "Adding bootnodes");
-
-        let mut table = kademlia.table.lock().await;
 
         for bootnode in &bootnodes {
             let _ = discovery_server.send_ping(bootnode).await.inspect_err(|e| {
                 error!(sent = "Ping", to = %format!("{:#x}", bootnode.public_key), err = ?e, "Error sending message to bootnode");
             });
-            table.insert(bootnode.node_id(), bootnode.clone().into());
+            PeerTable::new_contact(&mut peer_table, bootnode.node_id(), bootnode.clone().into());
         }
 
         discovery_server.start();
@@ -207,7 +205,7 @@ impl DiscoveryServer {
                 /*
                     TODO
                     https://github.com/lambdaclass/ethrex/issues/4412
-                    - Look up in kademlia the peer associated with this message
+                    - Look up in peer_table the peer associated with this message
                     - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
                     - Check that the seq number matches the one we have in our table (this requires setting it).
                     - Check valid signature
@@ -219,7 +217,7 @@ impl DiscoveryServer {
     }
 
     async fn revalidate(&self) {
-        for contact in self.kademlia.table.lock().await.values_mut() {
+        for contact in self.peer_table.table.lock().await.values_mut() {
             if contact.disposable || !self.is_validation_needed(contact) {
                 continue;
             }
@@ -241,7 +239,7 @@ impl DiscoveryServer {
     }
 
     async fn lookup(&self) {
-        for contact in self.kademlia.table.lock().await.values_mut() {
+        for contact in self.peer_table.table.lock().await.values_mut() {
             if contact.n_find_node_sent == 20 || contact.disposable {
                 continue;
             }
@@ -256,19 +254,10 @@ impl DiscoveryServer {
         }
     }
 
-    async fn prune(&self) {
-        let mut contacts = self.kademlia.table.lock().await;
-        let mut discarded_contacts = self.kademlia.discarded_contacts.lock().await;
-
-        let disposable_contacts = contacts
-            .iter()
-            .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
-            .collect::<Vec<_>>();
-
-        for contact_to_discard_id in disposable_contacts {
-            contacts.remove(&contact_to_discard_id);
-            discarded_contacts.insert(contact_to_discard_id);
-        }
+    async fn prune(&mut self) {
+        PeerTable::prune(&mut self.peer_table)
+            .await
+            .inspect_err(|e| error!(err= ?e, "Failed to prune peer table"));
     }
 
     fn is_validation_needed(&self, contact: &Contact) -> bool {
@@ -289,8 +278,8 @@ impl DiscoveryServer {
     }
 
     async fn get_lookup_interval(&self) -> Duration {
-        let number_of_contacts = self.kademlia.table.lock().await.len() as u64;
-        let number_of_peers = self.kademlia.peers.lock().await.len() as u64;
+        let number_of_contacts = self.peer_table.table.lock().await.len() as u64;
+        let number_of_peers = self.peer_table.peers.lock().await.len() as u64;
         if number_of_peers < TARGET_PEERS && number_of_contacts < TARGET_CONTACTS {
             INITIAL_LOOKUP_INTERVAL
         } else {
@@ -394,7 +383,7 @@ impl DiscoveryServer {
     async fn handle_ping(&self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
         self.send_pong(hash, &node).await?;
 
-        let mut table = self.kademlia.table.lock().await;
+        let mut table = self.peer_table.table.lock().await;
 
         match table.entry(node.node_id()) {
             Entry::Occupied(_) => (),
@@ -409,7 +398,7 @@ impl DiscoveryServer {
     }
 
     async fn handle_pong(&self, message: PongMessage, node_id: H256) {
-        let mut contacts = self.kademlia.table.lock().await;
+        let mut contacts = self.peer_table.table.lock().await;
 
         // Received a pong from a node we don't know about
         let Some(contact) = contacts.get_mut(&node_id) else {
@@ -427,7 +416,7 @@ impl DiscoveryServer {
     }
 
     async fn handle_find_node(&self, sender_public_key: H512, from: SocketAddr) {
-        let table = self.kademlia.table.lock().await;
+        let table = self.peer_table.table.lock().await;
 
         let node_id = node_id(&sender_public_key);
 
@@ -469,8 +458,8 @@ impl DiscoveryServer {
     async fn handle_neighbors(&self, neighbors_message: NeighborsMessage) {
         // TODO(#3746): check that we requested neighbors from the node
 
-        let mut contacts = self.kademlia.table.lock().await;
-        let discarded_contacts = self.kademlia.discarded_contacts.lock().await;
+        let mut contacts = self.peer_table.table.lock().await;
+        let discarded_contacts = self.peer_table.discarded_contacts.lock().await;
 
         for node in neighbors_message.nodes {
             let node_id = node.node_id();
@@ -486,7 +475,7 @@ impl DiscoveryServer {
     async fn handle_enr_request(&self, sender_public_key: H512, from: SocketAddr, hash: H256) {
         let node_id = node_id(&sender_public_key);
 
-        let mut table = self.kademlia.table.lock().await;
+        let mut table = self.peer_table.table.lock().await;
 
         let Some(contact) = table.get(&node_id) else {
             debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");

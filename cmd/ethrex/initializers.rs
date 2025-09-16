@@ -11,7 +11,7 @@ use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    kademlia::Kademlia,
+    discv4::peer_table::PeerTable,
     network::{P2PContext, peer_table},
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
@@ -199,7 +199,7 @@ pub async fn init_network(
         local_node_record,
         tracker.clone(),
         signer,
-        peer_handler.peer_table.clone(),
+        peer_handler.kademlia.clone(),
         store,
         blockchain.clone(),
         get_client_version(),
@@ -214,7 +214,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_handler.peer_table.peers.clone(),
+        peer_handler.kademlia.peers.clone(),
     ));
 }
 
@@ -378,7 +378,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
+) -> eyre::Result<(String, CancellationToken, PeerTable, Arc<Mutex<NodeRecord>>)> {
     let data_dir = init_datadir(&opts.datadir);
 
     let network = get_network(&opts);
@@ -453,7 +453,7 @@ pub async fn init_l1(
     Ok((
         data_dir,
         cancel_token,
-        peer_handler.peer_table,
+        peer_handler.kademlia,
         local_node_record,
     ))
 }

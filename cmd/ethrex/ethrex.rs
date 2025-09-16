@@ -4,7 +4,7 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, store_node_config_file},
 };
-use ethrex_p2p::{kademlia::Kademlia, types::NodeRecord};
+use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -16,7 +16,7 @@ use tracing::info;
 async fn server_shutdown(
     data_dir: String,
     cancel_token: &CancellationToken,
-    peer_table: Kademlia,
+    peer_table: PeerTable,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");

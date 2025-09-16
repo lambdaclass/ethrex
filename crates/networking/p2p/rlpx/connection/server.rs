@@ -31,7 +31,7 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    kademlia::{Kademlia, PeerChannels},
+    discv4::peer_table::{PeerTable, PeerTableHandle, PeerChannels},
     metrics::METRICS,
     network::P2PContext,
     rlpx::{
@@ -73,7 +73,6 @@ const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
-type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 
 #[derive(Clone, Debug)]
@@ -115,7 +114,7 @@ pub struct Established {
     /// TODO: Improve this mechanism
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
-    pub(crate) table: Kademlia,
+    pub(crate) kademlia: PeerTableHandle,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) _inbound: bool,
     pub(crate) l2_state: L2ConnState,
@@ -197,7 +196,7 @@ impl RLPxConnection {
 impl GenServer for RLPxConnection {
     type CallMsg = Unused;
     type CastMsg = CastMessage;
-    type OutMsg = MsgResult;
+    type OutMsg = Unused;
     type Error = RLPxError;
 
     async fn init(
@@ -214,19 +213,14 @@ impl GenServer for RLPxConnection {
                 if let Err(reason) =
                     initialize_connection(handle, &mut established_state, stream, eth_version).await
                 {
-                    if let Some(contact) = established_state
-                        .table
-                        .table
-                        .lock()
-                        .await
-                        .get_mut(&established_state.node.node_id())
-                    {
-                        match &reason {
-                            RLPxError::NoMatchingCapabilities() | RLPxError::HandshakeError(_) => {
-                                contact.unwanted = true
-                            }
-                            _ => {}
+                    match &reason {
+                        RLPxError::NoMatchingCapabilities() | RLPxError::HandshakeError(_) => {
+                            PeerTable::set_unwanted(
+                                &mut established_state.kademlia,
+                                &established_state.node.node_id(),
+                            );
                         }
+                        _ => {}
                     }
                     connection_failed(
                         &mut established_state,
@@ -367,17 +361,15 @@ impl GenServer for RLPxConnection {
 
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
         match self.inner_state {
-            InnerState::Established(established_state) => {
+            InnerState::Established(mut established_state) => {
                 log_peer_debug(
                     &established_state.node,
                     "Closing connection with established peer",
                 );
-                established_state
-                    .table
-                    .peers
-                    .lock()
-                    .await
-                    .remove(&established_state.node.node_id());
+                PeerTable::remove_peer(
+                    &mut established_state.kademlia,
+                    established_state.node.node_id(),
+                );
                 established_state.teardown().await;
             }
             _ => {
@@ -397,7 +389,7 @@ async fn initialize_connection<S>(
 where
     S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
 {
-    post_handshake_checks(state.table.clone()).await?;
+    post_handshake_checks(state.kademlia.clone()).await?;
 
     exchange_hello_messages(state, &mut stream).await?;
 
@@ -420,14 +412,13 @@ where
 
     init_capabilities(state, &mut stream).await?;
 
-    state
-        .table
-        .set_connected_peer(
-            state.node.clone(),
-            peer_channels.clone(),
-            state.capabilities.clone(),
-        )
-        .await;
+    PeerTable::new_connected_peer(
+        &mut state.kademlia,
+        state.node.clone(),
+        peer_channels.clone(),
+        state.capabilities.clone(),
+    )
+    .await?;
 
     log_peer_debug(&state.node, "Peer connection initialized.");
 
@@ -578,7 +569,7 @@ where
     Ok(())
 }
 
-async fn post_handshake_checks(_table: Kademlia) -> Result<(), RLPxError> {
+async fn post_handshake_checks(_kademlia: PeerTableHandle) -> Result<(), RLPxError> {
     Ok(())
 }
 
@@ -761,7 +752,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 )
                 .await;
 
-            state.table.peers.lock().await.remove(&state.node.node_id());
+            PeerTable::remove_peer(&mut state.kademlia, state.node.node_id());
 
             // TODO handle the disconnection request
 

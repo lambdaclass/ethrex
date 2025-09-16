@@ -1,6 +1,5 @@
 use crate::{
-    discv4::server::{DiscoveryServer, DiscoveryServerError},
-    kademlia::{Kademlia, PeerData},
+    discv4::{peer_table::{PeerTable, PeerTableHandle, PeerData}, server::{DiscoveryServer, DiscoveryServerError}},
     metrics::METRICS,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
@@ -37,7 +36,7 @@ pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 pub struct P2PContext {
     pub tracker: TaskTracker,
     pub signer: SecretKey,
-    pub table: Kademlia,
+    pub table: PeerTableHandle,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: RLPxConnBroadcastSender,
@@ -55,7 +54,7 @@ impl P2PContext {
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
         signer: SecretKey,
-        peer_table: Kademlia,
+        peer_table: PeerTableHandle,
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
@@ -98,8 +97,8 @@ pub enum NetworkError {
     TxBroadcasterError(#[from] TxBroadcasterError),
 }
 
-pub fn peer_table() -> Kademlia {
-    Kademlia::new()
+pub fn peer_table() -> PeerTableHandle {
+    PeerTable::spawn()
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {

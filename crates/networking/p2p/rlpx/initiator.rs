@@ -7,7 +7,7 @@ use spawned_concurrency::{
 
 use tracing::{debug, info};
 
-use crate::{metrics::METRICS, network::P2PContext};
+use crate::{discv4::peer_table::PeerTable, metrics::METRICS, network::P2PContext};
 
 use crate::rlpx::connection::server::RLPxConnection;
 
@@ -91,8 +91,10 @@ impl RLPxInitiator {
         }
     }
 
-    async fn get_lookup_interval(&self) -> Duration {
-        let num_peers = self.context.table.peers.lock().await.len() as u64;
+    async fn get_lookup_interval(&mut self) -> Duration {
+        let num_peers = PeerTable::peer_count(&mut self.context.table)
+            .await
+            .unwrap_or(0) as u64;
 
         if num_peers < self.target_peers {
             self.initial_lookup_interval

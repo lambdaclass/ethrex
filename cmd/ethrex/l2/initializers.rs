@@ -7,7 +7,7 @@ use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
 use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_l2::SequencerConfig;
-use ethrex_p2p::kademlia::Kademlia;
+use ethrex_p2p::discv4::peer_table::PeerTable;
 use ethrex_p2p::network::peer_table;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
@@ -39,7 +39,7 @@ use crate::utils::{
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Kademlia,
+    peer_table: PeerTable,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -190,7 +190,7 @@ pub async fn init_l2(
     init_rpc_api(
         &opts.node_opts,
         &opts,
-        peer_handler.peer_table.clone(),
+        peer_handler.kademlia.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
         store.clone(),
@@ -279,7 +279,7 @@ pub async fn init_l2(
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(
-        peer_handler.peer_table,
+        peer_handler.kademlia,
         local_node_record.lock().await.clone(),
     )
     .await;

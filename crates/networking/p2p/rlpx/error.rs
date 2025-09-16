@@ -5,6 +5,8 @@ use ethrex_storage_rollup::RollupStoreError;
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
 
+use crate::discv4::peer_table::PeerTableError;
+
 use super::{message::Message, p2p::DisconnectReason};
 
 #[derive(Debug, Error)]
@@ -78,6 +80,8 @@ pub enum RLPxError {
     L2CapabilityNotNegotiated,
     #[error("Received invalid block range update")]
     InvalidBlockRangeUpdate,
+    #[error(transparent)]
+    KademliaError(#[from] PeerTableError),
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly
