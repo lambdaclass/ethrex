@@ -1,3 +1,4 @@
+use std::fmt;
 use std::ops::AddAssign;
 
 use crate::kzg::KzgError;
@@ -25,7 +26,7 @@ pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 /// Struct containing all the blobs for a blob transaction, along with the corresponding commitments and proofs
 pub struct BlobsBundle {
@@ -223,6 +224,32 @@ pub enum BlobsBundleError {
     MaxBlobsExceeded,
     #[error("KZG related error: {0}")]
     Kzg(#[from] KzgError),
+}
+
+impl std::fmt::Debug for BlobsBundle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let fmt_blob = |blob: &Blob| {
+            let trailing_zeroes = blob.iter().rev().take_while(|c| **c == 0).count();
+            format!(
+                "0x{}{} ({}B)",
+                hex::encode(&blob[..blob.len() - trailing_zeroes]),
+                match trailing_zeroes {
+                    0 => "",
+                    1 => "00",
+                    _ => "00...",
+                },
+                blob.len(),
+            )
+        };
+        f.debug_struct("BlobsBundle")
+            .field("commitments", &self.commitments)
+            .field("proofs", &self.proofs)
+            .field(
+                "blobs",
+                &self.blobs.iter().map(fmt_blob).collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 #[cfg(test)]
