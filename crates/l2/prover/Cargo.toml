@@ -55,8 +55,6 @@ name = "ethrex_prover_lib"
 path = "src/lib.rs"
 
 [features]
-# TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
-default = ["l2"]
 # prover backends
 risc0 = ["guest_program/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
 sp1 = ["guest_program/sp1", "dep:sp1-sdk"]

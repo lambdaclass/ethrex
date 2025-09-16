@@ -5348,7 +5348,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
 dependencies = [
  "fallible-iterator 0.3.0",
- "indexmap 2.11.0",
+ "indexmap 2.11.1",
  "stable_deref_trait",
 ]
 
