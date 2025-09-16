@@ -509,8 +509,13 @@ impl DiscoveryServer {
         if let Some(s) = &self.sink {
             s.lock()
                 .await
-                .send((message, addr))
+                .send((message.clone(), addr))
                 .await
+                // Logging extra info to solve https://github.com/lambdaclass/ethrex/issues/4492
+                // Remove next line once the cause of the error is found
+                .inspect_err(
+                    |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
+                )
                 .map_err(DiscoveryServerError::MessageSendFailure)
         } else {
             error!("Trying to send a message through a non-initialized UdpSocket");
