@@ -25,8 +25,8 @@ use crate::{
     metrics::METRICS,
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
-    sync::{AccountStorageRoots, bytecode_collector::CodeHashCollector},
-    utils::{current_unix_time, get_bytecode_hashes_snapshots_dir},
+    sync::{AccountStorageRoots, code_collector::CodeHashCollector},
+    utils::{current_unix_time, get_code_hashes_snapshots_dir},
 };
 
 /// Max size of a bach to start a storage fetch request in queues
@@ -53,7 +53,7 @@ pub async fn heal_state_trie_wrap(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     storage_accounts: &mut AccountStorageRoots,
-    bytecode_index_file: &mut u64,
+    code_hashes_index_file: &mut u64,
     datadir: &str,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
@@ -61,9 +61,9 @@ pub async fn heal_state_trie_wrap(
     info!("Starting state healing");
 
     // Setup bytecode collector for healing
-    let bytecode_hashes_snapshots_dir = get_bytecode_hashes_snapshots_dir(&datadir.to_string());
-    let mut bytecode_collector =
-        CodeHashCollector::new(*bytecode_index_file, bytecode_hashes_snapshots_dir);
+    let code_hashes_snapshots_dir = get_code_hashes_snapshots_dir(&datadir.to_string());
+    let mut code_hashes_collector =
+        CodeHashCollector::new(*code_hashes_index_file, code_hashes_snapshots_dir);
 
     while !healing_done {
         healing_done = heal_state_trie(
@@ -74,7 +74,7 @@ pub async fn heal_state_trie_wrap(
             global_leafs_healed,
             HashMap::new(),
             storage_accounts,
-            &mut bytecode_collector,
+            &mut code_hashes_collector,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -84,7 +84,7 @@ pub async fn heal_state_trie_wrap(
     }
     info!("Stopped state healing");
 
-    *bytecode_index_file = bytecode_collector.finish().await?;
+    code_hashes_collector.finish().await?;
 
     Ok(healing_done)
 }
@@ -102,7 +102,7 @@ async fn heal_state_trie(
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
-    bytecode_collector: &mut CodeHashCollector,
+    code_hashes_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
@@ -192,10 +192,10 @@ async fn heal_state_trie(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
 
-                            // Collect bytecode hash if not empty
+                            // Collect code hash if not empty
                             if account.code_hash != *EMPTY_KECCACK_HASH {
-                                bytecode_collector.add(account.code_hash);
-                                bytecode_collector.flush_if_needed().await?;
+                                code_hashes_collector.add(account.code_hash);
+                                code_hashes_collector.flush_if_needed().await?;
                             }
 
                             if account.storage_root != *EMPTY_TRIE_HASH {
@@ -338,7 +338,7 @@ async fn heal_state_trie(
             is_stale = true;
         }
 
-        bytecode_collector.handle_errors().await?;
+        code_hashes_collector.handle_errors().await?;
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             info!("Finisehd inflight tasks");

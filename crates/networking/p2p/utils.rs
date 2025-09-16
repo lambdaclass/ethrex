@@ -73,7 +73,7 @@ pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -
     format!("{directory}/account_storages_chunk.rlp.{chunk_index}")
 }
 
-pub fn get_bytecode_hashes_snapshots_dir(datadir: &String) -> String {
+pub fn get_code_hashes_snapshots_dir(datadir: &String) -> String {
     format!("{datadir}/bytecode_hashes_snapshots")
 }
 
