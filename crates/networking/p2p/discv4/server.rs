@@ -354,7 +354,7 @@ impl DiscoveryServer {
 
         let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
         self.send(msg, node.udp_addr()).await.inspect_err(|e| {
-            error!(sent = "FindNode", to = %format!("{}", node), err = ?e, "Error sending message");
+            error!(sent = "FindNode", to = ?node, err = ?e, "Error sending message");
         })?;
 
         debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
@@ -513,9 +513,12 @@ impl DiscoveryServer {
                 .await
                 .send((message.clone(), addr))
                 .await
-                .map_err(DiscoveryServerError::MessageSendFailure).inspect_err(|e| {
-                    error!(sent = %format!("{message}"), to = %format!("{addr}"), is_ipv4 = %format!("{}", addr.is_ipv4()),err = ?e, "Error sending message");
-                })
+                // Logging extra info to solve https://github.com/lambdaclass/ethrex/issues/4492
+                // Remove next line once the cause of the error is found
+                .inspect_err(
+                    |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
+                )
+                .map_err(DiscoveryServerError::MessageSendFailure)
         } else {
             error!("Trying to send a message through a non-initialized UdpSocket");
             Ok(())
