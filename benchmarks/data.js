@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758037748000,
+  "lastUpdate": 1758038264766,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14545,6 +14545,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169521757018,
             "range": "± 442046219",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9e23e515e11487ffdefc3a4d2dc56ae508d4ac04",
+          "message": "fix(l2): use empty SP1 elf when linting (#4486)\n\n**Motivation**\n\n`make lint` fails with the following error:\n\n```\n    Checking ethrex-prover v0.1.0 (/Users/mega/execution/ethrex/crates/l2/prover)\nerror: couldn't read `crates/l2/prover/src/backend/../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf`: No such file or directory (os error 2)\n  --> crates/l2/prover/src/backend/sp1.rs:17:5\n   |\n17 |     include_bytes!(\"../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf\");\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nerror: could not compile `ethrex-prover` (lib) due to 1 previous error\nwarning: build failed, waiting for other jobs to finish...\nmake: *** [lint] Error 101\n```\n\n**Description**\n\nThis PR overrides the included bytes with an empty slice when it's being\ncompiled by clippy.\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-09-16T15:00:51Z",
+          "tree_id": "736291aabe74cfedfcd24ba3b47ede231b8892c4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9e23e515e11487ffdefc3a4d2dc56ae508d4ac04"
+        },
+        "date": 1758038241564,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166591775326,
+            "range": "± 320242567",
             "unit": "ns/iter"
           }
         ]
