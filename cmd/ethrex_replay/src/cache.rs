@@ -11,6 +11,8 @@ use tracing::debug;
 
 use crate::cli::network_from_chain_id;
 
+const CACHE_FILE_FORMAT: &str = "json";
+
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct L2Fields {
@@ -117,13 +119,13 @@ pub fn get_block_cache_file_name(chain_id: u64, from: u64, to: Option<u64>) -> S
     let network = network_from_chain_id(chain_id);
 
     if let Some(to) = to {
-        format!("cache_{network}_{from}-{to}.bin")
+        format!("cache_{network}_{from}-{to}.{CACHE_FILE_FORMAT}")
     } else {
-        format!("cache_{network}_{from}.bin")
+        format!("cache_{network}_{from}.{CACHE_FILE_FORMAT}")
     }
 }
 
 #[cfg(feature = "l2")]
 pub fn get_batch_cache_file_name(batch_number: u64) -> String {
-    format!("cache_batch_{batch_number}.bin")
+    format!("cache_batch_{batch_number}.{CACHE_FILE_FORMAT}")
 }
