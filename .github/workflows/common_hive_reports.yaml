@@ -12,10 +12,10 @@ on:
         description: "The name of the hive report artifact"
         value: ${{ jobs.hive-report.outputs.artifact_name }}
 
-concurrency:
-  # Serialize all runs to avoid race conditions when consuming hive result files
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
+# concurrency:
+#   # Serialize all runs to avoid race conditions when consuming hive result files
+#   group: ${{ github.workflow }}
+#   cancel-in-progress: false
 
 jobs:
   run-hive:
