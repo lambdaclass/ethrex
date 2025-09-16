@@ -24,7 +24,7 @@ impl Eq for Nibbles {}
 
 impl PartialOrd for Nibbles {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        self.data.partial_cmp(&other.data)
+        Some(self.cmp(other))
     }
 }
 

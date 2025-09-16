@@ -290,8 +290,8 @@ impl Trie {
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
     pub fn from_nodes(
-        root_hash: NodeHash,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
+        _root_hash: NodeHash,
+        _state_nodes: &BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
         todo!();
         /*
@@ -386,7 +386,7 @@ impl Trie {
 
     /// Obtain the encoded node given its path.
     /// Allows usage of full paths (byte slice of 32 bytes) or compact-encoded nibble slices (with length lower than 32)
-    pub fn get_node(&self, partial_path: &PathRLP) -> Result<Vec<u8>, TrieError> {
+    pub fn get_node(&self, _partial_path: &PathRLP) -> Result<Vec<u8>, TrieError> {
         todo!();
         /*
         // Convert compact-encoded nibbles into a byte slice if necessary

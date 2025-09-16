@@ -149,7 +149,7 @@ impl StoreEngine for Store {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = nibbles_to_fixed_size(node_hash);
                     let key = (key_1, key_2);
-                    tx.delete::<StorageTriesNodes>(key.clone(), None)
+                    tx.delete::<StorageTriesNodes>(key, None)
                         .map_err(StoreError::LibmdbxError)?;
 
                     tx.upsert::<StorageTriesNodes>(key, node_data)

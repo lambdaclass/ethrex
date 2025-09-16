@@ -8,7 +8,7 @@ use ethrex_common::{
     },
     utils::u256_to_big_endian,
 };
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode,
     MultiThreaded, Options, WriteBatch,
@@ -77,8 +77,8 @@ const CF_CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 const CF_SNAP_STATE: &str = "snap_state";
 
-/// State trie nodes column family: [`NodeHash`] => [`Vec<u8>`]
-/// - [`NodeHash`] = `node_hash.as_ref()`
+/// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
 const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
 
@@ -1536,7 +1536,7 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 

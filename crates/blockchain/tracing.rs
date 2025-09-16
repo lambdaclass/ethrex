@@ -121,9 +121,9 @@ impl Blockchain {
 /// We might be missing this state due to using batch execute or other methods while syncing the chain
 /// If we are not able to find a parent block with state after going through the amount of blocks given by `reexec` an error will be returned
 async fn get_missing_state_parents(
-    mut parent_hash: H256,
-    store: &Store,
-    reexec: u32,
+    mut _parent_hash: H256,
+    _store: &Store,
+    _reexec: u32,
 ) -> Result<Vec<Block>, ChainError> {
     todo!();
     /*
