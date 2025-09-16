@@ -463,7 +463,7 @@ async fn replay_no_backend(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Re
     let gas_used = get_total_gas_used(&cache.blocks);
 
     if opts.prove {
-        panic!("Proving not enabled without backend");
+        eyre::bail!("Proving not enabled without backend");
     }
 
     let start = Instant::now();
@@ -480,12 +480,12 @@ async fn replay_no_backend(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Re
     // We don't want empty nodes (0x80)
     witness.nodes.retain(|v| v != &[0x80]);
 
-    let guest_program = GuestProgramState::try_from(witness.clone()).unwrap();
+    let guest_program = GuestProgramState::try_from(witness.clone())?;
 
     let in_memory_store = InMemoryStore::new();
     // Set up internal state of in-memory store
     {
-        let mut inner_store = in_memory_store.inner().unwrap();
+        let mut inner_store = in_memory_store.inner()?;
 
         // Set up state trie nodes
         let all_nodes = &guest_program.nodes_hashed;
