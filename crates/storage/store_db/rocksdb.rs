@@ -60,9 +60,9 @@ const CF_RECEIPTS: &str = "receipts";
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
-///     let mut composite_key = Vec::with_capacity(64);
-///     composite_key.extend_from_slice(transaction_hash.as_bytes());
-///     composite_key.extend_from_slice(block_hash.as_bytes());
+///     // let mut composite_key = Vec::with_capacity(64);
+///     // composite_key.extend_from_slice(transaction_hash.as_bytes());
+///     // composite_key.extend_from_slice(block_hash.as_bytes());
 ///    ```
 /// - [`Vec<u8>`] = `(block_number, block_hash, index).encode_to_vec()`
 const CF_TRANSACTION_LOCATIONS: &str = "transaction_locations";
@@ -85,9 +85,9 @@ const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
 /// Storage tries nodes column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///   ```rust,no_run
-///     let mut key = Vec::with_capacity(64);
-///     key.extend_from_slice(address_hash.as_bytes());
-///     key.extend_from_slice(node_hash.as_ref());
+///     // let mut key = Vec::with_capacity(64);
+///     // key.extend_from_slice(address_hash.as_bytes());
+///     // key.extend_from_slice(node_hash.as_ref());
 ///   ```
 /// - [`Vec<u8>`] = `node_data`
 const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
@@ -100,9 +100,9 @@ const CF_PENDING_BLOCKS: &str = "pending_blocks";
 /// Storage snapshot column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///   ```rust,no_run
-///     let mut composite_key = Vec::with_capacity(64);
-///     composite_key.extend_from_slice(account_hash.as_bytes());
-///     composite_key.extend_from_slice(key.as_bytes());
+///     // let mut composite_key = Vec::with_capacity(64);
+///     // composite_key.extend_from_slice(account_hash.as_bytes());
+///     // composite_key.extend_from_slice(key.as_bytes());
 ///   ```
 /// - [`Vec<u8>`] = `u256_to_big_endian(value).to_vec()`
 const CF_STORAGE_SNAPSHOT: &str = "storage_snapshot";
