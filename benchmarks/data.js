@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758041458026,
+  "lastUpdate": 1758042327858,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14635,6 +14635,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170659599698,
             "range": "± 450243798",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b37a6b8dd4b815d8a321b9a70ca54736cbf577d5",
+          "message": "fix(l1): change default script branch in sync tool (#4506)\n\n**Motivation**\nThe default server script is snap_sync which is no longer valid\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nChanged default script branch to main\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-16T16:19:38Z",
+          "tree_id": "ebd4315d3425750ddcbb56a8acb997af775c7feb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b37a6b8dd4b815d8a321b9a70ca54736cbf577d5"
+        },
+        "date": 1758042305944,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170230759840,
+            "range": "± 798506036",
             "unit": "ns/iter"
           }
         ]
