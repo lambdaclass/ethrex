@@ -8,11 +8,13 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address, H256,
-    types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt},
+    types::{AccountUpdate, Block, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Receipt},
 };
 use ethrex_prover_lib::backend::Backend;
-use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_rpc::{
+    debug::execution_witness::RpcExecutionWitness, types::block_identifier::BlockTag,
+};
 use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
 use tracing::info;
@@ -655,7 +657,15 @@ pub async fn replay_custom_l1_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let cache = Cache::new(blocks, execution_witness);
+    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let cache = Cache::new(
+        blocks,
+        RpcExecutionWitness::from(execution_witness),
+        Some(network),
+    );
 
     let start = SystemTime::now();
 
@@ -708,6 +718,7 @@ pub async fn produce_l1_block(
         beacon_root: Some(H256::zero()),
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
     let payload_id = build_payload_args.id()?;
@@ -794,7 +805,15 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let mut cache = Cache::new(blocks, execution_witness);
+    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let mut cache = Cache::new(
+        blocks,
+        RpcExecutionWitness::from(execution_witness),
+        Some(network),
+    );
 
     cache.l2_fields = Some(L2Fields {
         blob_commitment: [0_u8; 48],

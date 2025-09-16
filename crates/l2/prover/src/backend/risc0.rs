@@ -3,7 +3,7 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProofCalldata, ProverType},
 };
 use guest_program::{
-    input::{JSONProgramInput, ProgramInput},
+    input::ProgramInput,
     methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };
 use risc0_zkp::verify::VerificationError;
@@ -11,6 +11,7 @@ use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
 };
+use rkyv::rancor::Error as RkyvError;
 use std::time::Instant;
 use tracing::info;
 
@@ -29,9 +30,8 @@ pub enum Error {
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    let env = ExecutorEnv::builder()
-        .write(&JSONProgramInput(input))?
-        .build()?;
+    let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
+    let env = ExecutorEnv::builder().write(&bytes.as_slice())?.build()?;
 
     let executor = default_executor();
 
@@ -49,9 +49,10 @@ pub fn prove(
 ) -> Result<Receipt, Box<dyn std::error::Error>> {
     let mut stdout = Vec::new();
 
+    let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
     let env = ExecutorEnv::builder()
         .stdout(&mut stdout)
-        .write(&JSONProgramInput(input))?
+        .write(&bytes.as_slice())?
         .build()?;
 
     let prover = default_prover();

@@ -4054,6 +4054,7 @@ dependencies = [
  "ethrex-p2p",
  "hex",
  "keccak-hash",
+ "serde",
  "serde_json",
 ]
 
@@ -4086,6 +4087,7 @@ name = "ethrex-l2"
 version = "0.1.0"
 dependencies = [
  "aligned-sdk",
+ "axum 0.8.4",
  "bincode",
  "bytes",
  "cfg-if 1.0.3",
