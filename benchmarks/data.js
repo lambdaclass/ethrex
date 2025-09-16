@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758059339167,
+  "lastUpdate": 1758061245579,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14965,6 +14965,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170925231361,
             "range": "± 1268647751",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4a9cffb1744b10149760363d5c76725f2ff3a565",
+          "message": "chore(l1): fix log level in tooling snap sync script (#4520)\n\n**Motivation**\n\nAfter #4515 was merged we lost most `info` logs when running with our\nautomated script, which are extremely important. This fixes it.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-16T21:27:58Z",
+          "tree_id": "4ae20850a57eacef45bd0e08a3893e910bb394e4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4a9cffb1744b10149760363d5c76725f2ff3a565"
+        },
+        "date": 1758061224448,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166690185568,
+            "range": "± 895674174",
             "unit": "ns/iter"
           }
         ]
