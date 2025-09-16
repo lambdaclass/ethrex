@@ -80,7 +80,8 @@ serde = { version = "<1.0.220", features = ["derive"] }
 # serde >=1.0.220 contains a breaking change for alloy-consensus
 # https://github.com/alloy-rs/alloy/issues/2876
 serde_with = "3.11.0"
-serde_json = "1.0.117"
+# serde_json >=1.0.145 depends on serde 1.0.220
+serde_json = "<1.0.145"
 libmdbx = { version = "=0.5.3", features = ["orm"] }
 bytes = { version = "1.6.0", features = ["serde"] }
 tokio = { version = "1.41.1", default-features = false }
