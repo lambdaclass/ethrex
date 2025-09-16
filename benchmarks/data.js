@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758040683991,
+  "lastUpdate": 1758041458026,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14605,6 +14605,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166574880534,
             "range": "± 472409055",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "435dd7fe41a6b2b39422b1da363309383948766c",
+          "message": "fix(replay):  `ethrex_replay` add fallback when executionWitness is not implemented (#4039)\n\n**Motivation**\n\nWe want to re incorporate the `ProverDB` struct that uses the endpoint\n`eth_getProof` for common usability.\n\n**Description**\n\n- Bring the deleted `ProverDB` and `RpcDB` structs.\n- Create new enum `PreExecutionState` for handling both\n`ExecutionWitnessResult` and `ProverDB`\n- Added an `--l2` flag to both the `execute` and `prove` subcommands in\nthe CLI, enabling users to specify L2 block processing.\n- Modify the block data fetcher to use a fallback mechanism: if the\n`debug_executionWitness` RPC endpoint is missing, it falls back to using\n`eth_getProof` and builds a database from RPC data, supporting both L1\nand L2 VM types.\n\n**Follow up**\n\n- Investigate if the changes made\n[here](https://github.com/lambdaclass/ethrex/pull/2952) are still\nrequired\n\n- We want to configure the RPC_LIMIT constant #4504\n\n**Known Issues**\n\nSome of the executions when using a Nethermind endpoint end up in\nerrors. Issue [here](http://github.com/lambdaclass/ethrex/issues/4109)\n\n**How to test**\n\nRunning with `RPC_URL` being and enpoint that does not implement\n`debug_executionWitness`:\n\n```\ncargo run --release --features sp1 -- execute block <N> --rpc-url <RPC_URL> --network <NETWORK>\n```\n\nCloses #3989\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: JereSalo <jeresalo17@gmail.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: LeanSerra <46695152+LeanSerra@users.noreply.github.com>",
+          "timestamp": "2025-09-16T15:56:18Z",
+          "tree_id": "11a88f93959ca1e28d121048df6349c20d3df7bb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/435dd7fe41a6b2b39422b1da363309383948766c"
+        },
+        "date": 1758041437097,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170659599698,
+            "range": "± 450243798",
             "unit": "ns/iter"
           }
         ]
