@@ -32,14 +32,40 @@ jobs:
             }
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
           - {
-              name: "Consume Engine tests",
-              file_name: consume-engine,
+              name: "Consume Engine tests (Rest)",
+              file_name: consume-engine-rest,
               simulation: ethereum/eest/consume-engine,
+              limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
             }
           - {
-              name: "Consume RLP tests",
-              file_name: consume-rlp,
+              name: "Consume Engine tests (Prague)",
+              file_name: consume-engine-prague,
+              simulation: ethereum/eest/consume-engine,
+              limit: ".*fork_Prague.*",
+            }
+          - {
+              name: "Consume Engine tests (Osaka)",
+              file_name: consume-engine-osaka,
+              simulation: ethereum/eest/consume-engine,
+              limit: ".*fork_Osaka.*",
+            }
+          - {
+              name: "Consume RLP tests (Rest)",
+              file_name: consume-rlp-rest,
               simulation: ethereum/eest/consume-rlp,
+              limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
+            }
+          - {
+              name: "Consume RLP tests (Prague)",
+              file_name: consume-rlp-prague,
+              simulation: ethereum/eest/consume-rlp,
+              limit: ".*fork_Prague.*",
+            }
+          - {
+              name: "Consume RLP tests (Osaka)",
+              file_name: consume-rlp-osaka,
+              simulation: ethereum/eest/consume-rlp,
+              limit: ".*fork_Osaka.*",
             }
 
     steps:
@@ -73,13 +99,15 @@ jobs:
         shell: bash
         env:
           SIMULATION: ${{ matrix.test.simulation }}
+          SIM_LIMIT: ${{ matrix.test.limit || '' }}
         run: |
           FLAGS='--sim.parallelism 16 --sim.loglevel 1'
           if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
             FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
             FLAGS+=" --sim.buildarg branch=main"
-            # FLAGS+=" --sim.limit \".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*|.*fork_Osaka.*\""
-            FLAGS+=" --sim.limit \".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*\""
+          fi
+          if [[ -n "$SIM_LIMIT" ]]; then
+            FLAGS+=" --sim.limit \"$SIM_LIMIT\""
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
