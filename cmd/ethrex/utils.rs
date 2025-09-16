@@ -112,6 +112,8 @@ pub fn default_datadir() -> String {
 // TODO: Use PathBuf instead of strings
 pub fn init_datadir(data_dir: &str) -> String {
     let datadir = if data_dir != &default_datadir() {
+        // Prefix the provided datadir with the project directory
+        // i.e. ~/.local/share/<data_dir>
         let project_dir =
             ProjectDirs::from("", "", data_dir).expect("Couldn't find home directory");
         let data_dir = project_dir
