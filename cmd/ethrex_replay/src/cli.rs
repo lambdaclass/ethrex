@@ -59,9 +59,6 @@ pub enum EthrexReplayCommand {
     #[command(about = "Replay multiple blocks")]
     Blocks(BlocksOptions),
     #[cfg(not(feature = "l2"))]
-    #[command(about = "Replay a range of blocks")]
-    BlockRange(BlockRangeOptions),
-    #[cfg(not(feature = "l2"))]
     #[command(about = "Plots the composition of a range of blocks.")]
     BlockComposition {
         #[arg(help = "Starting block. (Inclusive)")]
@@ -115,8 +112,6 @@ pub enum CacheSubcommand {
     Block(BlockOptions),
     #[command(about = "Cache multiple blocks.")]
     Blocks(BlocksOptions),
-    #[command(about = "Cache a range of blocks")]
-    BlockRange(BlockRangeOptions),
 }
 
 #[derive(Parser)]
@@ -155,20 +150,14 @@ pub struct BlockOptions {
 
 #[cfg(not(feature = "l2"))]
 #[derive(Parser)]
+#[command(group(ArgGroup::new("block_list").required(true).args(["blocks", "from"])))]
 pub struct BlocksOptions {
-    #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+    #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"])]
     blocks: Vec<u64>,
-    #[command(flatten)]
-    opts: EthrexReplayOptions,
-}
-
-#[cfg(not(feature = "l2"))]
-#[derive(Parser)]
-pub struct BlockRangeOptions {
-    #[arg(long, help = "Starting block. (Inclusive)")]
-    start: u64,
-    #[arg(long, help = "Ending block. (Inclusive)")]
-    end: u64,
+    #[arg(long, help = "Starting block. (Inclusive)", requires = "to")]
+    from: Option<u64>,
+    #[arg(long, help = "Ending block. (Inclusive)", requires = "from")]
+    to: Option<u64>,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -210,12 +199,17 @@ impl EthrexReplayCommand {
             #[cfg(not(feature = "l2"))]
             Self::Block(block_opts) => replay_block(block_opts).await?,
             #[cfg(not(feature = "l2"))]
-            Self::Blocks(BlocksOptions { mut blocks, opts }) => {
+            Self::Blocks(BlocksOptions {
+                blocks,
+                from,
+                to,
+                opts,
+            }) => {
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                blocks.sort();
+                let blocks = resolve_blocks(blocks, from, to)?;
 
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!(
@@ -227,26 +221,6 @@ impl EthrexReplayCommand {
 
                     replay_block(BlockOptions {
                         block: Some(*block_number),
-                        opts: opts.clone(),
-                    })
-                    .await?;
-                }
-            }
-            #[cfg(not(feature = "l2"))]
-            Self::BlockRange(BlockRangeOptions { start, end, opts }) => {
-                if opts.cached {
-                    unimplemented!("cached mode is not implemented yet");
-                }
-
-                if start >= end {
-                    return Err(eyre::Error::msg(
-                        "starting point can't be greater than ending point",
-                    ));
-                }
-
-                for block in start..=end {
-                    replay_block(BlockOptions {
-                        block: Some(block),
                         opts: opts.clone(),
                     })
                     .await?;
@@ -267,8 +241,13 @@ impl EthrexReplayCommand {
                 }
             }
             #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::Blocks(BlocksOptions { mut blocks, opts })) => {
-                blocks.sort();
+            Self::Cache(CacheSubcommand::Blocks(BlocksOptions {
+                blocks,
+                from,
+                to,
+                opts,
+            })) => {
+                let blocks = resolve_blocks(blocks, from, to)?;
 
                 let (eth_client, network) = setup(&opts).await?;
 
@@ -282,14 +261,6 @@ impl EthrexReplayCommand {
                 }
 
                 info!("Blocks data cached successfully.");
-            }
-            #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::BlockRange(BlockRangeOptions { start, end, opts })) => {
-                let (eth_client, network) = setup(&opts).await?;
-
-                get_rangedata(eth_client, network, start, end).await?;
-
-                info!("Block from {start} to {end} data cached successfully.");
             }
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Block(CustomBlockOptions { prove })) => {
@@ -564,6 +535,27 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
         Some(n) => BlockIdentifier::Number(n),
         None => BlockIdentifier::Tag(BlockTag::Latest),
     })
+}
+
+fn resolve_blocks(
+    mut blocks: Vec<u64>,
+    from: Option<u64>,
+    to: Option<u64>,
+) -> eyre::Result<Vec<u64>> {
+    if let (Some(start), Some(end)) = (from, to) {
+        if start > end {
+            return Err(eyre::Error::msg(
+                "starting point can't be greater than ending point",
+            ));
+        }
+        for block in start..=end {
+            blocks.push(block);
+        }
+    } else {
+        blocks.sort();
+    }
+
+    Ok(blocks)
 }
 
 fn print_transition(update: AccountUpdate) {
