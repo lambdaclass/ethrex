@@ -543,7 +543,7 @@ fn resolve_blocks(
     to: Option<u64>,
 ) -> eyre::Result<Vec<u64>> {
     if let (Some(start), Some(end)) = (from, to) {
-        if start >= end {
+        if start > end {
             return Err(eyre::Error::msg(
                 "starting point can't be greater than ending point",
             ));
