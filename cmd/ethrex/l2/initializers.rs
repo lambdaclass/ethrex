@@ -199,7 +199,7 @@ pub async fn init_l2(
         tracker.clone(),
         rollup_store.clone(),
         log_filter_handler,
-        opts.sequencer_opts.block_producer_opts.block_gas_limit,
+        Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
     )
     .await;
 

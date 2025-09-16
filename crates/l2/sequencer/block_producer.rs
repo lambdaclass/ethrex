@@ -11,7 +11,7 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
     validate_block,
 };
-use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_common::Address;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -81,7 +81,7 @@ impl BlockProducer {
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
             last_privileged_nonce: None,
-            block_gas_limit: block_gas_limit.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
+            block_gas_limit: *block_gas_limit,
         }
     }
 

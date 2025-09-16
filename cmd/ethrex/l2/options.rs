@@ -3,7 +3,7 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::Address;
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
@@ -389,12 +389,13 @@ pub struct BlockProducerOptions {
     pub elasticity_multiplier: u64,
     #[arg(
         long = "block-producer.block-gas-limit",
+        default_value = "30_000_000",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT",
         help = "Maximum gas limit for the L2 blocks.",
         help_heading = "Block producer options"
     )]
-    pub block_gas_limit: Option<u64>,
+    pub block_gas_limit: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -407,7 +408,7 @@ impl Default for BlockProducerOptions {
                     .unwrap(),
             ),
             elasticity_multiplier: 2,
-            block_gas_limit: None,
+            block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }
