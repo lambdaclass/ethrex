@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758027054357,
+  "lastUpdate": 1758031641047,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14455,6 +14455,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167094294389,
             "range": "± 343338997",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "671cc6e5eb2c9b73a328a78bf0efa5ac56160fa5",
+          "message": "ci(l2): install latest rex version (#4498)\n\n**Motivation**\n\nThe CI is still broken because we have an old Rex version pinned.\n\n**Description**\n\nInstall the latest Rex version.\n\nCloses None",
+          "timestamp": "2025-09-16T13:13:29Z",
+          "tree_id": "5c4c214c6e7b12bcf1d34ae15b84cb192eb05b05",
+          "url": "https://github.com/lambdaclass/ethrex/commit/671cc6e5eb2c9b73a328a78bf0efa5ac56160fa5"
+        },
+        "date": 1758031618009,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 171079857262,
+            "range": "± 595118598",
             "unit": "ns/iter"
           }
         ]
