@@ -63,6 +63,7 @@ use crate::{
         G2_MUL_COST, POINT_EVALUATION_COST,
     },
 };
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::BLS12381Curve;
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1009,9 +1010,7 @@ pub fn bls12_g1add(
 
     #[expect(clippy::arithmetic_side_effects, clippy::unwrap_used)]
     {
-        use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
-            BLS12381Curve, BLS12381FieldElement,
-        };
+        use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::BLS12381FieldElement;
 
         if calldata[0..16] != [0; 16]
             || calldata[64..80] != [0; 16]
@@ -1024,55 +1023,57 @@ pub fn bls12_g1add(
         fn parse_g1_point(
             x_data: &[u8],
             y_data: &[u8],
-        ) -> ShortWeierstrassProjectivePoint<BLS12381Curve> {
-            let mut x = BLS12381FieldElement::from_bytes_be(x_data).unwrap();
-            let mut y = BLS12381FieldElement::from_bytes_be(y_data).unwrap();
+        ) -> Result<Option<ShortWeierstrassProjectivePoint<BLS12381Curve>>, PrecompileError>
+        {
+            let x = BLS12381FieldElement::from_bytes_be(x_data).unwrap();
+            let y = BLS12381FieldElement::from_bytes_be(y_data).unwrap();
 
-            if x == BLS12381FieldElement::zero() {
-                x = BLS12381FieldElement::default();
+            if x == BLS12381FieldElement::zero() && y == BLS12381FieldElement::zero() {
+                Ok(None)
+            } else {
+                BLS12381Curve::create_point_from_affine(x, y)
+                    .map(Some)
+                    .map_err(|_| PrecompileError::InvalidPoint)
             }
-            if y == BLS12381FieldElement::zero() {
-                y = BLS12381FieldElement::default();
-            }
-
-            BLS12381Curve::create_point_from_affine(x, y).unwrap()
         }
 
-        let p0 = parse_g1_point(&calldata[16..64], &calldata[80..128]);
-        let p1 = parse_g1_point(&calldata[144..192], &calldata[208..256]);
+        let p0 = parse_g1_point(&calldata[16..64], &calldata[80..128])?;
+        let p1 = parse_g1_point(&calldata[144..192], &calldata[208..256])?;
 
-        let p2 = {
-            let y10 = p1.y() - p0.y();
-            let x10 = p1.x() - p0.x();
-            match x10.inv() {
-                Ok(x10_inv) => {
-                    let l = y10 * x10_inv;
+        let p2 = match (p0, p1) {
+            (Some(p0), Some(p1)) => {
+                let y10 = p1.y() - p0.y();
+                let x10 = p1.x() - p0.x();
+                match x10.inv() {
+                    Ok(x10_inv) => {
+                        let l = y10 * x10_inv;
 
-                    let x = l.square() - p0.x() - p1.x();
-                    let y = l * (p0.x() - &x) - p0.y();
+                        let x = l.square() - p0.x() - p1.x();
+                        let y = l * (p0.x() - &x) - p0.y();
 
-                    BLS12381Curve::create_point_from_affine(x, y).unwrap()
+                        (x, y)
+                    }
+                    Err(_) => (BLS12381FieldElement::zero(), BLS12381FieldElement::zero()),
                 }
-                Err(_) => todo!(),
             }
+            _ => (BLS12381FieldElement::zero(), BLS12381FieldElement::zero()),
         };
 
         let mut buffer = BytesMut::with_capacity(128);
         buffer.put_u128(0);
-        buffer.put_u64(p2.x().value().limbs[5]);
-        buffer.put_u64(p2.x().value().limbs[4]);
-        buffer.put_u64(p2.x().value().limbs[3]);
-        buffer.put_u64(p2.x().value().limbs[2]);
-        buffer.put_u64(p2.x().value().limbs[1]);
-        buffer.put_u64(p2.x().value().limbs[0]);
+        buffer.put_u64(p2.0.value().limbs[5]);
+        buffer.put_u64(p2.0.value().limbs[4]);
+        buffer.put_u64(p2.0.value().limbs[3]);
+        buffer.put_u64(p2.0.value().limbs[2]);
+        buffer.put_u64(p2.0.value().limbs[1]);
+        buffer.put_u64(p2.0.value().limbs[0]);
         buffer.put_u128(0);
-        buffer.put_u64(p2.y().value().limbs[5]);
-        buffer.put_u64(p2.y().value().limbs[4]);
-        buffer.put_u64(p2.y().value().limbs[3]);
-        buffer.put_u64(p2.y().value().limbs[2]);
-        buffer.put_u64(p2.y().value().limbs[1]);
-        buffer.put_u64(p2.y().value().limbs[0]);
-
+        buffer.put_u64(p2.1.value().limbs[5]);
+        buffer.put_u64(p2.1.value().limbs[4]);
+        buffer.put_u64(p2.1.value().limbs[3]);
+        buffer.put_u64(p2.1.value().limbs[2]);
+        buffer.put_u64(p2.1.value().limbs[1]);
+        buffer.put_u64(p2.1.value().limbs[0]);
         Ok(buffer.freeze())
     }
 }
