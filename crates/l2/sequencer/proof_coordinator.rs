@@ -17,19 +17,17 @@ use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use futures::StreamExt;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, spawn_listener};
+use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
-use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "metrics")]
@@ -253,12 +251,11 @@ impl ProofCoordinator {
         .await?;
 
         let proof_coordinator = ProofCoordinator::start(state);
-        start_prover_listener(
+        spawned_rt::tasks::spawn(start_prover_listener(
             proof_coordinator,
             cfg.proof_coordinator.listen_ip,
             cfg.proof_coordinator.listen_port,
-        )
-        .await?;
+        ));
 
         Ok(())
     }
@@ -565,32 +562,45 @@ async fn send_response(
 }
 
 async fn start_prover_listener(
-    proof_coordinator: GenServerHandle<ProofCoordinator>,
+    mut proof_coordinator: GenServerHandle<ProofCoordinator>,
     ip: IpAddr,
     port: u16,
-) -> std::io::Result<()> {
-    let listener = TcpListener::bind(format!("{ip}:{port}")).await?;
-    let stream = TcpListenerStream::new(listener);
-    let stream = stream.filter_map(async |result| match result {
-        Ok(mut stream) => {
-            let mut buffer = Vec::new();
-            stream
-                .read_to_end(&mut buffer)
-                .await
-                .inspect_err(|err| error!("Failed to read from tcp stream: {err}"))
-                .ok()?;
-
-            serde_json::from_slice(&buffer)
-                .map(|data| ProofCordInMessage::Request(data, Arc::new(stream)))
-                .inspect_err(|err| error!("Failed to deserialize data: {}", err))
-                .ok()
-        }
-        Err(e) => {
-            error!("{}", e);
-            None
-        }
-    });
+) -> Result<(), ProofCoordinatorError> {
     info!("Starting TCP server at {ip}:{port}.");
-    spawn_listener(proof_coordinator, stream);
-    Ok(())
+    let listener = TcpListener::bind(format!("{ip}:{port}"))
+        .await
+        .map_err(|e| {
+            ProofCoordinatorError::InternalError(format!("Failed to bind tcp socker: {e}"))
+        })?;
+    loop {
+        match listener.accept().await {
+            Ok((mut stream, _address)) => {
+                let mut buffer = Vec::new();
+                if stream
+                    .read_to_end(&mut buffer)
+                    .await
+                    .inspect_err(|err| error!("Failed to read from tcp stream: {err}"))
+                    .is_err()
+                {
+                    continue;
+                }
+
+                let Ok(message) = serde_json::from_slice(&buffer)
+                    .map(|data| ProofCordInMessage::Request(data, Arc::new(stream)))
+                    .inspect_err(|err| error!("Failed to deserialize data: {}", err))
+                else {
+                    continue;
+                };
+
+                proof_coordinator
+                    .cast(message)
+                    .await
+                    .inspect_err(|e| error!("Failed to send cast message to proof coordinator {e}"))
+                    .map_err(|e| ProofCoordinatorError::InternalError(e.to_string()))?;
+            }
+            Err(err) => {
+                error!("Error while accepting tpc connection {err}");
+            }
+        }
+    }
 }
