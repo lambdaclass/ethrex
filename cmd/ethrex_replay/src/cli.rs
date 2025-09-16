@@ -498,7 +498,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     // Always write the cache after fetching from RPC.
     // It will be deleted later if not needed.
-    cache.write(l2)?;
+    cache.write()?;
 
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
@@ -531,11 +531,11 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         // Only save the cache if the block run failed
         CacheLevel::Failed => {
             if !block_run_failed {
-                cache.delete(l2)?;
+                cache.delete()?;
             }
         }
         // Don't keep the cache
-        CacheLevel::Off => cache.delete(l2)?,
+        CacheLevel::Off => cache.delete()?,
     }
 
     if opts.to_csv {

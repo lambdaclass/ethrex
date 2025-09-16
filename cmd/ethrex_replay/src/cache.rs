@@ -60,7 +60,7 @@ impl Cache {
         Ok(serde_json::from_reader(file)?)
     }
 
-    pub fn write(&self, l2: bool) -> eyre::Result<()> {
+    pub fn write(&self) -> eyre::Result<()> {
         if self.blocks.is_empty() {
             return Err(eyre::Error::msg("cache can't be empty"));
         }
@@ -75,7 +75,6 @@ impl Cache {
             } else {
                 self.blocks.last().map(|b| b.header.number)
             },
-            l2,
         );
 
         debug!("Writing cache to {file_name}");
@@ -87,7 +86,7 @@ impl Cache {
         Ok(())
     }
 
-    pub fn delete(&self, l2: bool) -> eyre::Result<()> {
+    pub fn delete(&self) -> eyre::Result<()> {
         if self.blocks.is_empty() {
             return Err(eyre::Error::msg("tried to delete cache with no blocks"));
         }
@@ -102,7 +101,6 @@ impl Cache {
             } else {
                 self.blocks.last().map(|b| b.header.number)
             },
-            l2,
         );
 
         debug!("Deleting cache file {file_name}");
@@ -113,8 +111,8 @@ impl Cache {
     }
 }
 
-pub fn get_block_cache_file_name(chain_id: u64, from: u64, to: Option<u64>, l2: bool) -> String {
-    let network = network_from_chain_id(chain_id, l2);
+pub fn get_block_cache_file_name(chain_id: u64, from: u64, to: Option<u64>) -> String {
+    let network = network_from_chain_id(chain_id);
 
     if let Some(to) = to {
         format!("cache_{network}_{from}-{to}.bin")
