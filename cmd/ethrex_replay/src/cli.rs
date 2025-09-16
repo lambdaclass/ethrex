@@ -7,8 +7,8 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H256,
     types::{
-        AccountState, AccountUpdate, Block, BlockHeader, ELASTICITY_MULTIPLIER, Receipt,
-        block_execution_witness::GuestProgramState,
+        AccountState, AccountUpdate, Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL,
+        ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
     },
 };
 use ethrex_prover_lib::backend::Backend;
@@ -834,6 +834,7 @@ pub async fn produce_l1_block(
         beacon_root: Some(H256::zero()),
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
     let payload_id = build_payload_args.id()?;
