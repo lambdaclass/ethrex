@@ -3937,6 +3937,7 @@ dependencies = [
  "guest_program",
  "risc0-zkvm",
  "risc0-zkvm-platform",
+ "rkyv",
 ]
 
 [[patch.unused]]

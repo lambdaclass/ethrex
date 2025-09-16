@@ -279,7 +279,7 @@ impl From<EvmError> for RpcErr {
 
 pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError> {
     if data == "0x" {
-        Ok("unknown error".to_owned())
+        Ok("Execution reverted without a reason string.".to_owned())
     // 4 byte function signature 0xXXXXXXXX
     } else if data.len() == 10 {
         Ok(data.to_owned())
