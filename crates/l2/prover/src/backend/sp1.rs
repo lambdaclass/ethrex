@@ -81,9 +81,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let Some(setup) = PROVER_SETUP.get() else {
-        return Err("PROVER_SETUP is not initialized".into());
-    };
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
     let now = Instant::now();
     setup.client.execute(PROGRAM_ELF, &stdin)?;
@@ -101,9 +99,7 @@ pub fn prove(
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let Some(setup) = PROVER_SETUP.get() else {
-        return Err("PROVER_SETUP is not initialized".into());
-    };
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
     // contains the receipt along with statistics about execution of the guest
     let proof = if aligned_mode {
@@ -121,9 +117,7 @@ pub fn prove(
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(setup) = PROVER_SETUP.get() else {
-        return Err("PROVER_SETUP is not initialized".into());
-    };
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
     setup.client.verify(&output.proof, &output.vk)?;
 
     Ok(())
