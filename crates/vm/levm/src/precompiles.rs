@@ -64,7 +64,9 @@ use crate::{
     },
 };
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::BLS12381Curve;
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::field_extension::BLS12381FieldModulus;
 use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
+use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1025,6 +1027,14 @@ pub fn bls12_g1add(
             x_data: &[u8],
             y_data: &[u8],
         ) -> Result<(BLS12381FieldElement, BLS12381FieldElement), PrecompileError> {
+            let modulus_bytes = BLS12381FieldModulus::MODULUS.limbs.map(|x| x.to_be_bytes());
+            let modulus_bytes = modulus_bytes.as_flattened();
+            if (x_data.len() == modulus_bytes.len() && x_data >= modulus_bytes)
+                || (y_data.len() == modulus_bytes.len() && y_data >= modulus_bytes)
+            {
+                return Err(PrecompileError::ParsingInputError);
+            }
+
             let x = BLS12381FieldElement::from_bytes_be(x_data).unwrap();
             let y = BLS12381FieldElement::from_bytes_be(y_data).unwrap();
 
