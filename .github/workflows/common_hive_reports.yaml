@@ -12,6 +12,11 @@ on:
         description: "The name of the hive report artifact"
         value: ${{ jobs.hive-report.outputs.artifact_name }}
 
+concurrency:
+  # Serialize all runs to avoid race conditions when consuming hive result files
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
@@ -53,18 +58,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Pull image
-        if: ${{ github.ref_name == 'main' }}
         run: |
           docker pull ghcr.io/lambdaclass/ethrex:main
           # Tests use ethrex:ci so we retag it
           docker tag ghcr.io/lambdaclass/ethrex:main ethrex:ci
-
-      - name: Build image
-        uses: ./.github/actions/build-docker
-        if: ${{ github.ref_name != 'main' }}
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
