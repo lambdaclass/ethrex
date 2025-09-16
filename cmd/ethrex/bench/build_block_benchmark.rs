@@ -123,7 +123,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     let store = Store::new(
         &storage_path.path().display().to_string(),
-        EngineType::Libmdbx,
+        EngineType::RocksDB,
     )
     .unwrap();
     for address in accounts {
