@@ -63,7 +63,6 @@ use crate::{
         G2_MUL_COST, POINT_EVALUATION_COST,
     },
 };
-use lambdaworks_math::elliptic_curve::short_weierstrass::traits::Compress;
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1014,30 +1013,48 @@ pub fn bls12_g1add(
             BLS12381Curve, BLS12381FieldElement,
         };
 
-        assert_eq!(calldata[0..16], [0; 16]);
-        assert_eq!(calldata[64..80], [0; 16]);
-        assert_eq!(calldata[128..144], [0; 16]);
-        assert_eq!(calldata[192..208], [0; 16]);
-        let p0 = BLS12381Curve::create_point_from_affine(
-            BLS12381FieldElement::from_bytes_be(&calldata[16..64]).unwrap(),
-            BLS12381FieldElement::from_bytes_be(&calldata[80..128]).unwrap(),
-        )
-        .unwrap();
-        let p1 = BLS12381Curve::create_point_from_affine(
-            BLS12381FieldElement::from_bytes_be(&calldata[144..192]).unwrap(),
-            BLS12381FieldElement::from_bytes_be(&calldata[208..256]).unwrap(),
-        )
-        .unwrap();
+        if calldata[0..16] != [0; 16]
+            || calldata[64..80] != [0; 16]
+            || calldata[128..144] != [0; 16]
+            || calldata[192..208] != [0; 16]
+        {
+            return Err(PrecompileError::ParsingInputError.into());
+        }
+
+        fn parse_g1_point(
+            x_data: &[u8],
+            y_data: &[u8],
+        ) -> ShortWeierstrassProjectivePoint<BLS12381Curve> {
+            let mut x = BLS12381FieldElement::from_bytes_be(x_data).unwrap();
+            let mut y = BLS12381FieldElement::from_bytes_be(y_data).unwrap();
+
+            if x == BLS12381FieldElement::zero() {
+                x = BLS12381FieldElement::default();
+            }
+            if y == BLS12381FieldElement::zero() {
+                y = BLS12381FieldElement::default();
+            }
+
+            BLS12381Curve::create_point_from_affine(x, y).unwrap()
+        }
+
+        let p0 = parse_g1_point(&calldata[16..64], &calldata[80..128]);
+        let p1 = parse_g1_point(&calldata[144..192], &calldata[208..256]);
 
         let p2 = {
             let y10 = p1.y() - p0.y();
             let x10 = p1.x() - p0.x();
-            let l = y10 / x10;
+            match x10.inv() {
+                Ok(x10_inv) => {
+                    let l = y10 * x10_inv;
 
-            let x = l.square() - p0.x() - p1.x();
-            let y = l * (p0.x() - &x) - p0.y();
+                    let x = l.square() - p0.x() - p1.x();
+                    let y = l * (p0.x() - &x) - p0.y();
 
-            BLS12381Curve::create_point_from_affine(x, y).unwrap()
+                    BLS12381Curve::create_point_from_affine(x, y).unwrap()
+                }
+                Err(_) => todo!(),
+            }
         };
 
         let mut buffer = BytesMut::with_capacity(128);
