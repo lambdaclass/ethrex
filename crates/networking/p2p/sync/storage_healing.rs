@@ -676,6 +676,12 @@ fn commit_node(
         node.node_request.storage_path.clone(),
         node.node.encode_to_vec(),
     ));
+    if let Node::Leaf(leaf) = &node.node {
+        to_write.entry(hashed_account).or_default().push((
+            node.node_request.storage_path.concat(leaf.partial.clone()),
+            node.node.encode_to_vec(),
+        ));
+    }
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {

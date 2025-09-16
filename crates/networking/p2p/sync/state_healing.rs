@@ -365,6 +365,9 @@ fn commit_node(
     nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
 ) {
     nodes_to_write.push((path.clone(), node.encode_to_vec()));
+    if let Node::Leaf(leaf) = &node {
+        nodes_to_write.push((path.concat(leaf.partial.clone()), node.encode_to_vec()));
+    }
 
     if parent_path == path {
         return; // Case where we're saving the root
