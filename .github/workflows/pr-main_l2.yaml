@@ -218,11 +218,9 @@ jobs:
       - name: Install rex
         run: |
           cd ..
-          rustup install nightly # Install the nightly toolchain needed by rex, change this in the future
-          rustup default nightly
           git clone https://github.com/lambdaclass/rex.git
           cd rex
-          git checkout 21763774e29e4566ccb831ea8154e94aa2ff7c0e
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
           make cli
           echo "rex install successfully at $(which rex)"
 
@@ -401,7 +399,13 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [integration-test, state-diff-test, integration-test-based, integration-test-tdx]
+    needs:
+      [
+        integration-test,
+        state-diff-test,
+        integration-test-based,
+        integration-test-tdx,
+      ]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' }}
     steps:
