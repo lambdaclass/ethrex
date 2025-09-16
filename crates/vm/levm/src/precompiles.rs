@@ -1024,39 +1024,34 @@ pub fn bls12_g1add(
         fn parse_g1_point(
             x_data: &[u8],
             y_data: &[u8],
-        ) -> Result<Option<(BLS12381FieldElement, BLS12381FieldElement)>, PrecompileError> {
+        ) -> Result<(BLS12381FieldElement, BLS12381FieldElement), PrecompileError> {
             let x = BLS12381FieldElement::from_bytes_be(x_data).unwrap();
             let y = BLS12381FieldElement::from_bytes_be(y_data).unwrap();
 
-            if x == BLS12381FieldElement::zero() && y == BLS12381FieldElement::zero() {
-                Ok(None)
-            } else if BLS12381Curve::defining_equation(&x, &y) == BLS12381FieldElement::zero() {
-                Err(PrecompileError::InvalidPoint)
+            if BLS12381Curve::defining_equation(&x, &y) == BLS12381FieldElement::zero() {
+                Err(PrecompileError::BLS12381G1PointNotInCurve)
             } else {
-                Ok(Some((x, y)))
+                Ok((x, y))
             }
         }
 
         let p0 = parse_g1_point(&calldata[16..64], &calldata[80..128])?;
         let p1 = parse_g1_point(&calldata[144..192], &calldata[208..256])?;
 
-        let p2 = match (p0, p1) {
-            (Some(p0), Some(p1)) => {
-                let y10 = p1.1 - &p0.1;
-                let x10 = &p1.0 - &p0.0;
-                match x10.inv() {
-                    Ok(x10_inv) => {
-                        let l = y10 * x10_inv;
+        let p2 = {
+            let y10 = p1.1 - &p0.1;
+            let x10 = &p1.0 - &p0.0;
+            match x10.inv() {
+                Ok(x10_inv) => {
+                    let l = y10 * x10_inv;
 
-                        let x = l.square() - &p0.0 - p1.0;
-                        let y = l * (p0.0 - &x) - p0.1;
+                    let x = l.square() - &p0.0 - p1.0;
+                    let y = l * (p0.0 - &x) - p0.1;
 
-                        (x, y)
-                    }
-                    Err(_) => (BLS12381FieldElement::zero(), BLS12381FieldElement::zero()),
+                    (x, y)
                 }
+                Err(_) => (BLS12381FieldElement::zero(), BLS12381FieldElement::zero()),
             }
-            _ => (BLS12381FieldElement::zero(), BLS12381FieldElement::zero()),
         };
 
         let mut buffer = BytesMut::with_capacity(128);
