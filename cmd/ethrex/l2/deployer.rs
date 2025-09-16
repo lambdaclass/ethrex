@@ -70,7 +70,7 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 /// SP1 verification key.
 #[cfg(feature = "sp1")]
 const SP1_VERIFICATION_KEY: Option<&str> = Some(include_str!(concat!(
-    "../../../crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk"
+    "../../../crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk"
 )));
 #[cfg(not(feature = "sp1"))]
 const SP1_VERIFICATION_KEY: Option<&str> = None;
@@ -78,7 +78,7 @@ const SP1_VERIFICATION_KEY: Option<&str> = None;
 /// RISC0 verification key.
 #[cfg(feature = "risc0")]
 const RISC0_VERIFICATION_KEY: Option<&str> = Some(include_str!(concat!(
-    "../../../crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk"
+    "../../../crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk"
 )));
 #[cfg(not(feature = "risc0"))]
 const RISC0_VERIFICATION_KEY: Option<&str> = None;
