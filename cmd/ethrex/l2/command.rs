@@ -15,7 +15,6 @@ use ethrex_common::{
 };
 use ethrex_config::networks::Network;
 use ethrex_l2_common::{calldata::Value, l1_messages::get_l1_message_hash, state_diff::StateDiff};
-use ethrex_l2_rpc::signer::LocalSigner;
 use ethrex_l2_sdk::call_contract;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
