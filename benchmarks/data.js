@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758048851099,
+  "lastUpdate": 1758051107756,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14755,6 +14755,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168936511164,
             "range": "± 321978153",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "690bdb4c16cce02d7699c4af01b0c475ba5044fa",
+          "message": "feat(l2): add a configurable batch gas limit (#4267)\n\n> [!CAUTION]\n> Merge after #4211\n\n**Motivation**\n\nWe need a way to limit the gas used per batch to prevent overloading our\nprover.\n\n\n**Description**\n\n- Adds a new CLI parameter: `batch_gas_limit`.\n- Updates the `l1_committer` to ensure that the batch never exceeds this\nlimit if set.\n\nCloses #4208",
+          "timestamp": "2025-09-16T18:38:25Z",
+          "tree_id": "b0d27b27df364c909d77ba64933a8b3232646b31",
+          "url": "https://github.com/lambdaclass/ethrex/commit/690bdb4c16cce02d7699c4af01b0c475ba5044fa"
+        },
+        "date": 1758051086572,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170696538314,
+            "range": "± 436013083",
             "unit": "ns/iter"
           }
         ]
