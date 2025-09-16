@@ -11,10 +11,12 @@ use ethrex_common::{
     Address, U256,
     types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxType},
 };
-use ethrex_l2_common::l1_messages::get_block_l1_messages;
 use ethrex_l2_common::state_diff::{
     AccountStateDiff, BLOCK_HEADER_LEN, L1MESSAGE_LOG_LEN, PRIVILEGED_TX_LOG_LEN,
     SIMPLE_TX_STATE_DIFF_SIZE, StateDiffError,
+};
+use ethrex_l2_common::{
+    l1_messages::get_block_l1_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
 };
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
@@ -23,15 +25,11 @@ use ethrex_metrics::{
     metrics_transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_storage::Store;
-use ethrex_storage_rollup::StoreRollup;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
 use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error};
-
-/// Max privileged tx to allow per batch
-const PRIVILEGED_TX_BUDGET: u64 = 300;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -40,7 +38,8 @@ pub async fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
     store: &Store,
-    rollup_store: &StoreRollup,
+    last_privileged_nonce: &mut Option<u64>,
+    block_gas_limit: u64,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -48,7 +47,14 @@ pub async fn build_payload(
     debug!("Building payload");
     let mut context = PayloadBuildContext::new(payload, store, blockchain.r#type.clone())?;
 
-    fill_transactions(blockchain.clone(), &mut context, store, rollup_store).await?;
+    fill_transactions(
+        blockchain.clone(),
+        &mut context,
+        store,
+        last_privileged_nonce,
+        block_gas_limit,
+    )
+    .await?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
@@ -87,17 +93,21 @@ pub async fn build_payload(
 
 /// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size
 /// stays within the blob size limit after processing each transaction.
+/// Also, uses a configured `block_gas_limit` to limit the gas used in the block,
+/// which can be lower than the block gas limit specified in the payload header.
 pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
-    rollup_store: &StoreRollup,
+    last_privileged_nonce: &mut Option<u64>,
+    configured_block_gas_limit: u64,
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
     let mut account_diffs = HashMap::new();
     let safe_bytes_per_blob: u64 = SAFE_BYTES_PER_BLOB.try_into()?;
+    let mut privileged_tx_count = 0;
 
     let chain_config = store.get_chain_config()?;
 
@@ -105,8 +115,7 @@ pub async fn fill_transactions(
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
     let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
-    // Inserting an excessive number may prevent the commitment from being sent
-    let mut privileged_range = rollup_store.precommit_privileged().await?;
+
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -114,6 +123,12 @@ pub async fn fill_transactions(
             debug!("No more gas to run transactions");
             break;
         };
+
+        // Check if we have enough gas to run more transactions within the configured block_gas_limit
+        if context.gas_used() + TX_GAS_COST >= configured_block_gas_limit {
+            debug!("No more gas to run transactions");
+            break;
+        }
 
         // Check if we have enough space for the StateDiff to run more transactions
         if acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
@@ -130,6 +145,14 @@ pub async fn fill_transactions(
 
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
+            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+            // We don't have enough gas left for the transaction, so we skip all txs from this account
+            txs.pop();
+            continue;
+        }
+
+        // Check if we have enough gas to run the transaction within the configured block_gas_limit
+        if context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit {
             debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
@@ -200,24 +223,23 @@ pub async fn fill_transactions(
 
         // Check we don't have an excessive number of privileged transactions
         if head_tx.tx_type() == TxType::Privileged {
+            if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
+                debug!("Ran out of space for privileged transactions");
+                txs.pop();
+                undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
+                continue;
+            }
             let id = head_tx.nonce();
-            if let Some(range) = privileged_range.as_mut() {
-                if range.end - range.start > PRIVILEGED_TX_BUDGET {
-                    debug!("Ran out of space for privileged transactions");
-                    txs.pop();
-                    undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
-                    continue;
-                }
-                if id != range.end {
+            if let Some(last_nonce) = last_privileged_nonce {
+                if id != *last_nonce + 1 {
                     debug!("Ignoring out-of-order privileged transaction");
                     txs.pop();
                     undo_last_tx(context, previous_remaining_gas, previous_block_value)?;
                     continue;
                 }
-                range.end += 1;
-            } else {
-                privileged_range = Some(id..(id + 1));
             }
+            last_privileged_nonce.replace(id);
+            privileged_tx_count += 1;
         }
 
         txs.shift()?;
@@ -235,10 +257,6 @@ pub async fn fill_transactions(
         // Save receipt for hash calculation
         context.receipts.push(receipt);
     }
-
-    rollup_store
-        .update_precommit_privileged(privileged_range)
-        .await?;
 
     metrics!(
         context

@@ -1314,6 +1314,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "lazy_static",
+ "rkyv",
  "serde",
  "sha3",
  "thiserror",
@@ -4196,6 +4197,7 @@ dependencies = [
  "guest_program",
  "risc0-zkvm",
  "risc0-zkvm-platform",
+ "rkyv",
 ]
 
 [[patch.unused]]
