@@ -40,7 +40,7 @@ const fn pad_right<const N: usize>(input: &[u8; N]) -> [u8; 8] {
     padded
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 /// A capability is identified by a short ASCII name (max eight characters) and version number
 pub struct Capability {
     protocol: [u8; CAPABILITY_NAME_MAX_LENGTH],
@@ -107,6 +107,15 @@ impl Serialize for Capability {
         S: serde::Serializer,
     {
         serializer.serialize_str(&format!("{}/{}", self.protocol(), self.version))
+    }
+}
+
+impl std::fmt::Debug for Capability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Capability")
+            .field("protocol", &self.protocol())
+            .field("version", &self.version)
+            .finish()
     }
 }
 
