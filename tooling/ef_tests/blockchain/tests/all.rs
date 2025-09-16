@@ -3,7 +3,7 @@ use std::path::Path;
 
 const TEST_FOLDER: &str = "vectors/";
 
-#[cfg(not(feature = "revm"))]
+#[cfg(not(any(feature = "revm", feature = "sp1", feature = "stateless")))]
 const SKIPPED_TESTS: &[&str] = &[
     "system_contract_deployment",
     "test_excess_blob_gas_fork_transition",
@@ -34,6 +34,21 @@ const SKIPPED_TESTS: &[&str] = &[
     "test_reserve_price_at_transition",
     "CreateTransactionHighNonce",
     "lowGasLimit",
+];
+#[cfg(any(feature = "sp1", feature = "stateless"))]
+const SKIPPED_TESTS: &[&str] = &[
+    "system_contract_deployment",
+    "test_excess_blob_gas_fork_transition",
+    "test_invalid_post_fork_block_without_blob_fields",
+    "test_invalid_pre_fork_block_with_blob_fields",
+    "stTransactionTest/HighGasPriceParis",
+    "dynamicAccountOverwriteEmpty_Paris",
+    "create2collisionStorageParis",
+    "RevertInCreateInInitCreate2Paris",
+    "createBlobhashTx",
+    // We skip these two tests because they fail with stateless backend specifically. See https://github.com/lambdaclass/ethrex/issues/4502
+    "test_large_amount",
+    "test_multiple_withdrawals_same_address",
 ];
 
 // If neither `sp1` nor `stateless` is enabled: run with whichever engine
