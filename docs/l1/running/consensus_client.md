@@ -1,6 +1,6 @@
 # Connecting to a consensus client
 
-Ethrex is an execution client designed for post [merge](https://ethereum.org/en/roadmap/merge/) networks. Since Ethereum swapped from [proof-of-work](https://ethereum.org/en/developers/docs/consensus-mechanisms/pow) to [proof-of-stake](https://ethereum.org/en/developers/docs/consensus-mechanisms/pos), ethrex needs to run alongside a [consensus client](https://ethereum.org/en/developers/docs/nodes-and-clients/#consensus-clients).
+Ethrex is an execution client built for Ethereum networks after the [merge](https://ethereum.org/en/roadmap/merge/). As a result, ethrex must operate together with a [consensus client](https://ethereum.org/en/developers/docs/nodes-and-clients/#consensus-clients) to fully participate in the network.
 
 ### Consensus clients
 
@@ -11,7 +11,7 @@ There are several consensus clients and all of them work with ethrex. When choos
 - [Nimbus](https://nimbus.team/)
 - [Prysm](https://prysm.offchainlabs.com/)
 - [Teku](https://consensys.io/teku)
-- [Grandline](https://docs.grandine.io/)
+- [Grandine](https://docs.grandine.io/)
 
 ## Configuring ethrex
 

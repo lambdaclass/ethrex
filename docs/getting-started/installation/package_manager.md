@@ -1,3 +1,3 @@
-# Package Manager
+# Install ethrex (package manager)
 
 Coming soon.

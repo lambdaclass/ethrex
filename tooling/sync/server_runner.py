@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument(
         "--block_wait_time",
         type=int,
-        default=60,
+        default=120,
         help="Time to wait until new block in seconds (default: 60)",
     )
     parser.add_argument(

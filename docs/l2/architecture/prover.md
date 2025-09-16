@@ -109,6 +109,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
   - `make init-prover T=(sp1,risc0) G=true`
 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
+
    1. `cd ethrex/crates/l2`
    2. Create a `.env` file with the following content:
 
@@ -141,19 +142,22 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.
 
 - `Finally`, to start the `proposer`/`l2 node`, run:
+
   - `make rm-db-l2 && make down`
   - `make deploy-l1 && make init-l2` (if running a risc0 prover, see the next step before invoking the L1 contract deployer)
 
 - If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions [here](https://github.com/risc0/risc0-ethereum/tree/main/contracts/script).
 - For a local L1 running with ethrex, we do the following:
-   1. clone the risc0-ethereum repo
-   1. edit the `risc0-ethereum/contracts/deployment.toml` file by adding
+
+  1.  clone the risc0-ethereum repo
+  1.  edit the `risc0-ethereum/contracts/deployment.toml` file by adding
       ```toml
       [chains.ethrex]
       name = "Ethrex local devnet"
       id = 9
       ```
-   1. export env. variables (we are using an ethrex's rich L1 account)
+  1.  export env. variables (we are using an ethrex's rich L1 account)
+
       ```bash
       export VERIFIER_ESTOP_OWNER="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
       export DEPLOYER_PRIVATE_KEY="0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
@@ -164,14 +168,16 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       export ETHERSCAN_URL="dummy"
       export ETHERSCAN_API_KEY="dummy"
       ```
+
       the last two variables need to be defined with some value even if not used, else the deployment script fails.
-   1. cd into `risc0-ethereum/`
-   1. run the deployment script
+
+  1.  cd into `risc0-ethereum/`
+  1.  run the deployment script
       ```bash
       bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
       ```
-   1. if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
-   if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
+  1.  if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
+      if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
 
 ## Configuration
 
@@ -240,7 +246,7 @@ If a value is removed during block execution (meaning it existed initially but n
 
 **Case 1**
 
-![Image showing restructuration for case 1](../../img/execw_case1.png)
+![Image showing restructuration for case 1](../img/execw_case1.png)
 
 Here, only **leaf 1** is part of the execution witness, so we lack the proof (and thus the node data) for **leaf 2**. After removing **leaf 1**, **branch 1** becomes redundant. During trie restructuring, it's replaced by **leaf 3**, whose path is the path of **leaf 2** concatenated with a prefix nibble (`k`) representing the choice taken at the original **branch 1**, and keeping **leaf 2**'s value.
 
@@ -254,7 +260,7 @@ Without **leaf 2**'s data, we cannot construct **leaf 3**. The solution is to fe
 
 **Case 2**
 
-![Image showing restructuration for case 2](../../img/execw_case2.png)
+![Image showing restructuration for case 2](../img/execw_case2.png)
 
 In this case, restructuring requires information about **branch/ext 2** (which could be a branch or extension node), but this node might not be in the witness. Checking the final **extension** node might seem sufficient to deduce **branch/ext 2** in simple scenarios. However, this fails if similar restructuring occurred at higher trie levels involving more removals, as the final **extension** node might combine paths from multiple original branches, making it ambiguous to reconstruct the specific missing **branch/ext 2** node.
 
@@ -290,7 +296,7 @@ There are two kinds of MPT proofs:
 
 These three components are specific additions for ethrex's L2 protocol, layered on top of standard Ethereum execution logic. They each require specific validation steps within the program.
 
-For more details, refer to [Overview](../../overview.md), [Withdrawals](../withdrawals.md), and [State diffs](../state_diffs.md).
+For more details, refer to [Overview](./overview.md), [Withdrawals](../fundamentals/withdrawals.md), and [State diffs](../fundamentals/state_diffs.md).
 
 #### Step 1: initial state validation
 
