@@ -9,7 +9,9 @@ tokio = { version = "1.41.1", features = ["full"] }
 keccak-hash = "0.11"
 hex = "0.4"
 zerocopy = "0.8"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "<1.0.220", features = ["derive"] }
+# serde >=1.0.220 contains a breaking change for alloy-consensus
+# https://github.com/alloy-rs/alloy/issues/2876
 serde_json = "1.0"
 
 ethrex-common = { path = "../../../common", default-features = false }
