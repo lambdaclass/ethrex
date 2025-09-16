@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758057049413,
+  "lastUpdate": 1758059339167,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14935,6 +14935,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166634497576,
             "range": "± 994996420",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "006802b07b24f4f3a537cd7630294156f9e90037",
+          "message": "fix(l2): avoid blocking in `L1Committer` (#4164)\n\n**Motivation**\n\nThe L1 Committer does some blocking computations when publishing batches\nto L1, which took from 100ms to 30ms according to quick measurements on\nan M3. This is a low number, but still degrades the tokio runtime and\ncould cause issues elsewhere in the system.\n\n**Description**\n\n~This PR wraps the call to `generate_blobs_bundle` with a\n`spawn_blocking`, to avoid blocking the tokio runtime. Also adds a\ncomment on another call that seems to also be blocking, taking sometimes\n\\~40ms before reaching an `await` point.~ Changes reverted. Now we\ninstead spawn the whole GenServer as blocking.",
+          "timestamp": "2025-09-16T20:55:45Z",
+          "tree_id": "7c135955c608d9ba2423565b88f8f5adc3e6f470",
+          "url": "https://github.com/lambdaclass/ethrex/commit/006802b07b24f4f3a537cd7630294156f9e90037"
+        },
+        "date": 1758059318012,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170925231361,
+            "range": "± 1268647751",
             "unit": "ns/iter"
           }
         ]
