@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758036930586,
+  "lastUpdate": 1758037748000,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14515,6 +14515,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168255871116,
             "range": "± 787611023",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e1b03c8359c7cc7e8ef9831cb01073989ea6ccca",
+          "message": "feat(l2): configure block max gas limit (#4211)\n\n> [!CAUTION]\n> Merge after #4224\n\n**Motivation**\n\nWe need a way to limit the gas used per block to avoid overloading our\nprover.\n\n**Description**\n\n- Adds a new CLI parameter: `max_gas_limit`.\n- Updates the `payload_builder` to check this parameter as well.\n\n**How to test**\n\nSet a low `max_gas_limit`, start the L2, and watch in the monitor how\nthe initial deposits are distributed across different blocks, ensuring\nthat the gas used per block is lower than the configured amount.\n\n\nCloses #4207 \nCloses #2526",
+          "timestamp": "2025-09-16T14:55:31Z",
+          "tree_id": "32b9b3a5c7c33ed48d748cb34926836101a7b3dc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e1b03c8359c7cc7e8ef9831cb01073989ea6ccca"
+        },
+        "date": 1758037727119,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169521757018,
+            "range": "± 442046219",
             "unit": "ns/iter"
           }
         ]
