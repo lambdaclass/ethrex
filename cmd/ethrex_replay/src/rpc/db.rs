@@ -32,16 +32,28 @@ use super::{Account, NodeRLP};
 
 const RPC_RATE_LIMIT: usize = 15;
 
+/// Structure for a database that fetches data from an RPC endpoint on demand.
+/// Caches already fetched data to minimize RPC calls.
+/// Implements the `LevmDatabase` trait to be used as the db for execution.
 #[derive(Clone)]
 pub struct RpcDB {
+    /// RPC endpoint URL.
     pub rpc_url: String,
+    /// Block number of the actual block to execute.
     pub block_number: usize,
-    // we concurrently download tx callers before pre-execution to minimize sequential RPC calls
+    /// Cache of already fetched accounts. This includes state, code, storage and proofs.
+    /// Accounts in the parent block, i.e. the initial state of the execution.
     pub cache: Arc<Mutex<HashMap<Address, Account>>>,
+    /// Cache of already fetched accounts. This includes state, code, storage and proofs.
+    /// Accounts in the actual block being executed, i.e. the post-state.
     pub child_cache: Arc<Mutex<HashMap<Address, Account>>>,
+    /// Cache of already fetched block hashes.
     pub block_hashes: Arc<Mutex<HashMap<u64, H256>>>,
+    /// Cache of already fetched contract codes.
     pub codes: Arc<Mutex<HashMap<H256, Bytes>>>,
+    /// Chain config of the blockchain.
     pub chain_config: ChainConfig,
+    /// VM type (L1 or L2).
     pub vm_type: VMType,
 }
 
