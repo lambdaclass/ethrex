@@ -1,10 +1,15 @@
-mod r#trait;
 pub mod in_memory;
-pub mod rocksdb;
+
+#[cfg(feature = "libmdbx")]
 pub mod libmdbx;
 
-pub use r#trait::{StorageBackend, BatchOp, StorageError};
+#[cfg(feature = "rocksdb")]
+pub mod rocksdb;
+
+mod r#trait;
+
 pub use in_memory::InMemoryBackend;
+pub use r#trait::{BatchOp, StorageBackend, StorageError};
 
 #[cfg(feature = "rocksdb")]
 pub use rocksdb::RocksDBBackend;

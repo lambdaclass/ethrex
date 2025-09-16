@@ -54,13 +54,42 @@ impl SchemaRegistry {
     }
 
     /// Get a value by key from a specific table
-    pub async fn get(&self, table: DBTable, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
+    pub fn get_sync(&self, table: DBTable, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
         let table_def = self
             .tables
             .get(&table)
             .ok_or_else(|| StorageError::Custom(format!("Table {:?} not registered", table)))?;
 
-        self.backend.get(&table_def.namespace, key).await
+        self.backend.get_sync(&table_def.namespace, key)
+    }
+
+    /// Get a value by key from a specific table
+    pub async fn get_async(
+        &self,
+        table: DBTable,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, StorageError> {
+        let table_def = self
+            .tables
+            .get(&table)
+            .ok_or_else(|| StorageError::Custom(format!("Table {:?} not registered", table)))?;
+
+        self.backend.get_async(&table_def.namespace, key).await
+    }
+
+    pub async fn get_async_batch(
+        &self,
+        table: DBTable,
+        keys: Vec<Vec<u8>>,
+    ) -> Result<Vec<Vec<u8>>, StorageError> {
+        let table_def = self
+            .tables
+            .get(&table)
+            .ok_or_else(|| StorageError::Custom(format!("Table {:?} not registered", table)))?;
+
+        self.backend
+            .get_async_batch(&table_def.namespace, keys)
+            .await
     }
 
     /// Put a key-value pair in a specific table

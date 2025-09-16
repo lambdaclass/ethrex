@@ -41,7 +41,7 @@ impl InMemoryBackend {
 
 #[async_trait::async_trait]
 impl StorageBackend for InMemoryBackend {
-    async fn get(&self, namespace: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
+    fn get_sync(&self, namespace: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
         let namespaces = self
             .namespaces
             .lock()
@@ -52,6 +52,40 @@ impl StorageBackend for InMemoryBackend {
         match ns {
             Some(ns) => Ok(ns.get(key).cloned()),
             None => Ok(None),
+        }
+    }
+
+    async fn get_async(
+        &self,
+        namespace: &str,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, StorageError> {
+        self.get_sync(namespace, key)
+    }
+
+    async fn get_async_batch(
+        &self,
+        namespace: &str,
+        keys: Vec<Vec<u8>>,
+    ) -> Result<Vec<Vec<u8>>, StorageError> {
+        let namespaces = self
+            .namespaces
+            .lock()
+            .map_err(|_| StorageError::Custom("Failed to acquire lock".to_string()))?;
+
+        let ns = namespaces.get(namespace);
+
+        match ns {
+            Some(ns) => {
+                let mut results = Vec::new();
+                for key in keys {
+                    if let Some(value) = ns.get(&key) {
+                        results.push(value.clone());
+                    }
+                }
+                Ok(results)
+            }
+            None => Ok(Vec::new()),
         }
     }
 

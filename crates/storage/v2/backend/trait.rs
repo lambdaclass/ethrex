@@ -8,13 +8,27 @@ use ethrex_rlp::error::RLPDecodeError;
 #[async_trait::async_trait]
 pub trait StorageBackend: Send + Sync + Debug + RefUnwindSafe {
     /// Get a value by key from the specified namespace
-    async fn get(&self, namespace: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError>;
+    fn get_sync(&self, namespace: &str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StorageError>;
+
+    /// Get a value by key from the specified namespace
+    async fn get_async(
+        &self,
+        namespace: &str,
+        key: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, StorageError>;
+
+    /// Get a value by key from the specified namespace
+    async fn get_async_batch(
+        &self,
+        namespace: &str,
+        keys: Vec<Vec<u8>>,
+    ) -> Result<Vec<Vec<u8>>, StorageError>;
 
     /// Put a key-value pair in the specified namespace
-    async fn put(&self, namespace: &str, key: &[u8], value: &[u8]) -> Result<(), StorageError>;
+    async fn put(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError>;
 
     /// Delete a key from the specified namespace
-    async fn delete(&self, namespace: &str, key: &[u8]) -> Result<(), StorageError>;
+    async fn delete(&self, namespace: &str, key: Vec<u8>) -> Result<(), StorageError>;
 
     /// Execute multiple operations atomically
     async fn batch_write(&self, ops: Vec<BatchOp>) -> Result<(), StorageError>;
@@ -27,7 +41,7 @@ pub trait StorageBackend: Send + Sync + Debug + RefUnwindSafe {
     async fn range(
         &self,
         namespace: &str,
-        start_key: &[u8],
+        start_key: Vec<u8>,
         end_key: Option<&[u8]>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError>;
 }
@@ -66,4 +80,8 @@ pub enum StorageError {
 
     #[error("Error decoding RLP")]
     RLPDecode(#[from] RLPDecodeError),
+
+    #[cfg(feature = "rocksdb")]
+    #[error("RocksDB error: {0}")]
+    RocksDB(#[from] rocksdb::Error),
 }
