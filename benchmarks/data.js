@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758044392424,
+  "lastUpdate": 1758046377809,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14695,6 +14695,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168026338784,
             "range": "± 341410428",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d6f83bfb7cfdddfe30552ace30a367f12a2ed16",
+          "message": "test(l1): added error line to get more detail on InvalidArgument error (#4501)\n\n**Motivation**\n\nA `MessageSendFailure(IoError(Os { code: 22, kind: InvalidInput,\nmessage: \"Invalid argument\" }))` is spamming from time to time when\ntrying to send a discv4 message.\n\n**Description**\n\nAdded an error line to detail the message being send, the destination\naddress and the internal error to get better insight of the problem\n\nOnce the problem is found, we can revert this code.\n\nCloses #4492",
+          "timestamp": "2025-09-16T17:19:44Z",
+          "tree_id": "d781fcdba0d79c5c515737a0f56cf644cadf0afd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7d6f83bfb7cfdddfe30552ace30a367f12a2ed16"
+        },
+        "date": 1758046357031,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170207658745,
+            "range": "± 604607477",
             "unit": "ns/iter"
           }
         ]
