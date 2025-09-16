@@ -60,7 +60,6 @@ pub async fn heal_state_trie_wrap(
     *METRICS.current_step.lock().await = "Healing State".to_string();
     info!("Starting state healing");
 
-    // Setup bytecode collector for healing
     let code_hashes_snapshots_dir = get_code_hashes_snapshots_dir(&datadir.to_string());
     let mut code_hashes_collector =
         CodeHashCollector::new(*code_hashes_index_file, code_hashes_snapshots_dir);
@@ -192,7 +191,7 @@ async fn heal_state_trie(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
 
-                            // Collect code hash if not empty
+                            // Collect valid code hash
                             if account.code_hash != *EMPTY_KECCACK_HASH {
                                 code_hashes_collector.add(account.code_hash);
                                 code_hashes_collector.flush_if_needed().await?;

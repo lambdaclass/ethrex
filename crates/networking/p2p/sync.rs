@@ -836,12 +836,10 @@ impl Syncer {
         let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
-        // Code hashes snapshots directory and index file
         let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(&self.datadir);
-
-        // Create bytecode hashes snapshots directory if it doesn't exist
         std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
 
+        // Create collector to store code hashes in files
         let mut codehash_collector = CodeHashCollector::new(0, code_hashes_snapshot_dir.clone());
         let mut code_index_file = 0_u64;
 
@@ -1123,21 +1121,22 @@ impl Syncer {
 
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
-        // Read all bytecode hash files
         let code_hashes_dir = get_code_hashes_snapshots_dir(&self.datadir);
         let mut seen_code_hashes = HashSet::new();
         let mut code_hashes_to_download = Vec::new();
 
         info!("Starting download code hashes from peers");
-        for entry in std::fs::read_dir(&code_hashes_dir).map_err(|_| SyncError::CorruptPath)? {
+        for entry in std::fs::read_dir(&code_hashes_dir)
+            .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
+        {
             let entry = entry.map_err(|_| SyncError::CorruptPath)?;
             let snapshot_contents = std::fs::read(entry.path())
                 .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
             let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-                .map_err(|_| SyncError::SnapshotDecodeError(entry.path()))?;
+                .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
 
             for hash in code_hashes {
-                // If we haven't seen the code hash yet, add it to the list of code hashes to download
+                // If we haven't seen the code hash yet, add it to the list of hashes to download
                 if seen_code_hashes.insert(hash) {
                     code_hashes_to_download.push(hash);
 
@@ -1365,6 +1364,8 @@ pub enum SyncError {
     SnapshotReadError(PathBuf, std::io::Error),
     #[error("Failed to RLP decode account_state_snapshot from {0:?}")]
     SnapshotDecodeError(PathBuf),
+    #[error("Failed to RLP decode code_hashes_snapshot from {0:?}")]
+    CodeHashesSnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
     AccountState(H256, H256),
     #[error("Failed to acquire lock on maybe_big_account_storage")]
@@ -1375,6 +1376,8 @@ pub enum SyncError {
     AccountStateSnapshotsDirNotFound,
     #[error("Failed to get account storages snapshots directory")]
     AccountStoragesSnapshotsDirNotFound,
+    #[error("Failed to get code hashes snapshots directory")]
+    CodeHashesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
     #[error("We aren't finding get_peer_channel_with_retry")]
