@@ -54,6 +54,7 @@ pub struct BlockProducer {
     rollup_store: StoreRollup,
     // Needed to ensure privileged tx nonces are sequential
     last_privileged_nonce: Option<u64>,
+    block_gas_limit: u64,
 }
 
 impl BlockProducer {
@@ -68,6 +69,7 @@ impl BlockProducer {
             block_time_ms,
             coinbase_address,
             elasticity_multiplier,
+            block_gas_limit,
         } = config;
         Self {
             store,
@@ -79,6 +81,7 @@ impl BlockProducer {
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
             last_privileged_nonce: None,
+            block_gas_limit: *block_gas_limit,
         }
     }
 
@@ -131,6 +134,7 @@ impl BlockProducer {
             beacon_root: Some(head_beacon_block_root),
             version,
             elasticity_multiplier: self.elasticity_multiplier,
+            gas_ceil: self.block_gas_limit,
         };
         let payload = create_payload(&args, &self.store)?;
 
@@ -140,6 +144,7 @@ impl BlockProducer {
             payload,
             &self.store,
             &mut self.last_privileged_nonce,
+            self.block_gas_limit,
         )
         .await?;
         info!(

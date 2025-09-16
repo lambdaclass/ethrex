@@ -374,6 +374,7 @@ async fn build_payload(
         beacon_root: attributes.parent_beacon_block_root,
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: context.gas_ceil,
     };
     let payload_id = args
         .id()
