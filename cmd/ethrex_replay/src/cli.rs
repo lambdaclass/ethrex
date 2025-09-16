@@ -257,6 +257,16 @@ impl EthrexReplayCommand {
                 to,
                 opts,
             })) => {
+                let to = if to.is_none() {
+                    let eth_client = EthClient::new(opts.rpc_url.as_str())?;
+
+                    let latest_block = eth_client.get_block_number().await?;
+
+                    Some(latest_block.as_u64())
+                } else {
+                    to
+                };
+
                 let blocks = resolve_blocks(blocks, from, to)?;
 
                 let (eth_client, network) = setup(&opts).await?;
