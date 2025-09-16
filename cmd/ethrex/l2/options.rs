@@ -477,8 +477,7 @@ pub struct CommitterOptions {
         value_name = "UINT64",
         env = "ETHREX_COMMITTER_BATCH_GAS_LIMIT",
         help_heading = "L1 Committer options",
-        help = "Maximum gas limit for the batch",
-        requires = "max_gas_limit"
+        help = "Maximum gas limit for the batch"
     )]
     pub batch_gas_limit: Option<u64>,
     #[arg(
