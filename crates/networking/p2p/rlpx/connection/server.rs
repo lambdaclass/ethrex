@@ -723,6 +723,7 @@ where
     }
 }
 
+#[instrument(level = "trace", skip(state), fields(node = ?state.node, capabilities = ?state.capabilities))]
 pub(crate) async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     state.sink.lock().await.send(message).await
 }
