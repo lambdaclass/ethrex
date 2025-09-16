@@ -1,42 +1,50 @@
-# Docker images
+# Installing ethrex (docker)
+
+Run Ethrex easily using Docker containers. This guide covers pulling and running official images.
 
 ## Prerequisites
 
-- [Docker](https://www.docker.com/get-started/)
+- [Docker](https://www.docker.com/get-started/) installed and running
 
-## Pull the docker image
+## Pulling the Docker Image
 
-To pull the latest stable docker image, run:
+**Latest stable release:**
 
-```
+```sh
 docker pull ghcr.io/lambdaclass/ethrex:latest
 ```
 
-To pull the latest development docker image, run:
+**Latest development build:**
 
-```
+```sh
 docker pull ghcr.io/lambdaclass/ethrex:main
 ```
 
-To pull the image for a specific version, run:
+**Specific version:**
 
-```
+```sh
 docker pull ghcr.io/lambdaclass/ethrex:<version-tag>
 ```
 
-Existing tags are available in the [GitHub repo](https://github.com/lambdaclass/ethrex/tags)
+Find available tags in the <a href="https://github.com/lambdaclass/ethrex/tags" target="_blank">GitHub repo</a>.
 
-## Run the docker image
+---
 
-### Verify the image is working
+## Running the Docker Image
 
-```
+### Check the Image
+
+Verify the image is working:
+
+```sh
 docker run --rm ghcr.io/lambdaclass/ethrex --version
 ```
 
-### Start the node
+### Start an ethrex Node
 
-```
+Run the following command to start a node in the background:
+
+```sh
 docker run \
     --rm \
     -d \
@@ -48,26 +56,40 @@ docker run \
     -p 9090:9090 \
     --name ethrex \
     ghcr.io/lambdaclass/ethrex \
-    --http.addr 0.0.0.0 \
     --authrpc.addr 0.0.0.0
 ```
 
-This command will start a container called `ethrex` and publish the following ports
+**What this does:**
 
-- `8545`: TCP port for the JSON-RPC server
-- `8551`: TCP port for the auth JSON-RPC server
-- `30303`: TCP/UDP port for p2p networking
-- `9090`: TCP port metrics port
+- Starts a container named `ethrex`
+- Publishes ports:
+  - `8545`: JSON-RPC server (TCP)
+  - `8551`: Auth JSON-RPC server (TCP)
+  - `30303`: P2P networking (TCP/UDP)
+  - `9090`: Metrics (TCP)
+- Mounts the Docker volume `ethrex` to persist blockchain data
 
-The command also mounts the docker volume `ethrex` to persist data.
+**Tip:** You can add more Ethrex CLI arguments at the end of the command as needed.
 
-If you want to follow the logs run
-```
+---
+
+## Managing the Container
+
+**View logs:**
+
+```sh
 docker logs -f ethrex
 ```
 
-To stop the container run
+**Stop the node:**
 
-```
+```sh
 docker stop ethrex
 ```
+
+---
+
+**Next steps:**
+
+- [L1 Quickstart](../quickstart-l1.md)
+- [L2 Quickstart](../quickstart-l2.md)
