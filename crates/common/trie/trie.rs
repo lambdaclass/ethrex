@@ -266,7 +266,7 @@ impl Trie {
 
         fn get_embedded_node(
             all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_rlp: &Vec<u8>,
+            cur_node_rlp: &[u8],
         ) -> Result<Node, TrieError> {
             let cur_node = Node::decode_raw(cur_node_rlp)?;
 
@@ -320,7 +320,7 @@ impl Trie {
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
         let root = Self::get_embedded_root(state_nodes, root_hash)?;
-        trie.root = root.into();
+        trie.root = root;
 
         Ok(trie)
     }
