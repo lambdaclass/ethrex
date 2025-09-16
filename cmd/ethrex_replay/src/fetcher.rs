@@ -1,15 +1,17 @@
 use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::ChainConfig;
+use ethrex_config::networks::Network;
+use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
+    clients::{EthClientError, eth::errors::GetWitnessError},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
-use crate::cache::Cache;
-use ethrex_config::networks::Network;
+use crate::{cache::Cache, rpc::db::RpcDB};
 
 #[cfg(feature = "l2")]
 use crate::cache::L2Fields;
@@ -80,10 +82,52 @@ pub async fn get_blockdata(
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness_rpc = eth_client
+    let witness_rpc = match eth_client
         .get_witness(BlockIdentifier::Number(requested_block_number), None)
         .await
-        .wrap_err("Unimplemented: Retry with eth_getProofs")?;
+    {
+        Ok(witness) => witness,
+        Err(EthClientError::GetWitnessError(GetWitnessError::RPCError(_))) => {
+            warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
+
+            #[cfg(feature = "l2")]
+            let vm_type = VMType::L2;
+            #[cfg(not(feature = "l2"))]
+            let vm_type = VMType::L1;
+
+            info!(
+                "Caching callers and recipients state for block {}",
+                requested_block_number - 1
+            );
+            let rpc_db = RpcDB::with_cache(
+                eth_client.urls.first().unwrap().as_str(),
+                chain_config,
+                (requested_block_number - 1).try_into()?,
+                &block,
+                vm_type,
+            )
+            .await
+            .wrap_err("failed to create rpc db")?;
+
+            info!(
+                "Pre executing block {}. This may take a while.",
+                requested_block_number - 1
+            );
+            let rpc_db = rpc_db
+                .to_execution_witness(&block)
+                .wrap_err("failed to build execution db")?;
+            info!(
+                "Finished building execution witness for block {}",
+                requested_block_number - 1
+            );
+            rpc_db
+        }
+        Err(e) => {
+            return Err(eyre::eyre!(format!(
+                "Unexpected response from debug_executionWitness: {e}"
+            )));
+        }
+    };
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
         .elapsed()
