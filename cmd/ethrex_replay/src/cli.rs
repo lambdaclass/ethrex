@@ -13,8 +13,11 @@ use ethrex_common::{
 };
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_rpc::types::block_identifier::BlockTag;
-use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_rpc::{
+    EthClient,
+    debug::execution_witness::{RpcExecutionWitness, execution_witness_from_rpc_chain_config},
+    types::block_identifier::{BlockIdentifier, BlockTag},
+};
 use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
 };
@@ -456,7 +459,7 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     Ok(gas_used)
 }
 
-async fn replay_no_backend(mut cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
+async fn replay_no_backend(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     let gas_used = get_total_gas_used(&cache.blocks);
 
     if opts.prove {
@@ -466,10 +469,18 @@ async fn replay_no_backend(mut cache: Cache, opts: &EthrexReplayOptions) -> eyre
     let start = Instant::now();
     info!("Preparing Storage for execution without prover backend");
 
-    // We don't want empty nodes (0x80)
-    cache.witness.nodes.retain(|v| v != &[0x80]);
+    let chain_config = cache.get_chain_config()?;
 
-    let guest_program = GuestProgramState::try_from(cache.witness.clone()).unwrap();
+    let mut witness = execution_witness_from_rpc_chain_config(
+        cache.witness.clone(),
+        chain_config,
+        cache.get_first_block_number(),
+    )?;
+
+    // We don't want empty nodes (0x80)
+    witness.nodes.retain(|v| v != &[0x80]);
+
+    let guest_program = GuestProgramState::try_from(witness.clone()).unwrap();
 
     let in_memory_store = InMemoryStore::new();
     // Set up internal state of in-memory store
@@ -485,8 +496,7 @@ async fn replay_no_backend(mut cache: Cache, opts: &EthrexReplayOptions) -> eyre
         inner_store.state_trie_nodes = state_trie_nodes;
 
         // Set up storage trie nodes
-        let addresses: Vec<Address> = cache
-            .witness
+        let addresses: Vec<Address> = witness
             .keys
             .iter()
             .filter(|k| k.len() == Address::len_bytes())
@@ -524,7 +534,7 @@ async fn replay_no_backend(mut cache: Cache, opts: &EthrexReplayOptions) -> eyre
     // Set up store with preloaded database and the right chain config.
     let store = Store {
         engine: Arc::new(in_memory_store),
-        chain_config: Arc::new(RwLock::new(cache.witness.chain_config)),
+        chain_config: Arc::new(RwLock::new(chain_config)),
         latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
     };
 
@@ -781,7 +791,15 @@ pub async fn replay_custom_l1_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let cache = Cache::new(blocks, execution_witness);
+    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let cache = Cache::new(
+        blocks,
+        RpcExecutionWitness::from(execution_witness),
+        Some(network),
+    );
 
     let start = SystemTime::now();
 
@@ -920,7 +938,15 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let mut cache = Cache::new(blocks, execution_witness);
+    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let mut cache = Cache::new(
+        blocks,
+        RpcExecutionWitness::from(execution_witness),
+        Some(network),
+    );
 
     cache.l2_fields = Some(L2Fields {
         blob_commitment: [0_u8; 48],
