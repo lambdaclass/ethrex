@@ -154,7 +154,7 @@ pub struct BlockOptions {
 pub struct BlocksOptions {
     #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"])]
     blocks: Vec<u64>,
-    #[arg(long, help = "Starting block. (Inclusive)", requires = "to")]
+    #[arg(long, help = "Starting block. (Inclusive)")]
     from: Option<u64>,
     #[arg(long, help = "Ending block. (Inclusive)", requires = "from")]
     to: Option<u64>,
@@ -208,6 +208,16 @@ impl EthrexReplayCommand {
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
                 }
+
+                let to = if to.is_none() {
+                    let eth_client = EthClient::new(opts.rpc_url.as_str())?;
+
+                    let latest_block = eth_client.get_block_number().await?;
+
+                    Some(latest_block.as_u64())
+                } else {
+                    to
+                };
 
                 let blocks = resolve_blocks(blocks, from, to)?;
 
