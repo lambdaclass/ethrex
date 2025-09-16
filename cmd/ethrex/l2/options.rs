@@ -783,7 +783,14 @@ pub struct ProverClientOptions {
     )]
     pub aligned: bool,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
-    #[arg(long, default_value_t = None, value_name="URL", env= "ETHREX_SP1_ENDPOINT", help= "Url to the moongate server to use", help_heading="Prover client options")]
+    #[arg(
+        long,
+        default_value = "None",
+        value_name = "URL",
+        env = "ETHREX_SP1_ENDPOINT",
+        help = "Url to the moongate server to use when using sp1 backend",
+        help_heading = "Prover client options"
+    )]
     pub sp1_endpoint: Option<Url>,
 }
 
@@ -810,6 +817,8 @@ impl Default for ProverClientOptions {
             log_level: Level::INFO,
             aligned: false,
             backend: Backend::Exec,
+            #[cfg(all(feature = "sp1", feature = "gpu"))]
+            sp1_endpoint: None,
         }
     }
 }

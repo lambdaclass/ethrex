@@ -38,7 +38,8 @@ pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
                 .server(
                     &endpoint
                         .join("/twirp/")
-                        .expect("Failed to parse moongate server url"),
+                        .expect("Failed to parse moongate server url")
+                        .to_string(),
                 )
                 .build()
         } else {
