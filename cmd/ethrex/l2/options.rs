@@ -834,11 +834,11 @@ pub struct ProverClientOptions {
         long,
         default_value = "None",
         value_name = "URL",
-        env = "ETHREX_SP1_ENDPOINT",
+        env = "ETHREX_SP1_SERVER",
         help = "Url to the moongate server to use when using sp1 backend",
         help_heading = "Prover client options"
     )]
-    pub sp1_endpoint: Option<Url>,
+    pub sp1_server: Option<Url>,
 }
 
 impl From<ProverClientOptions> for ProverConfig {
@@ -849,7 +849,7 @@ impl From<ProverClientOptions> for ProverConfig {
             proving_time_ms: config.proving_time_ms,
             aligned_mode: config.aligned,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
-            sp1_endpoint: config.sp1_endpoint,
+            sp1_server: config.sp1_server,
         }
     }
 }
@@ -865,7 +865,7 @@ impl Default for ProverClientOptions {
             aligned: false,
             backend: Backend::Exec,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
-            sp1_endpoint: None,
+            sp1_server: None,
         }
     }
 }

@@ -28,7 +28,7 @@ struct Prover {
     aligned_mode: bool,
     commit_hash: String,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
-    sp1_endpoint: Option<Url>,
+    sp1_server: Option<Url>,
 }
 
 impl Prover {
@@ -40,7 +40,7 @@ impl Prover {
             aligned_mode: cfg.aligned_mode,
             commit_hash: get_commit_hash(),
             #[cfg(all(feature = "sp1", feature = "gpu"))]
-            sp1_endpoint: cfg.sp1_endpoint,
+            sp1_server: cfg.sp1_server,
         }
     }
 
@@ -48,7 +48,7 @@ impl Prover {
         #[cfg(all(feature = "sp1", feature = "gpu"))]
         {
             use crate::backend::sp1::{PROVER_SETUP, init_prover_setup};
-            PROVER_SETUP.get_or_init(|| init_prover_setup(self.sp1_endpoint.clone()));
+            PROVER_SETUP.get_or_init(|| init_prover_setup(self.sp1_server.clone()));
         }
 
         info!(
