@@ -89,7 +89,7 @@ jobs:
 
       - name: Run Hive Simulation
         id: run-hive-action
-        uses: ethpandaops/hive-github-action@0.4.0
+        uses: ethpandaops/hive-github-action@a9ec89442df18ee579d3179b76c47f5f93954307
         continue-on-error: true
         with:
           simulator: ${{ matrix.test.simulation }}
