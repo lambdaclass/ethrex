@@ -95,6 +95,10 @@ pub async fn get_blockdata(
             #[cfg(not(feature = "l2"))]
             let vm_type = VMType::L1;
 
+            info!(
+                "Caching callers and recipients state for block {}",
+                requested_block_number - 1
+            );
             let rpc_db = RpcDB::with_cache(
                 eth_client.urls.first().unwrap().as_str(),
                 chain_config,
@@ -105,9 +109,18 @@ pub async fn get_blockdata(
             .await
             .wrap_err("failed to create rpc db")?;
 
-            rpc_db
+            info!(
+                "Pre executing block {}. This may take a while.",
+                requested_block_number - 1
+            );
+            let rpc_db = rpc_db
                 .to_execution_witness(&block)
-                .wrap_err("failed to build execution db")?
+                .wrap_err("failed to build execution db")?;
+            info!(
+                "Finished building execution witness for block {}",
+                requested_block_number - 1
+            );
+            rpc_db
         }
         Err(e) => {
             return Err(eyre::eyre!(format!(

@@ -23,7 +23,7 @@ use eyre::Context;
 use futures_util::future::join_all;
 use sha3::{Digest, Keccak256};
 use tokio_utils::RateLimiter;
-use tracing::debug;
+use tracing::{debug, info};
 
 use std::sync::Mutex;
 use std::sync::{Arc, LazyLock};
@@ -316,6 +316,11 @@ impl RpcDB {
         // pre-execute and get all state changes
         let _ = LEVM::execute_block(block, &mut db, self.vm_type).map_err(Box::new)?;
         let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
+
+        info!(
+            "Finished pre-executing block {}. Now gathering execution witness.",
+            block.header.number
+        );
 
         let index: Vec<(Address, Vec<H256>)> = self
             .cache
