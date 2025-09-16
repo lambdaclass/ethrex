@@ -36,7 +36,11 @@ use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
-    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
+    EnvFilter, Layer, Registry,
+    filter::Directive,
+    fmt::{self, format::FmtSpan},
+    layer::SubscriberExt,
+    reload,
 };
 
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
