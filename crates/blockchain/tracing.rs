@@ -125,6 +125,8 @@ async fn get_missing_state_parents(
     store: &Store,
     reexec: u32,
 ) -> Result<Vec<Block>, ChainError> {
+    todo!();
+    /*
     let mut missing_state_parents = Vec::new();
     loop {
         if missing_state_parents.len() > reexec as usize {
@@ -143,6 +145,7 @@ async fn get_missing_state_parents(
         missing_state_parents.push(parent_block);
     }
     Ok(missing_state_parents)
+    */
 }
 
 /// Runs the given evm trace operation, aborting if it takes more than the time given by `tiemout`

@@ -1001,7 +1001,6 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
-        todo!();
         let state_trie = self.engine.open_state_trie(state_root)?;
         let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
         if let Some(last_hash) = last_hash {
@@ -1017,7 +1016,6 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        todo!();
         let state_trie = self.engine.open_state_trie(state_root)?;
         let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
@@ -1045,7 +1043,6 @@ impl Store {
         paths: Vec<Vec<u8>>,
         byte_limit: u64,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
-        todo!();
         let Some(account_path) = paths.first() else {
             return Ok(vec![]);
         };
@@ -1130,31 +1127,6 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         self.engine
             .open_locked_storage_trie(account_hash, storage_root)
-    }
-
-    /// Returns true if the given node is part of the state trie's internal storage
-    pub fn contains_state_node(&self, node_hash: H256) -> Result<bool, StoreError> {
-        todo!();
-        // Root is irrelevant, we only care about the internal state
-        Ok(self
-            .open_state_trie(*EMPTY_TRIE_HASH)?
-            .db()
-            .get(Nibbles::from_bytes(&node_hash.0))?
-            .is_some())
-    }
-
-    /// Returns true if the given node is part of the given storage trie's internal storage
-    pub fn contains_storage_node(
-        &self,
-        hashed_address: H256,
-        node_hash: H256,
-    ) -> Result<bool, StoreError> {
-        // Root is irrelevant, we only care about the internal state
-        Ok(self
-            .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?
-            .db()
-            .get(Nibbles::from_bytes(&node_hash.0))?
-            .is_some())
     }
 
     /// Sets the hash of the last header downloaded during a snap sync

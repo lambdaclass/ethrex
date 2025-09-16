@@ -548,8 +548,11 @@ fn get_initial_downloads(
                     return None;
                 }
                 if store
-                    .contains_storage_node(*acc_path, account.storage_root)
+                    .open_storage_trie(*acc_path, account.storage_root)
                     .expect("We should be able to open the store")
+                    .root_node()
+                    .expect("We should be able to read the store")
+                    .is_some()
                 {
                     return None;
                 }
@@ -568,8 +571,11 @@ fn get_initial_downloads(
             .par_iter()
             .filter_map(|(acc_path, storage_root)| {
                 if store
-                    .contains_storage_node(*acc_path, *storage_root)
+                    .open_storage_trie(*acc_path, *storage_root)
                     .expect("We should be able to open the store")
+                    .root_node()
+                    .expect("We should be able to read the store")
+                    .is_some()
                 {
                     return None;
                 }
