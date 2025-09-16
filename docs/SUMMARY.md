@@ -24,6 +24,7 @@
 # Ethrex for L2 chain
 - [Getting started](./l2/README.md)
 - [Deploying a node](./l2/running.md)
+- [Admin server](./l2/admin.md)
 - [Guides](./l2/guides/README.md)
     - [Depositing assets](./l2/guides/depositing.md)
     - [Withdrawing assets](./l2/guides/withdrawing.md)
