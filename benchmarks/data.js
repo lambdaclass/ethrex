@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758056836024,
+  "lastUpdate": 1758057049413,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14905,6 +14905,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169745299498,
             "range": "± 376124761",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0da884129cc48cf99048bd6b3aed9fd0527f9d36",
+          "message": "refactor(replay): merge block-range command with blocks (#4505)\n\n**Motivation**\n\nThe `BlockRange` subcommand is not used.\n\n**Description**\n\n- Instead of removing it entirely, this PR merges the `--from` and\n`--to` options into the `Blocks` subcommand, as explained in #4475.\n\nCloses #4475",
+          "timestamp": "2025-09-16T20:18:31Z",
+          "tree_id": "11fd8ee90a453e5384034aa7c69fc904bcfa0492",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0da884129cc48cf99048bd6b3aed9fd0527f9d36"
+        },
+        "date": 1758057028164,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166634497576,
+            "range": "± 994996420",
             "unit": "ns/iter"
           }
         ]
