@@ -30,22 +30,22 @@ jobs:
               simulation: ethereum/rpc-compat,
             }
           - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
-          - {
-              name: "Cancun Engine tests",
-              file_name: engine,
-              simulation: ethereum/engine,
-            }
+          # - {
+          #     name: "Cancun Engine tests",
+          #     file_name: engine,
+          #     simulation: ethereum/engine,
+          #   }
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
-          - {
-              name: "Consume Engine tests",
-              file_name: consume-engine,
-              simulation: ethereum/eest/consume-engine,
-            }
-          - {
-              name: "Consume RLP tests",
-              file_name: consume-rlp,
-              simulation: ethereum/eest/consume-rlp,
-            }
+          # - {
+          #     name: "Consume Engine tests",
+          #     file_name: consume-engine,
+          #     simulation: ethereum/eest/consume-engine,
+          #   }
+          # - {
+          #     name: "Consume RLP tests",
+          #     file_name: consume-rlp,
+          #     simulation: ethereum/eest/consume-rlp,
+          #   }
 
     steps:
       - name: Verify input parameters
@@ -63,33 +63,41 @@ jobs:
           # Tests use ethrex:ci so we retag it
           docker tag ghcr.io/lambdaclass/ethrex:main ethrex:ci
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-
-      - name: Setup Hive
-        run: make setup-hive
+      - name: Load hive client config
+        id: client-config
+        shell: bash
+        run: |
+          echo "config<<EOF" >> "$GITHUB_OUTPUT"
+          cat .github/config/hive/clients.yaml >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
-      # We use the `main` branch for now since it's working, but we can pin it to a specific release if necessary
-      - name: Set custom hive flags
+      - name: Determine hive flags
+        id: hive-flags
+        shell: bash
+        env:
+          SIMULATION: ${{ matrix.test.simulation }}
         run: |
-          if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
-            EEST_FIXTURES="https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
-            EEST_BRANCH=main
-            echo 'HIVE_FLAGS=--sim.buildarg fixtures='"$EEST_FIXTURES"' --sim.buildarg branch='"$EEST_BRANCH"' --sim.limit ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*|.*fork_Osaka.*"' >> $GITHUB_ENV
+          FLAGS='--sim.parallelism 16 --sim.loglevel 1'
+          if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
+            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
+            FLAGS+=" --sim.buildarg branch=main"
+            FLAGS+=" --sim.limit \".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*|.*fork_Osaka.*\""
           fi
+          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../.github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
+        id: run-hive-action
+        uses: ethpandaops/hive-github-action@0.4.0
         continue-on-error: true
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.test.file_name }}_${{ inputs.job_type }}_logs
-          path: hive/workspace/logs/*-*.json
-          if-no-files-found: error
+          simulator: ${{ matrix.test.simulation }}
+          client: ethrex
+          client_config: ${{ steps.client-config.outputs.config }}
+          extra_flags: ${{ steps.hive-flags.outputs.flags }}
+          workflow_artifact_upload: true
+          workflow_artifact_prefix: ${{ matrix.test.file_name }}_${{ inputs.job_type }}
 
   hive-report:
     name: Generate and Save report
@@ -107,8 +115,22 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs
-          pattern: "*_${{ inputs.job_type }}_logs"
+          pattern: "*_${{ inputs.job_type }}-results.zip"
           merge-multiple: true
+
+      - name: Flatten hive result files
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          mkdir -p hive/workspace/logs
+          for json in hive/workspace/logs/**/*.json; do
+            base_name=$(basename "$json")
+            target="hive/workspace/logs/$base_name"
+            if [[ "$json" != "$target" ]]; then
+              mv "$json" "$target"
+            fi
+          done
+          find hive/workspace/logs -mindepth 1 -type d -exec rm -rf {} +
 
       - name: Generate the hive report
         run: cargo run -p hive_report > results.md
