@@ -12,6 +12,12 @@ pub mod risc0;
 #[cfg(feature = "sp1")]
 pub mod sp1;
 
+#[cfg(feature = "openvm")]
+pub mod openvm;
+
+#[cfg(all(feature = "l2", feature = "openvm"))]
+compile_error!("The OpenVM backend only supports L1 proving as of now");
+
 #[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum)]
 pub enum Backend {
     #[default]
@@ -20,6 +26,8 @@ pub enum Backend {
     SP1,
     #[cfg(feature = "risc0")]
     RISC0,
+    #[cfg(feature = "openvm")]
+    OpenVM,
 }
 
 // Needed for Clap
@@ -33,6 +41,8 @@ impl FromStr for Backend {
             "sp1" => Ok(Backend::SP1),
             #[cfg(feature = "risc0")]
             "risc0" => Ok(Backend::RISC0),
+            #[cfg(feature = "openvm")]
+            "openvm" => Ok(Backend::OpenVM),
             _ => Err(Self::Err::from("Invalid backend")),
         }
     }
@@ -44,4 +54,6 @@ pub enum ProveOutput {
     SP1(sp1::ProveOutput),
     #[cfg(feature = "risc0")]
     RISC0(risc0_zkvm::Receipt),
+    #[cfg(feature = "openvm")]
+    OpenVM(openvm_sdk::types::EvmProof),
 }

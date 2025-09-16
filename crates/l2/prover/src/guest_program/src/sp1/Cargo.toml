@@ -9,7 +9,7 @@ edition = "2024"
 sp1-zkvm = { version = "=5.0.8" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
-guest_program = { path = "../../" }
+guest_program = { path = "../../", features = ["kzg-rs"] }
 
 ethrex-common = { path = "../../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../../storage", default-features = false }

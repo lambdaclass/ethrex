@@ -31,6 +31,8 @@ sequenceDiagram
 
 **Dependencies:**
 
+Make sure to read each zkVM's install docs first to ensure you have all needed prerequisites (for example, correct versions of CUDA related packages).
+
 - [RISC0](https://dev.risczero.com/api/zkvm/install)
   1. `curl -L https://risczero.com/install | bash`
   2. `rzup install cargo-risczero 3.0.3`
@@ -39,7 +41,16 @@ sequenceDiagram
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
   2. `sp1up --version 5.0.8`
+- [OpenVM](https://docs.openvm.dev/book/getting-started/install/#install)
+  1. `rustup install nightly-2025-02-14`
+  2. `rustup component add rust-src --toolchain nightly-2025-02-14`
+  3. `cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.0 --features cuda cargo-openvm`
+  4. `cargo openvm setup --evm`
+    - if this step fails, install the trusted setup parameters via the alternative way described [here](https://docs.openvm.dev/book/advanced-usage/sdk#setup).
 - [SOLC](https://docs.soliditylang.org/en/latest/installing-solidity.html)
+
+> [!NOTE]
+> The OpenVM backend only supports L1 proving as of now, using ethrex-replay.
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
 

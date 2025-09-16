@@ -1,4 +1,4 @@
-use ethrex_common::U256;
+use ethrex_common::{U256, types::EcdsaError};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -163,6 +163,12 @@ impl From<MempoolError> for RpcErr {
 
 impl From<secp256k1::Error> for RpcErr {
     fn from(err: secp256k1::Error) -> Self {
+        Self::Internal(format!("Cryptography error: {err}"))
+    }
+}
+
+impl From<EcdsaError> for RpcErr {
+    fn from(err: EcdsaError) -> Self {
         Self::Internal(format!("Cryptography error: {err}"))
     }
 }
