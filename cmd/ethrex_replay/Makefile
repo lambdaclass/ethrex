@@ -14,3 +14,8 @@ prove-sp1-gpu-ci:
 	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,ci" -- block --prove ${REPLAY_BLOCK_ARGS}
 prove-risc0-gpu-ci:
 	cargo r -r --no-default-features --features "risc0,gpu,ci" -- block --prove ${REPLAY_BLOCK_ARGS}
+
+execute-sp1-ci:
+	cargo r -r --features "sp1,ci" -- block --execute ${REPLAY_BLOCK_ARGS}
+execute-risc0-ci:
+	cargo r -r --no-default-features --features "risc0,ci" -- block --execute ${REPLAY_BLOCK_ARGS}
