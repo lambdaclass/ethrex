@@ -1141,6 +1141,10 @@ impl Syncer {
                     code_hashes_to_download.push(hash);
 
                     if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
+                        info!(
+                            "Starting bytecode download of {} hashes",
+                            code_hashes_to_download.len()
+                        );
                         let bytecodes = self
                             .peers
                             .request_bytecodes(&code_hashes_to_download)
