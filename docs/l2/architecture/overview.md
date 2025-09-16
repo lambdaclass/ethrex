@@ -61,7 +61,7 @@ Going a bit further, instead of posting the entire transaction, we could just po
 
 This is called `state diffs`. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the chain.
 
-Detailed documentation on [the state diffs spec](./fundamentals/state_diffs.md).
+Detailed documentation on [the state diffs spec](../fundamentals/state_diffs.md).
 
 ### How do we prevent the sequencer from publishing the wrong state diffs?
 
@@ -98,7 +98,8 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
 - Build a merkle tree with the $d_i$ as leaves. Note that we can think of the merkle root as a polynomial commitment, where the `i`-th leaf is the evaluation of the polynomial on the `i`-th power of $\omega$, the `4096`-th root of unity on $F_q$, the field modulus of the `BLS12-381` curve. Call this polynomial $f$. This is the same polynomial that the L1 KZG blob commits to (by definition). Call the L1 blob KZG commitment $C_1$ and the merkle root we just computed $C_2$.
 - Choose `x` as keccak($C_1$, $C_2$) and calculate the evaluation $f(x)$; call it `y`. To do this calculation, because we only have the $d_i$, the easiest way to do it is through the [barycentric formula](https://dankradfeist.de/ethereum/2021/06/18/pcs-multiproofs.html#evaluating-a-polynomial-in-evaluation-form-on-a-point-outside-the-domain). IMPORTANT: we are taking the $d_i$, `x`, `y`, and $\omega$ as elements of $F_q$, NOT the native field used by our prover. The evaluation thus is:
 
-    $$y = f(x) = \dfrac{x^{4096} - 1}{4096} \sum_{i = 0}^{4095} d_i \dfrac{\omega^i}{x - \omega^i}$$
+  $$y = f(x) = \dfrac{x^{4096} - 1}{4096} \sum_{i = 0}^{4095} d_i \dfrac{\omega^i}{x - \omega^i}$$
+
 - Set `x` and `y` as public inputs. All the above shows the verifier on L1 that we made a polynomial commitment to the state diff, that its evaluation on `x` is `y`, and that `x` was chosen through Fiat-Shamir by hashing the two commitments.
 
 ### Verifier side
@@ -109,16 +110,16 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
 
 ## L1<->L2 communication
 
-To communicate between L1 and L2, we use two mechanisms called *Privileged transactions*, and *L1 messages*.
-In this section we talk a bit about them, first going through the more specific use cases for *Deposits* and *Withdrawals*.
+To communicate between L1 and L2, we use two mechanisms called _Privileged transactions_, and _L1 messages_.
+In this section we talk a bit about them, first going through the more specific use cases for _Deposits_ and _Withdrawals_.
 
 ### Deposits
 
-The mechanism for depositing funds to L2 from L1 is explained in detail in ["Deposits"](./fundamentals/deposits.md).
+The mechanism for depositing funds to L2 from L1 is explained in detail in ["Deposits"](../fundamentals/deposits.md).
 
 ### Withdrawals
 
-The mechanism for withdrawing funds from L2 back to L1 is explained in detail in ["Withdrawals"](./fundamentals/withdrawals.md).
+The mechanism for withdrawing funds from L2 back to L1 is explained in detail in ["Withdrawals"](../fundamentals/withdrawals.md).
 
 ## Recap
 

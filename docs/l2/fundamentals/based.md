@@ -1,4 +1,128 @@
-# [DRAFT] Ethrex roadmap for becoming based
+# Based sequencing
+
+This section covers the fundamentals of "based" rollups in the context of L2s built with ethrex.
+
+## What is a Based Rollup?
+
+A based rollup is a type of Layer 2 (L2) rollup that relies on the Ethereum mainnet (L1) for sequencing and ordering transactions, instead of using its own independent sequencer. This design leverages Ethereum's security and neutrality for transaction ordering, making the rollup more trust-minimized and censorship-resistant.
+
+> [!IMPORTANT]
+> This documentation is about the current state of the `based` feature development and not about the final implementation. It is subject to change as the feature evolves and their still could be unmitigated issues.
+
+> [!NOTE]
+> This is an extension of the [ethrex-L2-Sequencer documentation](../architecture/sequencer.md) and is intended to be merged with it in the future.
+
+## Components
+
+In addition to the components outlined in the [ethrex-L2-Sequencer documentation](../architecture/sequencer.md), the `based` feature introduces new components to enable decentralized L2 sequencing. These additions enhance the system's ability to operate across multiple nodes, ensuring resilience, scalability, and state consistency.
+
+### Sequencer State
+
+> [!NOTE]
+> While not a traditional component, the **Sequencer State** is a fundamental element of the `based` feature and deserves its own dedicated section.
+
+The `based` feature decentralizes L2 sequencing, moving away from a single, centralized Sequencer to a model where multiple nodes can participate, with only one acting as the lead Sequencer at any time. This shift requires nodes to adapt their behavior depending on their role, leading to the introduction of the **Sequencer State**. The Sequencer State defines two possible modes:
+
+- `Sequencing`: The node is the lead Sequencer, responsible for proposing and committing new blocks to the L2 chain.
+- `Following`: The node is not the lead Sequencer and must synchronize with and follow the blocks proposed by the current lead Sequencer.
+
+To keep the system simple and avoid intricate inter-process communication, the Sequencer State is implemented as a **global state**, accessible to all Sequencer components. This design allows each component to check the state and adjust its operations accordingly. The **State Updater** component manages this global state.
+
+### State Updater
+
+The **State Updater** is a new component tasked with maintaining and updating the Sequencer State. It interacts with the **Sequencer Registry** contract on L1 to determine the current lead Sequencer and adjusts the node’s state based on this information and local conditions. Its responsibilities include:
+
+- **Periodic Monitoring**: The State Updater runs at regular intervals, querying the `SequencerRegistry` contract to identify the current lead Sequencer.
+- **State Transitions**: It manages transitions between `Sequencing` and `Following` states based on these rules:
+  - If the node is designated as the lead Sequencer, it enters the `Sequencing` state.
+  - If the node is not the lead Sequencer, it enters the `Following` state.
+  - When a node ceases to be the lead Sequencer, it transitions to `Following` and reverts any uncommitted state to ensure consistency with the network.
+  - When a node becomes the lead Sequencer, it transitions to `Sequencing` only if it is fully synced (i.e., has processed all blocks up to the last committed batch). If not, it remains in `Following` until it catches up.
+
+This component ensures that the node’s behavior aligns with its role, preventing conflicts and maintaining the integrity of the L2 state across the network.
+
+### Block Fetcher
+
+Decentralization poses a risk: a lead Sequencer could advance the L2 chain without sharing blocks, potentially isolating other nodes. To address this, the `OnChainProposer` contract (see [ethrex-L2-Contracts documentation](./contracts.md)) has been updated to include an RLP-encoded list of blocks committed in each batch. This makes block data publicly available on L1, enabling nodes to reconstruct the L2 state if needed.
+
+The **Block Fetcher** is a new component designed to retrieve these blocks from L1 when the node is in the `Following` state. Its responsibilities include:
+
+- **Querying L1**: It queries the `OnChainProposer` contract to identify the last committed batch.
+- **Scouting Transactions**: Similar to how the L1 Watcher monitors deposit transactions, the Block Fetcher scans L1 for commit transactions containing the RLP-encoded block list.
+- **State Reconstruction**: It uses the retrieved blocks to rebuild the L2 state, ensuring the node remains synchronized with the network.
+
+> [!NOTE]
+> Currently, the Block Fetcher is the primary mechanism for nodes to sync with the lead Sequencer. Future enhancements will introduce P2P gossiping to enable direct block sharing between nodes, improving efficiency.
+
+## Contracts
+
+In addition to the components described above, the based feature introduces new contracts and modifies existing ones to enhance decentralization, security, and transparency. Below are the key updates and additions:
+
+> [!NOTE]
+> This is an extension of the [ethrex-L2-Contracts documentation](./contracts.md) and is intended to be merged with it in the future.
+
+### OnChainProposer (Modified)
+
+The `OnChainProposer` contract, which handles batch proposals and management on L1, has been updated with the following modifications:
+
+- **New Constant:**
+  A public constant `SEQUENCER_REGISTRY` has been added. This constant holds the address of the `SequencerRegistry` contract, linking the two contracts for sequencer management.
+- **Modifier Update:**
+  The `onlySequencer` modifier has been renamed to `onlyLeadSequencer`. It now checks whether the caller is the current lead Sequencer, as determined by the `SequencerRegistry` contract. This ensures that only the designated leader can commit batches.
+- **Initialization:**
+  The `initialize` method now accepts the address of the `SequencerRegistry` contract as a parameter. During initialization, this address is set to the `SEQUENCER_REGISTRY` constant, establishing the connection between the contracts.
+- **Batch Commitment:**
+  The `commitBatch` method has been revised to improve data availability and streamline sequencer validation:
+  - It now requires an RLP-encoded list of blocks included in the batch. This list is published on L1 to ensure transparency and enable verification.
+  - The list of sequencers has been removed from the method parameters. Instead, the `SequencerRegistry` contract is now responsible for tracking and validating sequencers.
+- **Event Modification:**
+  The `BatchCommitted` event has been updated to include the batch number of the committed batch. This addition enhances traceability and allows external systems to monitor batch progression more effectively.
+- **Batch Verification:**
+  The `verifyBatch` method has been made more flexible and decentralized:
+  - The `onlySequencer` modifier has been removed, allowing anyone—not just the lead Sequencer—to verify batches.
+  - The restriction preventing multiple verifications of the same batch has been lifted. While multiple verifications are now permitted, only one valid verification is required to advance the L2 state. This change improves resilience and reduces dependency on a single actor.
+
+### SequencerRegistry (New Contract)
+
+The `SequencerRegistry` is a new contract designed to manage the pool of Sequencers and oversee the leader election process in a decentralized manner.
+
+- **Registration:**
+  - Anyone can register as a Sequencer by calling the `register` method and depositing a minimum collateral of 1 ETH. This collateral serves as a Sybil resistance mechanism, ensuring that only committed participants join the network.
+  - Sequencers can exit the registry by calling the `unregister` method, which refunds their 1 ETH collateral upon successful deregistration.
+- **Leader Election:**
+  The leader election process operates on a round-robin basis to fairly distribute the lead Sequencer role:
+  - **Single Sequencer Case:** If only one Sequencer is registered, it remains the lead Sequencer indefinitely.
+  - **Multiple Sequencers:** When two or more Sequencers are registered, the lead Sequencer rotates every 32 batches. This ensures that no single Sequencer dominates the network for an extended period.
+- **Future Leader Prediction:**
+  The `futureLeaderSequencer` method allows querying the lead Sequencer for a batch n batches in the future. The calculation is based on the following logic:
+
+  **Inputs:**
+
+  - `sequencers`: An array of registered Sequencer addresses.
+  - `currentBatch`: The next batch to be committed, calculated as `lastCommittedBatch() + 1` from the `OnChainProposer` contract.
+  - `nBatchesInTheFuture`: A parameter specifying how many batches ahead to look.
+  - `targetBatch`: Calculated as `currentBatch` + `nBatchesInTheFuture`.
+  - `BATCHES_PER_SEQUENCER`: A constant set to 32, representing the number of batches each lead Sequencer gets to commit.
+
+  **Logic:**
+
+  ```solidity
+  uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER).lastCommittedBatch() + 1;
+  uint256 _targetBatch = _currentBatch + nBatchesInTheFuture;
+  uint256 _id = _targetBatch / BATCHES_PER_SEQUENCER;
+  address _leader = sequencers[_id % sequencers.length];
+  ```
+
+  **Example:** Assume 3 Sequencers are registered: `[S0, S1, S2]`, and the current committed batch is 0:
+
+  - For batches 0–31: `_id = 0 / 32 = 0, 0 % 3 = 0`, lead Sequencer = `S0`.
+  - For batches 32–63: `_id = 32 / 32 = 1, 1 % 3 = 1`, lead Sequencer = `S1`.
+  - For batches 64–95: `_id = 64 / 32 = 2, 2 % 3 = 2`, lead Sequencer = `S2`.
+  - For batches 96–127: `_id = 96 / 32 = 3, 3 % 3 = 0`, lead Sequencer = `S0`.
+
+  This round-robin rotation repeats every 96 committed batches (32 committed batches per Sequencer × 3 Sequencers), ensuring equitable distribution of responsibilities.
+
+## Roadmap
 
 _Special thanks to [Lorenzo](https://x.com/_eltitan) and [Kubi](https://x.com/kubimensah), [George](https://x.com/gd_gattaca), and Louis from [Gattaca](https://x.com/gattacahq), [Jason](https://x.com/jasnoodle) from [Fabric](https://x.com/fabric_ethereum), and [Matthew](https://x.com/mteamisloading) from [Spire Labs](https://x.com/Spire_Labs) for their feedback and suggestions._
 

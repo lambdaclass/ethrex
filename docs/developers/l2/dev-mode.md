@@ -29,4 +29,4 @@ rex block-number http://localhost:1729
 
 ## Guides
 
-For more information on how to perform certain operations, go to [Guides](../../l2/guides).
+For more information on how to perform certain operations, go to [Guides]().

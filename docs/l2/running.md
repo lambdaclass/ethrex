@@ -38,3 +38,28 @@ ethrex l2 prover --proof-coordinators http://localhost:3900
 ```
 
 For further configuration take a look at the [CLI document](../CLI.md#ethrex-l2-prover)
+
+## Checking that everything is running
+
+After starting the sequencer and prover, you can verify that your L2 node is running correctly:
+
+- **Check the sequencer RPC:**
+
+  You can request the latest block number:
+
+  ```sh
+  curl http://localhost:1729 \
+  	-H 'content-type: application/json' \
+  	-d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":"1","params":[]}'
+  ```
+
+  The answer should be like this, and advance every 5 seconds:
+
+  ```
+  {"id":"1","jsonrpc":"2.0","result":"0x1"}
+  ```
+
+- **Check logs:**
+  - Review the terminal output or log files for any errors or warnings.
+
+If all endpoints respond and there are no errors in the logs, your L2 node is running successfully.
