@@ -1040,37 +1040,49 @@ pub fn bls12_g1add(
         let p0 = parse_g1_point(&calldata[16..64], &calldata[80..128])?;
         let p1 = parse_g1_point(&calldata[144..192], &calldata[208..256])?;
 
-        let p2 = {
-            let y10 = p1.1 - &p0.1;
-            let x10 = &p1.0 - &p0.0;
-            match x10.inv() {
+        let p2 = if p0.0 == BLS12381FieldElement::zero() && p0.1 == BLS12381FieldElement::zero() {
+            p1
+        } else if p1.0 == BLS12381FieldElement::zero() && p1.1 == BLS12381FieldElement::zero() {
+            p0
+        } else if p0.0 == p1.0 && &p0.1 + &p1.1 == BLS12381FieldElement::zero() {
+            (BLS12381FieldElement::zero(), BLS12381FieldElement::zero())
+        } else if p0 == p1 {
+            let x_squared = p0.0.square();
+            let s = ((&x_squared + &x_squared + &x_squared) + BLS12381Curve::a()) / (&p0.1 + &p0.1);
+            let x = s.square() - &p0.0 - &p0.0;
+            let y = s * (p0.0 - &x) - p0.1;
+            (x, y)
+        } else {
+            let y01 = &p0.1 - p1.1;
+            let x01 = &p0.0 - &p1.0;
+            match x01.inv() {
                 Ok(x10_inv) => {
-                    let l = y10 * x10_inv;
+                    let l = y01 * x10_inv;
 
                     let x = l.square() - &p0.0 - p1.0;
                     let y = l * (p0.0 - &x) - p0.1;
 
                     (x, y)
                 }
-                Err(_) => (BLS12381FieldElement::zero(), BLS12381FieldElement::zero()),
+                Err(_) => unreachable!("already handled before"),
             }
         };
 
         let mut buffer = BytesMut::with_capacity(128);
         buffer.put_u128(0);
-        buffer.put_u64(p2.0.value().limbs[5]);
-        buffer.put_u64(p2.0.value().limbs[4]);
-        buffer.put_u64(p2.0.value().limbs[3]);
-        buffer.put_u64(p2.0.value().limbs[2]);
-        buffer.put_u64(p2.0.value().limbs[1]);
-        buffer.put_u64(p2.0.value().limbs[0]);
+        buffer.put_u64(p2.0.representative().limbs[0]);
+        buffer.put_u64(p2.0.representative().limbs[1]);
+        buffer.put_u64(p2.0.representative().limbs[2]);
+        buffer.put_u64(p2.0.representative().limbs[3]);
+        buffer.put_u64(p2.0.representative().limbs[4]);
+        buffer.put_u64(p2.0.representative().limbs[5]);
         buffer.put_u128(0);
-        buffer.put_u64(p2.1.value().limbs[5]);
-        buffer.put_u64(p2.1.value().limbs[4]);
-        buffer.put_u64(p2.1.value().limbs[3]);
-        buffer.put_u64(p2.1.value().limbs[2]);
-        buffer.put_u64(p2.1.value().limbs[1]);
-        buffer.put_u64(p2.1.value().limbs[0]);
+        buffer.put_u64(p2.1.representative().limbs[0]);
+        buffer.put_u64(p2.1.representative().limbs[1]);
+        buffer.put_u64(p2.1.representative().limbs[2]);
+        buffer.put_u64(p2.1.representative().limbs[3]);
+        buffer.put_u64(p2.1.representative().limbs[4]);
+        buffer.put_u64(p2.1.representative().limbs[5]);
         Ok(buffer.freeze())
     }
 }
