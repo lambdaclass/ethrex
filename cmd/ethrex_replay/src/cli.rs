@@ -153,20 +153,14 @@ pub struct BlockOptions {
 
 #[cfg(not(feature = "l2"))]
 #[derive(Parser)]
+#[command(group(ArgGroup::new("blocks").required(true).args(["blocks", "from"])))]
 pub struct BlocksOptions {
-    #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+    #[arg(long, help = "List of blocks to execute.", num_args = 1..,value_delimiter = ',', conflicts_with_all = ["from", "to"])]
     blocks: Vec<u64>,
-    #[command(flatten)]
-    opts: EthrexReplayOptions,
-}
-
-#[cfg(not(feature = "l2"))]
-#[derive(Parser)]
-pub struct BlockRangeOptions {
-    #[arg(long, help = "Starting block. (Inclusive)")]
-    start: u64,
-    #[arg(long, help = "Ending block. (Inclusive)")]
-    end: u64,
+    #[arg(long, help = "Starting block. (Inclusive)", requires = "to")]
+    from: Option<u64>,
+    #[arg(long, help = "Ending block. (Inclusive)", requires = "from")]
+    to: Option<u64>,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
