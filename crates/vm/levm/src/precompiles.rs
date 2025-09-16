@@ -64,6 +64,7 @@ use crate::{
     },
 };
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::BLS12381Curve;
+use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
 
 pub const ECRECOVER_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1023,17 +1024,16 @@ pub fn bls12_g1add(
         fn parse_g1_point(
             x_data: &[u8],
             y_data: &[u8],
-        ) -> Result<Option<ShortWeierstrassProjectivePoint<BLS12381Curve>>, PrecompileError>
-        {
+        ) -> Result<Option<(BLS12381FieldElement, BLS12381FieldElement)>, PrecompileError> {
             let x = BLS12381FieldElement::from_bytes_be(x_data).unwrap();
             let y = BLS12381FieldElement::from_bytes_be(y_data).unwrap();
 
             if x == BLS12381FieldElement::zero() && y == BLS12381FieldElement::zero() {
                 Ok(None)
+            } else if BLS12381Curve::defining_equation(&x, &y) == BLS12381FieldElement::zero() {
+                Err(PrecompileError::InvalidPoint)
             } else {
-                BLS12381Curve::create_point_from_affine(x, y)
-                    .map(Some)
-                    .map_err(|_| PrecompileError::InvalidPoint)
+                Ok(Some((x, y)))
             }
         }
 
@@ -1042,14 +1042,14 @@ pub fn bls12_g1add(
 
         let p2 = match (p0, p1) {
             (Some(p0), Some(p1)) => {
-                let y10 = p1.y() - p0.y();
-                let x10 = p1.x() - p0.x();
+                let y10 = p1.1 - &p0.1;
+                let x10 = &p1.0 - &p0.0;
                 match x10.inv() {
                     Ok(x10_inv) => {
                         let l = y10 * x10_inv;
 
-                        let x = l.square() - p0.x() - p1.x();
-                        let y = l * (p0.x() - &x) - p0.y();
+                        let x = l.square() - &p0.0 - p1.0;
+                        let y = l * (p0.0 - &x) - p0.1;
 
                         (x, y)
                     }
