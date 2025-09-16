@@ -127,11 +127,11 @@ impl BlockRunReport {
                     text: Box::new(SlackWebHookBlock::PlainText {
                         text: match (&self.run_result, &self.replayer_mode) {
                             (Ok(_), ReplayerMode::Execute) => {
-                                String::from("✅ Successfully Executed Block")
+                                String::from("✅ Successfully Executed Block with Exec Backend")
                             }
-                            (Ok(_), ReplayerMode::ExecuteNoZkvm) => String::from(
-                                "✅ Successfully Executed Block without Prover Backend",
-                            ),
+                            (Ok(_), ReplayerMode::ExecuteNoZkvm) => {
+                                String::from("✅ Successfully Executed Block without zkVM")
+                            }
                             (Ok(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("✅ Successfully Executed Block with SP1")
                             }
@@ -145,10 +145,10 @@ impl BlockRunReport {
                                 String::from("✅ Successfully Proved Block with RISC0")
                             }
                             (Err(_), ReplayerMode::Execute) => {
-                                String::from("⚠️ Failed to Execute Block")
+                                String::from("⚠️ Failed to Execute Block with Exec Backend")
                             }
                             (Err(_), ReplayerMode::ExecuteNoZkvm) => {
-                                String::from("⚠️ Failed to Execute Block without Prover Backend")
+                                String::from("⚠️ Failed to Execute Block without zkVM")
                             }
                             (Err(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("⚠️ Failed to Execute Block with SP1")

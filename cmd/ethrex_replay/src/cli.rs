@@ -451,7 +451,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     }
 
     let start = Instant::now();
-    info!("Preparing Storage for execution without prover backend");
+    info!("Preparing Storage for execution without zkVM");
 
     let chain_config = cache.get_chain_config()?;
 
