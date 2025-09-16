@@ -102,6 +102,7 @@ impl RpcDB {
     /// 3. Storage slots from access lists
     ///
     /// All these accounts are pre-fetched and stored in the cache
+    /// This is done to batch request for multiple storage slots in a single RPC call.
     async fn cache_accounts(&mut self, block: &Block) -> eyre::Result<()> {
         let txs = &block.body.transactions;
 
