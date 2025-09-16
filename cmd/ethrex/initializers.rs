@@ -139,6 +139,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) {
     // Create SyncManager
     let syncer = SyncManager::new(
@@ -163,6 +164,7 @@ pub async fn init_rpc_api(
         peer_handler,
         get_client_version(),
         log_filter_handler,
+        gas_ceil,
     );
 
     tracker.spawn(rpc_api);
@@ -213,7 +215,6 @@ pub async fn init_network(
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
         peer_handler.peer_table.peers.clone(),
-        peer_handler.peer_scores,
     ));
 }
 
@@ -418,6 +419,8 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        // TODO (#4482): Make this configurable.
+        None,
     )
     .await;
 

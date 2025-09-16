@@ -120,6 +120,7 @@ rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
+tower-http = { version = "0.6.2", features = ["cors"] }
 
 rocksdb = "0.24.0"
 
