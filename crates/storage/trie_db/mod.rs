@@ -12,4 +12,3 @@ pub mod rocksdb;
 pub mod rocksdb_locked;
 #[cfg(test)]
 mod test_utils;
-pub mod utils;

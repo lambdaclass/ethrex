@@ -3,14 +3,13 @@ use crate::{
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
-    trie_db::utils::nibbles_to_fixed_size,
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::nibbles_to_fixed_size};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,

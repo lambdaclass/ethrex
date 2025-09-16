@@ -412,7 +412,12 @@ pub fn node_missing_children(
         }
         Node::Extension(node) => {
             let child_path = path.concat(node.prefix.clone());
-            if node.child.is_valid() && node.child.get_node(trie_state, child_path.clone())?.is_none() {
+            if node.child.is_valid()
+                && node
+                    .child
+                    .get_node(trie_state, child_path.clone())?
+                    .is_none()
+            {
                 missing_children_count += 1;
 
                 paths.extend(vec![RequestMetadata {

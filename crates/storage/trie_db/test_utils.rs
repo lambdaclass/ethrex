@@ -2,7 +2,6 @@
 pub mod libmdbx {
     use std::{path::PathBuf, sync::Arc};
 
-    use ethrex_trie::NodeHash;
     use libmdbx::{
         orm::{Database, Table, table_info},
         table,
@@ -10,7 +9,7 @@ pub mod libmdbx {
 
     table!(
         /// Test table.
-        (TestNodes) NodeHash => Vec<u8>
+        (TestNodes) [u8; 33] => Vec<u8>
     );
 
     /// Creates a new DB on a given path

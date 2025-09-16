@@ -1,4 +1,4 @@
-use ethrex_trie::{Nibbles, error::TrieError};
+use ethrex_trie::{Nibbles, db::nibbles_to_fixed_size, error::TrieError};
 use libmdbx::{
     RO,
     orm::{Database, Table, Transaction},
@@ -12,8 +12,6 @@ pub struct LibmdbxLockedTrieDB<T: Table> {
 }
 
 use ethrex_trie::TrieDB;
-
-use crate::trie_db::utils::nibbles_to_fixed_size;
 
 impl<T> LibmdbxLockedTrieDB<T>
 where

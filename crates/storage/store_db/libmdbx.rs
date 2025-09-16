@@ -10,7 +10,6 @@ use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::libmdbx_dupsort_locked::LibmdbxLockedDupsortTrieDB;
 use crate::trie_db::libmdbx_locked::LibmdbxLockedTrieDB;
-use crate::trie_db::utils::nibbles_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -21,7 +20,7 @@ use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, Trie, db::nibbles_to_fixed_size};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use libmdbx::{

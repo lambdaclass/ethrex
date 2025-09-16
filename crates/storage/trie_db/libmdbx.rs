@@ -7,9 +7,7 @@ pub struct LibmdbxTrieDB<T: Table> {
     phantom: PhantomData<T>,
 }
 
-use ethrex_trie::TrieDB;
-
-use crate::trie_db::utils::nibbles_to_fixed_size;
+use ethrex_trie::{TrieDB, db::nibbles_to_fixed_size};
 
 impl<T> LibmdbxTrieDB<T>
 where
@@ -42,14 +40,15 @@ where
         txn.commit().map_err(TrieError::DbError)
     }
 }
-/*
+
 #[cfg(test)]
 mod test {
     use super::LibmdbxTrieDB;
     use crate::trie_db::test_utils::libmdbx::{TestNodes, new_db};
-    use ethrex_trie::NodeHash;
+    use ethrex_trie::Nibbles;
     use ethrex_trie::Trie;
     use ethrex_trie::TrieDB;
+
     use libmdbx::{
         orm::{Database, table},
         table_info,
@@ -60,14 +59,14 @@ mod test {
     #[test]
     fn simple_addition() {
         table!(
-            /// NodeHash to Node table
-            ( Nodes )  NodeHash => Vec<u8>
+            /// [u8;33] to Node table
+            ( Nodes )  [u8;33] => Vec<u8>
         );
         let inner_db = new_db::<Nodes>();
-        let key = NodeHash::from_encoded_raw(b"hello");
+        let key = Nibbles::from_hex(vec![1, 2, 3, 4]);
         let db = LibmdbxTrieDB::<Nodes>::new(inner_db);
-        assert_eq!(db.get(key).unwrap(), None);
-        db.put(key, "value".into()).unwrap();
+        assert_eq!(db.get(key.clone()).unwrap(), None);
+        db.put(key.clone(), "value".into()).unwrap();
         assert_eq!(db.get(key).unwrap(), Some("value".into()));
     }
 
@@ -75,11 +74,11 @@ mod test {
     fn different_tables() {
         table!(
             /// vec to vec
-            ( TableA ) NodeHash => Vec<u8>
+            ( TableA ) [u8;33] => Vec<u8>
         );
         table!(
             /// vec to vec
-            ( TableB ) NodeHash => Vec<u8>
+            ( TableB ) [u8;33] => Vec<u8>
         );
         let tables = [table_info!(TableA), table_info!(TableB)]
             .into_iter()
@@ -88,8 +87,8 @@ mod test {
         let inner_db = Arc::new(Database::create(None, &tables).unwrap());
         let db_a = LibmdbxTrieDB::<TableA>::new(inner_db.clone());
         let db_b = LibmdbxTrieDB::<TableB>::new(inner_db.clone());
-        let key = NodeHash::from_encoded_raw(b"hello");
-        db_a.put(key, "value".into()).unwrap();
+        let key = Nibbles::from_hex(vec![1, 2, 3, 4]);
+        db_a.put(key.clone(), "value".into()).unwrap();
         assert_eq!(db_b.get(key).unwrap(), None);
     }
 
@@ -220,4 +219,3 @@ mod test {
         assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([4; 32].to_vec()));
     }
 }
-*/

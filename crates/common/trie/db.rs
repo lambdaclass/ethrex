@@ -1,4 +1,4 @@
-use crate::{Nibbles, NodeHash, PathRLP, error::TrieError};
+use crate::{Nibbles, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},

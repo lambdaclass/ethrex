@@ -39,17 +39,15 @@ impl NodeRef {
             }
             NodeRef::Hash(hash) => db
                 .get(path)?
-                .and_then(|rlp| {
-                    match Node::decode(&rlp) {
-                        Ok(node) => {
-                            if node.compute_hash() == hash {
-                                Some(Ok(node))
-                            } else {
-                                None
-                            }
-                        },
-                        Err(err) => Some(Err(TrieError::RLPDecode(err)))
+                .and_then(|rlp| match Node::decode(&rlp) {
+                    Ok(node) => {
+                        if node.compute_hash() == hash {
+                            Some(Ok(node))
+                        } else {
+                            None
+                        }
                     }
+                    Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
                 .transpose(),
         }

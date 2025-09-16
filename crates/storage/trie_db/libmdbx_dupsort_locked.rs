@@ -1,8 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
-use super::utils::nibbles_to_fixed_size;
 use ethrex_trie::TrieDB;
-use ethrex_trie::{Nibbles, error::TrieError};
+use ethrex_trie::{Nibbles, db::nibbles_to_fixed_size, error::TrieError};
 use libmdbx::RO;
 use libmdbx::orm::{Database, DupSort, Encodable, Transaction};
 
