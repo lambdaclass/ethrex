@@ -5,15 +5,15 @@ const TEST_FOLDER: &str = "vectors/";
 
 #[cfg(not(any(feature = "revm", feature = "sp1", feature = "stateless")))]
 const SKIPPED_TESTS: &[&str] = &[
-    "system_contract_deployment",
-    "test_excess_blob_gas_fork_transition",
-    "test_invalid_post_fork_block_without_blob_fields",
-    "test_invalid_pre_fork_block_with_blob_fields",
-    "stTransactionTest/HighGasPriceParis",
-    "dynamicAccountOverwriteEmpty_Paris",
-    "create2collisionStorageParis",
-    "RevertInCreateInInitCreate2Paris",
-    "createBlobhashTx",
+    "system_contract_deployment", // Skipped because we don't have that validation in our code; also skipped because other clients do so too
+    "test_excess_blob_gas_fork_transition", // Skipped because genesis has Cancun fields when it shouldn't, so genesis loading fails
+    "test_invalid_post_fork_block_without_blob_fields", // Skipped because genesis has Cancun fields when it shouldn't, so genesis loading fails
+    "test_invalid_pre_fork_block_with_blob_fields", // Skipped because genesis has Cancun fields when it shouldn't, so genesis loading fails
+    "stTransactionTest/HighGasPriceParis",          // Skipped because it tries to
+    "dynamicAccountOverwriteEmpty_Paris", // Skipped because it fails on REVM as well. See https://github.com/lambdaclass/ethrex/issues/1555 for more details
+    "create2collisionStorageParis", // Skipped because it fails on REVM as well. See https://github.com/lambdaclass/ethrex/issues/1555 for more details
+    "RevertInCreateInInitCreate2Paris", // Skipped because it fails on REVM as well. See https://github.com/lambdaclass/ethrex/issues/1555 for more details
+    "createBlobhashTx", // Skipped because it fails and is only part of development fixtures
 ];
 #[cfg(feature = "revm")]
 const SKIPPED_TESTS: &[&str] = &[
