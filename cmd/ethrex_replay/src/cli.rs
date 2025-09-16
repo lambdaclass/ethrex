@@ -474,7 +474,7 @@ async fn replay_no_backend(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Re
     let mut witness = execution_witness_from_rpc_chain_config(
         cache.witness.clone(),
         chain_config,
-        cache.get_first_block_number(),
+        cache.get_first_block_number()?,
     )?;
 
     // We don't want empty nodes (0x80)
@@ -507,14 +507,12 @@ async fn replay_no_backend(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Re
             let hashed_address = hash_address(address);
 
             // Account state may not be in the state trie
-            let account_state_rlp_opt = guest_program
+            let Some(account_state_rlp) = guest_program
                 .state_trie
                 .as_ref()
                 .unwrap()
-                .get(&hashed_address)
-                .unwrap();
-
-            let Some(account_state_rlp) = account_state_rlp_opt else {
+                .get(&hashed_address)?
+            else {
                 continue;
             };
 
@@ -540,15 +538,12 @@ async fn replay_no_backend(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Re
 
     // Add codes to DB
     for (code_hash, code) in guest_program.codes_hashed.clone() {
-        store
-            .add_account_code(code_hash, code.into())
-            .await
-            .unwrap();
+        store.add_account_code(code_hash, code.into()).await?;
     }
 
     // Add block headers to DB
     for (_n, header) in guest_program.block_headers.clone() {
-        store.add_block_header(header.hash(), header).await.unwrap();
+        store.add_block_header(header.hash(), header).await?;
     }
 
     let blockchain = Blockchain::default_with_store(store);
