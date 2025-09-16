@@ -51,6 +51,8 @@ pub enum SequencerError {
     MonitorError(#[from] MonitorError),
     #[error("Failed to start admin api: {0}")]
     Admin(#[from] AdminError),
+    #[error("Block gas limit cannot be greater than batch gas limit")]
+    GasLimitError,
 }
 
 #[derive(Debug, thiserror::Error)]
