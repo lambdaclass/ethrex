@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>Quickstart Ethereum Node - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,20 +237,36 @@
 }
 
 </style>
-<h1 id="developer-docs"><a class="header" href="#developer-docs">Developer docs</a></h1>
-<p>Welcome to the ethrex developer docs!</p>
-<p>This section contains documentation on the internals of the project.</p>
-<p>To get started first, read the developer <a href="./installing.html">installation guide</a> to learn about ethrex and its features. Then you can look into the <a href="../developers/l1/introduction.html">L1 developer docs</a> or the <a href="../developers/l2/introduction.html">L2 developer docs</a></p>
+<h1 id="quickstart-run-an-ethereum-l1-node"><a class="header" href="#quickstart-run-an-ethereum-l1-node">Quickstart: Run an Ethereum L1 Node</a></h1>
+<p>Follow these steps to quickly launch an Ethereum L1 (mainnet) node using Docker. For advanced details, see the links at the end.</p>
+<h2 id="supported-networks"><a class="header" href="#supported-networks">Supported Networks</a></h2>
+<ul>
+<li><strong>mainnet</strong></li>
+<li><strong>sepolia</strong></li>
+<li><strong>holesky</strong></li>
+<li><strong>hoodi</strong></li>
+</ul>
+<p>By default, the command below run a node on mainnet. To use a different network, change the <code>ETHREX_NETWORK</code> environment variable with one of the networks above.</p>
+<pre><code class="language-sh">curl -LO https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/docker-compose.yaml
+ETHREX_NETWORK=mainnet docker compose up
+</code></pre>
+<p>This will start an ethrex node along with a Lighthouse consensus client that syncs with the Ethereum network.</p>
+<hr />
+<p>For more details on installation, flags, and supported networks:</p>
+<ul>
+<li><a href="./installation">Installation</a></li>
+<li><a href="../l1/running">Advanced options and networks</a></li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../l2/fundamentals/based.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../getting-started/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../developers/installing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../getting-started/quickstart-l2.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -260,11 +276,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../l2/fundamentals/based.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../getting-started/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../developers/installing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../getting-started/quickstart-l2.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

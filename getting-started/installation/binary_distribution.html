@@ -237,37 +237,55 @@
 }
 
 </style>
-<h1 id="install-binary-distribution"><a class="header" href="#install-binary-distribution">Install binary distribution</a></h1>
-<h2 id="download-the-binary"><a class="header" href="#download-the-binary">Download the binary</a></h2>
-<p>Download the latest ethrex release for your OS from the <a href="https://github.com/lambdaclass/ethrex/releases">packaged binaries</a></p>
-<h4 id="for-linux-x86_64"><a class="header" href="#for-linux-x86_64">For Linux x86_64:</a></h4>
+<h1 id="install-ethrex-binary-distribution"><a class="header" href="#install-ethrex-binary-distribution">Install ethrex (binary distribution)</a></h1>
+<p>This guide explains how to quickly install the latest pre-built ethrex binary for your operating system.</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ul>
+<li><a href="https://curl.se/download.html">curl</a> (for downloading the binary)</li>
+</ul>
+<h2 id="download-the-latest-release"><a class="header" href="#download-the-latest-release">Download the latest release</a></h2>
+<p>Download the latest ethrex release for your OS from the <a href="https://github.com/lambdaclass/ethrex/releases/latest" target="_blank">GitHub Releases page</a>.</p>
+<h3 id="linux-x86_64"><a class="header" href="#linux-x86_64">Linux x86_64</a></h3>
 <pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
 </code></pre>
-<h4 id="for-linux-arm"><a class="header" href="#for-linux-arm">For Linux ARM:</a></h4>
+<h4 id="linux-x86_64-with-gpu-support-for-l2-prover"><a class="header" href="#linux-x86_64-with-gpu-support-for-l2-prover">Linux x86_64 with GPU support (for L2 prover)</a></h4>
+<p>If you want to run an L2 prover with GPU acceleration, download the GPU-enabled binary:</p>
+<pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64-gpu -o ethrex
+</code></pre>
+<h3 id="linux-arm-aarch64"><a class="header" href="#linux-arm-aarch64">Linux ARM (aarch64)</a></h3>
 <pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -o ethrex
 </code></pre>
-<h4 id="for-macos-apple-silicon"><a class="header" href="#for-macos-apple-silicon">For MacOS (Apple Silicon):</a></h4>
+<h4 id="linux-arm-aarch64-with-gpu-support-for-l2-prover"><a class="header" href="#linux-arm-aarch64-with-gpu-support-for-l2-prover">Linux ARM (aarch64) with GPU support (for L2 prover)</a></h4>
+<p>If you want to run an L2 prover with GPU acceleration, download the GPU-enabled binary:</p>
+<pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64-gpu -o ethrex
+</code></pre>
+<h3 id="macos-apple-silicon-aarch64"><a class="header" href="#macos-apple-silicon-aarch64">macOS (Apple Silicon, aarch64)</a></h3>
 <pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -o ethrex
 </code></pre>
-<h2 id="give-execution-permissions-to-the-binary"><a class="header" href="#give-execution-permissions-to-the-binary">Give execution permissions to the binary</a></h2>
-<pre><code>chmod +x ethrex
+<h2 id="set-execution-permissions"><a class="header" href="#set-execution-permissions">Set execution permissions</a></h2>
+<p>Make the binary executable:</p>
+<pre><code class="language-sh">chmod +x ethrex
 </code></pre>
-<p>Finally, you can verify the program is working by running:</p>
-<pre><code class="language-sh">./ethrex --version
+<h2 id="optional-move-to-a-directory-in-your-path"><a class="header" href="#optional-move-to-a-directory-in-your-path">(Optional) Move to a directory in your <code>$PATH</code></a></h2>
+<p>To run <code>ethrex</code> from anywhere, move it to a directory in your <code>$PATH</code> (e.g., <code>/usr/local/bin</code>):</p>
+<pre><code class="language-sh">sudo mv ethrex /usr/local/bin/
 </code></pre>
-<div class="mdbook-alerts mdbook-alerts-tip">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  tip
-</p>
-<p>For convenience, you can move the <code>ethrex</code> binary to a directory in your <code>$PATH</code>, so you can run it from anywhere.</p>
-</div>
+<h2 id="verify-the-installation"><a class="header" href="#verify-the-installation">Verify the installation</a></h2>
+<p>Check that Ethrex is installed and working:</p>
+<pre><code class="language-sh">ethrex --version
+</code></pre>
+<hr />
+<p><strong>Next steps:</strong></p>
+<ul>
+<li><a href="../quickstart-l1.html">L1 Quickstart</a></li>
+<li><a href="../quickstart-l2.html">L2 Quickstart</a></li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../getting-started/installation/installation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../getting-started/installation/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
@@ -281,7 +299,7 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../getting-started/installation/installation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../getting-started/installation/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 

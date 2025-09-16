@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>Quickstart L2 - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,20 +237,29 @@
 }
 
 </style>
-<h1 id="developer-docs"><a class="header" href="#developer-docs">Developer docs</a></h1>
-<p>Welcome to the ethrex developer docs!</p>
-<p>This section contains documentation on the internals of the project.</p>
-<p>To get started first, read the developer <a href="./installing.html">installation guide</a> to learn about ethrex and its features. Then you can look into the <a href="../developers/l1/introduction.html">L1 developer docs</a> or the <a href="../developers/l2/introduction.html">L2 developer docs</a></p>
+<h1 id="quickstart-run-an-l2-node"><a class="header" href="#quickstart-run-an-l2-node">Quickstart: Run an L2 Node</a></h1>
+<p><strong>Ethrex</strong> is a framework that lets you launch your own L2 rollup or blockchain. With ethrex, you can deploy, run, and experiment with custom L2 networks, taking advantage of Ethereum's security while enabling high throughput and low fees.</p>
+<h2 id="start-a-development-l2"><a class="header" href="#start-a-development-l2">Start a development L2</a></h2>
+<p>Follow these steps to quickly launch an L2 node using Docker. For advanced details, see the links at the end.</p>
+<pre><code class="language-sh">docker run -p 1729:1729 ghcr.io/lambdaclass/ethrex:main l2 --dev
+</code></pre>
+<p>This will start a local L1 and L2 network. A JSON-RPC server compatible with Ethereum clients will be available at <code>http://localhost:1729</code>.</p>
+<hr />
+<p>For more details and configuration options, see:</p>
+<ul>
+<li><a href="./installation">Installation</a></li>
+<li><a href="../l2/introduction.html">Advanced options and more details</a></li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../l2/fundamentals/based.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../getting-started/quickstart-l1.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../developers/installing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../getting-started/installation/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -260,11 +269,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../l2/fundamentals/based.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../getting-started/quickstart-l1.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../developers/installing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../getting-started/installation/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

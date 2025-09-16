@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>TDX execution module - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,20 +237,95 @@
 }
 
 </style>
-<h1 id="developer-docs"><a class="header" href="#developer-docs">Developer docs</a></h1>
-<p>Welcome to the ethrex developer docs!</p>
-<p>This section contains documentation on the internals of the project.</p>
-<p>To get started first, read the developer <a href="./installing.html">installation guide</a> to learn about ethrex and its features. Then you can look into the <a href="../developers/l1/introduction.html">L1 developer docs</a> or the <a href="../developers/l2/introduction.html">L2 developer docs</a></p>
+<h1 id="tdx-execution-module"><a class="header" href="#tdx-execution-module">TDX execution module</a></h1>
+<p>This document has documentation related to proving ethrex blocks using TDX.</p>
+<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<ul>
+<li>Running the following without an L2 running will continuously throw the error: <code>Error sending quote: Failed to get ProverSetupAck: Connection refused (os error 111)</code>. If you want to run this in a proper setup go to the <a href="#running">Running</a> section.</li>
+<li>The quote generator runs in a QEMU, to quit it press <code>CTRL+A X</code>.</li>
+</ul>
+</div>
+<p>On a machine with TDX support <a href="https://github.com/canonical/tdx">with the required setup</a> go to quote-gen and run</p>
+<pre><code class="language-sh">make run
+</code></pre>
+<h2 id="what-is-tdx"><a class="header" href="#what-is-tdx">What is TDX?</a></h2>
+<p>TDX is an Intel technology implementing a Trusted Execution Environment.
+Such an environment allows verifying certain code was executed without being tampered with or observed.</p>
+<p>These verifications (attestations) are known as "quotes" and contain signatures verifying the attestation was generated by a genuine processor, the measurements at the time, and a user-provided piece of data binding the proof.</p>
+<p>The measurements are saved to four Run Time Measurement Registers (RTMR), with each RTMR respresenting a boot stage.
+This is analogous to <a href="https://uapi-group.org/specifications/specs/linux_tpm_pcr_registry/">how PCRs work</a>.</p>
+<h2 id="usage-considerations"><a class="header" href="#usage-considerations">Usage considerations</a></h2>
+<p>Do not hardcode quote verification parameters as <a href="https://cc-enabling.trustedservices.intel.com/intel-tdx-enabling-guide/02/infrastructure_setup/#tcb-recovery-tcb-r">they might change</a>.</p>
+<p>It's easy to silently overlook non-verified areas such as accidentally leaving login enabled, or not verifying the integrity of the state.</p>
+<h2 id="boot-sequence"><a class="header" href="#boot-sequence">Boot sequence</a></h2>
+<ul>
+<li>Firmware (OVMF here) is loaded (and hashed into RTMR[0])</li>
+<li><a href="https://uapi-group.org/specifications/specs/unified_kernel_image/">UKI</a> is loaded (and hashed into a RTMR)</li>
+<li>kernel and initrd are extracted from the UKI and executed</li>
+<li>root partition is verified using the <code>roothash=</code> value provided on the kernel cmdline and the <code>hash</code> partition with the dm-verity merkle tree</li>
+<li>root partition is mounted read-only</li>
+<li>(WIP) systemd executes the payload</li>
+</ul>
+<h2 id="image-build-components"><a class="header" href="#image-build-components">Image build components</a></h2>
+<p>For reproducibility of images and hypervisor runtime we use <a href="https://en.wikipedia.org/wiki/Nix_(package_manager)">Nix</a>.</p>
+<h3 id="hypervisornix"><a class="header" href="#hypervisornix">hypervisor.nix</a></h3>
+<p>This builds the modified (with patches for TDX support) qemu, and TDX-specific VBIOS (OVMF) and exports a script to run a given image (the parameters, specifically added devices, affect the measurements).</p>
+<h3 id="servicenix"><a class="header" href="#servicenix">service.nix</a></h3>
+<p>This contains the quote-gen service. It's hash changes every time a non-gitignored file changes.</p>
+<h3 id="imagenix"><a class="header" href="#imagenix">image.nix</a></h3>
+<p>Exports an image that uses <a href="https://uapi-group.org/specifications/specs/unified_kernel_image/">UKI</a> and <a href="https://source.android.com/docs/security/features/verifiedboot/dm-verity?hl=en">dm-verity</a> to generate an image where changing any component changes the hash of the bootloader (the UKI image), which is measured by the BIOS.</p>
+<h2 id="running"><a class="header" href="#running">Running</a></h2>
+<p>You can enable the prover by setting <code>ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true</code>.</p>
+<p>For development purposes, you can use the flag <code>ETHREX_TDX_DEV_MODE=true</code> to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.</p>
+<p>Ensure the proof coordinator is reachable at 172.17.0.1. You can bring up the network by first starting the L2 components:</p>
+<pre><code class="language-sh">// cd crates/l2
+make init ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true PROOF_COORDINATOR_ADDRESS=0.0.0.0
+</code></pre>
+<p>And in another terminal, running the VM:</p>
+<pre><code class="language-sh">// cd crates/l2
+make -C tee/quote-gen run
+</code></pre>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="unshare-write-failed-procselfuid_map-operation-not-permitted"><a class="header" href="#unshare-write-failed-procselfuid_map-operation-not-permitted"><code>unshare: write failed /proc/self/uid_map: Operation not permitted</code></a></h3>
+<p>If you get this error when building the image, it's probably because your OS has unprivileged userns restricted by default. You can undo this by running the following commands as root, or running the build as root while disabling sandboxing.</p>
+<pre><code class="language-sh">sysctl kernel.unprivileged_userns_apparmor_policy=0
+sysctl kernel.apparmor_restrict_unprivileged_userns=0
+</code></pre>
+<h3 id="rtmrmrtd-mismatch"><a class="header" href="#rtmrmrtd-mismatch">RTMR/MRTD mismatch</a></h3>
+<p>If any code or dependencies changed, the measurements will change.</p>
+<p>To obtain the new measurements, first you obtain the quote by running the prover (you don't need to have the l2 running). It's output will contain <code>Sending quote &lt;very long hex string&gt;</code>.</p>
+<p>This usually causes a RTMR1 mismatch. The easiest way to obtain the new RTMR values is by looking at the printed quote for the next 96 bytes after the RTMR0, corresponding to RTMR1||RTMR2 (48 bytes each).</p>
+<p>More generally, you can generate a report with DCAP.verifyAndAttestOnChain(quote) which validates and extracts the report.</p>
+<p>Look at bytes 341..485 of the output for RTMRs and bytes 149..197 for the MRTD.</p>
+<p>For example, the file <code>quote.example</code> contains a quote, which can be turned into the following report:</p>
+<pre><code class="language-text">00048100000000b0c06f000000060103000000000000000000000000005b38e33a6487958b72c3c12a938eaa5e3fd4510c51aeeab58c7d5ecee41d7c436489d6c8e4f92f160b7cad34207b00c100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000e702060000000000
+
+91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7 # MRTD
+
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+
+4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643 # RTMR0
+53827a034d1e4c7f13fd2a12aee4497e7097f15a04794553e12fe73e2ffb8bd57585e771951115a13ec4d7e6bc193038 # RTMR1
+2ca1a728ff13c36195ad95e8f725bf00d7f9c5d6ed730fb8f50cccad692ab81aefc83d594819375649be934022573528 # RTMR2
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 # RTMR3
+
+39618efd10b14136ab416d6acfff8e36b23533a90000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+</code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../l2/fundamentals/based.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/architecture/aligned_mode.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../developers/installing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/interacting/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -260,11 +335,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../l2/fundamentals/based.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/architecture/aligned_mode.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../developers/installing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/interacting/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -279,17 +354,17 @@
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../mermaid.min.js"></script>
-        <script src="../mermaid-init.js"></script>
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
 
 
     </div>

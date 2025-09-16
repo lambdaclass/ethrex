@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Package manager - Ethrex</title>
+        <title>Networking - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,18 +237,138 @@
 }
 
 </style>
-<h1 id="install-ethrex-package-manager"><a class="header" href="#install-ethrex-package-manager">Install ethrex (package manager)</a></h1>
-<p>Coming soon.</p>
+<h1 id="networking"><a class="header" href="#networking">Networking</a></h1>
+<p>The network crate handles the ethereum networking protocols. This involves:</p>
+<ul>
+<li><a href="#discovery-protocol">Discovery protocol</a>: built on top of udp and it is how we discover new nodes.</li>
+<li>devP2P: sits on top of tcp and is where the actual blockchain information exchange happens.</li>
+</ul>
+<p>Implementation follows the official spec which can be found <a href="https://github.com/ethereum/devp2p/tree/master">here</a>. Also, we've inspired in some <a href="https://github.com/ethereum/go-ethereum/tree/master/p2p/discover">geth code</a>.</p>
+<h2 id="discovery-protocol"><a class="header" href="#discovery-protocol">Discovery protocol</a></h2>
+<p>In the next section, we'll be looking at the discovery protocol (discv4 to be more specific) and the way we have it set up. There are many points for improvement and here we discuss some possible solutions to them.</p>
+<p>At startup, the discovery server launches three concurrent tokio tasks:</p>
+<ul>
+<li>The listen loop for incoming requests.</li>
+<li>A revalidation loop to ensure peers remain responsive.</li>
+<li>A recursive lookup loop to request new peers and keep our table filled.</li>
+</ul>
+<p>Before starting these tasks, we run a <a href="#startup">startup</a> process to connect to an array of initial nodes.</p>
+<p>Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a <a href="https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/kademlia.rs#L25-L28">Kademlia table</a>, though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more <a href="https://en.wikipedia.org/wiki/Kademlia">here</a>. This table holds:</p>
+<ul>
+<li>Our <code>node_id</code>: The node's unique identifier computed by obtaining the keccak hash of the 64 bytes starting from index 1 of the encoded pub key.</li>
+<li>A vector of 256 <code>bucket</code>s which holds:
+<ul>
+<li><code>peers</code>: a vector of 16 elements of type <code>PeersData</code> where we save the node record and other related data that we'll see later.</li>
+<li><code>replacements</code>: a vector of 16 elements of <code>PeersData</code> that are not connected to us, but we consider them as potential replacements for those nodes that have disconnected from us.</li>
+</ul>
+</li>
+</ul>
+<p>Peers are not assigned to any bucket but they are assigned based on its <span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.7804em;vertical-align:-0.136em;"></span><span class="mord">0</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.8304em;vertical-align:-0.136em;"></span><span class="mord text"><span class="mord">distance</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.6444em;"></span><span class="mord">255</span></span></span></span> to our <code>node_id</code>. Distance is defined by:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub fn distance(node_id_1: H512, node_id_2: H512) -&gt; usize {
+    let xor = node_id_1 ^ node_id_2;
+    let distance = U256::from_big_endian(xor.as_bytes());
+    distance.bits().saturating_sub(1)
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="startup"><a class="header" href="#startup">Startup</a></h3>
+<p>Before starting the server, we do a startup where we connect to an array of seeders or bootnodes. This involves:</p>
+<ul>
+<li>Receiving bootnodes via CLI params</li>
+<li>Inserting them into our table</li>
+<li>Pinging them to notify our presence, so they acknowledge us.</li>
+</ul>
+<p>This startup is far from being completed. The current state allows us to do basic tests and connections. Later, we want to do a real startup by first trying to connect to those nodes we were previously connected. For that, we'd need to store nodes on the database. If those nodes aren't enough to fill our table, then we also ping some bootnodes, which could be hardcoded or received through the cli. Current issues are opened regarding <a href="https://github.com/lambdaclass/ethrex/issues/398">startup</a> and <a href="https://github.com/lambdaclass/ethrex/issues/454">nodes db</a>.</p>
+<h3 id="listen-loop"><a class="header" href="#listen-loop">Listen loop</a></h3>
+<p>The listen loop handles messages sent to our socket. The spec defines 6 types of messages:</p>
+<ul>
+<li><strong>Ping</strong>: Responds with a <code>pong</code> message. If the peer is not in our table we add it, if the corresponding bucket is already filled then we add it as a replacement for that bucket. If it was inserted we send a `ping from our end to get an endpoint proof.</li>
+<li><strong>Pong</strong>: Verifies that the <code>pong</code> corresponds to a previously sent <code>ping</code>, if so we mark the peer as proven.</li>
+<li><strong>FindNodes</strong>: Responds with a <code>neighbors</code> message that contains as many as the 16 closest nodes from the given target. A target is a pubkey provided by the peer in the message. The response can't be sent in one packet as it might exceed the discv4 max packet size. So we split it into different packets.</li>
+<li><strong>Neighbors</strong>: First we verify that we have sent the corresponding <code>find_node</code> message. If so, we receive the peers, store them, and ping them. Also, every <a href="https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/discv4.rs#L305-L314"><code>find_node</code> request</a> may have a <a href="https://docs.rs/tokio/latest/tokio/sync/mpsc/struct.Sender.html">tokio <code>Sender</code></a> attached, if that is the case, we forward the nodes from the message through the channel. This becomes useful when waiting for a <code>find_node</code> response, <a href="https://github.com/lambdaclass/ethrex/blob/229ca0b316a79403412a917d04e3b95f579c56c7/crates/net/net.rs#L517-L570">something we do in the lookups</a>.</li>
+<li><strong>ENRRequest</strong>: currently not implemented see <a href="https://github.com/lambdaclass/ethrex/issues/432">here</a>.</li>
+<li><strong>ENRResponse</strong>: same as above.</li>
+</ul>
+<h3 id="re-validations"><a class="header" href="#re-validations">Re-validations</a></h3>
+<p>Re-validations are tasks that are implemented as intervals, that is: they run an action every <code>x</code> wherever unit of time (currently configured to run every 30 seconds). The current flow of re-validation is as follows</p>
+<ol>
+<li>Every 30 seconds (by default) we ping the three least recently pinged peers: this may be fine now to keep simplicity, but we might prefer to choose three random peers instead to avoid the search which might become expensive as our buckets start to fill with more peers.</li>
+<li>In the next iteration we check if they have answered
+<ul>
+<li>if they have: we increment the liveness field by one.</li>
+<li>otherwise: we decrement the liveness by a third of its value.</li>
+</ul>
+</li>
+<li>If the liveness field is 0, we delete it and insert a new one from the replacements table.</li>
+</ol>
+<p>Liveness checks are not part of the spec but are taken from geth, see <a href="https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/table_reval.go">here</a>. This field is useful because it provides us with good criteria of which nodes are connected and we "trust" more. This trustiness is useful when deciding if we want to store this node in the database to use it as a future seeder or when establishing a connection in p2p.</p>
+<p>Re-validations are another point of potential improvement. While it may be fine for now to keep simplicity at max, pinging the last recently pinged peers becomes quite expensive as the number of peers in the table increases. And it also isn't very "just" in selecting nodes so that they get their liveness increased so we trust them more and we might consider them as a seeder. A possible improvement could be:</p>
+<ul>
+<li>Keep two lists: one for nodes that have already been pinged, and another one for nodes that have not yet been revalidated. Let's call the former "a" and the second "b".</li>
+<li>In the beginning, all nodes would belong to "a" and whenever we insert a new node, they would be pushed to "a".</li>
+<li>We would have two intervals: one for pinging "a" and another for pinging to nodes in "b". The "b" would be quicker, as no initial validation has been done.</li>
+<li>When picking a node to ping, we would do it randomly, which is the best form of justice for a node to become trusted by us.</li>
+<li>When a node from <code>b</code> responds successfully, we move it to <code>a</code>, and when one from <code>a</code> does not respond, we move it to <code>b</code>.</li>
+</ul>
+<p>This improvement follows somewhat what geth does, see <a href="https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/table_reval.go">here</a>.</p>
+<h3 id="recursive-lookups"><a class="header" href="#recursive-lookups">Recursive Lookups</a></h3>
+<p>Recursive lookups are as with re-validations implemented as intervals. Their current flow is as follows:</p>
+<ol>
+<li>Every 30min we spawn three concurrent lookups: one closest to our pubkey and three others closest to randomly generated pubkeys.</li>
+<li>Every lookup starts with the closest nodes from our table. Each lookup keeps track of:
+<ul>
+<li>Peers that have already been asked for nodes</li>
+<li>Peers that have been already seen</li>
+<li>Potential peers to query for nodes: a vector of up to 16 entries holding the closest peers to the pubkey. This vector is initially filled with nodes from our table.</li>
+</ul>
+</li>
+<li>We send a <code>find_node</code> to the closest 3 nodes (that we have not yet asked) from the pubkey.</li>
+<li>We wait for the neighbors' response and push or replace those who are closer to the potential peers.</li>
+<li>We select three other nodes from the potential peers vector and do the same until one lookup has no node to ask.</li>
+</ol>
+<p>The way to do lookups aren't part of the spec. Our implementation aligns with geth approach, see <a href="https://github.com/ethereum/go-ethereum/blob/master/p2p/discover/v4_udp.go#L282-L310">here</a>.</p>
+<h3 id="an-example-of-how-you-might-build-a-network"><a class="header" href="#an-example-of-how-you-might-build-a-network">An example of how you might build a network</a></h3>
+<p>Finally, here is an example of how you could build a network and see how they connect each other:</p>
+<p>We'll have three nodes: <code>a</code>, <code>b</code>, and <code>c</code>, we'll start <code>a</code>, then <code>b</code> setting <code>a</code> as a bootnode, and finally we'll start <code>c</code> with <code>b</code> as bootnode we should see that <code>c</code> connects to both <code>a</code> and <code>b</code> and so all the network should be connected.</p>
+<p><strong>node a</strong>:</p>
+<pre><code class="language-bash">cargo run --release -- --network ./fixtures/genesis/kurtosis.json
+</code></pre>
+<p>We get the <code>enode</code> by querying the node_info and using jq:</p>
+<pre><code class="language-bash">curl -s http://localhost:8545 \
+-X POST \
+-H "Content-Type: application/json" \
+--data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+| jq '.result.enode'
+</code></pre>
+<p><strong>node b</strong>:</p>
+<p>We start a new server passing the enode from node <code>a</code> as an argument. Also changing the database dir and the ports is needed to avoid conflicts.</p>
+<pre><code class="language-bash">cargo run --release -- --network ./fixtures/genesis/kurtosis.json --bootnodes=`NODE_A_ENODE` \
+--datadir=ethrex_b --authrpc.port=8552 --http.port=8546 --p2p.port=30305 --discovery.port=30306
+</code></pre>
+<p><strong>node c</strong>
+Finally, with <code>node_c</code> we connect to <code>node_b</code>. When the lookup runs, <code>node_c</code> should end up connecting to <code>node_a</code>:</p>
+<pre><code class="language-bash">cargo run --release -- --network ./fixtures/genesis/kurtosis.json --bootnodes=`NODE_B_ENODE` \
+--datadir=ethrex_c --authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
+</code></pre>
+<p>We get the <code>enode</code> by querying the node_info and using jq:</p>
+<pre><code class="language-bash">curl -s http://localhost:8546 \
+-X POST \
+-H "Content-Type: application/json" \
+--data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+| jq '.result.enode'
+</code></pre>
+<p>You could also spawn nodes from other clients and it should work as well.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../getting-started/installation/binary_distribution.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l1/fundamentals/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../getting-started/installation/docker_images.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l1/fundamentals/sync_modes.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -258,11 +378,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../getting-started/installation/binary_distribution.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l1/fundamentals/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../getting-started/installation/docker_images.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l1/fundamentals/sync_modes.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>Roadmap - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../";
+            const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,20 +237,52 @@
 }
 
 </style>
-<h1 id="developer-docs"><a class="header" href="#developer-docs">Developer docs</a></h1>
-<p>Welcome to the ethrex developer docs!</p>
-<p>This section contains documentation on the internals of the project.</p>
-<p>To get started first, read the developer <a href="./installing.html">installation guide</a> to learn about ethrex and its features. Then you can look into the <a href="../developers/l1/introduction.html">L1 developer docs</a> or the <a href="../developers/l2/introduction.html">L2 developer docs</a></p>
-
+<h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
+<p>This project is under active development. Over the next <strong>two months</strong>, our <strong>primary objective is to finalize and audit the first version of the stack</strong>.
+This means every component — from L1 syncing to L2 bridging and prover integration — must meet stability, performance, and security standards.</p>
+<p>The roadmap below outlines the remaining work required to achieve this milestone, organized into three major areas: <strong>L2</strong>, <strong>DevOps &amp; Performance</strong>, and <strong>L1</strong>.</p>
+<hr />
+<h2 id="l2-roadmap"><a class="header" href="#l2-roadmap">L2 Roadmap</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th><th>Status</th></tr></thead><tbody>
+<tr><td>Native Bridge</td><td>Secure and trust-minimized ERC-20 bridge between Ethereum L1 and L2 using canonical messaging and smart contracts.</td><td>In Progress</td></tr>
+<tr><td>Based Rollup</td><td>Launch the rollup as a based permissionless rollup. Leverages Ethereum for sequencing and DA. For more information check <a href="https://hackmd.io/TCa-bQisToW46enF58_3Vw?view">ethrex roadmap for becoming based</a></td><td>In Progress</td></tr>
+<tr><td>Aligned Integration</td><td>Optimize integration with Aligned’s aggregation mode.</td><td>In Progress</td></tr>
+<tr><td>Risc0 Support</td><td>Integrate RISC Zero as an alternative zkVM to SP1, enabling configurable proving backends.</td><td>In Progress</td></tr>
+<tr><td>Battle-Test the Prover</td><td>Ensure the prover (e.g., SP1, Risc0) is robust, correct, and performant under production-level  conditions.</td><td>In Progress</td></tr>
+<tr><td>One-Click L2 Deployment</td><td>Deploy a fully operational rollup with a single command. Includes TDX, Prover, integrated Grafana metrics, alerting system, block explorer, bridge hub, backups and default configuration for rapid developer spin-up.</td><td>In Progress</td></tr>
+<tr><td>Shared Bridge</td><td>Direct bridging between multiple L2s to improve UX and avoid L1 costs.</td><td>Planned</td></tr>
+<tr><td>Custom Native Token</td><td>Define a native token (non-ETH) for gas, staking, incentives, and governance. Fully integrated into fee mechanics and bridging.</td><td>Planned</td></tr>
+<tr><td>Validiums &amp; DACs</td><td>Enhance Validium mode with Data Availability Committees.</td><td>Planned</td></tr>
+<tr><td>Gas &amp; Fees</td><td>Set up a custom fee model to price deposits or any forced-included transaction, including data availability costs.</td><td>Planned</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="devops--performance"><a class="header" href="#devops--performance">DevOps &amp; Performance</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Initiative</th><th>Description</th><th>Status</th></tr></thead><tbody>
+<tr><td>Performance Benchmarking</td><td>Continuous <code>ggas/s</code> measurement, client comparison, and reproducible load tests.</td><td>In Progress</td></tr>
+<tr><td>DB Optimizations</td><td>Snapshots, background trie commits, parallel Merkle root calculation, and exploratory DB design.</td><td>In Progress</td></tr>
+<tr><td>EVM Profiling</td><td>Identify and optimize execution bottlenecks in the VM.</td><td>In Progress</td></tr>
+<tr><td>Deployment &amp; Dev Experience</td><td>One-command L2 launch, localnet spam testing, and L1 syncing on any network.</td><td>In Progress</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="l1-roadmap"><a class="header" href="#l1-roadmap">L1 Roadmap</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th><th>Status</th></tr></thead><tbody>
+<tr><td>P2P Improvements</td><td>Use <a href="https://github.com/lambdaclass/spawned">spawned</a> to improve peer discovery, sync reliability, and connection handling.</td><td>In Progress</td></tr>
+<tr><td>Chain Syncing</td><td>Verify the execution of all blocks across all chains. For Proof-of-Stake (PoS) chains (Holesky, Hoodi), verify all blocks since genesis. For chains with a pre-Merge genesis (Sepolia, Mainnet), verify all blocks after the Merge.</td><td>In Progress</td></tr>
+<tr><td>Snap Sync</td><td>Improve Snap Sync implementation to make it more reliable and efficient.</td><td>Planned</td></tr>
+<tr><td>Client Stability</td><td>Increase client resilience to adverse scenarios and network disruptions. Improve observability and logging.</td><td>Planned</td></tr>
+</tbody></table>
+</div>
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../l2/fundamentals/based.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="CLI.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../developers/installing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="CONTRIBUTING_DOCS.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -260,11 +292,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../l2/fundamentals/based.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="CLI.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../developers/installing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="CONTRIBUTING_DOCS.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -279,17 +311,17 @@
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../mermaid.min.js"></script>
-        <script src="../mermaid-init.js"></script>
+        <script src="mermaid.min.js"></script>
+        <script src="mermaid-init.js"></script>
 
 
     </div>

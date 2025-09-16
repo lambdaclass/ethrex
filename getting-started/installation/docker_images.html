@@ -237,28 +237,32 @@
 }
 
 </style>
-<h1 id="docker-images"><a class="header" href="#docker-images">Docker images</a></h1>
+<h1 id="installing-ethrex-docker"><a class="header" href="#installing-ethrex-docker">Installing ethrex (docker)</a></h1>
+<p>Run Ethrex easily using Docker containers. This guide covers pulling and running official images.</p>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
-<li><a href="https://www.docker.com/get-started/">Docker</a></li>
+<li><a href="https://www.docker.com/get-started/">Docker</a> installed and running</li>
 </ul>
-<h2 id="pull-the-docker-image"><a class="header" href="#pull-the-docker-image">Pull the docker image</a></h2>
-<p>To pull the latest stable docker image, run:</p>
-<pre><code>docker pull ghcr.io/lambdaclass/ethrex:latest
+<h2 id="pulling-the-docker-image"><a class="header" href="#pulling-the-docker-image">Pulling the Docker Image</a></h2>
+<p><strong>Latest stable release:</strong></p>
+<pre><code class="language-sh">docker pull ghcr.io/lambdaclass/ethrex:latest
 </code></pre>
-<p>To pull the latest development docker image, run:</p>
-<pre><code>docker pull ghcr.io/lambdaclass/ethrex:main
+<p><strong>Latest development build:</strong></p>
+<pre><code class="language-sh">docker pull ghcr.io/lambdaclass/ethrex:main
 </code></pre>
-<p>To pull the image for a specific version, run:</p>
-<pre><code>docker pull ghcr.io/lambdaclass/ethrex:&lt;version-tag&gt;
+<p><strong>Specific version:</strong></p>
+<pre><code class="language-sh">docker pull ghcr.io/lambdaclass/ethrex:&lt;version-tag&gt;
 </code></pre>
-<p>Existing tags are available in the <a href="https://github.com/lambdaclass/ethrex/tags">GitHub repo</a></p>
-<h2 id="run-the-docker-image"><a class="header" href="#run-the-docker-image">Run the docker image</a></h2>
-<h3 id="verify-the-image-is-working"><a class="header" href="#verify-the-image-is-working">Verify the image is working</a></h3>
-<pre><code>docker run --rm ghcr.io/lambdaclass/ethrex --version
+<p>Find available tags in the <a href="https://github.com/lambdaclass/ethrex/tags" target="_blank">GitHub repo</a>.</p>
+<hr />
+<h2 id="running-the-docker-image"><a class="header" href="#running-the-docker-image">Running the Docker Image</a></h2>
+<h3 id="check-the-image"><a class="header" href="#check-the-image">Check the Image</a></h3>
+<p>Verify the image is working:</p>
+<pre><code class="language-sh">docker run --rm ghcr.io/lambdaclass/ethrex --version
 </code></pre>
-<h3 id="start-the-node"><a class="header" href="#start-the-node">Start the node</a></h3>
-<pre><code>docker run \
+<h3 id="start-an-ethrex-node"><a class="header" href="#start-an-ethrex-node">Start an ethrex Node</a></h3>
+<p>Run the following command to start a node in the background:</p>
+<pre><code class="language-sh">docker run \
     --rm \
     -d \
     -v ethrex:/root/.local/share/ethrex \
@@ -269,23 +273,36 @@
     -p 9090:9090 \
     --name ethrex \
     ghcr.io/lambdaclass/ethrex \
-    --http.addr 0.0.0.0 \
     --authrpc.addr 0.0.0.0
 </code></pre>
-<p>This command will start a container called <code>ethrex</code> and publish the following ports</p>
+<p><strong>What this does:</strong></p>
 <ul>
-<li><code>8545</code>: TCP port for the JSON-RPC server</li>
-<li><code>8551</code>: TCP port for the auth JSON-RPC server</li>
-<li><code>30303</code>: TCP/UDP port for p2p networking</li>
-<li><code>9090</code>: TCP port metrics port</li>
+<li>Starts a container named <code>ethrex</code></li>
+<li>Publishes ports:
+<ul>
+<li><code>8545</code>: JSON-RPC server (TCP)</li>
+<li><code>8551</code>: Auth JSON-RPC server (TCP)</li>
+<li><code>30303</code>: P2P networking (TCP/UDP)</li>
+<li><code>9090</code>: Metrics (TCP)</li>
 </ul>
-<p>The command also mounts the docker volume <code>ethrex</code> to persist data.</p>
-<p>If you want to follow the logs run</p>
-<pre><code>docker logs -f ethrex
+</li>
+<li>Mounts the Docker volume <code>ethrex</code> to persist blockchain data</li>
+</ul>
+<p><strong>Tip:</strong> You can add more Ethrex CLI arguments at the end of the command as needed.</p>
+<hr />
+<h2 id="managing-the-container"><a class="header" href="#managing-the-container">Managing the Container</a></h2>
+<p><strong>View logs:</strong></p>
+<pre><code class="language-sh">docker logs -f ethrex
 </code></pre>
-<p>To stop the container run</p>
-<pre><code>docker stop ethrex
+<p><strong>Stop the node:</strong></p>
+<pre><code class="language-sh">docker stop ethrex
 </code></pre>
+<hr />
+<p><strong>Next steps:</strong></p>
+<ul>
+<li><a href="../quickstart-l1.html">L1 Quickstart</a></li>
+<li><a href="../quickstart-l2.html">L2 Quickstart</a></li>
+</ul>
 
                     </main>
 

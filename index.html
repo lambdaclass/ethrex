@@ -245,16 +245,52 @@ The client supports running in two different modes:</p>
 <li>As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
 </ul>
 <p>We call the first one "ethrex L1" and the second one "ethrex L2".</p>
-<h2 id="where-to-start"><a class="header" href="#where-to-start">Where to start</a></h2>
-<p>To get started with ethrex, you can follow the <a href="../getting-started/installation/installation.html">installation guide</a> to set up the client on your machine.
-Then, a good next step would be to <a href="../l1/running.html">run a node</a> and see ethrex in action.</p>
+<h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
+<h3 id="l1-run-an-ethereum-node"><a class="header" href="#l1-run-an-ethereum-node">L1: Run an Ethereum Node</a></h3>
+<p>Follow these steps to quickly launch an Ethereum L1 (mainnet) node using Docker. For advanced details, see the links at the end.</p>
+<h4 id="supported-networks"><a class="header" href="#supported-networks">Supported Networks</a></h4>
+<ul>
+<li><strong>mainnet</strong></li>
+<li><strong>sepolia</strong></li>
+<li><strong>holesky</strong></li>
+<li><strong>hoodi</strong></li>
+</ul>
+<p>By default, the command below runs a node on mainnet. To use a different network, change the <code>ETHREX_NETWORK</code> environment variable with one of the networks above.</p>
+<pre><code class="language-sh">curl -LO https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/docker-compose.yaml
+ETHREX_NETWORK=mainnet docker compose up
+</code></pre>
+<p>This will start an ethrex node along with a Lighthouse consensus client that syncs with the Ethereum network.</p>
+<h3 id="l2-run-an-l2-node"><a class="header" href="#l2-run-an-l2-node">L2: Run an L2 Node</a></h3>
+<p>Follow these steps to quickly launch an L2 node using Docker. For advanced details, see the links at the end.</p>
+<pre><code class="language-sh">docker run -p 1729:1729 ghcr.io/lambdaclass/ethrex:main l2 --dev
+</code></pre>
+<p>This will start a local L1 and L2 network.</p>
+<h2 id="where-to-start"><a class="header" href="#where-to-start">Where to Start</a></h2>
+<ul>
+<li>
+<p><strong>Just want to run an Ethereum node?</strong></p>
+<p>Start with the <a href="#quickstart">Quickstart</a> or see <a href="../l1/running">Node operation</a> for setup, configuration, monitoring, and best practices.</p>
+</li>
+<li>
+<p><strong>Interested in building your own L2?</strong></p>
+<p>Begin with the <a href="../l2/introduction.html">L2 introduction</a>, <a href="../getting-started/quickstart-l2.html">L2 quickstart</a>, and see <a href="../l2/deploy.html">L2 rollup deployment</a> for launching your own rollup, deploying contracts, and interacting with your L2.</p>
+</li>
+<li>
+<p><strong>Looking to contribute or develop?</strong></p>
+<p>Visit the <a href="../developers">Developer resources</a> for local dev mode, testing, debugging, advanced CLI usage, and the <a href="../CLI.html">CLI reference</a>.</p>
+</li>
+<li>
+<p><strong>Want to understand how ethrex works?</strong></p>
+<p>Explore <a href="../l1/fundamentals">L1 fundamentals</a> and <a href="../l2/architecture">L2 Architecture</a> for deep dives into ethrex's design, sync modes, networking, and more.</p>
+</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
 
-                            <a rel="next prefetch" href="getting-started/installation/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="getting-started/quickstart-l1.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -265,7 +301,7 @@ Then, a good next step would be to <a href="../l1/running.html">run a node</a> a
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
 
-                    <a rel="next prefetch" href="getting-started/installation/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="getting-started/quickstart-l1.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

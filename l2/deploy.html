@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>Deploy an L2 - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,20 +237,105 @@
 }
 
 </style>
-<h1 id="developer-docs"><a class="header" href="#developer-docs">Developer docs</a></h1>
-<p>Welcome to the ethrex developer docs!</p>
-<p>This section contains documentation on the internals of the project.</p>
-<p>To get started first, read the developer <a href="./installing.html">installation guide</a> to learn about ethrex and its features. Then you can look into the <a href="../developers/l1/introduction.html">L1 developer docs</a> or the <a href="../developers/l2/introduction.html">L2 developer docs</a></p>
+<h1 id="deploy-an-l2"><a class="header" href="#deploy-an-l2">Deploy an L2</a></h1>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<p>This guide assumes that you have ethrex installed. If you haven't done so, follow one of the installation methods in the <a href="../getting-started/installation/">installation guide</a>.</p>
+<h2 id="deploy-the-contracts"><a class="header" href="#deploy-the-contracts">Deploy the contracts</a></h2>
+<p>The first step is to deploy the rollup's core contracts to your chosen L1 network.</p>
+<h3 id="1-download-the-contracts"><a class="header" href="#1-download-the-contracts">1. Download the contracts</a></h3>
+<p>You can get the contracts in two ways:</p>
+<ul>
+<li>
+<p><strong>From GitHub Releases:</strong></p>
+<ul>
+<li>Download the latest release from <a href="https://github.com/lambdaclass/ethrex/releases/download/v0.0.4-alpha/ethrex-contracts.tar.gz">GitHub Releases</a>.</li>
+</ul>
+</li>
+<li>
+<p><strong>From source code (latest version):</strong></p>
+<ul>
+<li>Clone the repository:
+<pre><code class="language-sh">git clone https://github.com/lambdaclass/ethrex.git
+cd ethrex/crates/l2/contracts/src/l1
+</code></pre>
+</li>
+</ul>
+</li>
+</ul>
+<h3 id="2-deploy-the-contracts"><a class="header" href="#2-deploy-the-contracts">2. Deploy the contracts</a></h3>
+<p>You can deploy the contracts manually or using the built-in tool:</p>
+<pre><code class="language-sh">ethrex l2 deploy \
+    --eth-rpc-url &lt;L1_RPC_URL&gt; \
+    --private-key &lt;DEPLOYER_PRIVATE_KEY&gt; \
+    --genesis-l2-path &lt;GENESIS_L2_PATH&gt; \
+    --risc0.verifier-address &lt;RISC0_VERIFIER_ADDRESS&gt; \
+    --sp1.verifier-address &lt;SP1_VERIFIER_ADDRESS&gt; \
+    --tdx.verifier-address &lt;TDX_VERIFIER_ADDRESS&gt; \
+    --aligned.aggregator-address &lt;ALIGNED_AGGREGATOR_ADDRESS&gt; \
+    --on-chain-proposer-owner &lt;OWNER_ADDRESS&gt; \
+    --bridge-owner &lt;OWNER_ADDRESS&gt; \
+    --randomize-contract-deployment
+</code></pre>
+<p>You can find a genesis example in the <a href="https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json">repo</a>.</p>
+<p>Verifier addresses can be set to <code>0x00000000000000000000000000000000000000AA</code> in case you don't want to use some prover. The same applies to Aligned.</p>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>You can start a local <a href="../l1/running/configuration.html#dev-mode-localnet">development L1</a> network with <code>ethrex l1 --dev</code> and use its RPC URL for testing.</p>
+</div>
+<h2 id="run-the-sequencer"><a class="header" href="#run-the-sequencer">Run the sequencer</a></h2>
+<p>Next step is to start the sequencer. This command will start all necessary components for the L2 network except the prover.</p>
+<pre><code class="language-sh">ethrex l2 \
+	--network &lt;GENESIS_L2_PATH&gt; \
+	--l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; \
+	--l1.bridge-address &lt;BRIDGE_ADDRESS&gt; \
+	--rpc_url &lt;L1_RPC_URL&gt; \
+	--committer.l1-private-key &lt;COMMITTER_PRIVATE_KEY&gt; \
+    --proof-coordinator.l1-private-key &lt;PROOF_COORDINATOR_PRIVATE_KEY&gt; \
+	--block-producer.coinbase-address &lt;L2_COINBASE_ADDRESS&gt; \
+</code></pre>
+<p>OnChainProposer and CommonBridge addresses can be found in the <code>.env</code> file, generated during the deployment process. Committer and Proof coordinator accounts must have L1 funds, as they will need to pay for gas fees on the L1 network.</p>
+<p>For further configuration take a look at the <a href="../CLI.html#ethrex-l2">CLI document</a></p>
+<h2 id="run-the-prover"><a class="header" href="#run-the-prover">Run the prover</a></h2>
+<p>Lastly, you need to start the prover. This command will start the prover component for the L2 network.</p>
+<pre><code class="language-sh">ethrex l2 prover --proof-coordinators tcp://localhost:3900 --backend exec
+</code></pre>
+<p>In this example, the <code>exec</code> backend is used, which means the prover will only execute the transactions but not generate proofs. This is fine for development as it's faster. You may look for other backends like SP1 and RISC0 in production.</p>
+<p>For further configuration take a look at the <a href="../CLI.html#ethrex-l2-prover">CLI document</a></p>
+<h2 id="checking-that-everything-is-running"><a class="header" href="#checking-that-everything-is-running">Checking that everything is running</a></h2>
+<p>After starting the sequencer and prover, you can verify that your L2 node is running correctly:</p>
+<ul>
+<li>
+<p><strong>Check the sequencer RPC:</strong></p>
+<p>You can request the latest block number:</p>
+<pre><code class="language-sh">curl http://localhost:1729 \
+	-H 'content-type: application/json' \
+	-d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":"1","params":[]}'
+</code></pre>
+<p>The answer should be like this, and advance every 5 seconds:</p>
+<pre><code>{"id":"1","jsonrpc":"2.0","result":"0x1"}
+</code></pre>
+</li>
+<li>
+<p><strong>Check logs:</strong></p>
+<ul>
+<li>Review the terminal output or log files for any errors or warnings.</li>
+<li>After some time (1 minute by default) there should be a log from the L1 Committer informing a new batch is being sent to L1.</li>
+</ul>
+</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../l2/fundamentals/based.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../l2/introduction.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../developers/installing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../l2/monitoring.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -260,11 +345,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../l2/fundamentals/based.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../l2/introduction.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../developers/installing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../l2/monitoring.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

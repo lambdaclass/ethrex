@@ -237,55 +237,61 @@
 }
 
 </style>
-<h1 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h1>
+<h1 id="building-ethrex-from-source"><a class="header" href="#building-ethrex-from-source">Building ethrex from source</a></h1>
+<p>Build ethrex yourself for maximum flexibility and experimental features.</p>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
-<li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
+<li><a href="https://www.rust-lang.org/tools/install">Rust toolchain</a> (use <code>rustup</code> for easiest setup)</li>
 <li><a href="https://git-scm.com/downloads">Git</a></li>
+<li><a href="https://docs.soliditylang.org/en/v0.8.30/installing-solidity.html">solc</a> (for L2 development)</li>
 </ul>
-<h2 id="installing-using-cargo-install"><a class="header" href="#installing-using-cargo-install">Installing using <code>cargo install</code></a></h2>
-<p>To install the client simply run</p>
+<h3 id="l2-contracts"><a class="header" href="#l2-contracts">L2 contracts</a></h3>
+<p>If you want to install ethrex for L2 development, you may set the <code>COMPILE_CONTRACTS</code> env var, so the binary have the necessary contract code.</p>
+<pre><code class="language-sh">export COMPILE_CONTRACTS=true
+</code></pre>
+<h2 id="install-via-cargo-install"><a class="header" href="#install-via-cargo-install">Install via <code>cargo install</code></a></h2>
+<p>The fastest way to install ethrex from source:</p>
 <pre><code class="language-sh">cargo install --locked ethrex --git https://github.com/lambdaclass/ethrex.git
 </code></pre>
-<div class="mdbook-alerts mdbook-alerts-tip">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  tip
-</p>
-<p>You can add <code>sp1</code> and <code>risc0</code> features to the installation script to build with support for SP1
-and/or RISC0 provers. <code>gpu</code> feature is also available for CUDA support.</p>
-</div>
-<p>To install a specifc version you can add the <code>--tag &lt;tag&gt;</code> flag.
-Existing tags are available in the <a href="https://github.com/lambdaclass/ethrex/tags">GitHub repo</a></p>
-<p>After that, you can verify the program is working by running:</p>
+<p><strong>Optional features:</strong></p>
+<ul>
+<li>Add <code>--features sp1,risc0</code> to enable SP1 and/or RISC0 provers</li>
+<li>Add <code>--features gpu</code> for CUDA GPU support</li>
+</ul>
+<p><strong>Install a specific version:</strong></p>
+<pre><code class="language-sh">cargo install --locked ethrex --git https://github.com/lambdaclass/ethrex.git --tag &lt;version-tag&gt;
+</code></pre>
+<p>Find available tags in the <a href="https://github.com/lambdaclass/ethrex/tags" target="_blank">GitHub repo</a>.</p>
+<p><strong>Verify installation:</strong></p>
 <pre><code class="language-sh">ethrex --version
 </code></pre>
-<h2 id="building-the-binary-with-cargo-build"><a class="header" href="#building-the-binary-with-cargo-build">Building the binary with <code>cargo build</code></a></h2>
-<p>You can download the source code of a release from the <a href="https://github.com/lambdaclass/ethrex/releases">GitHub releases page</a>, or by cloning the repository at that version:</p>
-<pre><code class="language-sh">git clone --branch &lt;LATEST_VERSION_HERE&gt; --depth 1 https://github.com/lambdaclass/ethrex.git
+<hr />
+<h2 id="build-manually-with-cargo-build"><a class="header" href="#build-manually-with-cargo-build">Build manually with <code>cargo build</code></a></h2>
+<p>Clone the repository (replace <code>&lt;version-tag&gt;</code> with the desired version):</p>
+<pre><code class="language-sh">git clone --branch &lt;version-tag&gt; --depth 1 https://github.com/lambdaclass/ethrex.git
+cd ethrex
 </code></pre>
-<p>After that, you can run the following command inside the cloned repo to build the client:</p>
+<p>Build the binary:</p>
 <pre><code class="language-sh">cargo build --bin ethrex --release
 </code></pre>
-<div class="mdbook-alerts mdbook-alerts-tip">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  tip
-</p>
-<p>You can add <code>sp1</code> and <code>risc0</code> features to the installation script to build with support for SP1
-and/or RISC0 provers. <code>gpu</code> feature is also available for CUDA support.</p>
-</div>
-<p>You can find the built binary inside <code>target/release</code> directory.
-After that, you can verify the program is working by running:</p>
+<p><strong>Optional features:</strong></p>
+<ul>
+<li>Add <code>--features sp1,risc0</code> to enable SP1 and/or RISC0 provers</li>
+<li>Add <code>--features gpu</code> for CUDA GPU support</li>
+</ul>
+<p>The built binary will be in <code>target/release/ethrex</code>.</p>
+<p><strong>Verify the build:</strong></p>
 <pre><code class="language-sh">./target/release/ethrex --version
 </code></pre>
-<div class="mdbook-alerts mdbook-alerts-tip">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  tip
-</p>
-<p>For convenience, you can move the <code>ethrex</code> binary to a directory in your <code>$PATH</code>, so you can run it from anywhere.</p>
-</div>
+<p><strong>(Optional) Move the binary to your <code>$PATH</code>:</strong></p>
+<pre><code class="language-sh">sudo mv ./target/release/ethrex /usr/local/bin/
+</code></pre>
+<hr />
+<p><strong>Next steps:</strong></p>
+<ul>
+<li><a href="../quickstart-l1.html">L1 Quickstart</a></li>
+<li><a href="../quickstart-l2.html">L2 Quickstart</a></li>
+</ul>
 
                     </main>
 
@@ -295,7 +301,7 @@ After that, you can verify the program is working by running:</p>
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../getting-started/consensus_client.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l1/running/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -309,7 +315,7 @@ After that, you can verify the program is working by running:</p>
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../getting-started/consensus_client.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l1/running/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
