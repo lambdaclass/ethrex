@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758042327858,
+  "lastUpdate": 1758043008067,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14665,6 +14665,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170230759840,
             "range": "± 798506036",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5b08631a07d1fbb76018c450ec79d3dbcd730070",
+          "message": "feat(l2): `/health` sequencer endpoint (#4415)\n\n**Motivation**\n\nWhen an issue occurs on production we want an easy way to check the\nsequencer status\n\n**Description**\n\n- Add to the admin server the `/health` endpoint\n- For each component(Genserver) of the sequencer implement a call\nmessage Health and a response with information about the status of the\ncomponent\n     - TODO #4508 : implement it for BASED components\n     - TODO #4509 :  implement it for proof coordinator\n     - TODO #4510 : implement it for l1_proof_verifier\n- Implement helper methods for `Signer` and `EthClient` to check their\nstatus\n- Add to the admin server the `/admin/health` endpoint to check the\nstatus of the actual admin server\n\n**How to test**\n\n```\nmake init-l2-dev\n```\n\n```\ncurl -X GET http://localhost:5555/health\n```\n\npiping the output to jq can be used to filter components for example\n\n```\ncurl -X GET http://localhost:5555/health |jq .l1_watcher\n```\nwill show only the health status of the l1 watcher:\n\n```\n{\n  \"bridge_address\": \"0x39ba039e4862a44d6613b20373aaf90a8b3ba244\",\n  \"check_interval\": 12000,\n  \"l1_block_delay\": 0,\n  \"l1_rpc_healthcheck\": {\n    \"http://localhost:8545/\": {\n      \"id\": 1,\n      \"jsonrpc\": \"2.0\",\n      \"result\": \"0x766f\"\n    }\n  },\n  \"l2_rpc_healthcheck\": {\n    \"http://localhost:1729/\": {\n      \"id\": 1,\n      \"jsonrpc\": \"2.0\",\n      \"result\": \"0x14cb\"\n    }\n  },\n  \"last_block_fetched\": \"30309\",\n  \"max_block_step\": \"5000\",\n  \"sequencer_state\": \"Sequencing\"\n}\n```",
+          "timestamp": "2025-09-16T16:21:07Z",
+          "tree_id": "eaa601ac045a053ddbd4d2d5bdcfdc4fe656778b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5b08631a07d1fbb76018c450ec79d3dbcd730070"
+        },
+        "date": 1758042984933,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168026338784,
+            "range": "± 341410428",
             "unit": "ns/iter"
           }
         ]
