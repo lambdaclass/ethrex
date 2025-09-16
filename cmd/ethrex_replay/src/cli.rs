@@ -684,11 +684,13 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
 
 pub fn replayer_mode(execute: bool, no_backend: bool) -> eyre::Result<ReplayerMode> {
     if no_backend {
-        #[cfg(any(feature = "sp1", feature = "risc0"))]
-        return Err(eyre::Error::msg(
-            "no-backend mode is not supported with SP1 or RISC0 features enabled",
-        ));
-        return Ok(ReplayerMode::ExecuteNoBackend);
+        if cfg!(any(feature = "sp1", feature = "risc0")) {
+            return Err(eyre::Error::msg(
+                "no-backend mode is not supported with SP1 or RISC0 features enabled",
+            ));
+        } else {
+            return Ok(ReplayerMode::ExecuteNoBackend);
+        }
     }
     if execute {
         #[cfg(feature = "sp1")]
