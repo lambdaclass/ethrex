@@ -41,11 +41,7 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
     Ok(())
 }
 
-pub async fn run_tx(
-    cache: Cache,
-    tx_hash: H256,
-    l2: bool,
-) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
+pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
     let block = cache
         .blocks
         .first()
@@ -74,7 +70,11 @@ pub async fn run_tx(
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
-    let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
+    #[cfg(feature = "l2")]
+    let vm_type = VMType::L2;
+    #[cfg(not(feature = "l2"))]
+    let vm_type = VMType::L1;
+
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
         let mut db = GeneralizedDatabase::new(store.clone());
@@ -84,11 +84,10 @@ pub async fn run_tx(
     wrapped_db.apply_account_updates(&changes)?;
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
-        let mut vm = if l2 {
-            Evm::new_for_l2(wrapped_db.clone())?
-        } else {
-            Evm::new_for_l1(wrapped_db.clone())
-        };
+        #[cfg(feature = "l2")]
+        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        #[cfg(not(feature = "l2"))]
+        let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
         wrapped_db.apply_account_updates(&account_updates)?;
