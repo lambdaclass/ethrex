@@ -16,6 +16,7 @@ hex.workspace = true
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { workspace = true, optional = true }
+rocksdb = { workspace = true, optional = true }
 smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
 digest = "0.10.6"
 lazy_static.workspace = true
@@ -23,6 +24,8 @@ lazy_static.workspace = true
 [features]
 default = []
 libmdbx = ["dep:libmdbx"]
+rocksdb = ["dep:rocksdb"]
+
 
 [dev-dependencies]
 hex.workspace = true
