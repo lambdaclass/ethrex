@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758051107756,
+  "lastUpdate": 1758051893932,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14785,6 +14785,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170696538314,
             "range": "± 436013083",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dfb267a37ac3ea4eaf284c531f05dd9d347c9b48",
+          "message": "fix(l1): remove second log level override from `init_tracing` (#4515)\n\n**Motivation**\n\n`RUST_LOG` is the common way to specify the log level for a Rust\nprogram. Currently, any global level specified by the envvar is being\noverriden by the value of the CLI flag `--log.level`, which defaults to\n`INFO`.\n\n**Description**\n\nThis PR removes an `add_directive` call from the filter in\n`init_tracing`, which was causing the override. The CLI flag value will\nbe set by the `with_default_directive` call, unless the user sets the\n`RUST_LOG` variable.",
+          "timestamp": "2025-09-16T18:49:11Z",
+          "tree_id": "54cfa327996ee8bed312d991dfaa36fab3873f99",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dfb267a37ac3ea4eaf284c531f05dd9d347c9b48"
+        },
+        "date": 1758051872739,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167178555050,
+            "range": "± 305238284",
             "unit": "ns/iter"
           }
         ]
