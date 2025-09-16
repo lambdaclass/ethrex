@@ -13,7 +13,7 @@ pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,
     /// database containing all the data necessary to execute
-    pub db: ExecutionWitness,
+    pub execution_witness: ExecutionWitness,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
@@ -30,7 +30,7 @@ impl Default for ProgramInput {
     fn default() -> Self {
         Self {
             blocks: Default::default(),
-            db: Default::default(),
+            execution_witness: ExecutionWitness::default(),
             elasticity_multiplier: Default::default(),
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],

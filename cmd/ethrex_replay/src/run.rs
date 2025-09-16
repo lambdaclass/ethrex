@@ -41,11 +41,7 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
     Ok(())
 }
 
-pub async fn run_tx(
-    cache: Cache,
-    tx_hash: H256,
-    l2: bool,
-) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
+pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
     let block = cache
         .blocks
         .first()
@@ -74,7 +70,10 @@ pub async fn run_tx(
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
-    let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
+    #[cfg(feature = "l2")]
+    let vm_type = VMType::L2;
+    #[cfg(not(feature = "l2"))]
+    let vm_type = VMType::L1;
 
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
@@ -82,15 +81,13 @@ pub async fn run_tx(
         LEVM::prepare_block(block, &mut db, vm_type)?;
         LEVM::get_state_transitions(&mut db)?
     };
-
     wrapped_db.apply_account_updates(&changes)?;
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
-        let mut vm = if l2 {
-            Evm::new_for_l2(wrapped_db.clone())?
-        } else {
-            Evm::new_for_l1(wrapped_db.clone())
-        };
+        #[cfg(feature = "l2")]
+        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        #[cfg(not(feature = "l2"))]
+        let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
         wrapped_db.apply_account_updates(&account_updates)?;
@@ -98,6 +95,7 @@ pub async fn run_tx(
             return Ok((receipt, account_updates));
         }
     }
+
     Err(eyre::Error::msg("transaction not found inside block"))
 }
 
@@ -133,7 +131,7 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     Ok(ProgramInput {
         blocks,
-        db: execution_witness,
+        execution_witness,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         // The L2 specific fields (blob_commitment, blob_proof)
         // will be filled by Default::default() if the 'l2' feature of
@@ -173,7 +171,7 @@ fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     Ok(ProgramInput {
         blocks,
-        db: execution_witness,
+        execution_witness,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         blob_commitment: l2_fields.blob_commitment,
         blob_proof: l2_fields.blob_proof,
