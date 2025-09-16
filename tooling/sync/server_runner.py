@@ -29,8 +29,8 @@ def parse_args():
     parser.add_argument(
         "--branch",
         type=str,
-        default="snap_sync",
-        help="Branch variable (default: snap_sync)",
+        default="main",
+        help="Branch variable (default: main)",
     )
     parser.add_argument(
         "--logs_file",
@@ -59,10 +59,30 @@ def parse_args():
     return parser.parse_args()
 
 
-def send_slack_message_failed(message: str):
+def send_slack_message_failed(header: str, hostname: str, timeout, log_file: str):
     try:
         webhook_url = os.environ["SLACK_WEBHOOK_URL_FAILED"]
-        message = {"text": message}
+
+        timeout = "" if timeout == None else f"\n*Timeout:* {timeout} minutes"
+
+        message = {
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"{header}"
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Server:* `{hostname}`{timeout}\n*Logs in:* `{log_file}`"
+                    }
+                }
+            ]
+        }
         response = requests.post(
             webhook_url,
             data=json.dumps(message),
@@ -77,10 +97,29 @@ def send_slack_message_failed(message: str):
         return
 
 
-def send_slack_message_success(message: str):
+def send_slack_message_success(hostname: str, minutes: str, network: str, log_file: str):
     try:
         webhook_url = os.environ["SLACK_WEBHOOK_URL_SUCCESS"]
-        message = {"text": message}
+
+        message = {
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f":white_check_mark: Node snap-synced {capitalize_network(network)} and advanced for 30 minutes"
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f'*Server:* `{hostname}`\n*Synced in:* {minutes} minutes\n*Logs in:* `{log_file}`'
+                    }
+                }
+            ]
+        }
+
         response = requests.post(
             webhook_url,
             data=json.dumps(message),
@@ -93,6 +132,12 @@ def send_slack_message_success(message: str):
     except Exception as e:
         print(f"Error sending Slack message: {e}", file=sys.stderr)
         return
+
+
+def capitalize_network(word):
+    if not word:
+        return word
+    return word[0].upper() + word[1:]
 
 
 def get_variables(args):
@@ -122,9 +167,7 @@ def block_production_loop(
         block_elapsed = time.time() - block_start_time
         if block_elapsed > 30 * 60:  # 30 minutes
             print("✅ Node is fully synced!")
-            send_slack_message_success(
-                f"✅ Node on {hostname} is fully synced after {elapsed / 60:.2f} minutes and correctly generated blocks for 30 minutes! Network: {args.network} Log File: {logs_file}_{start_time}.log"
-            )
+            send_slack_message_success(hostname, f"{elapsed / 60:.2f}", args.network, f"{logs_file}_{start_time}.log")
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log SYNCED\n")
             return True
@@ -135,18 +178,14 @@ def block_production_loop(
                 current_block_number = int(result, 0)
             else:
                 print(f"⚠️ Node did not generated a new block. Stopping.")
-                send_slack_message_failed(
-                    f"⚠️ Node on {hostname} stopped generating new blocks after sync. Network: {args.network}. Stopping. Log File: {logs_file}_{start_time}.log"
-                )
+                send_slack_message_failed(f"⚠️ Node stopped generating new blocks after snap syncing {capitalize_network(args.network)}", hostname, None, f"{logs_file}_{start_time}.log")
                 with open("sync_logs.txt", "a") as f:
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
                 return False
         except Exception as e:
             print(f"⚠️ Node did stopped. Stopping.")
             print("Error:", e)
-            send_slack_message_failed(
-                f"⚠️ Node on {hostname} stopped. Network: {args.network}. Log File: {logs_file}_{start_time}.log"
-            )
+            send_slack_message_failed(f"⚠️ Node stopped running after snap syncing {capitalize_network(args.network)}", hostname, None, f"{logs_file}_{start_time}.log")
             with open("sync_logs.txt", "a") as f:
                 f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
             return False
@@ -161,9 +200,7 @@ def verification_loop(
             elapsed = time.time() - start_time
             if elapsed > args.timeout * 60:
                 print(f"⚠️ Node did not sync within {args.timeout} minutes. Stopping.")
-                send_slack_message_failed(
-                    f"⚠️ Node on {hostname} did not sync within {args.timeout} minutes. Network: {args.network}. Stopping. Log File: {logs_file}_{start_time}.log"
-                )
+                send_slack_message_failed(f"⚠️ Node failed to sync {capitalize_network(args.network)} within timeout", hostname, args.timeout, f"{logs_file}_{start_time}.log")
                 with open("sync_logs.txt", "a") as f:
                     f.write(f"LOGS_FILE={logs_file}_{start_time}.log FAILED\n")
                 return False
@@ -205,7 +242,6 @@ def execution_loop(
 def main():
     args = parse_args()
     hostname = socket.gethostname()
-
     variables = get_variables(args)
 
     logs_file = args.logs_file
@@ -228,7 +264,6 @@ def main():
     except subprocess.CalledProcessError as e:
         print(f"An error occurred while running the make command: {e}", file=sys.stderr)
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
