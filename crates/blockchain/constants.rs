@@ -45,4 +45,6 @@ pub const GAS_LIMIT_BOUND_DIVISOR: u64 = 1024;
 
 pub const MIN_GAS_LIMIT: u64 = 5000;
 
+// === EIP-7825 constants ===
+// https://eips.ethereum.org/EIPS/eip-7825
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;

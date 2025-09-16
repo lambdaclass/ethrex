@@ -78,7 +78,7 @@ pub async fn start_l2(
         return Ok(());
     }
 
-    let _ = L1Watcher::spawn(
+    let l1_watcher = L1Watcher::spawn(
         store.clone(),
         blockchain.clone(),
         cfg.clone(),
@@ -111,7 +111,7 @@ pub async fn start_l2(
         error!("Error starting Proof Coordinator: {err}");
     });
 
-    let _ = L1ProofSender::spawn(
+    let l1_proof_sender = L1ProofSender::spawn(
         cfg.clone(),
         shared_state.clone(),
         rollup_store.clone(),
@@ -121,7 +121,7 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting L1 Proof Sender: {err}");
     });
-    let _ = BlockProducer::spawn(
+    let block_producer = BlockProducer::spawn(
         store.clone(),
         rollup_store.clone(),
         blockchain.clone(),
@@ -134,7 +134,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let _ = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+    let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
@@ -189,7 +189,12 @@ pub async fn start_l2(
             "{}:{}",
             cfg.admin_server.listen_ip, cfg.admin_server.listen_port
         ),
-        l1_committer?,
+        l1_committer.ok(),
+        l1_watcher.ok(),
+        l1_proof_sender.ok(),
+        block_producer.ok(),
+        #[cfg(feature = "metrics")]
+        metrics_gatherer.ok(),
     )
     .await
     .inspect_err(|err| {

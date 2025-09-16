@@ -177,13 +177,6 @@ pub struct BlockRangeOptions {
 pub struct TransactionOpts {
     #[arg(long, help = "Transaction hash.")]
     tx_hash: H256,
-    #[arg(
-        long,
-        help = "Is this an L2 transaction?",
-        default_value_t = false,
-        required = false
-    )]
-    l2: bool,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -261,7 +254,7 @@ impl EthrexReplayCommand {
             }
             #[cfg(not(feature = "l2"))]
             Self::Cache(CacheSubcommand::Block(BlockOptions { block, opts })) => {
-                let (eth_client, network) = setup(&opts, false).await?;
+                let (eth_client, network) = setup(&opts).await?;
 
                 let block_identifier = or_latest(block)?;
 
@@ -277,7 +270,7 @@ impl EthrexReplayCommand {
             Self::Cache(CacheSubcommand::Blocks(BlocksOptions { mut blocks, opts })) => {
                 blocks.sort();
 
-                let (eth_client, network) = setup(&opts, false).await?;
+                let (eth_client, network) = setup(&opts).await?;
 
                 for block_number in blocks {
                     get_blockdata(
@@ -292,7 +285,7 @@ impl EthrexReplayCommand {
             }
             #[cfg(not(feature = "l2"))]
             Self::Cache(CacheSubcommand::BlockRange(BlockRangeOptions { start, end, opts })) => {
-                let (eth_client, network) = setup(&opts, false).await?;
+                let (eth_client, network) = setup(&opts).await?;
 
                 get_rangedata(eth_client, network, start, end).await?;
 
@@ -357,17 +350,8 @@ impl EthrexReplayCommand {
                 plot(cache).await?;
             }
             #[cfg(feature = "l2")]
-            Self::L2(L2Subcommand::Transaction(TransactionOpts {
-                tx_hash,
-                opts,
-                l2: _,
-            })) => {
-                replay_transaction(TransactionOpts {
-                    tx_hash,
-                    opts,
-                    l2: true,
-                })
-                .await?
+            Self::L2(L2Subcommand::Transaction(TransactionOpts { tx_hash, opts })) => {
+                replay_transaction(TransactionOpts { tx_hash, opts }).await?
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Batch(BatchOptions { batch, opts })) => {
@@ -375,7 +359,7 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let (eth_client, network) = setup(&opts, true).await?;
+                let (eth_client, network) = setup(&opts).await?;
 
                 let cache = get_batchdata(eth_client, network, batch).await?;
 
@@ -424,10 +408,10 @@ impl EthrexReplayCommand {
     }
 }
 
-async fn setup(opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<(EthClient, Network)> {
+async fn setup(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)> {
     let eth_client = EthClient::new(opts.rpc_url.as_str())?;
     let chain_id = eth_client.get_chain_id().await?.as_u64();
-    let network = network_from_chain_id(chain_id, l2);
+    let network = network_from_chain_id(chain_id);
     Ok((eth_client, network))
 }
 
@@ -450,9 +434,7 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
 
     let tx_hash = tx_opts.tx_hash;
 
-    let l2 = tx_opts.l2;
-
-    let (eth_client, network) = setup(&tx_opts.opts, l2).await?;
+    let (eth_client, network) = setup(&tx_opts.opts).await?;
 
     // Get the block number of the transaction
     let tx = eth_client
@@ -467,7 +449,7 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
     )
     .await?;
 
-    let (receipt, transitions) = run_tx(cache, tx_hash, l2).await?;
+    let (receipt, transitions) = run_tx(cache, tx_hash).await?;
 
     print_receipt(receipt);
 
@@ -487,9 +469,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         unimplemented!("cached mode is not implemented yet");
     }
 
-    let l2 = false;
-
-    let (eth_client, network) = setup(&opts, l2).await?;
+    let (eth_client, network) = setup(&opts).await?;
 
     #[cfg(feature = "l2")]
     if network != Network::LocalDevnetL2 {
@@ -539,14 +519,14 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
+fn network_from_chain_id(chain_id: u64) -> Network {
     match chain_id {
         MAINNET_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Mainnet),
         HOLESKY_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Holesky),
         HOODI_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Hoodi),
         SEPOLIA_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Sepolia),
         _ => {
-            if l2 {
+            if cfg!(feature = "l2") {
                 Network::LocalDevnetL2
             } else {
                 Network::LocalDevnet

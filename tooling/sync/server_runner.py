@@ -29,8 +29,8 @@ def parse_args():
     parser.add_argument(
         "--branch",
         type=str,
-        default="snap_sync",
-        help="Branch variable (default: snap_sync)",
+        default="main",
+        help="Branch variable (default: main)",
     )
     parser.add_argument(
         "--logs_file",

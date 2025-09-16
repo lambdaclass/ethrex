@@ -765,6 +765,7 @@ impl Blockchain {
 
         if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
+            // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
                 tx.hash(),
                 tx.gas_limit(),
@@ -1088,6 +1089,7 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 
 // Perform validations over the block's gas usage.
 // Must be called only if the block has osaka activated
+// as specified in https://eips.ethereum.org/EIPS/eip-7825
 fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
     for transaction in block.body.transactions.iter() {
         if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
