@@ -353,7 +353,9 @@ impl DiscoveryServer {
         let random_pub_key = public_key_from_signing_key(&random_priv_key);
 
         let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
-        self.send(msg, node.udp_addr()).await?;
+        self.send(msg, node.udp_addr()).await.inspect_err(|e| {
+            error!(sent = "FindNode", to = %format!("{}", node), err = ?e, "Error sending message");
+        })?;
 
         debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
@@ -509,9 +511,11 @@ impl DiscoveryServer {
         if let Some(s) = &self.sink {
             s.lock()
                 .await
-                .send((message, addr))
+                .send((message.clone(), addr))
                 .await
-                .map_err(DiscoveryServerError::MessageSendFailure)
+                .map_err(DiscoveryServerError::MessageSendFailure).inspect_err(|e| {
+                    error!(sent = %format!("{message}"), to = %format!("{addr}"), is_ipv4 = %format!("{}", addr.is_ipv4()),err = ?e, "Error sending message");
+                })
         } else {
             error!("Trying to send a message through a non-initialized UdpSocket");
             Ok(())
