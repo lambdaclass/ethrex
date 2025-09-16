@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758031641047,
+  "lastUpdate": 1758033179726,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -29692,6 +29692,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004758470398970399,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ce96b49c69ca1c306ad169a9e479ae093588ddf8",
+          "message": "perf(levm): fix block hash caching (#4479)\n\n**Motivation**\n\nThe original code made it so that the cache mechanism never worked\nproperly.\n\n**Description**\n\nFix the block hash caching mechanism so that the result is actually\ncached.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-09-15T16:49:20Z",
+          "tree_id": "e3c24ae00e58cdb5fb515b3f6520b07ddb260cfb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ce96b49c69ca1c306ad169a9e479ae093588ddf8"
+        },
+        "date": 1758033157021,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0016469182628062362,
             "unit": "Mgas/s"
           }
         ]
