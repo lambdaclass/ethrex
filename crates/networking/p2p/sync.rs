@@ -91,7 +91,7 @@ pub struct Syncer {
     blockchain: Arc<Blockchain>,
     /// This string indicates a folder where the snap algorithm will store temporary files that are
     /// used during the syncing process
-    datadir: String,
+    datadir: PathBuf,
 }
 
 impl Syncer {
@@ -100,7 +100,7 @@ impl Syncer {
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
-        datadir: String,
+        datadir: PathBuf,
     ) -> Self {
         Self {
             snap_enabled,
@@ -120,9 +120,9 @@ impl Syncer {
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
+                Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
             )),
-            datadir: ".".to_string(),
+            datadir: ".".into(),
         }
     }
 
@@ -844,7 +844,7 @@ impl Syncer {
                 .request_account_range(
                     H256::zero(),
                     H256::repeat_byte(0xff),
-                    account_state_snapshots_dir.clone(),
+                    account_state_snapshots_dir.as_ref(),
                     &mut pivot_header,
                     block_sync_state,
                 )
@@ -860,7 +860,7 @@ impl Syncer {
             {
                 *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
                 let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
+                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone(), err)
                 })?;
                 info!("Reading account file from entry {entry:?}");
                 let snapshot_path = entry.path();
@@ -957,7 +957,7 @@ impl Syncer {
                     .peers
                     .request_storage_ranges(
                         &mut storage_accounts,
-                        account_storages_snapshots_dir.clone(),
+                        account_storages_snapshots_dir.as_ref(),
                         chunk_index,
                         &mut pivot_header,
                     )
@@ -994,7 +994,7 @@ impl Syncer {
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
             {
                 let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
+                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone(), err)
                 })?;
                 info!("Reading account storage file from entry {entry:?}");
 

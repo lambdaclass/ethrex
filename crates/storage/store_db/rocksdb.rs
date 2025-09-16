@@ -118,7 +118,7 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn new(path: &str) -> Result<Self, StoreError> {
+    pub fn new(path: &Path) -> Result<Self, StoreError> {
         let mut db_options = Options::default();
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
