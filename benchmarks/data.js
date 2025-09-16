@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758054844680,
+  "lastUpdate": 1758055910379,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14845,6 +14845,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 172303958758,
             "range": "± 538591136",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a41ab15be09666f86fd54d6299809e0d5450afb8",
+          "message": "chore(l1): change default block wait time to 2 minutes instead of 1 on sync tooling script (#4512)\n\n**Motivation**\n\nWe have had runs fail simply because there were 5 missed slots in a row\non Hoodi, triggering notifications that we were not advancing when in\nreality the entire network had not advanced in that timeframe. This\nchanges the default time from 1 minute to 2, meaning there would need to\nbe at least 9 missed slots in a row to have this affect us, which should\nbe good enough.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-16T19:56:21Z",
+          "tree_id": "61f0b59b33a636096a0fae251943adf462f79fe9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a41ab15be09666f86fd54d6299809e0d5450afb8"
+        },
+        "date": 1758055889358,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170349266413,
+            "range": "± 537101479",
             "unit": "ns/iter"
           }
         ]
