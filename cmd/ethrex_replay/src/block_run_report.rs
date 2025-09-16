@@ -10,7 +10,7 @@ use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookReq
 #[allow(dead_code)]
 pub enum ReplayerMode {
     Execute,
-    ExecuteNoBackend,
+    ExecuteNoZkvm,
     ExecuteSP1,
     ExecuteRISC0,
     ProveSP1,
@@ -38,7 +38,7 @@ impl Display for ReplayerMode {
             ReplayerMode::ExecuteRISC0 => write!(f, "execute_risc0"),
             ReplayerMode::ProveSP1 => write!(f, "prove_sp1"),
             ReplayerMode::ProveRISC0 => write!(f, "prove_risc0"),
-            ReplayerMode::ExecuteNoBackend => write!(f, "execute_no_backend"),
+            ReplayerMode::ExecuteNoZkvm => write!(f, "execute_no_zkvm"),
         }
     }
 }
@@ -129,7 +129,7 @@ impl BlockRunReport {
                             (Ok(_), ReplayerMode::Execute) => {
                                 String::from("✅ Successfully Executed Block")
                             }
-                            (Ok(_), ReplayerMode::ExecuteNoBackend) => String::from(
+                            (Ok(_), ReplayerMode::ExecuteNoZkvm) => String::from(
                                 "✅ Successfully Executed Block without Prover Backend",
                             ),
                             (Ok(_), ReplayerMode::ExecuteSP1) => {
@@ -147,7 +147,7 @@ impl BlockRunReport {
                             (Err(_), ReplayerMode::Execute) => {
                                 String::from("⚠️ Failed to Execute Block")
                             }
-                            (Err(_), ReplayerMode::ExecuteNoBackend) => {
+                            (Err(_), ReplayerMode::ExecuteNoZkvm) => {
                                 String::from("⚠️ Failed to Execute Block without Prover Backend")
                             }
                             (Err(_), ReplayerMode::ExecuteSP1) => {

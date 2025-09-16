@@ -152,8 +152,8 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source")]
     pub cached: bool,
-    #[arg(long, help = "Execute with `add_block`, no prover backend")]
-    pub no_backend: bool,
+    #[arg(long, help = "Execute with `add_block`, without using zkvm as backend")]
+    pub no_zkvm: bool,
     #[arg(long, required = false)]
     pub bench: bool,
     #[arg(long, required = false)]
@@ -334,7 +334,7 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
-                    no_backend: false,
+                    no_zkvm: false,
                 };
 
                 let elapsed = replay_custom_l1_blocks(max(1, n_blocks), &opts).await?;
@@ -459,7 +459,7 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     Ok(gas_used)
 }
 
-async fn replay_no_backend(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
+async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     let gas_used = get_total_gas_used(&cache.blocks);
 
     if opts.prove {
@@ -623,12 +623,12 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
-    let replayer_mode = replayer_mode(opts.execute, opts.no_backend)?;
+    let replayer_mode = replayer_mode(opts.execute, opts.no_zkvm)?;
 
     let start = SystemTime::now();
 
-    let block_run_result = if opts.no_backend {
-        run_and_measure(replay_no_backend(cache, &opts), opts.bench).await
+    let block_run_result = if opts.no_zkvm {
+        run_and_measure(replay_no_zkvm(cache, &opts), opts.bench).await
     } else {
         run_and_measure(replay(cache, &opts), opts.bench).await
     };
@@ -677,14 +677,14 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
     }
 }
 
-pub fn replayer_mode(execute: bool, no_backend: bool) -> eyre::Result<ReplayerMode> {
-    if no_backend {
+pub fn replayer_mode(execute: bool, no_zkvm: bool) -> eyre::Result<ReplayerMode> {
+    if no_zkvm {
         if cfg!(any(feature = "sp1", feature = "risc0")) {
             return Err(eyre::Error::msg(
-                "no-backend mode is not supported with SP1 or RISC0 features enabled",
+                "no-zkvm mode is not supported with SP1 or RISC0 features enabled",
             ));
         } else {
-            return Ok(ReplayerMode::ExecuteNoBackend);
+            return Ok(ReplayerMode::ExecuteNoZkvm);
         }
     }
     if execute {
