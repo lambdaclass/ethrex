@@ -35,7 +35,11 @@ pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
     let client = {
         if let Some(endpoint) = _endpoint {
             CudaProverBuilder::default()
-                .server(&endpoint.join("/twirp/"))
+                .server(
+                    &endpoint
+                        .join("/twirp/")
+                        .expect("Failed to parse moongate server url"),
+                )
                 .build()
         } else {
             CudaProverBuilder::default().local().build()
