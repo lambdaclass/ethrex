@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Deploying a node - Ethrex</title>
+        <title>Admin server - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,41 +237,57 @@
 }
 
 </style>
-<h1 id="deploying-a-node"><a class="header" href="#deploying-a-node">Deploying a node</a></h1>
-<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
-<p>This guide assumes that you've deployed the contracts for the rollup to your chosen L1 network, and that you have a valid <code>genesis.json</code>.
-The contract's solidity code can be downloaded from the <a href="https://github.com/lambdaclass/ethrex/releases">GitHub releases</a>
-or by running:</p>
-<pre><code>curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-contracts.tar.gz
+<h1 id="admin-api"><a class="header" href="#admin-api">Admin API</a></h1>
+<p>This API exposes endpoints to manage the Sequencer.</p>
+<h2 id="base-url"><a class="header" href="#base-url">Base URL</a></h2>
+<p>By default the server is listening on <code>127.0.0.1:5555</code> but can be configured with <code>--admin-server.addr &lt;address&gt;</code> <code>--admin-server.port &lt;port&gt;</code></p>
+<h2 id="endpoints"><a class="header" href="#endpoints">Endpoints</a></h2>
+<h3 id="l1-committer"><a class="header" href="#l1-committer">L1 Committer</a></h3>
+<hr />
+<h4 id="start-committer-immediately"><a class="header" href="#start-committer-immediately">Start Committer immediately</a></h4>
+<p><strong>Description</strong></p>
+<p>Starts the committer immediately (with a delay of 0).</p>
+<p><strong>Endpoint</strong></p>
+<pre><code>GET /committer/start
 </code></pre>
-<h2 id="starting-the-sequencer"><a class="header" href="#starting-the-sequencer">Starting the sequencer</a></h2>
-<p>First we need to set some environment variables.</p>
-<h4 id="run-the-sequencer"><a class="header" href="#run-the-sequencer">Run the sequencer</a></h4>
-<pre><code class="language-sh">    ethrex l2 \
-	--network &lt;path-to-your-genesis.json&gt; \
-	--on_chain_proposer_address &lt;address&gt; \
-	--bridge_address &lt;address&gt; \
-	--rpc_url &lt;rpc-url&gt; \
-	--committer_l1_private_key &lt;private-key&gt; \
-	--proof_coordinator_l1_private_key \
-	--block-producer.coinbase-address &lt;l2-coinbase-address&gt; \
+<p><strong>Example</strong></p>
+<pre><code>curl -X GET http://localhost:5555/committer/start
 </code></pre>
-<p>For further configuration take a look at the <a href="../CLI.html#ethrex-l2">CLI document</a></p>
-<p>This will start an ethrex l2 sequencer with the RPC server listening at <code>http://localhost:1729</code> and the proof coordinator server listening at <code>http://localhost:3900</code></p>
-<h2 id="starting-a-prover-server"><a class="header" href="#starting-a-prover-server">Starting a prover server</a></h2>
-<pre><code class="language-sh">ethrex l2 prover --proof-coordinators http://localhost:3900
+<hr />
+<h4 id="start-committer-with-delay"><a class="header" href="#start-committer-with-delay">Start Committer (with delay)</a></h4>
+<p><strong>Description</strong></p>
+<p>Starts the committer with a configurable delay.</p>
+<p><strong>Endpoint</strong></p>
+<pre><code>GET /committer/start/{delay}
 </code></pre>
-<p>For further configuration take a look at the <a href="../CLI.html#ethrex-l2-prover">CLI document</a></p>
+<p><strong>Example</strong></p>
+<pre><code>curl -X GET http://localhost:5555/committer/start/60000
+</code></pre>
+<p><strong>Parameters</strong></p>
+<div class="table-wrapper"><table><thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td>delay</td><td>number</td><td>Delay in milliseconds before starting the committer.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h4 id="stop-committer"><a class="header" href="#stop-committer">Stop Committer</a></h4>
+<p><strong>Description</strong></p>
+<p>Stops the committer.</p>
+<p><strong>Endpoint</strong></p>
+<pre><code>GET /committer/stop
+</code></pre>
+<p><strong>Example</strong></p>
+<pre><code>curl -X GET http://localhost:5555/committer/stop
+</code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../l2/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../l2/running.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../l2/admin.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../l2/guides/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -281,11 +297,11 @@ or by running:</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../l2/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../l2/running.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../l2/admin.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../l2/guides/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
