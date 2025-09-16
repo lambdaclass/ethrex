@@ -15,4 +15,7 @@ additional_services:
 
 assertoor_params:
   tests:
-    - https://raw.githubusercontent.com/lambdaclass/ethrex/main/.github/config/assertoor/syncing-check.yaml
+    - test_url: https://raw.githubusercontent.com/lambdaclass/ethrex/main/.github/config/assertoor/syncing-check.yaml
+      config:
+        timeout: "120m"
+        minBlockHeight: 10

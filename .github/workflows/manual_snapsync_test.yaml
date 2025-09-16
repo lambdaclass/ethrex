@@ -1,0 +1,78 @@
+name: Snapsync Ethrex Test
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Network name"
+        required: false
+        default: "hoodi"
+      timeout:
+        description: "Assertoor test timeout"
+        required: false
+        default: "120m"
+      minBlockHeight:
+        description: "Minimum block height for progress check"
+        required: false
+        default: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ethrex-sync-server
+  cancel-in-progress: false
+
+jobs:
+  run-kurtosis-assertoor:
+    name: Run Kurtosis Assertoor
+    runs-on: ethrex-sync
+    env:
+      NETWORK_NAME: ${{ inputs.network || 'hoodi' }}
+      TIMEOUT: ${{ inputs.timeout || '120m' }}
+      MIN_BLOCK_HEIGHT: ${{ inputs.minBlockHeight || '10' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Kurtosis args
+        run: |
+          cat > .github/config/assertoor/network_params.generated.yaml <<'YAML'
+          participants:
+            - el_type: ethrex
+              el_image: ghcr.io/lambdaclass/ethrex:main
+              el_extra_params:
+                - "--syncmode=snap"
+              cl_type: lighthouse
+              cl_image: sigp/lighthouse:v7.1.0
+              count: 1
+
+          network_params:
+            network: "${NETWORK_NAME}"
+
+          additional_services:
+            - assertoor
+
+          assertoor_params:
+            tests:
+              - test_url: https://raw.githubusercontent.com/lambdaclass/ethrex/${GITHUB_SHA}/.github/config/assertoor/syncing-check.yaml
+                config:
+                  timeout: "${TIMEOUT}"
+                  minBlockHeight: ${MIN_BLOCK_HEIGHT}
+          YAML
+
+      - name: Show generated args on failure
+        if: failure()
+        run: |
+          echo '--- Generated Kurtosis args ---'
+          cat .github/config/assertoor/network_params.generated.yaml
+
+      - name: Run assertoor
+        uses: ethpandaops/kurtosis-assertoor-github-action@v1
+        with:
+          enclave_name: "ethrex-assertoor-hoodi"
+          kurtosis_version: "1.10.2"
+          ethereum_package_url: "github.com/ethpandaops/ethereum-package"
+          ethereum_package_branch: "82e5a7178138d892c0c31c3839c89d53ffd42d9a"
+          ethereum_package_args: ".github/config/assertoor/network_params.generated.yaml"
