@@ -133,7 +133,7 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    #[instrument(skip(self))]
+    #[instrument(level = "trace", skip(self))]
     async fn handle_message(
         &mut self,
         Discv4Message {
@@ -560,7 +560,7 @@ impl GenServer for DiscoveryServer {
         Ok(Success(self))
     }
 
-    #[instrument(skip(self, handle))]
+    #[instrument(level = "trace", skip(self, handle))]
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
