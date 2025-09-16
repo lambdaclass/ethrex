@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::LazyLock};
+use std::{fmt::Debug, sync::OnceLock};
 
 use ethrex_l2_common::{
     calldata::Value,
@@ -17,22 +17,25 @@ use sp1_sdk::{
 };
 use std::time::Instant;
 use tracing::info;
+use url::Url;
 
-static PROGRAM_ELF: &[u8] =
+pub static PROGRAM_ELF: &[u8] =
     include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
 
-struct ProverSetup {
+pub struct ProverSetup {
     client: Box<dyn Prover<CpuProverComponents>>,
     pk: SP1ProvingKey,
     vk: SP1VerifyingKey,
 }
 
-static PROVER_SETUP: LazyLock<ProverSetup> = LazyLock::new(|| {
+pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
+
+pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
     #[cfg(feature = "gpu")]
     let client = {
-        if let Ok(endpoint) = std::env::var("ETHREX_SP1_MOONGATE_ENDPOINT") {
+        if let Some(endpoint) = _endpoint {
             CudaProverBuilder::default()
-                .server(&format!("{endpoint}/twirp/"))
+                .server(&endpoint.join("/twirp/"))
                 .build()
         } else {
             CudaProverBuilder::default().local().build()
@@ -41,13 +44,13 @@ static PROVER_SETUP: LazyLock<ProverSetup> = LazyLock::new(|| {
     #[cfg(not(feature = "gpu"))]
     let client = { CpuProver::new() };
     let (pk, vk) = client.setup(PROGRAM_ELF);
+
     ProverSetup {
         client: Box::new(client),
         pk,
         vk,
     }
-});
-
+}
 pub struct ProveOutput {
     pub proof: SP1ProofWithPublicValues,
     pub vk: SP1VerifyingKey,
@@ -78,7 +81,9 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let setup = &*PROVER_SETUP;
+    let Some(setup) = PROVER_SETUP.get() else {
+        return Err("PROVER_SETUP is not initialized".into());
+    };
 
     let now = Instant::now();
     setup.client.execute(PROGRAM_ELF, &stdin)?;
@@ -96,7 +101,9 @@ pub fn prove(
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let setup = &*PROVER_SETUP;
+    let Some(setup) = PROVER_SETUP.get() else {
+        return Err("PROVER_SETUP is not initialized".into());
+    };
 
     // contains the receipt along with statistics about execution of the guest
     let proof = if aligned_mode {
@@ -114,7 +121,9 @@ pub fn prove(
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
-    let setup = &*PROVER_SETUP;
+    let Some(setup) = PROVER_SETUP.get() else {
+        return Err("PROVER_SETUP is not initialized".into());
+    };
     setup.client.verify(&output.proof, &output.vk)?;
 
     Ok(())

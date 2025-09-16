@@ -782,6 +782,9 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub aligned: bool,
+    #[cfg(all(feature = "sp1", feature = "gpu"))]
+    #[arg(long, default_value_t = None, value_name="URL", env= "ETHREX_SP1_ENDPOINT", help= "Url to the moongate server to use", help_heading="Prover client options")]
+    pub sp1_endpoint: Option<Url>,
 }
 
 impl From<ProverClientOptions> for ProverConfig {
@@ -791,6 +794,8 @@ impl From<ProverClientOptions> for ProverConfig {
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
             aligned_mode: config.aligned,
+            #[cfg(all(feature = "sp1", feature = "gpu"))]
+            sp1_endpoint: config.sp1_endpoint,
         }
     }
 }
