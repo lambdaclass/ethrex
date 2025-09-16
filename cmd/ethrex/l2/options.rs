@@ -170,6 +170,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
                 first_wake_up_time_ms: opts.committer_opts.first_wake_up_time_ms.unwrap_or(0),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
+                batch_gas_limit: opts.committer_opts.batch_gas_limit,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
                 validium: opts.validium,
@@ -473,6 +474,14 @@ pub struct CommitterOptions {
     )]
     pub commit_time_ms: u64,
     #[arg(
+        long = "committer.batch-gas-limit",
+        value_name = "UINT64",
+        env = "ETHREX_COMMITTER_BATCH_GAS_LIMIT",
+        help_heading = "L1 Committer options",
+        help = "Maximum gas limit for the batch"
+    )]
+    pub batch_gas_limit: Option<u64>,
+    #[arg(
         long = "committer.first-wake-up-time",
         value_name = "UINT64",
         env = "ETHREX_COMMITTER_FIRST_WAKE_UP_TIME",
@@ -499,6 +508,7 @@ impl Default for CommitterOptions {
             .ok(),
             on_chain_proposer_address: None,
             commit_time_ms: 60000,
+            batch_gas_limit: None,
             first_wake_up_time_ms: None,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
