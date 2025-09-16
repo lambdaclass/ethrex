@@ -47,7 +47,9 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let fmt_layer = fmt::layer().with_filter(filter);
+    let fmt_layer = fmt::layer()
+        .with_span_events(FmtSpan::CLOSE)
+        .with_filter(filter);
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
