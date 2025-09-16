@@ -6,8 +6,13 @@ use ethrex_l2_common::{
 };
 use guest_program::input::ProgramInput;
 use rkyv::rancor::Error;
+use sp1_prover::components::CpuProverComponents;
+#[cfg(not(feature = "gpu"))]
+use sp1_sdk::CpuProver;
+#[cfg(feature = "gpu")]
+use sp1_sdk::cuda::builder::CudaProverBuilder;
 use sp1_sdk::{
-    EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
 use std::time::Instant;
@@ -17,15 +22,30 @@ static PROGRAM_ELF: &[u8] =
     include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
 
 struct ProverSetup {
-    client: EnvProver,
+    client: Box<dyn Prover<CpuProverComponents>>,
     pk: SP1ProvingKey,
     vk: SP1VerifyingKey,
 }
 
 static PROVER_SETUP: LazyLock<ProverSetup> = LazyLock::new(|| {
-    let client = ProverClient::from_env();
+    #[cfg(feature = "gpu")]
+    let client = {
+        if let Ok(endpoint) = std::env::var("ETHREX_SP1_MOONGATE_ENDPOINT") {
+            CudaProverBuilder::default()
+                .server(&format!("{endpoint}/twirp/"))
+                .build()
+        } else {
+            CudaProverBuilder::default().local().build()
+        }
+    };
+    #[cfg(not(feature = "gpu"))]
+    let client = { CpuProver::new() };
     let (pk, vk) = client.setup(PROGRAM_ELF);
-    ProverSetup { client, pk, vk }
+    ProverSetup {
+        client: Box::new(client),
+        pk,
+        vk,
+    }
 });
 
 pub struct ProveOutput {
@@ -61,7 +81,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let setup = &*PROVER_SETUP;
 
     let now = Instant::now();
-    setup.client.execute(PROGRAM_ELF, &stdin).run()?;
+    setup.client.execute(PROGRAM_ELF, &stdin)?;
     let elapsed = now.elapsed();
 
     info!("Successfully executed SP1 program in {:.2?}", elapsed);
@@ -80,9 +100,13 @@ pub fn prove(
 
     // contains the receipt along with statistics about execution of the guest
     let proof = if aligned_mode {
-        setup.client.prove(&setup.pk, &stdin).compressed().run()?
+        setup
+            .client
+            .prove(&setup.pk, &stdin, SP1ProofMode::Compressed)?
     } else {
-        setup.client.prove(&setup.pk, &stdin).groth16().run()?
+        setup
+            .client
+            .prove(&setup.pk, &stdin, SP1ProofMode::Groth16)?
     };
 
     info!("Successfully generated SP1Proof.");
