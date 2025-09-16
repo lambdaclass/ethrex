@@ -67,7 +67,6 @@ impl ExtensionNode {
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             let branch_node = if self.prefix.at(0) == 16 {
-                todo!();
                 match new_node.get_node(db, path.current())? {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
                     _ => return Err(TrieError::InconsistentTree),

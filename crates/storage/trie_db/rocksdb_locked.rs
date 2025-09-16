@@ -40,7 +40,7 @@ impl RocksDBLockedTrieDB {
         })
     }
 
-    fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
+    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
                 // For storage tries, prefix with address
@@ -69,7 +69,7 @@ impl Drop for RocksDBLockedTrieDB {
 }
 
 impl TrieDB for RocksDBLockedTrieDB {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let db_key = self.make_key(key);
 
         self.snapshot
@@ -77,7 +77,7 @@ impl TrieDB for RocksDBLockedTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e)))
     }
 
-    fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!(
             "LockedTrie is read-only"
         )))

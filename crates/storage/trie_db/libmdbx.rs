@@ -1,4 +1,4 @@
-use ethrex_trie::{Nibbles, NodeHash, error::TrieError};
+use ethrex_trie::{Nibbles, error::TrieError};
 use libmdbx::orm::{Database, Table};
 use std::{marker::PhantomData, sync::Arc};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.

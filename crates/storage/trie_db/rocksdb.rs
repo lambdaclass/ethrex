@@ -40,7 +40,7 @@ impl RocksDBTrieDB {
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
-    fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
+    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
                 // For storage tries, prefix with address
@@ -57,7 +57,7 @@ impl RocksDBTrieDB {
 }
 
 impl TrieDB for RocksDBTrieDB {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle()?;
         let db_key = self.make_key(key);
 
@@ -66,7 +66,7 @@ impl TrieDB for RocksDBTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let mut batch = rocksdb::WriteBatch::default();
 
@@ -111,7 +111,7 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
 
         // Test data
-        let node_hash = NodeHash::from(H256::from([1u8; 32]));
+        let node_hash = Nibbles::from_hex([1]);
         let node_data = vec![1, 2, 3, 4, 5];
 
         // Test put_batch
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(retrieved_data, node_data);
 
         // Test get nonexistent
-        let nonexistent_hash = NodeHash::from(H256::from([2u8; 32]));
+        let nonexistent_hash = Nibbles::from([2]);
         assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
     }
 
@@ -152,7 +152,7 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", Some(address)).unwrap();
 
         // Test data
-        let node_hash = NodeHash::from(H256::from([1u8; 32]));
+        let node_hash = Nibbles::from_hex([1]);
         let node_data = vec![1, 2, 3, 4, 5];
 
         // Test put_batch
@@ -189,9 +189,9 @@ mod tests {
 
         // Test data
         let batch_data = vec![
-            (NodeHash::from(H256::from([1u8; 32])), vec![1, 2, 3]),
-            (NodeHash::from(H256::from([2u8; 32])), vec![4, 5, 6]),
-            (NodeHash::from(H256::from([3u8; 32])), vec![7, 8, 9]),
+            (Nibbles::from_hex([1]), vec![1, 2, 3]),
+            (Nibbles::from_hex([1]), vec![4, 5, 6]),
+            (Nibbles::from_hex([1]), vec![7, 8, 9]),
         ];
 
         // Test batch put

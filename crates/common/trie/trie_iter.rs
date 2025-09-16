@@ -42,7 +42,7 @@ impl TrieIterator {
             node: NodeRef,
             new_stack: &mut Vec<(Nibbles, NodeRef)>,
         ) -> Result<(), TrieError> {
-            let Some(next_node) = node.get_node(db).ok().flatten() else {
+            let Some(next_node) = node.get_node(db, prefix_nibbles.clone()).ok().flatten() else {
                 return Ok(());
             };
             match &next_node {
