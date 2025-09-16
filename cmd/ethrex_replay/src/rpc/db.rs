@@ -76,6 +76,7 @@ impl RpcDB {
         }
     }
 
+    /// Create a new RpcDB and pre-cache all known accounts touched by the block.
     pub async fn with_cache(
         rpc_url: &str,
         chain_config: ChainConfig,
@@ -90,6 +91,14 @@ impl RpcDB {
         Ok(db)
     }
 
+    /// Pre-cache all accounts touched by the block to minimize RPC calls during execution.
+    ///
+    /// This method extracts and fetches:
+    /// 1. Transaction senders (from addresses)
+    /// 2. Transaction recipients (to addresses, excluding contract creations)
+    /// 3. Storage slots from access lists
+    ///
+    /// All these accounts are pre-fetched and stored in the cache
     async fn cache_accounts(&mut self, block: &Block) -> eyre::Result<()> {
         let txs = &block.body.transactions;
 
@@ -118,6 +127,20 @@ impl RpcDB {
         Ok(())
     }
 
+    /// Fetches account data from the RPC endpoint and updates the appropriate cache.
+    ///
+    /// This method retrieves account information including state, code, storage values, and proofs
+    /// for the specified addresses and storage keys using the `eth_getProof` RPC method.
+    ///
+    /// # Parameters
+    /// * `index` - List of addresses and their storage keys to fetch
+    /// * `from_child` - If true, fetches data for the post-state (block_number + 1),
+    ///   otherwise fetches data for the pre-state (block_number)
+    ///
+    /// # Implementation details
+    /// * Uses rate limiting to avoid surpassing the RPC endpoint limits
+    /// * Merges new data with existing cached data
+    /// * Updates code cache with the bytecode
     async fn fetch_accounts(
         &self,
         index: &[(Address, Vec<H256>)],
@@ -133,7 +156,9 @@ impl RpcDB {
         let mut fetched = HashMap::new();
         let mut counter = 0;
 
+        // Fetch accounts in chunks to respect rate limits of the RPC endpoint
         for chunk in index.chunks(RPC_RATE_LIMIT) {
+            // Call to `eth_getProof` for each account in the chunk
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
@@ -150,6 +175,7 @@ impl RpcDB {
                 ))
             });
 
+            // Wait for all requests in the chunk to complete
             let fetched_chunk = rate_limiter
                 .throttle(|| async { join_all(futures).await })
                 .await
@@ -167,12 +193,17 @@ impl RpcDB {
             }
         }
 
+        // Merge fetched accounts into the appropriate cache based on the `from_child` flag.
+        // If from_child is true, we update the post-state cache (child_cache).
+        // Otherwise, we update the pre-state cache (cache).
+        // For existing cache entries, we merge storage and proof data.
         if from_child {
             let mut child_cache = self.child_cache.lock().unwrap();
             for (address, account) in &fetched {
                 let acc_account_mut = child_cache.get_mut(address);
-                if let Some(acc_account) = acc_account_mut {
-                    match (account, acc_account) {
+                if let Some(cached_account) = acc_account_mut {
+                    // If already in cache, merge storage and proofs
+                    match (account, cached_account) {
                         (
                             Account::Existing {
                                 storage,
@@ -209,8 +240,9 @@ impl RpcDB {
             let mut cache = self.cache.lock().unwrap();
             for (address, account) in &fetched {
                 let acc_account_mut = cache.get_mut(address);
-                if let Some(acc_account) = acc_account_mut {
-                    match (account, acc_account) {
+                if let Some(cached_account) = acc_account_mut {
+                    // If already in cache, merge storage and proofs
+                    match (account, cached_account) {
                         (
                             Account::Existing {
                                 storage,
@@ -244,6 +276,7 @@ impl RpcDB {
                 }
             }
         }
+        // Update code cache with any newly fetched code and hash it.
         {
             let mut codes = self.codes.lock().unwrap();
             for account in fetched.values() {
@@ -259,6 +292,7 @@ impl RpcDB {
         Ok(fetched)
     }
 
+    /// Blocking version of fetch_accounts to be used inside LevmDatabase trait methods.
     fn fetch_accounts_blocking(
         &self,
         index: &[(Address, Vec<H256>)],
@@ -268,6 +302,12 @@ impl RpcDB {
         tokio::task::block_in_place(|| handle.block_on(self.fetch_accounts(index, from_child)))
     }
 
+    /// Creates an execution witness for the given block from the current database state.
+    ///
+    /// This method:
+    /// 1. Pre-executes the block to capture all state changes
+    /// 2. Gathers account and storage proofs for both initial and final states
+    /// 3. Collects potential child nodes for deleted account and storage entries
     pub fn to_execution_witness(&self, block: &Block) -> eyre::Result<RpcExecutionWitness> {
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
 
