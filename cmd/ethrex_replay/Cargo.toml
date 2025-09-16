@@ -29,8 +29,6 @@ ethrex-blockchain.workspace = true
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2-rpc.workspace = true
-ethrex-trie.workspace = true
-ethrex-rlp.workspace = true
 ethrex-prover = { path = "../../crates/l2/prover", default-features = false }
 
 guest_program = { path = "../../crates/l2/prover/src/guest_program", default-features = false }
