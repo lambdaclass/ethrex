@@ -185,7 +185,7 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
     		$(BOOTNODES_FLAG) \
 
-SERVER_SYNC_BRANCH ?= snap_sync
+SERVER_SYNC_BRANCH ?= main
 SERVER_SYNC_NETWORK ?= hoodi
 
 ifeq ($(SERVER_SYNC_NETWORK),hoodi)
