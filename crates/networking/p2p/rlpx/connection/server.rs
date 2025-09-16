@@ -863,8 +863,10 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
 
-            let request = GetPooledTransactions::new(random(), hashes);
-            send(state, Message::GetPooledTransactions(request)).await?;
+            if !hashes.is_empty() {
+                let request = GetPooledTransactions::new(random(), hashes);
+                send(state, Message::GetPooledTransactions(request)).await?;
+            }
         }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
