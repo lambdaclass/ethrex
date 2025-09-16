@@ -507,14 +507,14 @@ impl Blockchain {
 
             // Check if we have enough gas to run the transaction
             if context.remaining_gas < head_tx.tx.gas_limit() {
-                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+                debug!("Skipping transaction: {}, no gas left", head_tx.hash);
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
                 continue;
             }
 
-            // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-            let tx_hash = head_tx.tx.hash();
+            // Use the cached hash instead of recomputing it
+            let tx_hash = head_tx.hash;
 
             // Check whether the tx is replay-protected
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -680,6 +680,7 @@ pub struct TransactionQueue {
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
     pub tip: u64,
+    pub hash: H256, // Cached transaction hash to avoid recomputation
 }
 
 impl std::ops::Deref for HeadTransaction {
@@ -707,6 +708,7 @@ impl TransactionQueue {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
             let head_tx = txs.remove(0);
+            let tx_hash = head_tx.transaction().hash(); // Compute hash once here
             heads.push(HeadTransaction {
                 // We already ran this method when filtering the transactions from the mempool so it shouldn't fail
                 tip: head_tx
@@ -714,6 +716,7 @@ impl TransactionQueue {
                     .ok_or(ChainError::InvalidBlock(
                         InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
                     ))?,
+                hash: tx_hash, // Store the computed hash
                 tx: head_tx,
             });
         }
@@ -759,6 +762,7 @@ impl TransactionQueue {
             // Fetch next head
             if !txs.is_empty() {
                 let head_tx = txs.remove(0);
+                let tx_hash = head_tx.transaction().hash(); // Compute hash once here
                 let head = HeadTransaction {
                     // We already ran this method when filtering the transactions from the mempool so it shouldn't fail
                     tip: head_tx.effective_gas_tip(self.base_fee).ok_or(
@@ -766,6 +770,7 @@ impl TransactionQueue {
                             InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
                         ),
                     )?,
+                    hash: tx_hash, // Store the computed hash
                     tx: head_tx,
                 };
                 // Insert head into heads list while maintaing order
