@@ -21,7 +21,8 @@ use ethrex_l2_common::{
     l1_messages::{get_block_l1_messages, get_l1_message_hash},
     merkle_tree::compute_merkle_root,
     privileged_transactions::{
-        compute_privileged_transactions_hash, get_block_privileged_transactions,
+        PRIVILEGED_TX_BUDGET, compute_privileged_transactions_hash,
+        get_block_privileged_transactions,
     },
     state_diff::{StateDiff, prepare_state_diff},
 };
@@ -267,8 +268,6 @@ impl L1Committer {
             batch.number,
         );
 
-        self.rollup_store.update_precommit_privileged(None).await?;
-
         match self.send_commitment(&batch).await {
             Ok(commit_tx_hash) => {
                 metrics!(
@@ -415,6 +414,15 @@ impl L1Committer {
                 .parent_hash;
             let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
 
+            let acc_privileged_txs_len: u64 = acc_privileged_txs.len().try_into()?;
+            if acc_privileged_txs_len > PRIVILEGED_TX_BUDGET {
+                warn!(
+                    "Privileged transactions budget exceeded. Any remaining blocks will be processed in the next batch."
+                );
+                // Break loop. Use the previous generated blobs_bundle.
+                break;
+            }
+
             let result = if !self.validium {
                 // Prepare current state diff.
                 let state_diff = prepare_state_diff(
@@ -488,6 +496,11 @@ impl L1Committer {
             METRICS.set_batch_gas_used(batch_number, batch_gas_used)?;
             METRICS.set_batch_size(batch_number, batch_size)?;
             METRICS.set_batch_tx_count(batch_number, tx_count)?;
+        );
+
+        info!(
+            "Added {} privileged transactions to the batch",
+            privileged_transactions_hashes.len()
         );
 
         let privileged_transactions_hash =
@@ -632,7 +645,7 @@ impl L1Committer {
         Ok(commit_tx_hash)
     }
 
-    fn stop_sequencer(&mut self) -> CallResponse<Self> {
+    fn stop_committer(&mut self) -> CallResponse<Self> {
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
             info!("L1 committer stopped");
@@ -643,7 +656,7 @@ impl L1Committer {
         }
     }
 
-    fn start_sequencer(&mut self, handle: GenServerHandle<Self>, delay: u64) -> CallResponse<Self> {
+    fn start_committer(&mut self, handle: GenServerHandle<Self>, delay: u64) -> CallResponse<Self> {
         if self.cancellation_token.is_none() {
             self.schedule_commit(delay, handle);
             info!("L1 committer restarted next commit will be sent in {delay}ms");
@@ -738,8 +751,8 @@ impl GenServer for L1Committer {
         handle: &GenServerHandle<Self>,
     ) -> CallResponse<Self> {
         match message {
-            CallMessage::Stop => self.stop_sequencer(),
-            CallMessage::Start(delay) => self.start_sequencer(handle.clone(), delay),
+            CallMessage::Stop => self.stop_committer(),
+            CallMessage::Start(delay) => self.start_committer(handle.clone(), delay),
             CallMessage::Health => self.health().await,
         }
     }
@@ -792,7 +805,7 @@ async fn estimate_blob_gas(
     headroom: u64,
 ) -> Result<u64, CommitterError> {
     let latest_block = eth_client
-        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest))
+        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
         .await?;
 
     let blob_gas_used = latest_block.header.blob_gas_used.unwrap_or(0);

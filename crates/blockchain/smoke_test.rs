@@ -12,7 +12,7 @@ mod blockchain_integration_test {
 
     use ethrex_common::{
         H160, H256,
-        types::{Block, BlockHeader, ELASTICITY_MULTIPLIER},
+        types::{Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
     };
     use ethrex_storage::{EngineType, Store};
 
@@ -305,6 +305,7 @@ mod blockchain_integration_test {
             beacon_root: Some(H256::random()),
             version: 1,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         };
 
         // Create blockchain

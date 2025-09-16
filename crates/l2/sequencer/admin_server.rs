@@ -121,6 +121,7 @@ async fn start_committer(
         Ok(ok) => match ok {
             CommitterOutMessage::Started => Ok(Json::from(Value::String("ok".into()))),
             CommitterOutMessage::Error(err) => Err(AdminErrorResponse::MessageError(err)),
+
             _ => Err(AdminErrorResponse::UnexpectedResponse {
                 component: "l1_committer".into(),
             }),

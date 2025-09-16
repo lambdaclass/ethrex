@@ -3,7 +3,7 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::Address;
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
@@ -161,6 +161,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .coinbase_address
                     .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
+                block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -392,6 +393,15 @@ pub struct BlockProducerOptions {
         help_heading = "Proposer options"
     )]
     pub elasticity_multiplier: u64,
+    #[arg(
+        long = "block-producer.block-gas-limit",
+        default_value = "30000000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT",
+        help = "Maximum gas limit for the L2 blocks.",
+        help_heading = "Block producer options"
+    )]
+    pub block_gas_limit: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -404,6 +414,7 @@ impl Default for BlockProducerOptions {
                     .unwrap(),
             ),
             elasticity_multiplier: 2,
+            block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }

@@ -42,6 +42,29 @@ pub struct OnlyHashesBlockBody {
     pub withdrawals: Vec<Withdrawal>,
 }
 
+impl TryInto<Block> for RpcBlock {
+    type Error = String;
+
+    fn try_into(self) -> Result<Block, Self::Error> {
+        let block_body = if let BlockBodyWrapper::Full(body) = self.body {
+            body
+        } else {
+            return Err("Expected full block body from RPC".to_owned());
+        };
+
+        let transactions = block_body.transactions.into_iter().map(|t| t.tx).collect();
+
+        Ok(Block {
+            header: self.header,
+            body: BlockBody {
+                transactions,
+                ommers: Vec::new(),
+                withdrawals: Some(block_body.withdrawals),
+            },
+        })
+    }
+}
+
 impl RpcBlock {
     pub fn build(
         header: BlockHeader,
