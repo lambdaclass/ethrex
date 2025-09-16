@@ -242,6 +242,27 @@
 <h2 id="base-url"><a class="header" href="#base-url">Base URL</a></h2>
 <p>By default the server is listening on <code>127.0.0.1:5555</code> but can be configured with <code>--admin-server.addr &lt;address&gt;</code> <code>--admin-server.port &lt;port&gt;</code></p>
 <h2 id="endpoints"><a class="header" href="#endpoints">Endpoints</a></h2>
+<h3 id="health"><a class="header" href="#health">Health</a></h3>
+<hr />
+<h4 id="sequencer-health"><a class="header" href="#sequencer-health">Sequencer Health</a></h4>
+<p><strong>Description</strong></p>
+<p>Performs a healthcheck on all the components of the sequencer returning a json with the status</p>
+<p><strong>Endpoint</strong></p>
+<pre><code>GET /health
+</code></pre>
+<p><strong>Example</strong></p>
+<pre><code>curl -X GET http://localhost:5555/health
+</code></pre>
+<hr />
+<h4 id="admin-server-health"><a class="header" href="#admin-server-health">Admin server health</a></h4>
+<p><strong>Description</strong></p>
+<p>Performs a healthcheck on the http admin server</p>
+<p><strong>Endpoint</strong></p>
+<pre><code>GET /admin/health
+</code></pre>
+<p><strong>Example</strong></p>
+<pre><code>curl -X GET http://localhost:5555/admin/health
+</code></pre>
 <h3 id="l1-committer"><a class="header" href="#l1-committer">L1 Committer</a></h3>
 <hr />
 <h4 id="start-committer-immediately"><a class="header" href="#start-committer-immediately">Start Committer immediately</a></h4>
