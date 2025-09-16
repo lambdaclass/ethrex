@@ -41,7 +41,7 @@ pub async fn get_blockdata(
 
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = get_block_cache_file_name(chain_config.chain_id, requested_block_number, None);
+    let file_name = get_block_cache_file_name(&network, requested_block_number, None);
 
     if let Ok(cache) = Cache::load(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
         info!("Getting block {requested_block_number} data from cache");
@@ -229,7 +229,7 @@ pub async fn get_rangedata(
 ) -> eyre::Result<Cache> {
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = get_block_cache_file_name(chain_config.chain_id, from, Some(to));
+    let file_name = get_block_cache_file_name(&network, from, Some(to));
 
     if let Ok(cache) = Cache::load(&file_name) {
         info!("Getting block range data from cache");

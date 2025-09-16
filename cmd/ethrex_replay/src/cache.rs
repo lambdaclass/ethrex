@@ -9,8 +9,6 @@ use std::io::BufReader;
 use std::{fs::File, io::BufWriter};
 use tracing::debug;
 
-use crate::cli::network_from_chain_id;
-
 const CACHE_FILE_FORMAT: &str = "json";
 
 #[serde_as]
@@ -70,9 +68,10 @@ impl Cache {
         }
 
         let file_name = get_block_cache_file_name(
-            self.chain_config
-                .ok_or(eyre::Error::msg("chain_config must be set to write cache"))?
-                .chain_id,
+            &self
+                .network
+                .clone()
+                .ok_or(eyre::Error::msg("network must be set to write cache"))?,
             self.blocks[0].header.number,
             if self.blocks.len() == 1 {
                 None
@@ -96,9 +95,10 @@ impl Cache {
         }
 
         let file_name = get_block_cache_file_name(
-            self.chain_config
-                .ok_or(eyre::Error::msg("chain_config must be set to write cache"))?
-                .chain_id,
+            &self
+                .network
+                .clone()
+                .ok_or(eyre::Error::msg("chain_config must be set to write cache"))?,
             self.blocks[0].header.number,
             if self.blocks.len() == 1 {
                 None
@@ -115,9 +115,7 @@ impl Cache {
     }
 }
 
-pub fn get_block_cache_file_name(chain_id: u64, from: u64, to: Option<u64>) -> String {
-    let network = network_from_chain_id(chain_id);
-
+pub fn get_block_cache_file_name(network: &Network, from: u64, to: Option<u64>) -> String {
     if let Some(to) = to {
         format!("cache_{network}_{from}-{to}.{CACHE_FILE_FORMAT}")
     } else {
