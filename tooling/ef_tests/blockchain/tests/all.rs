@@ -12,7 +12,7 @@ const SKIPPED_TESTS: &[&str] = &[
 // inconsistency on the expected exception. Exception returned is InvalidBlock(GasUsedMismatch(0x06000000,0x05000000)) while
 // exception expected GAS_ALLOWANCE_EXCEEDED. The thing is gas allowance exception is supposed to be thrown on any transaction
 // execution in case the transaction's gas limit is larger than the block's, which is not the case of this test.
-// This tests has a block with "gasLimit": "0x055d4a80", "gasUsed": "0x05000000" and six transactions with "gasLimit": "0x01000000",
+// This test has a block with "gasLimit": "0x055d4a80", "gasUsed": "0x05000000" and six transactions with "gasLimit": "0x01000000",
 // Apparently each transaction consumes up to its gas limit, which together is larger than the block's. Then when executing validate_gas_used
 // after the block's execution, it throws InvalidBlock(GasUsedMismatch(0x06000000,0x05000000)) on comparing the receipt's cumulative gas used agains the block's gas limit.
 #[cfg(feature = "revm")]
