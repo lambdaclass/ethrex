@@ -11,10 +11,15 @@ use ethrex_rpc::{
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
-use crate::{cache::Cache, rpc::db::RpcDB};
+use crate::{
+    cache::{Cache, get_block_cache_file_name},
+    rpc::db::RpcDB,
+};
 
 #[cfg(feature = "l2")]
 use crate::cache::L2Fields;
+#[cfg(feature = "l2")]
+use crate::cache::get_batch_cache_file_name;
 
 pub async fn get_blockdata(
     eth_client: EthClient,
@@ -36,11 +41,9 @@ pub async fn get_blockdata(
 
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{requested_block_number}.json");
+    let file_name = get_block_cache_file_name(&network, requested_block_number, None);
 
-    if let Ok(cache) =
-        Cache::load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}"))
-    {
+    if let Ok(cache) = Cache::load(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
         info!("Getting block {requested_block_number} data from cache");
         return Ok(cache);
     }
@@ -140,24 +143,7 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    debug!("Caching block {requested_block_number}");
-
-    let block_cache_start_time = SystemTime::now();
-
-    let cache = Cache::new(vec![block], witness_rpc, Some(network));
-
-    cache.write_cache(&file_name)?;
-
-    let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
-    });
-
-    debug!(
-        "Cached block {requested_block_number} in {}",
-        format_duration(block_cache_duration)
-    );
-
-    Ok(cache)
+    Ok(Cache::new(vec![block], witness_rpc, Some(network)))
 }
 
 async fn fetch_rangedata_from_client(
@@ -243,9 +229,9 @@ pub async fn get_rangedata(
 ) -> eyre::Result<Cache> {
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{from}-{to}.json");
+    let file_name = get_block_cache_file_name(&network, from, Some(to));
 
-    if let Ok(cache) = Cache::load_cache(&file_name) {
+    if let Ok(cache) = Cache::load(&file_name) {
         info!("Getting block range data from cache");
         return Ok(cache);
     }
@@ -254,7 +240,7 @@ pub async fn get_rangedata(
 
     let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to).await?;
 
-    cache.write_cache(&file_name)?;
+    cache.write()?;
 
     Ok(cache)
 }
@@ -267,7 +253,7 @@ pub async fn get_batchdata(
 ) -> eyre::Result<Cache> {
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
-    let file_name = format!("cache_batch_{batch_number}.json");
+    let file_name = get_batch_cache_file_name(batch_number);
     if let Ok(cache) = Cache::load_cache(&file_name) {
         info!("Getting batch data from cache");
         return Ok(cache);
