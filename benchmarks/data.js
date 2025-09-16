@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758053860003,
+  "lastUpdate": 1758054844680,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14815,6 +14815,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167178555050,
             "range": "± 305238284",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "764c4f50167619918f355b23f49c4d8774728e01",
+          "message": "docs(l1,l2): refactor docs (#4513)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nDocs were outdated and had a messing structure\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nRefactor them with quickstart guides, cleaner summary structure, etc.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Leandro Ferrigno <leanrafa@gmail.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-16T19:39:47Z",
+          "tree_id": "d36d6ef5102eb1357aad00bf0060c4577dbc97d6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/764c4f50167619918f355b23f49c4d8774728e01"
+        },
+        "date": 1758054823470,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 172303958758,
+            "range": "± 538591136",
             "unit": "ns/iter"
           }
         ]
