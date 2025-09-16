@@ -39,6 +39,7 @@ pub async fn build_payload(
     payload: Block,
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
+    block_gas_limit: u64,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -51,6 +52,7 @@ pub async fn build_payload(
         &mut context,
         store,
         last_privileged_nonce,
+        block_gas_limit,
     )
     .await?;
     blockchain.finalize_payload(&mut context).await?;
@@ -91,11 +93,14 @@ pub async fn build_payload(
 
 /// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size
 /// stays within the blob size limit after processing each transaction.
+/// Also, uses a configured `block_gas_limit` to limit the gas used in the block,
+/// which can be lower than the block gas limit specified in the payload header.
 pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
+    configured_block_gas_limit: u64,
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + BLOCK_HEADER_LEN + 2 + 2 + 2;
@@ -119,6 +124,12 @@ pub async fn fill_transactions(
             break;
         };
 
+        // Check if we have enough gas to run more transactions within the configured block_gas_limit
+        if context.gas_used() + TX_GAS_COST >= configured_block_gas_limit {
+            debug!("No more gas to run transactions");
+            break;
+        }
+
         // Check if we have enough space for the StateDiff to run more transactions
         if acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
             > safe_bytes_per_blob
@@ -134,6 +145,14 @@ pub async fn fill_transactions(
 
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
+            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+            // We don't have enough gas left for the transaction, so we skip all txs from this account
+            txs.pop();
+            continue;
+        }
+
+        // Check if we have enough gas to run the transaction within the configured block_gas_limit
+        if context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit {
             debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
