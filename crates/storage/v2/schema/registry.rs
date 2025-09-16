@@ -7,8 +7,8 @@ use std::sync::Arc;
 /// and physical storage operations.
 #[derive(Debug, Clone)]
 pub struct SchemaRegistry {
-    backend: Arc<dyn StorageBackend>,
-    tables: HashMap<DBTable, TableDefinition>,
+    pub backend: Arc<dyn StorageBackend>,
+    pub tables: HashMap<DBTable, TableDefinition>,
 }
 
 /// Definition of how a logical table is stored and serialized
@@ -21,7 +21,7 @@ pub struct TableDefinition {
 
 impl SchemaRegistry {
     /// Create a new schema registry with the given storage backend
-    pub async fn new(backend: Arc<dyn StorageBackend>) -> Result<Self, StorageError> {
+    pub fn new(backend: Arc<dyn StorageBackend>) -> Result<Self, StorageError> {
         let mut registry = Self {
             backend,
             tables: HashMap::new(),
@@ -29,18 +29,18 @@ impl SchemaRegistry {
 
         // Initialize all Ethereum tables
         for &table in DBTable::all() {
-            registry.register_table(table).await?;
+            registry.register_table(table)?;
         }
 
         Ok(registry)
     }
 
     /// Register a table with the storage backend
-    async fn register_table(&mut self, table: DBTable) -> Result<(), StorageError> {
+    fn register_table(&mut self, table: DBTable) -> Result<(), StorageError> {
         let namespace = table.namespace().to_string();
 
         // Ensure the namespace exists in the backend
-        self.backend.init_namespace(&namespace).await?;
+        self.backend.init_namespace(&namespace)?;
 
         // Register the table definition
         let definition = TableDefinition {
@@ -54,7 +54,7 @@ impl SchemaRegistry {
     }
 
     /// Get a value by key from a specific table
-    pub fn get_sync(&self, table: DBTable, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
+    pub fn get_sync(&self, table: DBTable, key: Vec<u8>) -> Result<Option<Vec<u8>>, StorageError> {
         let table_def = self
             .tables
             .get(&table)
@@ -67,7 +67,7 @@ impl SchemaRegistry {
     pub async fn get_async(
         &self,
         table: DBTable,
-        key: &[u8],
+        key: Vec<u8>,
     ) -> Result<Option<Vec<u8>>, StorageError> {
         let table_def = self
             .tables
@@ -92,8 +92,27 @@ impl SchemaRegistry {
             .await
     }
 
+    pub fn put_sync(
+        &self,
+        table: DBTable,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        let table_def = self
+            .tables
+            .get(&table)
+            .ok_or_else(|| StorageError::Custom(format!("Table {:?} not registered", table)))?;
+
+        self.backend.put_sync(&table_def.namespace, key, value)
+    }
+
     /// Put a key-value pair in a specific table
-    pub async fn put(&self, table: DBTable, key: &[u8], value: &[u8]) -> Result<(), StorageError> {
+    pub async fn put(
+        &self,
+        table: DBTable,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<(), StorageError> {
         let table_def = self
             .tables
             .get(&table)
@@ -103,7 +122,7 @@ impl SchemaRegistry {
     }
 
     /// Delete a key from a specific table
-    pub async fn delete(&self, table: DBTable, key: &[u8]) -> Result<(), StorageError> {
+    pub async fn delete(&self, table: DBTable, key: Vec<u8>) -> Result<(), StorageError> {
         let table_def = self
             .tables
             .get(&table)
@@ -116,8 +135,8 @@ impl SchemaRegistry {
     pub async fn range(
         &self,
         table: DBTable,
-        start_key: &[u8],
-        end_key: Option<&[u8]>,
+        start_key: Vec<u8>,
+        end_key: Option<Vec<u8>>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError> {
         let table_def = self
             .tables

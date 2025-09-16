@@ -7,9 +7,11 @@ pub mod libmdbx;
 pub mod rocksdb;
 
 mod r#trait;
+mod trie_adapter;
 
 pub use in_memory::InMemoryBackend;
 pub use r#trait::{BatchOp, StorageBackend, StorageError};
+pub use trie_adapter::{StorageBackendLockedTrieDB, StorageBackendTrieDB};
 
 #[cfg(feature = "rocksdb")]
 pub use rocksdb::RocksDBBackend;

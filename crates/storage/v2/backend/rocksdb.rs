@@ -97,6 +97,15 @@ impl StorageBackend for RocksDBBackend {
         .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    fn put_sync(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError> {
+        let db = self.db.clone();
+        let namespace = namespace.to_string();
+        let cf = db.cf_handle(&namespace).ok_or_else(|| {
+            StorageError::Custom(format!("Column family not found: {}", namespace))
+        })?;
+        db.put_cf(&cf, &key, &value).map_err(StorageError::from)
+    }
+
     async fn put(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError> {
         let db = self.db.clone();
         let namespace = namespace.to_string();
@@ -160,7 +169,7 @@ impl StorageBackend for RocksDBBackend {
         .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    async fn init_namespace(&self, namespace: &str) -> Result<(), StorageError> {
+    fn init_namespace(&self, namespace: &str) -> Result<(), StorageError> {
         // Column families are already created during DB initialization
         // Just verify the namespace exists
         if self.db.cf_handle(namespace).is_none() {
@@ -176,7 +185,7 @@ impl StorageBackend for RocksDBBackend {
         &self,
         namespace: &str,
         start_key: Vec<u8>,
-        end_key: Option<&[u8]>,
+        end_key: Option<Vec<u8>>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError> {
         let db = self.db.clone();
         let namespace = namespace.to_string();

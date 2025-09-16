@@ -41,26 +41,16 @@ impl InMemoryBackend {
 
 #[async_trait::async_trait]
 impl StorageBackend for InMemoryBackend {
-    fn get_sync(&self, namespace: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
-        let namespaces = self
-            .namespaces
-            .lock()
-            .map_err(|_| StorageError::Custom("Failed to acquire lock".to_string()))?;
-
-        let ns = namespaces.get(namespace);
-
-        match ns {
-            Some(ns) => Ok(ns.get(key).cloned()),
-            None => Ok(None),
-        }
+    fn get_sync(&self, namespace: &str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StorageError> {
+        todo!()
     }
 
     async fn get_async(
         &self,
         namespace: &str,
-        key: &[u8],
+        key: Vec<u8>,
     ) -> Result<Option<Vec<u8>>, StorageError> {
-        self.get_sync(namespace, key)
+        todo!()
     }
 
     async fn get_async_batch(
@@ -68,115 +58,35 @@ impl StorageBackend for InMemoryBackend {
         namespace: &str,
         keys: Vec<Vec<u8>>,
     ) -> Result<Vec<Vec<u8>>, StorageError> {
-        let namespaces = self
-            .namespaces
-            .lock()
-            .map_err(|_| StorageError::Custom("Failed to acquire lock".to_string()))?;
-
-        let ns = namespaces.get(namespace);
-
-        match ns {
-            Some(ns) => {
-                let mut results = Vec::new();
-                for key in keys {
-                    if let Some(value) = ns.get(&key) {
-                        results.push(value.clone());
-                    }
-                }
-                Ok(results)
-            }
-            None => Ok(Vec::new()),
-        }
+        todo!()
     }
 
-    async fn put(&self, namespace: &str, key: &[u8], value: &[u8]) -> Result<(), StorageError> {
-        let mut namespaces = self
-            .namespaces
-            .lock()
-            .map_err(|_| StorageError::Custom("Failed to acquire lock".to_string()))?;
-
-        let ns = namespaces
-            .entry(namespace.to_string())
-            .or_insert_with(BTreeMap::new);
-        ns.insert(key.to_vec(), value.to_vec());
-
-        Ok(())
+    fn put_sync(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError> {
+        todo!()
     }
 
-    async fn delete(&self, namespace: &str, key: &[u8]) -> Result<(), StorageError> {
-        let mut namespaces = self
-            .namespaces
-            .lock()
-            .map_err(|_| StorageError::Custom("Failed to acquire lock".to_string()))?;
+    async fn put(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError> {
+        todo!()
+    }
 
-        if let Some(ns) = namespaces.get_mut(namespace) {
-            ns.remove(key);
-        }
-
-        Ok(())
+    async fn delete(&self, namespace: &str, key: Vec<u8>) -> Result<(), StorageError> {
+        todo!()
     }
 
     async fn batch_write(&self, ops: Vec<BatchOp>) -> Result<(), StorageError> {
-        let mut namespaces = self
-            .namespaces
-            .lock()
-            .map_err(|_| StorageError::Custom("Failed to acquire lock".to_string()))?;
-
-        // Execute all operations atomically
-        for op in ops {
-            match op {
-                BatchOp::Put {
-                    namespace,
-                    key,
-                    value,
-                } => {
-                    let ns = namespaces.entry(namespace).or_insert_with(BTreeMap::new);
-                    ns.insert(key, value);
-                }
-                BatchOp::Delete { namespace, key } => {
-                    if let Some(ns) = namespaces.get_mut(&namespace) {
-                        ns.remove(&key);
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        todo!()
     }
 
-    async fn init_namespace(&self, namespace: &str) -> Result<(), StorageError> {
+    fn init_namespace(&self, namespace: &str) -> Result<(), StorageError> {
         self.ensure_namespace_exists(namespace)
     }
 
     async fn range(
         &self,
         namespace: &str,
-        start_key: &[u8],
-        end_key: Option<&[u8]>,
+        start_key: Vec<u8>,
+        end_key: Option<Vec<u8>>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError> {
-        let namespaces = self
-            .namespaces
-            .lock()
-            .map_err(|_| StorageError::Custom("Failed to acquire lock".to_string()))?;
-
-        let ns = match namespaces.get(namespace) {
-            Some(ns) => ns,
-            None => return Ok(Vec::new()),
-        };
-
-        let mut result = Vec::new();
-
-        for (key, value) in ns.range(start_key.to_vec()..) {
-            // Check if we've exceeded the end key
-            if let Some(end) = end_key {
-                if key.as_slice() >= end {
-                    break;
-                }
-            }
-
-            result.push((key.clone(), value.clone()));
-        }
-
-        Ok(result)
+        todo!()
     }
 }

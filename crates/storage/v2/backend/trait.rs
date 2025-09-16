@@ -25,6 +25,9 @@ pub trait StorageBackend: Send + Sync + Debug + RefUnwindSafe {
     ) -> Result<Vec<Vec<u8>>, StorageError>;
 
     /// Put a key-value pair in the specified namespace
+    fn put_sync(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError>;
+
+    /// Put a key-value pair in the specified namespace
     async fn put(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError>;
 
     /// Delete a key from the specified namespace
@@ -34,7 +37,7 @@ pub trait StorageBackend: Send + Sync + Debug + RefUnwindSafe {
     async fn batch_write(&self, ops: Vec<BatchOp>) -> Result<(), StorageError>;
 
     /// Initialize/ensure a namespace exists (for DBs that require pre-creation)
-    async fn init_namespace(&self, namespace: &str) -> Result<(), StorageError>;
+    fn init_namespace(&self, namespace: &str) -> Result<(), StorageError>;
 
     /// Get a range of key-value pairs from start_key (inclusive) to end_key (exclusive)
     /// If end_key is None, iterate from start_key to end of namespace
@@ -42,7 +45,7 @@ pub trait StorageBackend: Send + Sync + Debug + RefUnwindSafe {
         &self,
         namespace: &str,
         start_key: Vec<u8>,
-        end_key: Option<&[u8]>,
+        end_key: Option<Vec<u8>>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError>;
 }
 

@@ -18,14 +18,14 @@ impl LibmdbxBackend {
 
 #[async_trait::async_trait]
 impl StorageBackend for LibmdbxBackend {
-    fn get_sync(&self, _namespace: &str, _key: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
+    fn get_sync(&self, _namespace: &str, _key: Vec<u8>) -> Result<Option<Vec<u8>>, StorageError> {
         todo!("LibMDBX get_sync implementation pending")
     }
 
     async fn get_async(
         &self,
         _namespace: &str,
-        _key: &[u8],
+        _key: Vec<u8>,
     ) -> Result<Option<Vec<u8>>, StorageError> {
         todo!("LibMDBX get_async implementation pending")
     }
@@ -38,11 +38,25 @@ impl StorageBackend for LibmdbxBackend {
         todo!("LibMDBX get_async_batch implementation pending")
     }
 
-    async fn put(&self, _namespace: &str, _key: &[u8], _value: &[u8]) -> Result<(), StorageError> {
+    fn put_sync(
+        &self,
+        _namespace: &str,
+        _key: Vec<u8>,
+        _value: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        todo!("LibMDBX put_sync implementation pending")
+    }
+
+    async fn put(
+        &self,
+        _namespace: &str,
+        _key: Vec<u8>,
+        _value: Vec<u8>,
+    ) -> Result<(), StorageError> {
         todo!("LibMDBX put implementation pending")
     }
 
-    async fn delete(&self, _namespace: &str, _key: &[u8]) -> Result<(), StorageError> {
+    async fn delete(&self, _namespace: &str, _key: Vec<u8>) -> Result<(), StorageError> {
         todo!("LibMDBX delete implementation pending")
     }
 
@@ -50,15 +64,15 @@ impl StorageBackend for LibmdbxBackend {
         todo!("LibMDBX batch_write implementation pending")
     }
 
-    async fn init_namespace(&self, _namespace: &str) -> Result<(), StorageError> {
+    fn init_namespace(&self, _namespace: &str) -> Result<(), StorageError> {
         todo!("LibMDBX init_namespace implementation pending")
     }
 
     async fn range(
         &self,
         _namespace: &str,
-        _start_key: &[u8],
-        _end_key: Option<&[u8]>,
+        _start_key: Vec<u8>,
+        _end_key: Option<Vec<u8>>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError> {
         todo!("LibMDBX range implementation pending")
     }

@@ -76,3 +76,25 @@ impl DBTable {
         ]
     }
 }
+
+impl From<&str> for DBTable {
+    fn from(value: &str) -> Self {
+        match value {
+            "headers" => Self::Headers,
+            "bodies" => Self::Bodies,
+            "block_numbers" => Self::BlockNumbers,
+            "canonical_hashes" => Self::CanonicalHashes,
+            "transaction_locations" => Self::TransactionLocations,
+            "receipts" => Self::Receipts,
+            "account_codes" => Self::AccountCodes,
+            "state_trie_nodes" => Self::StateTrieNodes,
+            "storage_trie_nodes" => Self::StorageTrieNodes,
+            "chain_data" => Self::ChainData,
+            "snap_state" => Self::SnapState,
+            "storage_snapshot" => Self::StorageSnapshot,
+            "pending_blocks" => Self::PendingBlocks,
+            "invalid_ancestors" => Self::InvalidAncestors,
+            _ => panic!("Invalid table name: {}", value),
+        }
+    }
+}
