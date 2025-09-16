@@ -350,17 +350,8 @@ impl EthrexReplayCommand {
                 plot(cache).await?;
             }
             #[cfg(feature = "l2")]
-            Self::L2(L2Subcommand::Transaction(TransactionOpts {
-                tx_hash,
-                opts,
-                l2: _,
-            })) => {
-                replay_transaction(TransactionOpts {
-                    tx_hash,
-                    opts,
-                    l2: true,
-                })
-                .await?
+            Self::L2(L2Subcommand::Transaction(TransactionOpts { tx_hash, opts })) => {
+                replay_transaction(TransactionOpts { tx_hash, opts }).await?
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Batch(BatchOptions { batch, opts })) => {
@@ -368,14 +359,14 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let (eth_client, network) = setup(&opts, true).await?;
+                let (eth_client, network) = setup(&opts).await?;
 
                 let cache = get_batchdata(eth_client, network, batch).await?;
 
                 run_and_measure(replay(cache, &opts), opts.bench).await?;
             }
             #[cfg(feature = "l2")]
-            Self::L2(L2Subcommand::Block(block_opts)) => replay_block(block_opts, true).await?,
+            Self::L2(L2Subcommand::Block(block_opts)) => replay_block(block_opts).await?,
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Block(CustomBlockOptions {
                 prove,
