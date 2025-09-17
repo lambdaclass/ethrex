@@ -142,7 +142,7 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::H256;
+    use ethrex_common::H256;
 
     use super::*;
 
