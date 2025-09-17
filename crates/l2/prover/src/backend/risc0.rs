@@ -53,7 +53,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     match result {
         Ok(exec_result) => exec_result,
         Err(panic_info) => {
-            let panic_msg = extract_panic_message(&panic_info);
+            let panic_msg = crate::extract_panic_message(&panic_info);
             
             Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -94,7 +94,7 @@ pub fn prove(
     match result {
         Ok(prove_result) => prove_result,
         Err(panic_info) => {
-            let panic_msg = extract_panic_message(&panic_info);
+            let panic_msg = crate::extract_panic_message(&panic_info);
             
             Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -152,13 +152,3 @@ fn encode_seal(receipt: &Receipt) -> Result<Vec<u8>, Error> {
     Ok(selector_seal)
 }
 
-/// Extract a meaningful error message from panic information.
-fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = panic_info.downcast_ref::<String>() {
-        s.clone()
-    } else if let Some(s) = panic_info.downcast_ref::<&str>() {
-        s.to_string()
-    } else {
-        "Unknown panic occurred".to_string()
-    }
-}

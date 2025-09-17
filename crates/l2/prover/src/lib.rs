@@ -99,7 +99,7 @@ pub fn to_batch_proof(
 /// 
 /// This helper function attempts to downcast the panic payload to common types
 /// and returns a readable error message.
-fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> String {
+pub fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = panic_info.downcast_ref::<String>() {
         s.clone()
     } else if let Some(s) = panic_info.downcast_ref::<&str>() {
