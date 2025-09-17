@@ -162,6 +162,7 @@ impl From<LeafNode> for Node {
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
     pub fn get(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+        println!("Inside get with path {}", hex::encode(&path));
         match self {
             Node::Branch(n) => n.get(db, path),
             Node::Extension(n) => n.get(db, path),

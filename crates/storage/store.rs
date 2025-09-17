@@ -140,6 +140,7 @@ impl Store {
         };
         let hashed_address = hash_address(&address);
 
+        println!("Hashed address {}", hex::encode(&hashed_address));
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };

@@ -44,6 +44,7 @@ impl StoreVmDatabase {
 impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
+        println!("Info: {:#x}", address);
         self.store
             .get_account_info_by_hash(self.block_hash, address)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -51,6 +52,7 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        println!("Slot -> Address: {:#x}. key: {:#x}", address, key);
         self.store
             .get_storage_at_hash(self.block_hash, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
@@ -105,6 +107,7 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(level = "trace", name = "Account code read", skip_all)]
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+        println!("Code: {:#x}", code_hash);
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }

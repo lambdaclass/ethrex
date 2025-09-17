@@ -12,7 +12,7 @@ use ethrex_common::{
     },
 };
 use ethrex_prover_lib::backend::Backend;
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::{
     EthClient,
     debug::execution_witness::{RpcExecutionWitness, execution_witness_from_rpc_chain_config},
@@ -21,12 +21,13 @@ use ethrex_rpc::{
 use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
 };
-use ethrex_trie::InMemoryTrieDB;
+use ethrex_trie::{InMemoryTrieDB, Nibbles, node::LeafNode};
 use eyre::Ok;
 use reqwest::Url;
 use std::{
     cmp::max,
     io::Write,
+    str::FromStr,
     sync::{Arc, RwLock},
     time::{Instant, SystemTime},
 };
@@ -456,13 +457,46 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     let in_memory_store = InMemoryStore::new();
     // Set up internal state of in-memory store
     {
-        let mut inner_store = in_memory_store.inner()?;
-
         // Set up state trie nodes
-        let all_nodes = &guest_program.nodes_hashed;
+        let mut all_nodes = guest_program.nodes_hashed.clone();
         let state_root_hash = guest_program.parent_block_header.state_root;
 
-        let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, all_nodes)?.inner;
+        let key =
+            H256::from_str("0x7f32058f93569f9aa4c7af485ef080cd363beccaf059b80b739d1ee66852265c")
+                .unwrap();
+        // let value = vec![];
+        let value = AccountState::default().encode_to_vec();
+        let nibbles = Nibbles {
+            data: vec![
+                0x0c, 0x0b, 0x0d, 0x04, 0x09, 0x0b, 0x03, 0x0a, 0x01, 0x00, 0x06, 0x0f, 0x07, 0x0e,
+                0x04, 0x09, 0x0c, 0x06, 0x0e, 0x01, 0x04, 0x07, 0x0b, 0x07, 0x06, 0x0c, 0x0a, 0x04,
+                0x06, 0x08, 0x02, 0x0a, 0x0e, 0x0f, 0x0d, 0x04, 0x0f, 0x0e, 0x06, 0x0d, 0x00, 0x07,
+                0x0f, 0x04, 0x03, 0x06, 0x08, 0x0f, 0x05, 0x04, 0x02, 0x07, 0x05, 0x01, 0x0a, 0x0a,
+                0x0f, 0x08, 0x05, 0x0d, 0x05, 0x09, 0x06, 0x10,
+            ],
+        };
+        let leaf_node = LeafNode::new(nibbles, value);
+        let raw_encoded = leaf_node.encode_raw();
+        println!("Node raw encoded: {}", hex::encode(&raw_encoded));
+
+        all_nodes.insert(key, raw_encoded);
+
+        let key_to_get =
+            H256::from_str("0x4d57b262aa69fa5781d854150fccd30311a815a0a61c1a6062ede9306212737d")
+                .unwrap();
+
+        let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, &all_nodes)
+            .unwrap()
+            .inner;
+
+        {
+            let a = state_trie_nodes.lock().unwrap();
+            let sth = a.get(&ethrex_trie::NodeHash::Hashed(key_to_get)).unwrap();
+            println!("node: {}", hex::encode(sth));
+            std::process::exit(1);
+        }
+
+        let mut inner_store = in_memory_store.inner()?;
 
         inner_store.state_trie_nodes = state_trie_nodes;
 
@@ -489,7 +523,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
             let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
 
-            let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
+            let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, &all_nodes) {
                 std::result::Result::Ok(trie) => trie.inner,
                 Err(_) => continue,
             };
@@ -524,7 +558,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     for block in cache.blocks {
         info!("Starting to execute block {}", block.header.number);
         let start_time = Instant::now();
-        blockchain.add_block(&block).await?;
+        blockchain.add_block(&block).await.unwrap();
         let duration = start_time.elapsed();
         info!("add_block execution time: {:.2?}", duration);
     }

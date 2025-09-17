@@ -2,7 +2,7 @@ pub mod db;
 pub mod error;
 pub mod logger;
 mod nibbles;
-mod node;
+pub mod node;
 mod node_hash;
 mod rlp;
 #[cfg(test)]
@@ -92,11 +92,19 @@ impl Trie {
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+        println!("idk man");
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                let rlp = self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?;
+                println!(
+                    "I'm going to get node for hash {:?} and path {}",
+                    hash,
+                    hex::encode(&path)
+                );
+                let rlp = self.db.get(hash).unwrap().unwrap();
+                println!("RLP: {}", hex::encode(&rlp));
                 let node = Node::decode(&rlp).map_err(TrieError::RLPDecode)?;
+                println!("Decoded node");
                 node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
             _ => None,
@@ -268,7 +276,7 @@ impl Trie {
             all_nodes: &BTreeMap<H256, Vec<u8>>,
             cur_node_rlp: &[u8],
         ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode_raw(cur_node_rlp)?;
+            let cur_node = Node::decode_raw(cur_node_rlp).unwrap();
 
             Ok(match cur_node {
                 Node::Branch(mut node) => {
