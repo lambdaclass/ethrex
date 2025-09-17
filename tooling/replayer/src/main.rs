@@ -4,7 +4,7 @@ use clap::Parser;
 use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::{
     block_run_report::{BlockRunReport, ReplayerMode},
-    cli::{BlockOptions, EthrexReplayCommand, EthrexReplayOptions, replayer_mode},
+    cli::{BlockOptions, CacheLevel, EthrexReplayCommand, EthrexReplayOptions, replayer_mode},
     slack::{SlackWebHookBlock, SlackWebHookRequest},
 };
 use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::BlockIdentifier};
@@ -84,13 +84,6 @@ pub struct Options {
     pub cache_level: CacheLevel,
 }
 
-#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq, Copy)]
-pub enum CacheLevel {
-    Off,
-    Failed,
-    All,
-}
-
 #[tokio::main]
 async fn main() {
     init_tracing();
@@ -121,6 +114,7 @@ async fn main() {
             ),
         ] {
             let slack_webhook_url = opts.slack_webhook_url.clone();
+            let cache_level = opts.cache_level.clone();
 
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
@@ -129,7 +123,7 @@ async fn main() {
                         network,
                         rpc_url,
                         slack_webhook_url,
-                        opts.cache_level,
+                        cache_level,
                         opts.no_zkvm,
                     )
                     .await
@@ -239,7 +233,7 @@ async fn replay_execution(
             rpc_url.clone(),
             &eth_client,
             slack_webhook_url.clone(),
-            cache_level,
+            cache_level.clone(),
             no_zkvm,
         )
         .await?;
@@ -272,7 +266,7 @@ async fn replay_proving(
                 rpc_url.clone(),
                 &eth_client,
                 slack_webhook_url.clone(),
-                cache_level,
+                cache_level.clone(),
                 false,
             )
             .await?;
@@ -331,6 +325,7 @@ async fn replay_latest_block(
                     bench: false,
                     to_csv: false,
                     no_zkvm,
+                    cache_level: cache_level.clone(),
                 },
             })
             .run()
@@ -347,6 +342,7 @@ async fn replay_latest_block(
                     bench: false,
                     to_csv: false,
                     no_zkvm: false,
+                    cache_level: cache_level.clone(),
                 },
             })
             .run()
@@ -370,32 +366,6 @@ async fn replay_latest_block(
         tracing::error!("{block_run_report}");
     } else {
         tracing::info!("{block_run_report}");
-    }
-
-    // Caching logic: In replay every block is cached. So here we decide whether to keep the cache or not
-    match cache_level {
-        CacheLevel::Off => {
-            // We don't want any cache
-            tracing::info!("Deleting cache: Caching is disabled");
-            delete_cache(network, latest_block);
-        }
-        CacheLevel::Failed => {
-            // We only want caches that failed
-            if block_run_report.run_result.is_ok() {
-                tracing::info!(
-                    "Deleting cache: Execution was successful and Cache Level is 'failed'"
-                );
-                delete_cache(network, latest_block);
-            } else {
-                // I prefer to be explicit about keeping the cache file
-                tracing::info!(
-                    "Keeping cache file for block {} on network {} because execution failed.",
-                    latest_block,
-                    network
-                );
-            }
-        }
-        CacheLevel::All => {}
     }
 
     if replayer_mode.is_proving_mode()
@@ -497,16 +467,6 @@ fn shutdown(handles: Vec<JoinHandle<Result<(), EthClientError>>>) {
     for handle in handles {
         if !handle.is_finished() {
             handle.abort();
-        }
-    }
-}
-
-fn delete_cache(network: Network, block_number: u64) {
-    // This file_name is the same used in ethrex_replay, this is a quick and simple solution but not ideal. Be aware that if we decide to change the name we have to do it in both places.
-    let file_name = format!("cache_{network}_{block_number}.bin");
-    if let Err(e) = std::fs::remove_file(&file_name) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            tracing::error!("Failed to delete cache file {}: {}", file_name, e);
         }
     }
 }
