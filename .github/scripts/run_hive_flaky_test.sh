@@ -1,7 +1,7 @@
 #!/bin/bash
 
 HIVE_CMD="./hive"
-CLIENT_FILE="../fixtures//hive/clients.yaml"
+CLIENT_FILE=".github/config/hive/clients.yaml"
 CLIENT="ethrex"
 SIM="ethereum/engine"
 SIM_LIMIT="engine-cancun/Invalid Missing Ancestor Syncing ReOrg, Transaction Nonce, EmptyTxs=False, CanonicalReOrg=True, Invalid P9 (Cancun)"
