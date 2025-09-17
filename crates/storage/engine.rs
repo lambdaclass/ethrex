@@ -479,9 +479,15 @@ impl Engine {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
         self.backend
             .get_sync(DBTable::Headers.namespace(), hash_key)?
-            .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
+            .map(|bytes| -> Result<BlockHeader, StoreError> {
+                let header = BlockHeaderRLP::from_bytes(bytes)
+                    .to()
+                    .map_err(StoreError::from)?;
+                // FIXME: Force hash initialization to ensure OnceCell is populated
+                let _ = header.hash();
+                Ok(header)
+            })
             .transpose()
-            .map_err(StoreError::from)
     }
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
