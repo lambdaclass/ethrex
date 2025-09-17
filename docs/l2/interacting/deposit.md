@@ -1,5 +1,4 @@
-
-# Depositing assets into the L2
+# Deposit assets into the L2
 
 To transfer ETH from Ethereum L1 to your L2 account, you need to use the `CommonBridge` as explained in this section.
 
