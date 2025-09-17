@@ -7,9 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::io::BufReader;
 use std::{fs::File, io::BufWriter};
+use tracing::debug;
+
+const CACHE_FILE_FORMAT: &str = "json";
 
 #[serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct L2Fields {
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
@@ -18,7 +21,7 @@ pub struct L2Fields {
 }
 /// Structure holding input data needed to execute or prove blocks.
 /// Optional fields are included only when relevant (e.g. L2 or custom chain).
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Cache {
     /// Blocks to execute / prove.
     pub blocks: Vec<Block>,
@@ -52,16 +55,75 @@ impl Cache {
             l2_fields: None,
         }
     }
-    pub fn load_cache(file_name: &str) -> eyre::Result<Self> {
-        let file = BufReader::new(File::open(file_name)?);
+    pub fn load(file_name: &str) -> eyre::Result<Self> {
+        let file = BufReader::new(
+            File::open(file_name).map_err(|e| eyre::Error::msg(format!("{e} ({file_name})")))?,
+        );
         Ok(serde_json::from_reader(file)?)
     }
 
-    pub fn write_cache(&self, file_name: &str) -> eyre::Result<()> {
+    pub fn write(&self) -> eyre::Result<()> {
         if self.blocks.is_empty() {
             return Err(eyre::Error::msg("cache can't be empty"));
         }
+
+        let file_name = get_block_cache_file_name(
+            &self
+                .network
+                .clone()
+                .ok_or(eyre::Error::msg("network must be set to write cache"))?,
+            self.blocks[0].header.number,
+            if self.blocks.len() == 1 {
+                None
+            } else {
+                self.blocks.last().map(|b| b.header.number)
+            },
+        );
+
+        debug!("Writing cache to {file_name}");
+
         let file = BufWriter::new(File::create(file_name)?);
-        Ok(serde_json::to_writer_pretty(file, self)?)
+
+        serde_json::to_writer_pretty(file, self)?;
+
+        Ok(())
     }
+
+    pub fn delete(&self) -> eyre::Result<()> {
+        if self.blocks.is_empty() {
+            return Err(eyre::Error::msg("tried to delete cache with no blocks"));
+        }
+
+        let file_name = get_block_cache_file_name(
+            &self
+                .network
+                .clone()
+                .ok_or(eyre::Error::msg("chain_config must be set to write cache"))?,
+            self.blocks[0].header.number,
+            if self.blocks.len() == 1 {
+                None
+            } else {
+                self.blocks.last().map(|b| b.header.number)
+            },
+        );
+
+        debug!("Deleting cache file {file_name}");
+
+        std::fs::remove_file(file_name)?;
+
+        Ok(())
+    }
+}
+
+pub fn get_block_cache_file_name(network: &Network, from: u64, to: Option<u64>) -> String {
+    if let Some(to) = to {
+        format!("cache_{network}_{from}-{to}.{CACHE_FILE_FORMAT}")
+    } else {
+        format!("cache_{network}_{from}.{CACHE_FILE_FORMAT}")
+    }
+}
+
+#[cfg(feature = "l2")]
+pub fn get_batch_cache_file_name(batch_number: u64) -> String {
+    format!("cache_batch_{batch_number}.{CACHE_FILE_FORMAT}")
 }
