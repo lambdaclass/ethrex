@@ -794,8 +794,9 @@ impl SnapBlockSyncState {
     }
 }
 
-/// Debug function, frees all peer and logs an error if we found freed peers when not expectig to
-/// step is a string indicating where did we lose the peers
+/// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
+/// Logs with where the function was when it found this error
+/// TODO: remove this function once peer table has moved to spawned implementation
 async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
     if peer_handler.peer_table.free_peers().await != 0 {
         let step = METRICS.current_step.lock().await.clone();
