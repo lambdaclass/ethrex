@@ -452,10 +452,25 @@ impl DiscoveryServer {
             return;
         }
 
-        let neighbors = get_closest_nodes(node_id, table.clone());
+        let cloned_table = table.clone();
 
         drop(table);
 
+        let neighbors =
+            match tokio::task::spawn_blocking(move || get_closest_nodes(node_id, cloned_table))
+                .await
+            {
+                Ok(neighbors) => neighbors,
+                Err(err) => {
+                    debug!(
+                        received = "FindNode",
+                        to = %format!("{sender_public_key:#x}"),
+                        err = ?err,
+                        "Error getting closest nodes"
+                    );
+                    return;
+                }
+            };
         // we are sending the neighbors in 2 different messages to avoid exceeding the
         // maximum packet size
         for chunk in neighbors.chunks(8) {

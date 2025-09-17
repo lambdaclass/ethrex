@@ -6,7 +6,7 @@ use std::{
 };
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{MempoolTransaction, Transaction};
+use ethrex_common::types::{MempoolTransaction, Receipt, Transaction};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -828,10 +828,19 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                let mut receipts = Vec::new();
-                for hash in block_hashes.iter() {
-                    receipts.push(state.storage.get_receipts_for_block(hash)?);
-                }
+                let cloned_state = state.clone();
+                let receipts =
+                    tokio::task::spawn_blocking(move || -> Result<Vec<Vec<Receipt>>, RLPxError> {
+                        let mut receipts = Vec::new();
+                        for hash in block_hashes.iter() {
+                            receipts.push(cloned_state.storage.get_receipts_for_block(hash)?);
+                        }
+                        Ok(receipts)
+                    })
+                    .await
+                    .map_err(|_| {
+                        RLPxError::InternalError("Get receipts for block task failed".to_string())
+                    })??;
                 let response = Receipts::new(id, receipts, eth)?;
                 send(state, Message::Receipts(response)).await?;
             }
@@ -896,7 +905,14 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::StorageRanges(response)).await?
         }
         Message::GetByteCodes(req) => {
-            let response = process_byte_codes_request(req, state.storage.clone())?;
+            let state_clone = state.clone();
+            let response = tokio::task::spawn_blocking(move || {
+                process_byte_codes_request(req, state_clone.storage.clone())
+            })
+            .await
+            .map_err(|_| {
+                RLPxError::InternalError("Get Bytecodes failed to complete task".to_string())
+            })??;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
