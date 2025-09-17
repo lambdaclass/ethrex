@@ -5,7 +5,7 @@ use bls12_381::{
     Fp, Fp2, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, Bytes};
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
@@ -63,7 +63,9 @@ use crate::{
         G2_MUL_COST, POINT_EVALUATION_COST,
     },
 };
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::BLS12381Curve;
+use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
+    BLS12381Curve, BLS12381FieldElement,
+};
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::field_extension::BLS12381FieldModulus;
 use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
 use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
@@ -1011,90 +1013,82 @@ pub fn bls12_g1add(
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    #[expect(clippy::arithmetic_side_effects, clippy::unwrap_used)]
+    if calldata[0..16] != [0; 16]
+        || calldata[64..80] != [0; 16]
+        || calldata[128..144] != [0; 16]
+        || calldata[192..208] != [0; 16]
     {
-        use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::BLS12381FieldElement;
-
-        if calldata[0..16] != [0; 16]
-            || calldata[64..80] != [0; 16]
-            || calldata[128..144] != [0; 16]
-            || calldata[192..208] != [0; 16]
-        {
-            return Err(PrecompileError::ParsingInputError.into());
-        }
-
-        fn parse_g1_point(
-            x_data: &[u8],
-            y_data: &[u8],
-        ) -> Result<(BLS12381FieldElement, BLS12381FieldElement), PrecompileError> {
-            let modulus_bytes = BLS12381FieldModulus::MODULUS.limbs.map(|x| x.to_be_bytes());
-            let modulus_bytes = modulus_bytes.as_flattened();
-            if (x_data.len() == modulus_bytes.len() && x_data >= modulus_bytes)
-                || (y_data.len() == modulus_bytes.len() && y_data >= modulus_bytes)
-            {
-                return Err(PrecompileError::ParsingInputError);
-            }
-
-            let x = BLS12381FieldElement::from_bytes_be(x_data).unwrap();
-            let y = BLS12381FieldElement::from_bytes_be(y_data).unwrap();
-
-            if (x == BLS12381FieldElement::zero() && y == BLS12381FieldElement::zero())
-                || BLS12381Curve::defining_equation(&x, &y) == BLS12381FieldElement::zero()
-            {
-                Ok((x, y))
-            } else {
-                Err(PrecompileError::BLS12381G1PointNotInCurve)
-            }
-        }
-
-        let p0 = parse_g1_point(&calldata[16..64], &calldata[80..128])?;
-        let p1 = parse_g1_point(&calldata[144..192], &calldata[208..256])?;
-
-        let p2 = if p0.0 == BLS12381FieldElement::zero() && p0.1 == BLS12381FieldElement::zero() {
-            p1
-        } else if p1.0 == BLS12381FieldElement::zero() && p1.1 == BLS12381FieldElement::zero() {
-            p0
-        } else if p0.0 == p1.0 && &p0.1 + &p1.1 == BLS12381FieldElement::zero() {
-            (BLS12381FieldElement::zero(), BLS12381FieldElement::zero())
-        } else if p0 == p1 {
-            let x_squared = p0.0.square();
-            let s = ((&x_squared + &x_squared + &x_squared) + BLS12381Curve::a()) / (&p0.1 + &p0.1);
-            let x = s.square() - &p0.0 - &p0.0;
-            let y = s * (p0.0 - &x) - p0.1;
-            (x, y)
-        } else {
-            let y01 = &p0.1 - p1.1;
-            let x01 = &p0.0 - &p1.0;
-            match x01.inv() {
-                Ok(x10_inv) => {
-                    let l = y01 * x10_inv;
-
-                    let x = l.square() - &p0.0 - p1.0;
-                    let y = l * (p0.0 - &x) - p0.1;
-
-                    (x, y)
-                }
-                Err(_) => unreachable!("already handled before"),
-            }
-        };
-
-        let mut buffer = BytesMut::with_capacity(128);
-        buffer.put_u128(0);
-        buffer.put_u64(p2.0.representative().limbs[0]);
-        buffer.put_u64(p2.0.representative().limbs[1]);
-        buffer.put_u64(p2.0.representative().limbs[2]);
-        buffer.put_u64(p2.0.representative().limbs[3]);
-        buffer.put_u64(p2.0.representative().limbs[4]);
-        buffer.put_u64(p2.0.representative().limbs[5]);
-        buffer.put_u128(0);
-        buffer.put_u64(p2.1.representative().limbs[0]);
-        buffer.put_u64(p2.1.representative().limbs[1]);
-        buffer.put_u64(p2.1.representative().limbs[2]);
-        buffer.put_u64(p2.1.representative().limbs[3]);
-        buffer.put_u64(p2.1.representative().limbs[4]);
-        buffer.put_u64(p2.1.representative().limbs[5]);
-        Ok(buffer.freeze())
+        return Err(PrecompileError::ParsingInputError.into());
     }
+
+    fn parse_g1_point(
+        x_data: &[u8],
+        y_data: &[u8],
+    ) -> Result<Option<(BLS12381FieldElement, BLS12381FieldElement)>, PrecompileError> {
+        let x = UnsignedInteger::<6>::from_bytes_be(x_data)
+            .map_err(|_| PrecompileError::ParsingInputError)?;
+        let y = UnsignedInteger::<6>::from_bytes_be(y_data)
+            .map_err(|_| PrecompileError::ParsingInputError)?;
+        if x >= BLS12381FieldModulus::MODULUS || y >= BLS12381FieldModulus::MODULUS {
+            return Err(PrecompileError::ParsingInputError);
+        }
+
+        if x == UnsignedInteger::from_u64(0) && y == UnsignedInteger::from_u64(0) {
+            return Ok(None);
+        }
+
+        let x = BLS12381FieldElement::new(x);
+        let y = BLS12381FieldElement::new(y);
+        if BLS12381Curve::defining_equation(&x, &y) != BLS12381FieldElement::zero() {
+            return Err(PrecompileError::BLS12381G1PointNotInCurve);
+        }
+
+        Ok(Some((x, y)))
+    }
+
+    let p0 = parse_g1_point(&calldata[16..64], &calldata[80..128])?;
+    let p1 = parse_g1_point(&calldata[144..192], &calldata[208..256])?;
+
+    #[expect(clippy::arithmetic_side_effects, reason = "modular arithmetic")]
+    let p2 = match (p0, p1) {
+        (None, None) => (BLS12381FieldElement::zero(), BLS12381FieldElement::zero()),
+        (None, Some(p1)) => p1,
+        (Some(p0), None) => p0,
+        (Some(p0), Some(p1)) => 'block: {
+            if p0.0 == p1.0 {
+                if p0.1 == p1.1 {
+                    // The division may panic only when `p0.1.double()` has no inverse. This can
+                    // only happen if `p0.1 == 0`, which is impossible as long as the defining
+                    // equation holds since it has no solutions for an `x` coordinate where `y` is
+                    // zero within the prime field space.
+                    let x_squared = p0.0.square();
+                    let s = (x_squared.double() + &x_squared + BLS12381Curve::a()) / p0.1.double();
+
+                    let x = s.square() - p0.0.double();
+                    let y = s * (p0.0 - &x) - p0.1;
+                    break 'block (x, y);
+                } else if &p0.1 + &p1.1 == BLS12381FieldElement::zero() {
+                    break 'block (BLS12381FieldElement::zero(), BLS12381FieldElement::zero());
+                }
+            }
+
+            // The division may panic only when `t` has no inverse. This can only happen if
+            // `t == 0`, which is impossible in this branch.
+            let l = (&p0.1 - p1.1) / (&p0.0 - &p1.0);
+
+            let x = l.square() - &p0.0 - p1.0;
+            let y = l * (p0.0 - &x) - p0.1;
+            (x, y)
+        }
+    };
+
+    let [x0, x1, x2, x3, x4, x5] = p2.0.representative().limbs.map(|x| x.to_be_bytes());
+    let [y0, y1, y2, y3, y4, y5] = p2.1.representative().limbs.map(|x| x.to_be_bytes());
+    let buffer: [[u8; 8]; 16] = [
+        [0; 8], [0; 8], x0, x1, x2, x3, x4, x5, // Padded x coordinate.
+        [0; 8], [0; 8], y0, y1, y2, y3, y4, y5, // Padded y coordinate.
+    ];
+    Ok(Bytes::copy_from_slice(buffer.as_flattened()))
 }
 
 /// Signature verification in the “secp256r1” elliptic curve
