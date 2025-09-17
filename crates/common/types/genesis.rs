@@ -113,9 +113,9 @@ impl TryFrom<&Path> for Genesis {
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ForkBlobSchedule {
-    pub target: u32,
-    pub max: u32,
     pub base_fee_update_fraction: u64,
+    pub max: u32,
+    pub target: u32,
 }
 
 #[allow(unused)]

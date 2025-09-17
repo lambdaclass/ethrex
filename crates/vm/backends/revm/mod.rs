@@ -7,12 +7,12 @@ mod tracing;
 use super::BlockExecutionResult;
 use crate::backends::revm::db::EvmState;
 use crate::backends::revm::helpers::spec_id;
-use crate::constants::{
+use crate::errors::EvmError;
+use crate::execution_result::ExecutionResult;
+use ethrex_common::addresses::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::errors::EvmError;
-use crate::execution_result::ExecutionResult;
 use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};

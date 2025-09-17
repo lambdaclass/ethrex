@@ -2,12 +2,12 @@ pub mod db;
 mod tracing;
 
 use super::BlockExecutionResult;
-use crate::constants::{
+use crate::{EvmError, ExecutionResult};
+use bytes::Bytes;
+use ethrex_common::addresses::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult};
-use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
     types::{

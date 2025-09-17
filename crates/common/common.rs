@@ -5,6 +5,7 @@ pub mod types;
 pub use bytes::Bytes;
 pub mod base64;
 pub use ethrex_trie::{TrieLogger, TrieWitness};
+pub mod addresses;
 pub mod evm;
 pub mod kzg;
 pub mod rkyv_utils;
