@@ -1,10 +1,10 @@
-use crate::api::StoreEngine;
 use crate::error::StoreError;
-use crate::store_db::in_memory::Store as InMemoryStore;
+use crate::v2::backend::StorageBackend;
+use crate::{v2::backend::InMemoryBackend, v2::domain::DomainStore};
 #[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
+use crate::v2::backend::LibmdbxBackend;
 #[cfg(feature = "rocksdb")]
-use crate::store_db::rocksdb::Store as RocksDBStore;
+use crate::v2::backend::RocksDBBackend;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -35,7 +35,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<dyn StoreEngine>,
+    engine: Arc<DomainStore>,
     chain_config: Arc<RwLock<ChainConfig>>,
     latest_block_header: Arc<RwLock<BlockHeader>>,
 }
@@ -76,29 +76,29 @@ pub struct AccountUpdatesList {
 
 impl Store {
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        self.engine.apply_updates(update_batch).await
+        self.engine
+            .apply_updates(update_batch)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!(engine = ?engine_type, path = %path, "Opening storage engine");
-        let store = match engine_type {
+
+        let backend: Arc<dyn StorageBackend> = match engine_type {
             #[cfg(feature = "rocksdb")]
-            EngineType::RocksDB => Self {
-                engine: Arc::new(RocksDBStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
+            EngineType::RocksDB => Arc::new(RocksDBBackend::new(path)?),
             #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            EngineType::InMemory => Self {
-                engine: Arc::new(InMemoryStore::new()),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
+            EngineType::Libmdbx => Arc::new(LibmdbxBackend::new(path)?),
+            EngineType::InMemory => Arc::new(InMemoryBackend::new()),
+        };
+
+        let domain_store = DomainStore::new(backend)?;
+
+        let store = Self {
+            engine: Arc::new(domain_store),
+            chain_config: Default::default(),
+            latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
         };
 
         Ok(store)
@@ -170,14 +170,20 @@ impl Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_header(block_hash, block_header).await
+        self.engine
+            .add_block_header(block_hash, block_header)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_block_headers(
         &self,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_headers(block_headers).await
+        self.engine
+            .add_block_headers(block_headers)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub fn get_block_header(
@@ -192,7 +198,9 @@ impl Store {
         if block_number == latest.number {
             return Ok(Some(latest));
         }
-        self.engine.get_block_header(block_number)
+        self.engine
+            .get_block_header(block_number)
+            .map_err(StoreError::from)
     }
 
     pub fn get_block_header_by_hash(
@@ -209,14 +217,19 @@ impl Store {
             }
         }
 
-        self.engine.get_block_header_by_hash(block_hash)
+        self.engine
+            .get_block_header_by_hash(block_hash)
+            .map_err(StoreError::from)
     }
 
     pub async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        self.engine.get_block_body_by_hash(block_hash).await
+        self.engine
+            .get_block_body_by_hash(block_hash)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_block_body(
@@ -224,7 +237,10 @@ impl Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_body(block_hash, block_body).await
+        self.engine
+            .add_block_body(block_hash, block_body)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_block_body(
@@ -239,13 +255,23 @@ impl Store {
             .clone();
         if block_number == latest.number {
             // The latest may not be marked as canonical yet
-            return self.engine.get_block_body_by_hash(latest.hash()).await;
+            return self
+                .engine
+                .get_block_body_by_hash(latest.hash())
+                .await
+                .map_err(StoreError::from);
         }
-        self.engine.get_block_body(block_number).await
+        self.engine
+            .get_block_body(block_number)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.remove_block(block_number).await
+        self.engine
+            .remove_block(block_number)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_block_bodies(
@@ -253,19 +279,28 @@ impl Store {
         from: BlockNumber,
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        self.engine.get_block_bodies(from, to).await
+        self.engine
+            .get_block_bodies(from, to)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        self.engine.get_block_bodies_by_hash(hashes).await
+        self.engine
+            .get_block_bodies_by_hash(hashes)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         info!("Adding block to pending: {}", block.hash());
-        self.engine.add_pending_block(block).await
+        self.engine
+            .add_pending_block(block)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_pending_block(
@@ -273,7 +308,10 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<Block>, StoreError> {
         info!("get pending: {}", block_hash);
-        self.engine.get_pending_block(block_hash).await
+        self.engine
+            .get_pending_block(block_hash)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_block_number(
@@ -285,24 +323,30 @@ impl Store {
             .clone()
             .add_block_number(block_hash, block_number)
             .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_block_number(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_block_number(block_hash).await
+        self.engine
+            .get_block_number(block_hash)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
         let chain_config = self.get_chain_config()?;
         let genesis_header = self
             .engine
-            .get_block_header(0)?
+            .get_block_header(0)
+            .map_err(StoreError::from)?
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
         let block_number = self.get_latest_block_number().await?;
         let block_header = self
-            .get_block_header(block_number)?
+            .get_block_header(block_number)
+            .map_err(StoreError::from)?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
 
         Ok(ForkId::new(
@@ -323,6 +367,7 @@ impl Store {
         self.engine
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
             .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_transaction_locations(
@@ -337,22 +382,33 @@ impl Store {
             locations.push((transaction.hash(), block_number, block_hash, index as Index));
         }
 
-        self.engine.add_transaction_locations(locations).await
+        self.engine
+            .add_transaction_locations(locations)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        self.engine.get_transaction_location(transaction_hash).await
+        self.engine
+            .get_transaction_location(transaction_hash)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.engine.add_account_code(code_hash, code).await
+        self.engine
+            .add_account_code(code_hash, code)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        self.engine.get_account_code(code_hash)
+        self.engine
+            .get_account_code(code_hash)
+            .map_err(StoreError::from)
     }
 
     pub async fn get_code_by_account_address(
@@ -372,6 +428,7 @@ impl Store {
         };
         let account_state = AccountState::decode(&encoded_state)?;
         self.get_account_code(account_state.code_hash)
+            .map_err(StoreError::from)
     }
 
     pub async fn get_nonce_by_account_address(
@@ -570,7 +627,10 @@ impl Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipt(block_hash, index, receipt).await
+        self.engine
+            .add_receipt(block_hash, index, receipt)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_receipts(
@@ -578,7 +638,10 @@ impl Store {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipts(block_hash, receipts).await
+        self.engine
+            .add_receipts(block_hash, receipts)
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Obtain receipt for a canonical block represented by the block number.
@@ -591,7 +654,10 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        self.engine.get_receipt(block_hash, index).await
+        self.engine
+            .get_receipt(block_hash, index)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
@@ -599,7 +665,10 @@ impl Store {
     }
 
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        self.engine.add_blocks(blocks).await
+        self.engine
+            .add_blocks(blocks)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -677,7 +746,10 @@ impl Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
-        self.engine.get_transaction_by_hash(transaction_hash).await
+        self.engine
+            .get_transaction_by_hash(transaction_hash)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_transaction_by_location(
@@ -688,17 +760,24 @@ impl Store {
         self.engine
             .get_transaction_by_location(block_hash, index)
             .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<Option<Block>, StoreError> {
-        self.engine.get_block_by_hash(block_hash).await
+        self.engine
+            .get_block_by_hash(block_hash)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_block_by_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<Block>, StoreError> {
-        self.engine.get_block_by_number(block_number).await
+        self.engine
+            .get_block_by_number(block_number)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_storage_at(
@@ -734,7 +813,10 @@ impl Store {
             .chain_config
             .write()
             .map_err(|_| StoreError::LockError)? = *chain_config;
-        self.engine.set_chain_config(chain_config).await
+        self.engine
+            .set_chain_config(chain_config)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
@@ -748,7 +830,10 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_earliest_block_number(block_number).await
+        self.engine
+            .update_earliest_block_number(block_number)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
@@ -759,11 +844,17 @@ impl Store {
     }
 
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_finalized_block_number().await
+        self.engine
+            .get_finalized_block_number()
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_safe_block_number().await
+        self.engine
+            .get_safe_block_number()
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
@@ -778,11 +869,17 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_pending_block_number(block_number).await
+        self.engine
+            .update_pending_block_number(block_number)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_pending_block_number().await
+        self.engine
+            .get_pending_block_number()
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_canonical_block_hash(
@@ -798,7 +895,10 @@ impl Store {
                 return Ok(Some(last.hash()));
             }
         }
-        self.engine.get_canonical_block_hash(block_number).await
+        self.engine
+            .get_canonical_block_hash(block_number)
+            .await
+            .map_err(StoreError::from)
     }
 
     pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
@@ -1086,12 +1186,16 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
-        self.engine.get_receipts_for_block(block_hash)
+        self.engine
+            .get_receipts_for_block(block_hash)
+            .map_err(StoreError::from)
     }
 
     /// Creates a new state trie with an empty state root, for testing purposes only
     pub fn new_state_trie_for_test(&self) -> Result<Trie, StoreError> {
-        self.engine.open_state_trie(*EMPTY_TRIE_HASH)
+        self.engine
+            .open_state_trie(*EMPTY_TRIE_HASH)
+            .map_err(StoreError::from)
     }
 
     // Methods exclusive for trie management during snap-syncing
@@ -1099,13 +1203,17 @@ impl Store {
     /// Obtain a state trie from the given state root.
     /// Doesn't check if the state root is valid
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        self.engine.open_state_trie(state_root)
+        self.engine
+            .open_state_trie(state_root)
+            .map_err(StoreError::from)
     }
 
     /// Obtain a read-locked state trie from the given state root.
     /// Doesn't check if the state root is valid
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        self.engine.open_locked_state_trie(state_root)
+        self.engine
+            .open_locked_state_trie(state_root)
+            .map_err(StoreError::from)
     }
 
     /// Obtain a storage trie from the given address and storage_root.
@@ -1115,7 +1223,9 @@ impl Store {
         account_hash: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        self.engine.open_storage_trie(account_hash, storage_root)
+        self.engine
+            .open_storage_trie(account_hash, storage_root)
+            .map_err(StoreError::from)
     }
 
     /// Obtain a read-locked storage trie from the given address and storage_root.
@@ -1127,6 +1237,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         self.engine
             .open_locked_storage_trie(account_hash, storage_root)
+            .map_err(StoreError::from)
     }
 
     /// Returns true if the given node is part of the state trie's internal storage
@@ -1158,12 +1269,18 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<(), StoreError> {
-        self.engine.set_header_download_checkpoint(block_hash).await
+        self.engine
+            .set_header_download_checkpoint(block_hash)
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Gets the hash of the last header downloaded during a snap sync
     pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_header_download_checkpoint().await
+        self.engine
+            .get_header_download_checkpoint()
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Sets the last key fetched from the state trie being fetched during snap sync
@@ -1171,14 +1288,20 @@ impl Store {
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
-        self.engine.set_state_trie_key_checkpoint(last_keys).await
+        self.engine
+            .set_state_trie_key_checkpoint(last_keys)
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
     pub async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        self.engine.get_state_trie_key_checkpoint().await
+        self.engine
+            .get_state_trie_key_checkpoint()
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Sets the state trie paths in need of healing
@@ -1186,12 +1309,18 @@ impl Store {
         &self,
         paths: Vec<(Nibbles, H256)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_state_heal_paths(paths).await
+        self.engine
+            .set_state_heal_paths(paths)
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Gets the state trie paths in need of healing
     pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
-        self.engine.get_state_heal_paths().await
+        self.engine
+            .get_state_heal_paths()
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Write a storage batch into the current storage snapshot
@@ -1204,6 +1333,7 @@ impl Store {
         self.engine
             .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
             .await
+            .map_err(StoreError::from)
     }
 
     /// Write multiple storage batches belonging to different accounts into the current storage snapshot
@@ -1216,6 +1346,7 @@ impl Store {
         self.engine
             .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
             .await
+            .map_err(StoreError::from)
     }
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
@@ -1226,13 +1357,17 @@ impl Store {
         self.engine
             .set_state_trie_rebuild_checkpoint(checkpoint)
             .await
+            .map_err(StoreError::from)
     }
 
     /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     pub async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        self.engine.get_state_trie_rebuild_checkpoint().await
+        self.engine
+            .get_state_trie_rebuild_checkpoint()
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Set the accont hashes and roots of the storage tries awaiting rebuild
@@ -1240,19 +1375,28 @@ impl Store {
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_storage_trie_rebuild_pending(pending).await
+        self.engine
+            .set_storage_trie_rebuild_pending(pending)
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Get the accont hashes and roots of the storage tries awaiting rebuild
     pub async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        self.engine.get_storage_trie_rebuild_pending().await
+        self.engine
+            .get_storage_trie_rebuild_pending()
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_snap_state().await
+        self.engine
+            .clear_snap_state()
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
@@ -1261,7 +1405,10 @@ impl Store {
         account_hash: H256,
         start: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
-        self.engine.read_storage_snapshot(account_hash, start).await
+        self.engine
+            .read_storage_snapshot(account_hash, start)
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Fetches the latest valid ancestor for a block that was previously marked as invalid
@@ -1270,7 +1417,10 @@ impl Store {
         &self,
         block: BlockHash,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_latest_valid_ancestor(block).await
+        self.engine
+            .get_latest_valid_ancestor(block)
+            .await
+            .map_err(StoreError::from)
     }
 
     /// Marks a block as invalid and sets its latest valid ancestor
@@ -1282,6 +1432,7 @@ impl Store {
         self.engine
             .set_latest_valid_ancestor(bad_block, latest_valid)
             .await
+            .map_err(StoreError::from)
     }
 
     /// Takes a block hash and returns an iterator to its ancestors. Block headers are returned
@@ -1307,7 +1458,9 @@ impl Store {
                 return Ok(Some(last.hash()));
             }
         }
-        self.engine.get_canonical_block_hash_sync(block_number)
+        self.engine
+            .get_canonical_block_hash_sync(block_number)
+            .map_err(StoreError::from)
     }
 
     /// Checks if a given block belongs to the current canonical chain. Returns false if the block is not known
@@ -1327,13 +1480,17 @@ impl Store {
         self.engine
             .write_storage_trie_nodes_batch(storage_trie_nodes)
             .await
+            .map_err(StoreError::from)
     }
 
     pub async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError> {
-        self.engine.write_account_code_batch(account_codes).await
+        self.engine
+            .write_account_code_batch(account_codes)
+            .await
+            .map_err(StoreError::from)
     }
 }
 

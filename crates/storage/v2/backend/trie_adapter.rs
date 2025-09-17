@@ -41,7 +41,6 @@ impl StorageBackendTrieDB {
     fn encode_key(&self, node_hash: NodeHash) -> Vec<u8> {
         match &self.account_prefix {
             Some(prefix) => {
-                // For storage tries, prefix with account hash
                 let mut key = prefix.as_bytes().to_vec();
                 key.extend_from_slice(node_hash.as_ref());
                 key
@@ -107,7 +106,6 @@ impl StorageBackendLockedTrieDB {
     fn encode_key(&self, node_hash: NodeHash) -> Vec<u8> {
         match &self.account_prefix {
             Some(prefix) => {
-                // For storage tries, prefix with account hash
                 let mut key = prefix.as_bytes().to_vec();
                 key.extend_from_slice(node_hash.as_ref());
                 key

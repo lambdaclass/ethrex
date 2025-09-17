@@ -2,6 +2,8 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::TrieError;
 use thiserror::Error;
 
+use crate::v2::backend::StorageError;
+
 // TODO improve errors
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -39,4 +41,6 @@ pub enum StoreError {
     IncompatibleChainConfig,
     #[error("Failed to convert index: {0}")]
     TryInto(#[from] std::num::TryFromIntError),
+    #[error(transparent)]
+    StorageFrom(#[from] StorageError),
 }

@@ -19,7 +19,9 @@ pub struct RocksDBBackend {
 
 impl RocksDBBackend {
     pub fn new(path: &str) -> Result<Self, StorageError> {
-        let options = Options::default();
+        let mut options = Options::default();
+        options.create_if_missing(true);
+        options.create_missing_column_families(true);
         let tables = DBTable::all()
             .iter()
             .map(|table| ColumnFamilyDescriptor::new(table.namespace(), Options::default()))
