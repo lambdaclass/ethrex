@@ -854,58 +854,9 @@ impl Syncer {
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
-            let mut computed_state_root = *EMPTY_TRIE_HASH;
-            for entry in std::fs::read_dir(&account_state_snapshots_dir)
-                .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-            {
-                *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
-                let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
-                })?;
-                info!("Reading account file from entry {entry:?}");
-                let snapshot_path = entry.path();
-                let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-                let account_states_snapshot: Vec<(H256, AccountState)> =
-                    RLPDecode::decode(&snapshot_contents)
-                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-                let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-                    account_states_snapshot.iter().cloned().unzip();
-
-                storage_accounts.accounts_with_storage_root.extend(
-                    account_hashes
-                        .iter()
-                        .zip(account_states.iter())
-                        .filter_map(|(hash, state)| {
-                            (state.storage_root != *EMPTY_TRIE_HASH)
-                                .then_some((*hash, state.storage_root))
-                        }),
-                );
-
-                info!("Inserting accounts into the state trie");
-
-                let store_clone = store.clone();
-                let current_state_root =
-                    tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
                         let mut trie = store_clone.open_state_trie(computed_state_root)?;
-
-                        for (account_hash, account) in account_states_snapshot {
-                            METRICS
-                                .account_tries_inserted
-                                .fetch_add(1, Ordering::Relaxed);
-                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                        }
-                        *METRICS.current_step.blocking_lock() =
-                            "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
-                        let current_state_root = trie.hash()?;
-                        Ok(current_state_root)
-                    })
-                    .await??;
-
-                computed_state_root = current_state_root;
-            }
-
+            let computed_state_root =
+                insert_accounts_into_db(store.clone(), &mut storage_accounts).await?;
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
@@ -1387,4 +1338,52 @@ where
 {
     Some(bytecode_iter.by_ref().take(BYTECODE_CHUNK_SIZE).collect())
         .filter(|chunk: &Vec<_>| !chunk.is_empty())
+}
+
+async fn insert_accounts_into_db(
+    store: Store,
+    storage_accounts: &mut AccountStorageRoots,
+    account_state_snapshots_dir: &str,
+) -> Result<H256, SyncError> {
+    let mut computed_state_root = *EMPTY_TRIE_HASH;
+    for entry in std::fs::read_dir(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+    {
+        let entry = entry.map_err(|err| {
+            SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
+        })?;
+        info!("Reading account file from entry {entry:?}");
+        let snapshot_path = entry.path();
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        let account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        storage_accounts.accounts_with_storage_root.extend(
+            account_states_snapshot.iter().filter_map(|(hash, state)| {
+                (state.storage_root != *EMPTY_TRIE_HASH).then_some((*hash, state.storage_root))
+            }),
+        );
+
+        info!("Inserting accounts into the state trie");
+
+        let store_clone = store.clone();
+        let current_state_root: Result<H256, SyncError> =
+            tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
+                let mut trie = store_clone.open_state_trie(computed_state_root)?;
+
+                for (account_hash, account) in account_states_snapshot {
+                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+                }
+                info!("Comitting to disk");
+                let current_state_root = trie.hash()?;
+                Ok(current_state_root)
+            })
+            .await?;
+
+        computed_state_root = current_state_root?;
+    }
+    info!("computed_state_root {computed_state_root}");
+    Ok(computed_state_root)
 }
