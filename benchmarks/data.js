@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758142307015,
+  "lastUpdate": 1758149544209,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15115,6 +15115,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 165215985427,
             "range": "± 537420855",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9925c371e90b0f7436c73ee208d9875aab66f4cc",
+          "message": "ci(l2): pin rex version in TDX workflow (#4541)\n\n**Motivation**\n\nThe latest Rex commit broke the CI. We should pin a commit to prevent\nfurther breaking changes.\n\n**Description**\n\n- Pins a Rex commit in the TDX workflow.\n- Improves some logs in the integration tests.\n\nCloses None",
+          "timestamp": "2025-09-17T21:50:51Z",
+          "tree_id": "c12c38ffbf0d7e98cd3ed51e886da52b2790638e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9925c371e90b0f7436c73ee208d9875aab66f4cc"
+        },
+        "date": 1758149524116,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168150659989,
+            "range": "± 232028620",
             "unit": "ns/iter"
           }
         ]
