@@ -64,11 +64,15 @@ jobs:
                   minBlockHeight: ${MIN_BLOCK_HEIGHT}
           YAML
 
-      - name: Show generated args on failure
-        if: failure()
+      - name: Show generated args
+        if: always()
         run: |
           echo '--- Generated Kurtosis args ---'
-          cat .github/config/assertoor/network_params.generated.yaml
+          if [ -f .github/config/assertoor/network_params.generated.yaml ]; then
+            cat .github/config/assertoor/network_params.generated.yaml
+          else
+            echo 'Generated file not found'
+          fi
 
       - name: Run assertoor
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
