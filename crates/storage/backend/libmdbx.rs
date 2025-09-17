@@ -14,7 +14,7 @@ use crate::{engine::DBTable, error::StoreError};
 /// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
 const DB_PAGE_SIZE: usize = 4096;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
-const DB_MAX_VALUE_SIZE: usize = 2022;
+// const DB_MAX_VALUE_SIZE: usize = 2022;
 // Maximum DB size, set to 8 TB
 const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 8; // 8 TB
 
@@ -31,9 +31,11 @@ impl LibmdbxBackend {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         // TODO: Add dupsort when needed
         let options = DatabaseOptions {
+            max_tables: Some(14),
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
                 max_size: Some(MAX_MAP_SIZE),
+
                 ..Default::default()
             }),
             ..Default::default()
