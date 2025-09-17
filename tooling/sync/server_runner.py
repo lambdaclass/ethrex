@@ -122,7 +122,7 @@ def send_slack_message_success(hostname: str, minutes: str, network: str, log_fi
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f'*Server:* `{hostname}`\n*Synced in:* {minutes} minutes\n*Logs in:* `{log_file}`\n*Branch*: {branch}\n*Commit*: {commit if commit else "N/A"}'
+                        "text": f'*Server:* `{hostname}`\n*Synced in:* {minutes} minutes\n*Logs in:* `{log_file}`\n*Branch:* `{branch}`\n*Commit:* `{commit if commit else "N/A"}`'
                     }
                 }
             ]
