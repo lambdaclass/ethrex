@@ -3,8 +3,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ethrex_common::{H256, H512};
-use ethrex_rlp::error::RLPDecodeError;
+use ethrex_common::{H256, H512, U256, types::AccountState};
+use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_trie::Node;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
@@ -73,6 +73,31 @@ pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -
     format!("{directory}/account_storages_chunk.rlp.{chunk_index}")
 }
 
+#[cfg(feature = "rocksdb")]
+pub fn dump_to_rocks_db(path: String, contents: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), DumpError> {
+    let writer_options = rocksdb::Options::default();
+    let mut writer = rocksdb::SstFileWriter::create(&writer_options);
+    writer
+        .open(std::path::Path::new(&path))
+        .map_err(|_| DumpError {
+            path: path.clone(),
+            contents: Vec::new(),
+            error: std::io::ErrorKind::Other,
+        })?;
+    for values in contents {
+        writer.put(values.0, values.1).map_err(|_| DumpError {
+            path: path.clone(),
+            contents: Vec::new(),
+            error: std::io::ErrorKind::Other,
+        })?;
+    }
+    writer.finish().map_err(|_| DumpError {
+        path: path.clone(),
+        contents: Vec::new(),
+        error: std::io::ErrorKind::Other,
+    })
+}
+
 pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
     std::fs::write(&path, &contents)
         .inspect_err(|err| {
@@ -83,6 +108,26 @@ pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
             contents,
             error: err.kind(),
         })
+}
+
+pub fn dump_accounts_to_file(
+    path: String,
+    accounts: Vec<(H256, AccountState)>,
+) -> Result<(), DumpError> {
+    cfg_if::cfg_if! {
+            if #[cfg(feature = "rocksdb")] {
+                dump_to_rocks_db(path, accounts.into_iter().map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())).collect::<Vec<_>>())
+            } else {
+    dump_to_file(path, accounts.encode_to_vec())
+    }
+    }
+}
+
+pub fn dump_storages_to_file(
+    path: String,
+    storages: Vec<(H256, Vec<(H256, U256)>)>,
+) -> Result<(), DumpError> {
+    dump_to_file(path, storages.encode_to_vec())
 }
 
 /// TODO: make it more generic

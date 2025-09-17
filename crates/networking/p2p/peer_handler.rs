@@ -37,8 +37,8 @@ use crate::{
     snap::encodable_to_proof,
     sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
-        SendMessageError, dump_to_file, get_account_state_snapshot_file,
-        get_account_storages_snapshot_file,
+        SendMessageError, dump_accounts_to_file, dump_storages_to_file, dump_to_file,
+        get_account_state_snapshot_file, get_account_storages_snapshot_file,
     },
 };
 use tracing::{debug, error, info, trace, warn};
@@ -780,8 +780,7 @@ impl PeerHandler {
                 let account_state_chunk = current_account_hashes
                     .into_iter()
                     .zip(current_account_states)
-                    .collect::<Vec<(H256, AccountState)>>()
-                    .encode_to_vec();
+                    .collect::<Vec<(H256, AccountState)>>();
 
                 if !std::fs::exists(&account_state_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
@@ -798,7 +797,7 @@ impl PeerHandler {
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result = dump_to_file(path, account_state_chunk);
+                    let result = dump_accounts_to_file(path, account_state_chunk);
                     dump_account_result_sender_cloned
                         .send(result)
                         .await
@@ -931,8 +930,7 @@ impl PeerHandler {
             let account_state_chunk = current_account_hashes
                 .into_iter()
                 .zip(current_account_states)
-                .collect::<Vec<(H256, AccountState)>>()
-                .encode_to_vec();
+                .collect::<Vec<(H256, AccountState)>>();
 
             if !std::fs::exists(&account_state_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
@@ -942,7 +940,7 @@ impl PeerHandler {
             }
 
             let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
-            std::fs::write(path, account_state_chunk)
+            dump_accounts_to_file(path, account_state_chunk)
                 .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
         }
 
@@ -1302,7 +1300,7 @@ impl PeerHandler {
         }
 
         // 2) request the chunks from peers
-        let mut all_account_storages =
+        let mut all_account_storages: Vec<Vec<(H256, U256)>> =
             vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
 
         // channel to send the tasks to the peers
@@ -1336,8 +1334,7 @@ impl PeerHandler {
                     .clone()
                     .into_iter()
                     .zip(current_account_storages)
-                    .collect::<Vec<_>>()
-                    .encode_to_vec();
+                    .collect::<Vec<_>>();
 
                 if !std::fs::exists(&account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
@@ -1363,7 +1360,7 @@ impl PeerHandler {
                         account_storages_snapshots_dir_cloned,
                         chunk_index,
                     );
-                    dump_to_file(path, snapshot)
+                    dump_storages_to_file(path, snapshot)
                 });
 
                 chunk_index += 1;
@@ -1567,8 +1564,7 @@ impl PeerHandler {
             let snapshot = current_account_hashes
                 .into_iter()
                 .zip(current_account_storages)
-                .collect::<Vec<_>>()
-                .encode_to_vec();
+                .collect::<Vec<_>>();
 
             if !std::fs::exists(&account_storages_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
@@ -1581,8 +1577,8 @@ impl PeerHandler {
                 account_storages_snapshots_dir_cloned,
                 chunk_index,
             );
-            std::fs::write(path, snapshot)
-                .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
+            dump_storages_to_file(path, snapshot)
+                .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_index))?;
         }
         disk_joinset
             .join_all()
