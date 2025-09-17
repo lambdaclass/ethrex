@@ -856,7 +856,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     })
                     .await
                     .map_err(|_| {
-                        RLPxError::InternalError("Get receipts for block task failed".to_string())
+                        RLPxError::InternalError("Receipt retrieval task was cancelled or panicked".to_string())
                     })??;
                 let response = match eth.version {
                     68 => Message::Receipts68(Receipts68::new(id, receipts)),
@@ -936,7 +936,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             })
             .await
             .map_err(|_| {
-                RLPxError::InternalError("Get Bytecodes failed to complete task".to_string())
+                RLPxError::InternalError("Failed to execute bytecode retrieval task".to_string())
             })??;
             send(state, Message::ByteCodes(response)).await?
         }
