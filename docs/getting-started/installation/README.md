@@ -1,5 +1,4 @@
-## Installation Options
-
+# Installation
 
 Ethrex is designed to run on Linux and macOS.
 

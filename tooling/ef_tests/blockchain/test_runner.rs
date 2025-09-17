@@ -34,7 +34,7 @@ pub fn parse_and_execute(
     //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
     //EIPs should be added as strings in the format 'eip-XXXX'
     let fusaka_eips_to_test: Vec<&str> = vec![
-        "eip-7594", "eip-7883", "eip-7918", "eip-7892", "eip-7939", "eip-7951", "eip-7594",
+        "eip-7883", "eip-7892", "eip-7918", "eip-7934", "eip-7939", "eip-7951", "eip-7594",
     ];
 
     //Hashes of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
@@ -183,7 +183,7 @@ fn exception_is_expected(
     expected_exceptions.iter().any(|exception| {
         if let (
             BlockChainExpectedException::TxtException(expected_error_msg),
-            ChainError::EvmError(EvmError::Transaction(error_msg)),
+            ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(error_msg)),
         ) = (exception, returned_error)
         {
             return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
@@ -459,11 +459,11 @@ async fn re_run_stateless(
         return Err("Failed to create witness for a test that should not fail".into());
     }
     // At this point witness is guaranteed to be Ok
-    let witness = witness.unwrap();
+    let execution_witness = witness.unwrap();
 
     let program_input = ProgramInput {
         blocks,
-        db: witness,
+        execution_witness,
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()
     };

@@ -2074,6 +2074,7 @@ dependencies = [
  "ethrex-p2p",
  "hex",
  "keccak-hash",
+ "serde",
  "serde_json",
 ]
 
@@ -2445,6 +2446,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "lazy_static",
+ "rkyv",
  "serde",
  "sha3",
  "thiserror 2.0.16",

@@ -1,4 +1,4 @@
-# Withdrawing assets from the L2
+# Withdraw assets from the L2
 
 This section explains how to withdraw funds from the L2 through the native bridge.
 
