@@ -599,12 +599,18 @@ impl Engine {
             )
             .await?;
 
-        if let Some((_, value_bytes)) = results.first() {
-            let location: (BlockNumber, BlockHash, Index) = RLPDecode::decode(value_bytes)?;
-            Ok(Some(location))
-        } else {
-            Ok(None)
+        // Check each location to see if it's in the canonical chain
+        for (_, value_bytes) in results {
+            let location: (BlockNumber, BlockHash, Index) = RLPDecode::decode(&value_bytes)?;
+
+            // Check if this block is canonical
+            let canonical_hash = self.get_canonical_block_hash_sync(location.0)?;
+            if canonical_hash == Some(location.1) {
+                return Ok(Some(location));
+            }
         }
+
+        Ok(None)
     }
 
     /// Add receipt
