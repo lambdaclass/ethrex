@@ -1,8 +1,7 @@
+use crate::backend::{BatchOp, StorageBackend, StorageBackendLockedTrieDB, StorageBackendTrieDB};
+use crate::error::StoreError;
 use crate::rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP};
 use crate::utils::SnapStateIndex;
-use crate::v2::backend::{
-    BatchOp, StorageBackend, StorageBackendLockedTrieDB, StorageBackendTrieDB, StorageError,
-};
 use crate::{UpdateBatch, store::STATE_TRIE_SEGMENTS, utils::ChainDataIndex};
 
 use bytes::Bytes;
@@ -18,9 +17,6 @@ use ethrex_trie::{Nibbles, NodeHash, Trie};
 use std::{fmt::Debug, sync::Arc};
 
 /// Defines all the logical tables needed for Ethereum storage
-///
-/// These correspond to the different data types that the current StoreEngine manages,
-/// but without coupling to any specific database implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DBTable {
     // Block data
@@ -124,18 +120,18 @@ impl DomainBatchOp {
 /// This is the single implementation that replaces all the duplicated logic
 /// in rocksdb.rs, libmdbx.rs, and in_memory.rs
 #[derive(Debug)]
-pub struct DomainStore {
+pub struct Engine {
     backend: Arc<dyn StorageBackend>,
 }
 
-impl DomainStore {
-    /// Create a new DomainStore with the given storage backend
+impl Engine {
+    /// Create a new Engine with the given storage backend
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self { backend }
     }
 
     /// Convert DomainBatchOp to BackendBatchOp for execution
-    async fn execute_batch(&self, batch_ops: Vec<DomainBatchOp>) -> Result<(), StorageError> {
+    async fn execute_batch(&self, batch_ops: Vec<DomainBatchOp>) -> Result<(), StoreError> {
         let backend_ops: Vec<BatchOp> = batch_ops
             .into_iter()
             .map(|op| match op {
@@ -155,9 +151,9 @@ impl DomainStore {
     }
 }
 
-impl DomainStore {
+impl Engine {
     /// Store changes in a batch from a vec of blocks
-    pub async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StorageError> {
+    pub async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
         // Process account updates
@@ -258,7 +254,7 @@ impl DomainStore {
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
-    pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StorageError> {
+    pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
         for block in blocks {
@@ -314,7 +310,7 @@ impl DomainStore {
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
         let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
         self.backend
@@ -326,7 +322,7 @@ impl DomainStore {
     pub async fn add_block_headers(
         &self,
         block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
 
         for header in block_headers {
@@ -357,7 +353,7 @@ impl DomainStore {
     pub fn get_block_header(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<BlockHeader>, StorageError> {
+    ) -> Result<Option<BlockHeader>, StoreError> {
         let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(None);
         };
@@ -370,7 +366,7 @@ impl DomainStore {
         &self,
         block_hash: BlockHash,
         block_body: BlockBody,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
         let body_value = BlockBodyRLP::from(block_body).bytes().clone();
         self.backend
@@ -382,7 +378,7 @@ impl DomainStore {
     pub async fn get_block_body(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<BlockBody>, StorageError> {
+    ) -> Result<Option<BlockBody>, StoreError> {
         let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(None);
         };
@@ -391,7 +387,7 @@ impl DomainStore {
     }
 
     /// Remove canonical block
-    pub async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StorageError> {
+    pub async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let Some(hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(());
         };
@@ -422,7 +418,7 @@ impl DomainStore {
         &self,
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Vec<BlockBody>, StorageError> {
+    ) -> Result<Vec<BlockBody>, StoreError> {
         let numbers: Vec<BlockNumber> = (from..=to).collect();
         let number_keys: Vec<Vec<u8>> = numbers.iter().map(|n| n.to_le_bytes().to_vec()).collect();
         let hashes = self
@@ -440,16 +436,16 @@ impl DomainStore {
             .map(|bytes| {
                 BlockBodyRLP::from_bytes(bytes)
                     .to()
-                    .map_err(StorageError::from)
+                    .map_err(StoreError::from)
             })
-            .collect::<Result<Vec<BlockBody>, StorageError>>()
+            .collect::<Result<Vec<BlockBody>, StoreError>>()
     }
 
     /// Obtain block bodies from a list of hashes
     pub async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
-    ) -> Result<Vec<BlockBody>, StorageError> {
+    ) -> Result<Vec<BlockBody>, StoreError> {
         let hash_keys: Vec<Vec<u8>> = hashes
             .iter()
             .map(|hash| BlockHashRLP::from(*hash).bytes().clone())
@@ -463,9 +459,9 @@ impl DomainStore {
             .map(|bytes| {
                 BlockBodyRLP::from_bytes(bytes)
                     .to()
-                    .map_err(StorageError::from)
+                    .map_err(StoreError::from)
             })
-            .collect::<Result<Vec<BlockBody>, StorageError>>()?;
+            .collect::<Result<Vec<BlockBody>, StoreError>>()?;
 
         Ok(bodies)
     }
@@ -474,29 +470,29 @@ impl DomainStore {
     pub async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
-    ) -> Result<Option<BlockBody>, StorageError> {
+    ) -> Result<Option<BlockBody>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
         self.backend
             .get_async(DBTable::Bodies.namespace(), hash_key)
             .await?
             .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     pub fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,
-    ) -> Result<Option<BlockHeader>, StorageError> {
+    ) -> Result<Option<BlockHeader>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
         self.backend
             .get_sync(DBTable::Headers.namespace(), hash_key)?
             .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
-    pub async fn add_pending_block(&self, block: Block) -> Result<(), StorageError> {
+    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block.hash()).bytes().clone();
         let block_value = BlockRLP::from(block).bytes().clone();
         self.backend
@@ -506,14 +502,14 @@ impl DomainStore {
     pub async fn get_pending_block(
         &self,
         block_hash: BlockHash,
-    ) -> Result<Option<Block>, StorageError> {
+    ) -> Result<Option<Block>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
         self.backend
             .get_async(DBTable::PendingBlocks.namespace(), hash_key)
             .await?
             .map(|bytes| BlockRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     /// Add block number for a given hash
@@ -521,7 +517,7 @@ impl DomainStore {
         &self,
         block_hash: BlockHash,
         block_number: BlockNumber,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
         let number_value = block_number.to_le_bytes().to_vec();
         self.backend
@@ -533,15 +529,15 @@ impl DomainStore {
     pub async fn get_block_number(
         &self,
         block_hash: BlockHash,
-    ) -> Result<Option<BlockNumber>, StorageError> {
+    ) -> Result<Option<BlockNumber>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
         self.backend
             .get_async(DBTable::BlockNumbers.namespace(), hash_key)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StorageError> {
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
-                    .map_err(|_| StorageError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
                 Ok(BlockNumber::from_le_bytes(array))
             })
             .transpose()
@@ -554,7 +550,7 @@ impl DomainStore {
         block_number: BlockNumber,
         block_hash: BlockHash,
         index: Index,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let mut composite_key = Vec::with_capacity(64);
         composite_key.extend_from_slice(transaction_hash.as_bytes());
         composite_key.extend_from_slice(block_hash.as_bytes());
@@ -572,7 +568,7 @@ impl DomainStore {
     pub async fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
         for (tx_hash, block_number, block_hash, index) in locations {
             // Key: tx_hash + block_hash
@@ -595,7 +591,7 @@ impl DomainStore {
     pub async fn get_transaction_location(
         &self,
         transaction_hash: H256,
-    ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StorageError> {
+    ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
         // Use range query to find transaction location
         // Key pattern: tx_hash + block_hash
         let start_key = transaction_hash.as_bytes().to_vec();
@@ -625,7 +621,7 @@ impl DomainStore {
         block_hash: BlockHash,
         index: Index,
         receipt: Receipt,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = (block_hash, index).encode_to_vec();
         let value = receipt.encode_to_vec();
         self.backend
@@ -638,7 +634,7 @@ impl DomainStore {
         &self,
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
         for (index, receipt) in receipts.into_iter().enumerate() {
             let key = (block_hash, index as u64).encode_to_vec();
@@ -658,18 +654,18 @@ impl DomainStore {
         &self,
         block_hash: BlockHash,
         index: Index,
-    ) -> Result<Option<Receipt>, StorageError> {
+    ) -> Result<Option<Receipt>, StoreError> {
         let key = (block_hash, index).encode_to_vec();
         self.backend
             .get_async(DBTable::Receipts.namespace(), key)
             .await?
             .map(|bytes| Receipt::decode(bytes.as_slice()))
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     /// Add account code
-    pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StorageError> {
+    pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         let hash_key = code_hash.as_bytes().to_vec();
         let code_value = AccountCodeRLP::from(code).bytes().clone();
         self.backend
@@ -678,7 +674,7 @@ impl DomainStore {
     }
 
     /// Clears all checkpoint data created during the last snap sync
-    pub async fn clear_snap_state(&self) -> Result<(), StorageError> {
+    pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
         // Clear all snap state data by removing all entries in the SnapState table
         // Since we don't have a clear_table method, we'll use range to get all keys and delete them
         let all_data = self
@@ -702,19 +698,19 @@ impl DomainStore {
     }
 
     /// Obtain account code via code hash
-    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StorageError> {
+    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
         let hash_key = code_hash.as_bytes().to_vec();
         self.backend
             .get_sync(DBTable::AccountCodes.namespace(), hash_key)?
             .map(|bytes| AccountCodeRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     pub async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
-    ) -> Result<Option<Transaction>, StorageError> {
+    ) -> Result<Option<Transaction>, StoreError> {
         let (_block_number, block_hash, index) =
             match self.get_transaction_location(transaction_hash).await? {
                 Some(location) => location,
@@ -727,7 +723,7 @@ impl DomainStore {
         &self,
         block_hash: H256,
         index: u64,
-    ) -> Result<Option<Transaction>, StorageError> {
+    ) -> Result<Option<Transaction>, StoreError> {
         let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
@@ -735,14 +731,14 @@ impl DomainStore {
         // TODO: Fix error handling
         let index: usize = index
             .try_into()
-            .map_err(|_| StorageError::Custom("Invalid index".to_string()))?;
+            .map_err(|_| StoreError::Custom("Invalid index".to_string()))?;
         Ok(block_body.transactions.get(index).cloned())
     }
 
     pub async fn get_block_by_hash(
         &self,
         block_hash: BlockHash,
-    ) -> Result<Option<Block>, StorageError> {
+    ) -> Result<Option<Block>, StoreError> {
         let header = match self.get_block_header_by_hash(block_hash)? {
             Some(header) => header,
             None => return Ok(None),
@@ -757,7 +753,7 @@ impl DomainStore {
     pub async fn get_block_by_number(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<Block>, StorageError> {
+    ) -> Result<Option<Block>, StoreError> {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -768,22 +764,22 @@ impl DomainStore {
     pub async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<BlockHash>, StorageError> {
+    ) -> Result<Option<BlockHash>, StoreError> {
         let number_key = block_number.to_le_bytes().to_vec();
         self.backend
             .get_async(DBTable::CanonicalHashes.namespace(), number_key)
             .await?
             .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     /// Stores the chain configuration values, should only be called once after reading the genesis file
     /// Ignores previously stored values if present
-    pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StorageError> {
+    pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         let key = Self::chain_data_key(ChainDataIndex::ChainConfig);
         let value = serde_json::to_string(chain_config)
-            .map_err(|_| StorageError::Custom("Failed to serialize chain config".to_string()))?
+            .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
             .into_bytes();
         self.backend
             .put(DBTable::ChainData.namespace(), key, value)
@@ -794,7 +790,7 @@ impl DomainStore {
     pub async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = vec![ChainDataIndex::EarliestBlockNumber as u8];
         let value = block_number.to_le_bytes().to_vec();
         self.backend
@@ -803,60 +799,60 @@ impl DomainStore {
     }
 
     /// Obtain earliest block number
-    pub async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StorageError> {
+    pub async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = vec![ChainDataIndex::EarliestBlockNumber as u8];
         self.backend
             .get_async(DBTable::ChainData.namespace(), key)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StorageError> {
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
-                    .map_err(|_| StorageError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
                 Ok(BlockNumber::from_le_bytes(array))
             })
             .transpose()
     }
 
     /// Obtain finalized block number
-    pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StorageError> {
+    pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = vec![ChainDataIndex::FinalizedBlockNumber as u8];
         self.backend
             .get_async(DBTable::ChainData.namespace(), key)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StorageError> {
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
-                    .map_err(|_| StorageError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
                 Ok(BlockNumber::from_le_bytes(array))
             })
             .transpose()
     }
 
     /// Obtain safe block number
-    pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StorageError> {
+    pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = vec![ChainDataIndex::SafeBlockNumber as u8];
         self.backend
             .get_async(DBTable::ChainData.namespace(), key)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StorageError> {
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
-                    .map_err(|_| StorageError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
                 Ok(BlockNumber::from_le_bytes(array))
             })
             .transpose()
     }
 
     /// Obtain latest block number
-    pub async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StorageError> {
+    pub async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = vec![ChainDataIndex::LatestBlockNumber as u8];
         self.backend
             .get_async(DBTable::ChainData.namespace(), key)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StorageError> {
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
-                    .map_err(|_| StorageError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
                 Ok(BlockNumber::from_le_bytes(array))
             })
             .transpose()
@@ -866,7 +862,7 @@ impl DomainStore {
     pub async fn update_pending_block_number(
         &self,
         block_number: BlockNumber,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = vec![ChainDataIndex::PendingBlockNumber as u8];
         let value = block_number.to_le_bytes().to_vec();
         self.backend
@@ -875,15 +871,15 @@ impl DomainStore {
     }
 
     /// Obtain pending block number
-    pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StorageError> {
+    pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = vec![ChainDataIndex::PendingBlockNumber as u8];
         self.backend
             .get_async(DBTable::ChainData.namespace(), key)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StorageError> {
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
-                    .map_err(|_| StorageError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
                 Ok(BlockNumber::from_le_bytes(array))
             })
             .transpose()
@@ -896,7 +892,7 @@ impl DomainStore {
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
         let mut batch_ops = Vec::new();
 
@@ -963,7 +959,7 @@ impl DomainStore {
     pub fn get_receipts_for_block(
         &self,
         block_hash: &BlockHash,
-    ) -> Result<Vec<Receipt>, StorageError> {
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
         let mut index = 0u64;
         loop {
@@ -986,7 +982,7 @@ impl DomainStore {
     pub async fn set_header_download_checkpoint(
         &self,
         block_hash: BlockHash,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = vec![SnapStateIndex::HeaderDownloadCheckpoint as u8];
         let value = BlockHashRLP::from(block_hash).bytes().clone();
         self.backend
@@ -995,21 +991,21 @@ impl DomainStore {
     }
 
     /// Gets the hash of the last header downloaded during a snap sync
-    pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StorageError> {
+    pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         let key = vec![SnapStateIndex::HeaderDownloadCheckpoint as u8];
         self.backend
             .get_async(DBTable::SnapState.namespace(), key)
             .await?
             .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     /// Sets the last key fetched from the state trie being fetched during snap sync
     pub async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = vec![SnapStateIndex::StateTrieKeyCheckpoint as u8];
         let value = last_keys.to_vec().encode_to_vec();
         self.backend
@@ -1020,19 +1016,17 @@ impl DomainStore {
     /// Gets the last key fetched from the state trie being fetched during snap sync
     pub async fn get_state_trie_key_checkpoint(
         &self,
-    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StorageError> {
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
         let key = vec![SnapStateIndex::StateTrieKeyCheckpoint as u8];
         self.backend
             .get_async(DBTable::SnapState.namespace(), key)
             .await?
-            .map(
-                |bytes| -> Result<[H256; STATE_TRIE_SEGMENTS], StorageError> {
-                    let keys_vec: Vec<H256> = Vec::<H256>::decode(bytes.as_slice())?;
-                    keys_vec
-                        .try_into()
-                        .map_err(|_| StorageError::Custom("Invalid array size".to_string()))
-                },
-            )
+            .map(|bytes| -> Result<[H256; STATE_TRIE_SEGMENTS], StoreError> {
+                let keys_vec: Vec<H256> = Vec::<H256>::decode(bytes.as_slice())?;
+                keys_vec
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid array size".to_string()))
+            })
             .transpose()
     }
 
@@ -1040,7 +1034,7 @@ impl DomainStore {
     pub async fn set_state_heal_paths(
         &self,
         paths: Vec<(Nibbles, H256)>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = vec![SnapStateIndex::StateHealPaths as u8];
         let value = paths.encode_to_vec();
         self.backend
@@ -1049,14 +1043,14 @@ impl DomainStore {
     }
 
     /// Gets the state trie paths in need of healing
-    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StorageError> {
+    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         let key = vec![SnapStateIndex::StateHealPaths as u8];
         self.backend
             .get_async(DBTable::SnapState.namespace(), key)
             .await?
             .map(|bytes| Vec::<(Nibbles, H256)>::decode(bytes.as_slice()))
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     /// Write a storage batch into the current storage snapshot
@@ -1065,9 +1059,9 @@ impl DomainStore {
         account_hash: H256,
         storage_keys: Vec<H256>,
         storage_values: Vec<U256>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         if storage_keys.len() != storage_values.len() {
-            return Err(StorageError::Custom(
+            return Err(StoreError::Custom(
                 "Storage keys and values length mismatch".to_string(),
             ));
         }
@@ -1095,11 +1089,11 @@ impl DomainStore {
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         if account_hashes.len() != storage_keys.len()
             || account_hashes.len() != storage_values.len()
         {
-            return Err(StorageError::Custom(
+            return Err(StoreError::Custom(
                 "Account hashes, keys, and values length mismatch".to_string(),
             ));
         }
@@ -1111,7 +1105,7 @@ impl DomainStore {
             .zip(storage_values.into_iter())
         {
             if keys.len() != values.len() {
-                return Err(StorageError::Custom(
+                return Err(StoreError::Custom(
                     "Storage keys and values length mismatch for account".to_string(),
                 ));
             }
@@ -1138,7 +1132,7 @@ impl DomainStore {
     pub async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = vec![SnapStateIndex::StateTrieRebuildCheckpoint as u8];
         let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
         self.backend
@@ -1149,17 +1143,17 @@ impl DomainStore {
     /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     pub async fn get_state_trie_rebuild_checkpoint(
         &self,
-    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StorageError> {
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         let key = vec![SnapStateIndex::StateTrieRebuildCheckpoint as u8];
         self.backend
             .get_async(DBTable::SnapState.namespace(), key)
             .await?
             .map(
-                |bytes| -> Result<(H256, [H256; STATE_TRIE_SEGMENTS]), StorageError> {
+                |bytes| -> Result<(H256, [H256; STATE_TRIE_SEGMENTS]), StoreError> {
                     let (root, segments_vec): (H256, Vec<H256>) = RLPDecode::decode(&bytes)?;
                     let segments: [H256; STATE_TRIE_SEGMENTS] =
                         segments_vec.try_into().map_err(|_| {
-                            StorageError::Custom("Invalid segments array size".to_string())
+                            StoreError::Custom("Invalid segments array size".to_string())
                         })?;
                     Ok((root, segments))
                 },
@@ -1171,7 +1165,7 @@ impl DomainStore {
     pub async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = vec![SnapStateIndex::StorageTrieRebuildPending as u8];
         let value = pending.encode_to_vec();
         self.backend
@@ -1182,14 +1176,14 @@ impl DomainStore {
     /// Get the accont hashes and roots of the storage tries awaiting rebuild
     pub async fn get_storage_trie_rebuild_pending(
         &self,
-    ) -> Result<Option<Vec<(H256, H256)>>, StorageError> {
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         let key = vec![SnapStateIndex::StorageTrieRebuildPending as u8];
         self.backend
             .get_async(DBTable::SnapState.namespace(), key)
             .await?
             .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
@@ -1197,7 +1191,7 @@ impl DomainStore {
         &self,
         start: H256,
         account_hash: H256,
-    ) -> Result<Vec<(H256, U256)>, StorageError> {
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
         // Create start key: account_hash + start
         let mut start_key = Vec::with_capacity(64);
         start_key.extend_from_slice(account_hash.as_bytes());
@@ -1240,7 +1234,7 @@ impl DomainStore {
         &self,
         bad_block: BlockHash,
         latest_valid: BlockHash,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let key = BlockHashRLP::from(bad_block).bytes().clone();
         let value = BlockHashRLP::from(latest_valid).bytes().clone();
         self.backend
@@ -1253,29 +1247,29 @@ impl DomainStore {
     pub async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
-    ) -> Result<Option<BlockHash>, StorageError> {
+    ) -> Result<Option<BlockHash>, StoreError> {
         let key = BlockHashRLP::from(block).bytes().clone();
         self.backend
             .get_async(DBTable::InvalidAncestors.namespace(), key)
             .await?
             .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from)
+            .map_err(StoreError::from)
     }
 
     /// Obtain block number for a given hash
     pub fn get_block_number_sync(
         &self,
         block_hash: BlockHash,
-    ) -> Result<Option<BlockNumber>, StorageError> {
+    ) -> Result<Option<BlockNumber>, StoreError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
 
         self.backend
             .get_sync(DBTable::BlockNumbers.namespace(), hash_key)?
-            .map(|bytes| -> Result<BlockNumber, StorageError> {
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
-                    .map_err(|_| StorageError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
                 Ok(BlockNumber::from_le_bytes(array))
             })
             .transpose()
@@ -1285,7 +1279,7 @@ impl DomainStore {
     pub fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<BlockHash>, StorageError> {
+    ) -> Result<Option<BlockHash>, StoreError> {
         let number_key = block_number.to_le_bytes().to_vec();
         match self
             .backend
@@ -1294,7 +1288,7 @@ impl DomainStore {
             Some(bytes) => {
                 let rlp = BlockHashRLP::from_bytes(bytes)
                     .to()
-                    .map_err(StorageError::from)?;
+                    .map_err(StoreError::from)?;
                 Ok(Some(rlp))
             }
             None => Ok(None),
@@ -1304,7 +1298,7 @@ impl DomainStore {
     pub async fn write_storage_trie_nodes_batch(
         &self,
         storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
         for (address_hash, nodes) in storage_trie_nodes {
             for (node_hash, node_data) in nodes {
@@ -1327,7 +1321,7 @@ impl DomainStore {
     pub async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
@@ -1346,7 +1340,7 @@ impl DomainStore {
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
-    pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StorageError> {
+    pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = Box::new(StorageBackendTrieDB::new_state_trie(self.backend.clone()));
         let result = Trie::open(trie_db, state_root);
         Ok(result)
@@ -1359,7 +1353,7 @@ impl DomainStore {
         &self,
         hashed_address: H256,
         storage_root: H256,
-    ) -> Result<Trie, StorageError> {
+    ) -> Result<Trie, StoreError> {
         let trie_db = Box::new(StorageBackendTrieDB::new_storage_trie(
             self.backend.clone(),
             hashed_address,
@@ -1370,7 +1364,7 @@ impl DomainStore {
     /// Obtain a state trie locked for reads from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
-    pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StorageError> {
+    pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = Box::new(StorageBackendLockedTrieDB::new_state_trie(
             self.backend.clone(),
         ));
@@ -1384,7 +1378,7 @@ impl DomainStore {
         &self,
         hashed_address: H256,
         storage_root: H256,
-    ) -> Result<Trie, StorageError> {
+    ) -> Result<Trie, StoreError> {
         let trie_db = Box::new(StorageBackendLockedTrieDB::new_storage_trie(
             self.backend.clone(),
             hashed_address,
@@ -1393,7 +1387,7 @@ impl DomainStore {
     }
 }
 
-impl DomainStore {
+impl Engine {
     // Helper methods for key generation
     pub fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
         vec![index as u8]

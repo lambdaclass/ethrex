@@ -1,5 +1,5 @@
 use super::StorageBackend;
-use crate::v2::domain::store::DBTable;
+use crate::engine::DBTable;
 use ethereum_types::H256;
 use ethrex_trie::{NodeHash, TrieDB, TrieError};
 use std::sync::Arc;

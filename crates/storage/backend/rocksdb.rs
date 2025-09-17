@@ -3,9 +3,10 @@ use rocksdb::{
     WriteBatch,
 };
 
-use crate::v2::domain::store::DBTable;
+use crate::engine::DBTable;
 
-use super::{BatchOp, StorageBackend, StorageError};
+use super::{BatchOp, StorageBackend};
+use crate::error::StoreError;
 use std::sync::Arc;
 
 /// RocksDB storage backend implementation
@@ -18,7 +19,7 @@ pub struct RocksDBBackend {
 }
 
 impl RocksDBBackend {
-    pub fn new(path: &str) -> Result<Self, StorageError> {
+    pub fn new(path: &str) -> Result<Self, StoreError> {
         let mut options = Options::default();
         options.create_if_missing(true);
         options.create_missing_column_families(true);
@@ -28,7 +29,7 @@ impl RocksDBBackend {
             .collect::<Vec<_>>();
 
         let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&options, path, tables)
-            .map_err(|e| StorageError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+            .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
         Ok(Self { db: Arc::new(db) })
     }
@@ -36,43 +37,44 @@ impl RocksDBBackend {
 
 #[async_trait::async_trait]
 impl StorageBackend for RocksDBBackend {
-    fn get_sync(&self, namespace: &str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StorageError> {
-        let cf = self.db.cf_handle(namespace).ok_or_else(|| {
-            StorageError::Custom(format!("Column family not found: {}", namespace))
-        })?;
+    fn get_sync(&self, namespace: &str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(namespace)
+            .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", namespace)))?;
 
-        self.db.get_cf(&cf, key).map_err(StorageError::from)
+        self.db.get_cf(&cf, key).map_err(StoreError::RocksdbError)
     }
 
     async fn get_async(
         &self,
         namespace: &str,
         key: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, StorageError> {
+    ) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self.db.clone();
         let namespace = namespace.to_string();
         tokio::task::spawn_blocking(move || {
             let cf = db.cf_handle(&namespace).ok_or_else(|| {
-                StorageError::Custom(format!("Column family not found: {}", namespace))
+                StoreError::Custom(format!("Column family not found: {}", namespace))
             })?;
 
-            db.get_cf(&cf, &key).map_err(StorageError::from)
+            db.get_cf(&cf, &key).map_err(StoreError::RocksdbError)
         })
         .await
-        .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn get_async_batch(
         &self,
         namespace: &str,
         keys: Vec<Vec<u8>>,
-    ) -> Result<Vec<Vec<u8>>, StorageError> {
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
         let db = self.db.clone();
         let namespace = namespace.to_string();
 
         tokio::task::spawn_blocking(move || {
             let cf = db.cf_handle(&namespace).ok_or_else(|| {
-                StorageError::Custom(format!("Column family not found: {}", namespace))
+                StoreError::Custom(format!("Column family not found: {}", namespace))
             })?;
 
             // Prepare keys with column family references
@@ -83,12 +85,10 @@ impl StorageBackend for RocksDBBackend {
 
             let mut values = Vec::new();
             for result in results {
-                match result.map_err(StorageError::from)? {
+                match result.map_err(StoreError::RocksdbError)? {
                     Some(value) => values.push(value),
                     None => {
-                        return Err(StorageError::Custom(
-                            "Key not found in bulk read".to_string(),
-                        ));
+                        return Err(StoreError::Custom("Key not found in bulk read".to_string()));
                     }
                 }
             }
@@ -96,49 +96,51 @@ impl StorageBackend for RocksDBBackend {
             Ok(values)
         })
         .await
-        .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    fn put_sync(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError> {
+    fn put_sync(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StoreError> {
         let db = self.db.clone();
         let namespace = namespace.to_string();
-        let cf = db.cf_handle(&namespace).ok_or_else(|| {
-            StorageError::Custom(format!("Column family not found: {}", namespace))
-        })?;
-        db.put_cf(&cf, &key, &value).map_err(StorageError::from)
+        let cf = db
+            .cf_handle(&namespace)
+            .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", namespace)))?;
+        db.put_cf(&cf, &key, &value)
+            .map_err(StoreError::RocksdbError)
     }
 
-    async fn put(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError> {
-        let db = self.db.clone();
-        let namespace = namespace.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&namespace).ok_or_else(|| {
-                StorageError::Custom(format!("Column family not found: {}", namespace))
-            })?;
-
-            db.put_cf(&cf, &key, &value).map_err(StorageError::from)
-        })
-        .await
-        .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    async fn delete(&self, namespace: &str, key: Vec<u8>) -> Result<(), StorageError> {
+    async fn put(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StoreError> {
         let db = self.db.clone();
         let namespace = namespace.to_string();
 
         tokio::task::spawn_blocking(move || {
             let cf = db.cf_handle(&namespace).ok_or_else(|| {
-                StorageError::Custom(format!("Column family not found: {}", namespace))
+                StoreError::Custom(format!("Column family not found: {}", namespace))
             })?;
 
-            db.delete_cf(&cf, &key).map_err(StorageError::from)
+            db.put_cf(&cf, &key, &value)
+                .map_err(StoreError::RocksdbError)
         })
         .await
-        .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    async fn batch_write(&self, ops: Vec<BatchOp>) -> Result<(), StorageError> {
+    async fn delete(&self, namespace: &str, key: Vec<u8>) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        let namespace = namespace.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let cf = db.cf_handle(&namespace).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: {}", namespace))
+            })?;
+
+            db.delete_cf(&cf, &key).map_err(StoreError::RocksdbError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    async fn batch_write(&self, ops: Vec<BatchOp>) -> Result<(), StoreError> {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -152,23 +154,23 @@ impl StorageBackend for RocksDBBackend {
                         value,
                     } => {
                         let cf = db.cf_handle(&namespace).ok_or_else(|| {
-                            StorageError::Custom(format!("Column family not found: {}", namespace))
+                            StoreError::Custom(format!("Column family not found: {}", namespace))
                         })?;
                         batch.put_cf(&cf, &key, &value);
                     }
                     BatchOp::Delete { namespace, key } => {
                         let cf = db.cf_handle(&namespace).ok_or_else(|| {
-                            StorageError::Custom(format!("Column family not found: {}", namespace))
+                            StoreError::Custom(format!("Column family not found: {}", namespace))
                         })?;
                         batch.delete_cf(&cf, &key);
                     }
                 }
             }
 
-            db.write(batch).map_err(StorageError::from)
+            db.write(batch).map_err(StoreError::RocksdbError)
         })
         .await
-        .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn range(
@@ -176,21 +178,21 @@ impl StorageBackend for RocksDBBackend {
         namespace: &str,
         start_key: Vec<u8>,
         end_key: Option<Vec<u8>>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError> {
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StoreError> {
         let db = self.db.clone();
         let namespace = namespace.to_string();
         let end_key = end_key.map(|k| k.to_vec());
 
         tokio::task::spawn_blocking(move || {
             let cf = db.cf_handle(&namespace).ok_or_else(|| {
-                StorageError::Custom(format!("Column family not found: {}", namespace))
+                StoreError::Custom(format!("Column family not found: {}", namespace))
             })?;
 
             let mut result = Vec::new();
             let iter = db.iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
 
             for item in iter {
-                let (key, value) = item.map_err(StorageError::from)?;
+                let (key, value) = item.map_err(StoreError::RocksdbError)?;
 
                 // Check if we've exceeded the end key
                 if let Some(ref end) = end_key {
@@ -205,6 +207,6 @@ impl StorageBackend for RocksDBBackend {
             Ok(result)
         })
         .await
-        .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 }

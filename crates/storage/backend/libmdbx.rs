@@ -1,4 +1,5 @@
-use super::{BatchOp, StorageBackend, StorageError};
+use super::{BatchOp, StorageBackend};
+use crate::error::StoreError;
 
 /// LibMDBX storage backend implementation
 ///
@@ -10,7 +11,7 @@ pub struct LibmdbxBackend {
 }
 
 impl LibmdbxBackend {
-    pub fn new(_path: &str) -> Result<Self, StorageError> {
+    pub fn new(_path: &str) -> Result<Self, StoreError> {
         // TODO: Implement LibMDBX initialization
         todo!("LibMDBX backend implementation pending")
     }
@@ -18,7 +19,7 @@ impl LibmdbxBackend {
 
 #[async_trait::async_trait]
 impl StorageBackend for LibmdbxBackend {
-    fn get_sync(&self, _namespace: &str, _key: Vec<u8>) -> Result<Option<Vec<u8>>, StorageError> {
+    fn get_sync(&self, _namespace: &str, _key: Vec<u8>) -> Result<Option<Vec<u8>>, StoreError> {
         todo!("LibMDBX get_sync implementation pending")
     }
 
@@ -26,7 +27,7 @@ impl StorageBackend for LibmdbxBackend {
         &self,
         _namespace: &str,
         _key: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, StorageError> {
+    ) -> Result<Option<Vec<u8>>, StoreError> {
         todo!("LibMDBX get_async implementation pending")
     }
 
@@ -34,16 +35,11 @@ impl StorageBackend for LibmdbxBackend {
         &self,
         _namespace: &str,
         _keys: Vec<Vec<u8>>,
-    ) -> Result<Vec<Vec<u8>>, StorageError> {
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
         todo!("LibMDBX get_async_batch implementation pending")
     }
 
-    fn put_sync(
-        &self,
-        _namespace: &str,
-        _key: Vec<u8>,
-        _value: Vec<u8>,
-    ) -> Result<(), StorageError> {
+    fn put_sync(&self, _namespace: &str, _key: Vec<u8>, _value: Vec<u8>) -> Result<(), StoreError> {
         todo!("LibMDBX put_sync implementation pending")
     }
 
@@ -52,15 +48,15 @@ impl StorageBackend for LibmdbxBackend {
         _namespace: &str,
         _key: Vec<u8>,
         _value: Vec<u8>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), StoreError> {
         todo!("LibMDBX put implementation pending")
     }
 
-    async fn delete(&self, _namespace: &str, _key: Vec<u8>) -> Result<(), StorageError> {
+    async fn delete(&self, _namespace: &str, _key: Vec<u8>) -> Result<(), StoreError> {
         todo!("LibMDBX delete implementation pending")
     }
 
-    async fn batch_write(&self, _ops: Vec<BatchOp>) -> Result<(), StorageError> {
+    async fn batch_write(&self, _ops: Vec<BatchOp>) -> Result<(), StoreError> {
         todo!("LibMDBX batch_write implementation pending")
     }
 
@@ -69,7 +65,7 @@ impl StorageBackend for LibmdbxBackend {
         _namespace: &str,
         _start_key: Vec<u8>,
         _end_key: Option<Vec<u8>>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError> {
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StoreError> {
         todo!("LibMDBX range implementation pending")
     }
 }

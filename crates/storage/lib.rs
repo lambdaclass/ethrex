@@ -2,10 +2,9 @@
 mod rlp;
 mod store;
 mod utils;
+mod engine;
 
-// New v2 architecture - experimental
-pub mod v2;
-
+pub mod backend;
 pub mod error;
 pub use store::{
     AccountUpdatesList, EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, UpdateBatch,

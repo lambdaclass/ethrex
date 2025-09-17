@@ -1,4 +1,5 @@
-use super::{BatchOp, StorageBackend, StorageError};
+use super::{BatchOp, StorageBackend};
+use crate::error::StoreError;
 use std::collections::{BTreeMap, HashMap};
 use std::panic::RefUnwindSafe;
 use std::sync::{Arc, Mutex};
@@ -25,11 +26,11 @@ impl InMemoryBackend {
         Self::default()
     }
 
-    fn ensure_namespace_exists(&self, namespace: &str) -> Result<(), StorageError> {
+    fn ensure_namespace_exists(&self, namespace: &str) -> Result<(), StoreError> {
         let mut namespaces = self
             .namespaces
             .lock()
-            .map_err(|_| StorageError::Custom("Failed to acquire lock".to_string()))?;
+            .map_err(|_| StoreError::Custom("Failed to acquire lock".to_string()))?;
 
         if !namespaces.contains_key(namespace) {
             namespaces.insert(namespace.to_string(), BTreeMap::new());
@@ -41,7 +42,7 @@ impl InMemoryBackend {
 
 #[async_trait::async_trait]
 impl StorageBackend for InMemoryBackend {
-    fn get_sync(&self, namespace: &str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StorageError> {
+    fn get_sync(&self, namespace: &str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StoreError> {
         todo!()
     }
 
@@ -49,7 +50,7 @@ impl StorageBackend for InMemoryBackend {
         &self,
         namespace: &str,
         key: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, StorageError> {
+    ) -> Result<Option<Vec<u8>>, StoreError> {
         todo!()
     }
 
@@ -57,23 +58,23 @@ impl StorageBackend for InMemoryBackend {
         &self,
         namespace: &str,
         keys: Vec<Vec<u8>>,
-    ) -> Result<Vec<Vec<u8>>, StorageError> {
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
         todo!()
     }
 
-    fn put_sync(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError> {
+    fn put_sync(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StoreError> {
         todo!()
     }
 
-    async fn put(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StorageError> {
+    async fn put(&self, namespace: &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), StoreError> {
         todo!()
     }
 
-    async fn delete(&self, namespace: &str, key: Vec<u8>) -> Result<(), StorageError> {
+    async fn delete(&self, namespace: &str, key: Vec<u8>) -> Result<(), StoreError> {
         todo!()
     }
 
-    async fn batch_write(&self, ops: Vec<BatchOp>) -> Result<(), StorageError> {
+    async fn batch_write(&self, ops: Vec<BatchOp>) -> Result<(), StoreError> {
         todo!()
     }
 
@@ -82,7 +83,7 @@ impl StorageBackend for InMemoryBackend {
         namespace: &str,
         start_key: Vec<u8>,
         end_key: Option<Vec<u8>>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError> {
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StoreError> {
         todo!()
     }
 }
