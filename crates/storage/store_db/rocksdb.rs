@@ -13,6 +13,7 @@ use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode,
     MultiThreaded, Options, WriteBatch,
 };
+use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc};
 use tracing::info;
 
@@ -111,6 +112,14 @@ const CF_STORAGE_SNAPSHOT: &str = "storage_snapshot";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(bad_block).bytes().clone()`
 /// - [`Vec<u8>`] = `BlockHashRLP::from(latest_valid).bytes().clone()`
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UpdateLog {
+    forwards_state: Vec<(Vec<u8>, Vec<u8>)>,
+    forwards_storage: Vec<(Vec<u8>, Vec<u8>)>,
+    backwards_state: Vec<(Vec<u8>, Vec<u8>)>,
+    backwards_storage: Vec<(Vec<u8>, Vec<u8>)>,
+}
 
 #[derive(Debug)]
 pub struct Store {
@@ -448,6 +457,12 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let from_blockhash = update_batch.blocks.first().unwrap().header.parent_hash;
+        let from_state = self
+            .get_block_header_by_hash(from_blockhash)?
+            .unwrap()
+            .state_root;
+        let to_state = update_batch.blocks.last().unwrap().header.state_root;
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -477,19 +492,59 @@ impl StoreEngine for Store {
             let _span = tracing::trace_span!("Block DB update").entered();
             let mut batch = WriteBatch::default();
 
-            for (node_hash, node_data) in update_batch.account_updates {
-                batch.put_cf(&cf_state, node_hash.as_ref(), node_data);
+            let mut oldnodes = Vec::with_capacity(update_batch.account_updates.len());
+            let mut oldstorages = Vec::with_capacity(update_batch.storage_updates.len());
+
+            for (nibbles, node_data) in update_batch.account_updates.clone() {
+                if let Some(oldnode) = db.get_cf(&cf_state, nibbles.as_ref())? {
+                    oldnodes.push((nibbles.as_ref().to_vec(), oldnode));
+                }
+
+                batch.put_cf(&cf_state, nibbles.as_ref(), node_data);
             }
 
-            for (address_hash, storage_updates) in update_batch.storage_updates {
-                for (node_hash, node_data) in storage_updates {
-                    // Key: address_hash + node_hash
+            for (address_hash, storage_updates) in update_batch.storage_updates.clone() {
+                for (nibbles, node_data) in storage_updates {
+                    // Key: address_hash + nibbles
                     let mut key = Vec::with_capacity(64);
                     key.extend_from_slice(address_hash.as_bytes());
-                    key.extend_from_slice(node_hash.as_ref());
+                    key.extend_from_slice(nibbles.as_ref());
+                    if let Some(oldnode) = db.get_cf(&cf_state, &key)? {
+                        oldstorages.push((key.clone(), oldnode));
+                    }
                     batch.put_cf(&cf_storage, key, node_data);
                 }
             }
+
+            let revert = UpdateLog {
+                forwards_state: update_batch
+                    .account_updates
+                    .into_iter()
+                    .map(|(nibbles, node)| (nibbles.as_ref().to_vec(), node))
+                    .collect(),
+                forwards_storage: update_batch
+                    .storage_updates
+                    .into_iter()
+                    .flat_map(|(address_hash, nodes)| {
+                        nodes
+                            .into_iter()
+                            .map(move |(nibbles, node)| {
+                                let mut key = Vec::with_capacity(64);
+                                key.extend_from_slice(address_hash.as_bytes());
+                                key.extend_from_slice(nibbles.as_ref());
+                                (nibbles.as_ref().to_vec(), node)
+                            })
+                    })
+                    .collect(),
+                backwards_state: oldnodes,
+                backwards_storage: oldstorages,
+            };
+
+            std::fs::write(
+                format!("./rollbacks/{from_state:x}_{to_state:x}"),
+                serde_json::to_string(&revert).unwrap(),
+            )
+            .unwrap();
 
             for block in update_batch.blocks {
                 let block_number = block.header.number;
