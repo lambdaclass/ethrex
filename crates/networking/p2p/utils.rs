@@ -115,11 +115,11 @@ pub fn dump_accounts_to_file(
     accounts: Vec<(H256, AccountState)>,
 ) -> Result<(), DumpError> {
     cfg_if::cfg_if! {
-            if #[cfg(feature = "rocksdb")] {
-                dump_to_rocks_db(path, accounts.into_iter().map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())).collect::<Vec<_>>())
-            } else {
-    dump_to_file(path, accounts.encode_to_vec())
-    }
+        if #[cfg(feature = "rocksdb")] {
+            dump_to_rocks_db(path, accounts.into_iter().map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())).collect::<Vec<_>>())
+        } else {
+            dump_to_file(path, accounts.encode_to_vec())
+        }
     }
 }
 
