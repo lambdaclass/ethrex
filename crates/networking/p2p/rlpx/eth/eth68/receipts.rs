@@ -44,10 +44,14 @@ impl Receipts68 {
             .map(|receipts| receipts.iter().map(Receipt::from).collect())
             .collect()
     }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
+    }
 }
 
 impl RLPxMessage for Receipts68 {
-    const CODE: u8 = 0x0F;
+    const CODE: u8 = 0x10;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];

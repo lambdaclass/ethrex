@@ -41,8 +41,8 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts},
-            status::StatusMessage,
+            receipts::{GetReceipts, Receipts68, Receipts69},
+            status::{StatusMessage68, StatusMessage69},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
@@ -547,9 +547,17 @@ where
 {
     // Sending eth Status if peer supports it
     if let Some(eth) = state.negotiated_eth_capability.clone() {
-        let status = StatusMessage::new(&state.storage, &eth).await?;
+        let status = match eth.version {
+            68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
+            69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            ver => {
+                return Err(RLPxError::HandshakeError(format!(
+                    "Invalid eth version {ver}"
+                )));
+            }
+        };
         log_peer_debug(&state.node, "Sending status");
-        send(state, Message::Status(status)).await?;
+        send(state, status).await?;
         // The next immediate message in the ETH protocol is the
         // status, reference here:
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
@@ -558,8 +566,12 @@ where
             None => return Err(RLPxError::Disconnected()),
         };
         match msg {
-            Message::Status(msg_data) => {
-                log_peer_debug(&state.node, "Received Status");
+            Message::Status68(msg_data) => {
+                log_peer_debug(&state.node, "Received Status(68)");
+                backend::validate_status(msg_data, &state.storage, &eth).await?
+            }
+            Message::Status69(msg_data) => {
+                log_peer_debug(&state.node, "Received Status(69)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -774,7 +786,12 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::Pong(_) => {
             // We ignore received Pong messages
         }
-        Message::Status(msg_data) => {
+        Message::Status68(msg_data) => {
+            if let Some(eth) = &state.negotiated_eth_capability {
+                backend::validate_status(msg_data, &state.storage, eth).await?
+            };
+        }
+        Message::Status69(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 backend::validate_status(msg_data, &state.storage, eth).await?
             };
@@ -832,8 +849,16 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 for hash in block_hashes.iter() {
                     receipts.push(state.storage.get_receipts_for_block(hash)?);
                 }
-                let response = Receipts::new(id, receipts, eth)?;
-                send(state, Message::Receipts(response)).await?;
+                let response = match eth.version {
+                    68 => Message::Receipts68(Receipts68::new(id, receipts)),
+                    69 => Message::Receipts69(Receipts69::new(id, receipts)),
+                    ver => {
+                        return Err(RLPxError::InternalError(format!(
+                            "Invalid eth version {ver}"
+                        )));
+                    }
+                };
+                send(state, response).await?;
             }
         }
         Message::BlockRangeUpdate(update) => {
@@ -913,7 +938,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         | message @ Message::TrieNodes(_)
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
-        | message @ Message::Receipts(_) => {
+        | message @ Message::Receipts68(_)
+        | message @ Message::Receipts69(_) => {
             state
                 .backend_channel
                 .as_mut()

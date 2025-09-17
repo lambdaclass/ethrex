@@ -5,8 +5,8 @@ use crate::rlpx::{error::RLPxError, p2p::Capability};
 
 use super::status::StatusMessage;
 
-pub async fn validate_status(
-    msg_data: StatusMessage,
+pub async fn validate_status<ST: StatusMessage>(
+    msg_data: ST,
     storage: &Store,
     eth_capability: &Capability,
 ) -> Result<(), RLPxError> {
@@ -64,7 +64,6 @@ pub async fn validate_status(
 mod tests {
     use super::validate_status;
     use crate::rlpx::eth::eth68::status::StatusMessage68;
-    use crate::rlpx::eth::status::StatusMessage;
     use crate::rlpx::p2p::Capability;
     use ethrex_common::{
         H256, U256,
@@ -97,14 +96,14 @@ mod tests {
         let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 
         let eth = Capability::eth(68);
-        let message = StatusMessage::StatusMessage68(StatusMessage68 {
+        let message = StatusMessage68 {
             eth_version: eth.version,
             network_id: 3503995874084926,
             total_difficulty,
             block_hash: H256::random(),
             genesis: genesis_hash,
             fork_id,
-        });
+        };
         let result = validate_status(message, &storage, &eth).await;
         assert!(result.is_ok());
     }
