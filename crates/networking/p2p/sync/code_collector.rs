@@ -3,6 +3,7 @@ use crate::sync::SyncError;
 use crate::utils::{dump_to_file, get_code_hashes_snapshot_file};
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
+use std::collections::HashSet;
 
 /// Size of the buffer to store code hashes before flushing to a file
 const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
@@ -10,7 +11,7 @@ const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 /// Manages code hash collection and async file writing
 pub struct CodeHashCollector {
     // Buffer to store code hashes
-    buffer: Vec<H256>,
+    buffer: HashSet<H256>,
     // Directory to store code hashes
     snapshots_dir: String,
     // Index of the current code hash file
@@ -26,7 +27,7 @@ impl CodeHashCollector {
     pub fn new(initial_index: u64, snapshots_dir: String) -> Self {
         let (sender, receiver) = tokio::sync::mpsc::channel(100);
         Self {
-            buffer: Vec::new(),
+            buffer: HashSet::new(),
             snapshots_dir,
             file_index: initial_index,
             sender,
@@ -36,7 +37,7 @@ impl CodeHashCollector {
 
     /// Adds a code hash to the buffer
     pub fn add(&mut self, hash: H256) {
-        self.buffer.push(hash);
+        self.buffer.insert(hash);
     }
 
     /// Extends the buffer with a list of code hashes
@@ -96,7 +97,7 @@ impl CodeHashCollector {
     }
 
     /// Flushes the given buffer to a file
-    fn flush_buffer(&mut self, buffer: Vec<H256>) {
+    fn flush_buffer(&mut self, buffer: HashSet<H256>) {
         let (encoded_buffer, file_name) =
             prepare_bytecode_buffer_for_dump(buffer, self.file_index, self.snapshots_dir.clone());
 
@@ -109,15 +110,14 @@ impl CodeHashCollector {
     }
 }
 
-/// Sort and deduplicate code hashes and encode them to a vector
+/// Encode code hashes to a vector
 fn prepare_bytecode_buffer_for_dump(
-    buffer: Vec<H256>,
+    buffer: HashSet<H256>,
     file_index: u64,
     dir: String,
 ) -> (Vec<u8>, String) {
-    let mut sorted_buffer = buffer;
+    let mut sorted_buffer: Vec<H256> = buffer.into_iter().collect();
     sorted_buffer.sort();
-    sorted_buffer.dedup();
     let encoded = sorted_buffer.encode_to_vec();
     let filename = get_code_hashes_snapshot_file(dir, file_index);
     (encoded, filename)
