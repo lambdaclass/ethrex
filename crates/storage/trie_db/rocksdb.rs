@@ -111,12 +111,12 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
 
         // Test data
-        let node_hash = Nibbles::from_hex([1]);
+        let node_hash = Nibbles::from_hex(vec![1]);
         let node_data = vec![1, 2, 3, 4, 5];
 
         // Test put_batch
         trie_db
-            .put_batch(vec![(node_hash, node_data.clone())])
+            .put_batch(vec![(node_hash.clone(), node_data.clone())])
             .unwrap();
 
         // Test get
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(retrieved_data, node_data);
 
         // Test get nonexistent
-        let nonexistent_hash = Nibbles::from([2]);
+        let nonexistent_hash = Nibbles::from_hex(vec![2]);
         assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
     }
 
@@ -152,12 +152,12 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", Some(address)).unwrap();
 
         // Test data
-        let node_hash = Nibbles::from_hex([1]);
+        let node_hash = Nibbles::from_hex(vec![1]);
         let node_data = vec![1, 2, 3, 4, 5];
 
         // Test put_batch
         trie_db
-            .put_batch(vec![(node_hash, node_data.clone())])
+            .put_batch(vec![(node_hash.clone(), node_data.clone())])
             .unwrap();
 
         // Test get
@@ -189,9 +189,9 @@ mod tests {
 
         // Test data
         let batch_data = vec![
-            (Nibbles::from_hex([1]), vec![1, 2, 3]),
-            (Nibbles::from_hex([1]), vec![4, 5, 6]),
-            (Nibbles::from_hex([1]), vec![7, 8, 9]),
+            (Nibbles::from_hex(vec![1]), vec![1, 2, 3]),
+            (Nibbles::from_hex(vec![1]), vec![4, 5, 6]),
+            (Nibbles::from_hex(vec![1]), vec![7, 8, 9]),
         ];
 
         // Test batch put
