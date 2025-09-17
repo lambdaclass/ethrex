@@ -111,12 +111,6 @@ pub fn default_datadir() -> String {
 
 // TODO: Use PathBuf instead of strings
 pub fn init_datadir(data_dir: &str) -> String {
-    let project_dir = ProjectDirs::from("", "", data_dir).expect("Couldn't find home directory");
-    let data_dir = project_dir
-        .data_local_dir()
-        .to_str()
-        .expect("invalid data directory")
-        .to_owned();
     let datadir = PathBuf::from(data_dir);
     if datadir.exists() {
         if !datadir.is_dir() {
