@@ -10,12 +10,12 @@ use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
 
+use crate::peer_handler::DumpError;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
 };
-
-use crate::peer_handler::DumpError;
+use tracing::error;
 
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
@@ -74,28 +74,17 @@ pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -
 }
 
 #[cfg(feature = "rocksdb")]
-pub fn dump_to_rocks_db(path: String, contents: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), DumpError> {
+pub fn dump_to_rocks_db(
+    path: String,
+    contents: Vec<(Vec<u8>, Vec<u8>)>,
+) -> Result<(), rocksdb::Error> {
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
-    writer
-        .open(std::path::Path::new(&path))
-        .map_err(|_| DumpError {
-            path: path.clone(),
-            contents: Vec::new(),
-            error: std::io::ErrorKind::Other,
-        })?;
+    writer.open(std::path::Path::new(&path))?;
     for values in contents {
-        writer.put(values.0, values.1).map_err(|_| DumpError {
-            path: path.clone(),
-            contents: Vec::new(),
-            error: std::io::ErrorKind::Other,
-        })?;
+        writer.put(values.0, values.1)?;
     }
-    writer.finish().map_err(|_| DumpError {
-        path: path.clone(),
-        contents: Vec::new(),
-        error: std::io::ErrorKind::Other,
-    })
+    writer.finish()
 }
 
 pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
@@ -116,7 +105,19 @@ pub fn dump_accounts_to_file(
 ) -> Result<(), DumpError> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rocksdb")] {
-            dump_to_rocks_db(path, accounts.into_iter().map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())).collect::<Vec<_>>())
+            dump_to_rocks_db(
+                path.clone(),
+                accounts
+                    .into_iter()
+                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())
+                ).collect::<Vec<_>>()
+            )
+                .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+                .map_err(|_| DumpError {
+                    path,
+                    contents: Vec::new(),
+                    error: std::io::ErrorKind::Other,
+                })
         } else {
             dump_to_file(path, accounts.encode_to_vec())
         }
