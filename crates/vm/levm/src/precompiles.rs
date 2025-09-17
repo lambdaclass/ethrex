@@ -12,8 +12,6 @@ use ethrex_common::{
     utils::u256_from_big_endian,
 };
 use ethrex_crypto::blake2f::blake2b_f;
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use k256::elliptic_curve::Field;
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     elliptic_curve::{
@@ -295,6 +293,73 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
+pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    // Use the ethrex implementation of ecrecover
+    // Switch to the sp1 implementation of ecrecover when we are in SP1 environment
+    if cfg!(feature = "sp1") {
+        ecrecover_sp1(calldata, gas_remaining, _fork)
+    } else {
+        ecrecover_ethrex(calldata, gas_remaining, _fork)
+    }
+}
+
+/// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
+/// Given a hash, a Signature and a recovery Id, returns the public key recovered by secp256k1
+pub fn ecrecover_ethrex(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    use secp256k1::{
+        Message,
+        ecdsa::{RecoverableSignature, RecoveryId},
+    };
+    let gas_cost = ECRECOVER_COST;
+
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+
+    // If calldata does not reach the required length, we should fill the rest with zeros
+    let calldata = fill_with_zeros(calldata, 128);
+
+    // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
+    let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let Ok(message) = Message::from_digest_slice(hash) else {
+        return Ok(Bytes::new());
+    };
+
+    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+
+    // The Recovery identifier is expected to be 27 or 28, any other value is invalid
+    if !(v == U256::from(27) || v == U256::from(28)) {
+        return Ok(Bytes::new());
+    }
+
+    let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
+    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
+    let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc.into()) else {
+        return Ok(Bytes::new());
+    };
+
+    // signature is made up of the parameters r and s
+    let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
+    let Ok(signature) = RecoverableSignature::from_compact(sig, recovery_id) else {
+        return Ok(Bytes::new());
+    };
+
+    // Recover the address using secp256k1
+    let Ok(public_key) = signature.recover(&message) else {
+        return Ok(Bytes::new());
+    };
+
+    let mut public_key = public_key.serialize_uncompressed();
+
+    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
+    keccak256(&mut public_key[1..65]);
+
+    // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
+    let mut output = vec![0u8; 12];
+    output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::Slicing)?);
+
+    Ok(Bytes::from(output.to_vec()))
+}
+
+
 /// ## ECRECOVER precompile.
 /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
 ///
@@ -304,7 +369,9 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecrecover_sp1(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+    
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;
@@ -1119,6 +1186,8 @@ pub fn bls12_g1msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
+    use k256::elliptic_curve::Field;
+
     if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
         return Err(PrecompileError::ParsingInputError.into());
     }
