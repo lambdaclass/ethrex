@@ -93,7 +93,7 @@ impl Store {
             EngineType::InMemory => Arc::new(InMemoryBackend::new()),
         };
 
-        let domain_store = DomainStore::new(backend)?;
+        let domain_store = DomainStore::new(backend);
 
         let store = Self {
             engine: Arc::new(domain_store),
@@ -345,8 +345,7 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
         let block_number = self.get_latest_block_number().await?;
         let block_header = self
-            .get_block_header(block_number)
-            .map_err(StoreError::from)?
+            .get_block_header(block_number)?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
 
         Ok(ForkId::new(

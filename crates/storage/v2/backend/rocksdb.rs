@@ -3,7 +3,7 @@ use rocksdb::{
     WriteBatch,
 };
 
-use crate::v2::schema::DBTable;
+use crate::v2::domain::store::DBTable;
 
 use super::{BatchOp, StorageBackend, StorageError};
 use std::sync::Arc;
