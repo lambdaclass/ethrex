@@ -14,7 +14,8 @@ for ((i=1; i<=1000; i++)); do
         --sim "$SIM" \
         --sim.limit "$SIM_LIMIT" \
         --sim.parallelism 16 \
-        --sim.loglevel 1
+        --sim.loglevel 1 \
+        --docker.output
 
     echo "[$i/1000] Command completed at $(date)"
 done
