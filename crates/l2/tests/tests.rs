@@ -1767,7 +1767,7 @@ fn bridge_owner_private_key() -> SecretKey {
     SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
 }
 
-// FIXME: Remove this before merging
+// Keep #[allow(dead_code)] to suppress warnings if FeesDetails is not used in all test configurations or future refactors.
 #[allow(dead_code)]
 #[derive(Debug)]
 struct FeesDetails {
