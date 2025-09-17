@@ -4,9 +4,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::panic::RefUnwindSafe;
 use std::sync::{Arc, Mutex};
 
-/// Map of namespaces to their key-value pairs
-pub type NamespaceMap = HashMap<String, BTreeMap<Vec<u8>, Vec<u8>>>;
-
 /// In-memory storage backend implementation
 ///
 /// This is the simplest possible implementation of StorageBackend.
@@ -15,7 +12,7 @@ pub type NamespaceMap = HashMap<String, BTreeMap<Vec<u8>, Vec<u8>>>;
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryBackend {
     // Each namespace is a separate BTreeMap for ordered key iteration
-    namespaces: Arc<Mutex<NamespaceMap>>,
+    namespaces: HashMap<String, Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>>,
 }
 
 // Implement RefUnwindSafe manually since Mutex<T> doesn't automatically implement it
@@ -24,19 +21,6 @@ impl RefUnwindSafe for InMemoryBackend {}
 impl InMemoryBackend {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    fn ensure_namespace_exists(&self, namespace: &str) -> Result<(), StoreError> {
-        let mut namespaces = self
-            .namespaces
-            .lock()
-            .map_err(|_| StoreError::Custom("Failed to acquire lock".to_string()))?;
-
-        if !namespaces.contains_key(namespace) {
-            namespaces.insert(namespace.to_string(), BTreeMap::new());
-        }
-
-        Ok(())
     }
 }
 
