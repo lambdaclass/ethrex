@@ -7,8 +7,8 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
+use ethrex_common::H256;
 use ethrex_common::{Address, U256};
-use keccak_hash::H256;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,

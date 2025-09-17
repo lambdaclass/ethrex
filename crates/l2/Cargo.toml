@@ -33,7 +33,6 @@ hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 envy = "0.4.2"
 rand.workspace = true
 thiserror.workspace = true
