@@ -9,7 +9,7 @@ use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::debug::execution_witness::execution_witness_from_rpc_chain_config;
 use ethrex_vm::{DynVmDatabase, Evm, GuestProgramStateWrapper, backends::levm::LEVM};
-use eyre::{Context, Ok};
+use eyre::Context;
 use guest_program::input::ProgramInput;
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
@@ -22,9 +22,32 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
     #[cfg(not(feature = "l2"))]
     let input = get_l1_input(cache)?;
 
-    ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+    // Use catch_unwind to capture panics
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        ethrex_prover_lib::execute(backend, input)
+    }));
 
-    Ok(())
+    match result {
+        Ok(exec_result) => {
+            exec_result.map_err(|e| eyre::Error::msg(format!("Execution failed: {}", e)))?;
+            Ok(())
+        }
+        Err(panic_info) => {
+            // Try to extract meaningful error message from panic info
+            let panic_msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else {
+                format!("Unknown panic occurred during execution with backend: {:?}", backend)
+            };
+            
+            Err(eyre::Error::msg(format!(
+                "Execution panicked with backend {:?}: {}",
+                backend, panic_msg
+            )))
+        }
+    }
 }
 
 pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
@@ -33,12 +56,41 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
     #[cfg(not(feature = "l2"))]
     let input = get_l1_input(cache)?;
 
-    catch_unwind(AssertUnwindSafe(|| {
-        ethrex_prover_lib::prove(backend, input, false).map_err(|e| eyre::Error::msg(e.to_string()))
-    }))
-    .map_err(|_e| eyre::Error::msg("SP1 panicked while proving"))??;
+    // Use catch_unwind to capture panics
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        ethrex_prover_lib::prove(backend, input, false)
+    }));
 
-    Ok(())
+    match result {
+        Ok(prove_result) => {
+            prove_result.map_err(|e| eyre::Error::msg(format!("Proving failed: {}", e)))?;
+            Ok(())
+        }
+        Err(panic_info) => {
+            // Try to extract meaningful error message from panic info
+            let panic_msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else {
+                "Unknown panic occurred".to_string()
+            };
+            
+            // Provide more specific error messages based on different backends
+            let backend_name = match backend {
+                Backend::Exec => "Exec",
+                #[cfg(feature = "sp1")]
+                Backend::SP1 => "SP1",
+                #[cfg(feature = "risc0")]
+                Backend::RISC0 => "RISC0",
+            };
+            
+            Err(eyre::Error::msg(format!(
+                "{} backend panicked while proving: {}",
+                backend_name, panic_msg
+            )))
+        }
+    }
 }
 
 pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {

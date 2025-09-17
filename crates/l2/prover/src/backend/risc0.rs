@@ -29,39 +29,79 @@ pub enum Error {
     ZkvmDyn(#[from] anyhow::Error),
 }
 
+/// Execute a program using the RISC0 backend with panic handling.
+/// 
+/// This function executes the zkVM program and catches any panics that may occur
+/// during execution, converting them to proper error results.
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
-    let env = ExecutorEnv::builder().write(&bytes.as_slice())?.build()?;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
+        let env = ExecutorEnv::builder().write(&bytes.as_slice())?.build()?;
 
-    let executor = default_executor();
+        let executor = default_executor();
 
-    let now = Instant::now();
-    let _session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
-    let elapsed = now.elapsed();
+        let now = Instant::now();
+        let _session_info = executor.execute(env, ZKVM_RISC0_PROGRAM_ELF)?;
+        let elapsed = now.elapsed();
 
-    info!("Successfully generated session info in {:.2?}", elapsed);
-    Ok(())
+        info!("Successfully generated session info in {:.2?}", elapsed);
+        Ok(())
+    }));
+    
+    match result {
+        Ok(exec_result) => exec_result,
+        Err(panic_info) => {
+            let panic_msg = extract_panic_message(&panic_info);
+            
+            Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("RISC0 execution panicked: {}. This may be due to insufficient memory or invalid program input.", panic_msg)
+            )))
+        }
+    }
 }
 
+/// Generate a proof using the RISC0 backend with panic handling.
+/// 
+/// This function generates a zkVM proof and catches any panics that may occur
+/// during proving, converting them to proper error results.
 pub fn prove(
     input: ProgramInput,
     _aligned_mode: bool,
 ) -> Result<Receipt, Box<dyn std::error::Error>> {
-    let mut stdout = Vec::new();
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<Receipt, Box<dyn std::error::Error>> {
+        let mut stdout = Vec::new();
 
-    let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
-    let env = ExecutorEnv::builder()
-        .stdout(&mut stdout)
-        .write(&bytes.as_slice())?
-        .build()?;
+        let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
+        let env = ExecutorEnv::builder()
+            .stdout(&mut stdout)
+            .write(&bytes.as_slice())?
+            .build()?;
 
-    let prover = default_prover();
+        let prover = default_prover();
 
-    // contains the receipt along with statistics about execution of the guest
-    let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &ProverOpts::groth16())?;
+        // Generate proof using groth16 proving options
+        let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &ProverOpts::groth16())?;
 
-    info!("Successfully generated execution receipt.");
-    Ok(prove_info.receipt)
+        info!("Successfully generated execution receipt.");
+        Ok(prove_info.receipt)
+    }));
+    
+    match result {
+        Ok(prove_result) => prove_result,
+        Err(panic_info) => {
+            let panic_msg = extract_panic_message(&panic_info);
+            
+            Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("RISC0 proving (groth16 mode) panicked: {}. This may be due to insufficient memory, invalid program input, or zkVM constraints violation.", panic_msg)
+            )))
+        }
+    }
 }
 
 pub fn verify(receipt: &Receipt) -> Result<(), Error> {
@@ -110,4 +150,15 @@ fn encode_seal(receipt: &Receipt) -> Result<Vec<u8>, Error> {
     selector_seal.extend_from_slice(selector);
     selector_seal.extend_from_slice(receipt.seal.as_ref());
     Ok(selector_seal)
+}
+
+/// Extract a meaningful error message from panic information.
+fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = panic_info.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+        s.to_string()
+    } else {
+        "Unknown panic occurred".to_string()
+    }
 }
