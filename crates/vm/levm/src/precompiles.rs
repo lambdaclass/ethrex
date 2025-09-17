@@ -296,6 +296,8 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // Use the ethrex implementation of ecrecover
     // Switch to the sp1 implementation of ecrecover when we are in SP1 environment
+    
+    // TODO: change this when we have a way to detect SP1 environment
     if cfg!(feature = "sp1") {
         ecrecover_sp1(calldata, gas_remaining, _fork)
     } else {
