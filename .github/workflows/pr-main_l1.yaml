@@ -233,6 +233,9 @@ jobs:
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
 
+      - name: Run Hive Flaky Test
+        run: chmod +x hive && bash .github/scripts/run_hive_flaky_test.sh
+        
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
