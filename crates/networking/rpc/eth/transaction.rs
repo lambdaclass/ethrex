@@ -239,7 +239,7 @@ impl RpcHandler for GetTransactionByHashRequest {
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        info!(
+        debug!(
             "Requested transaction with hash: {:#x}",
             self.transaction_hash,
         );
@@ -264,10 +264,6 @@ impl RpcHandler for GetTransactionByHashRequest {
             };
             RpcTransaction::build(tx, Some(0), BlockHash::default(), Some(0))?
         };
-        info!(
-            "Supplying transaction with hash {:#x}",
-            self.transaction_hash
-        );
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
