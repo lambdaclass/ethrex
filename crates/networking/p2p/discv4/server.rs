@@ -370,6 +370,8 @@ impl DiscoveryServer {
         // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
 
+        info!("Sending {} neighbors to {}", neighbors.len(), node.udp_addr());
+
         let msg = Message::Neighbors(NeighborsMessage::new(neighbors, expiration));
 
         self.send(msg, node.udp_addr()).await?;
