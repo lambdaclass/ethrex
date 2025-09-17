@@ -854,9 +854,12 @@ impl Syncer {
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
-                        let mut trie = store_clone.open_state_trie(computed_state_root)?;
-            let computed_state_root =
-                insert_accounts_into_db(store.clone(), &mut storage_accounts).await?;
+            let computed_state_root = insert_accounts_into_db(
+                store.clone(),
+                &mut storage_accounts,
+                &account_state_snapshots_dir,
+            )
+            .await?;
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
