@@ -856,7 +856,9 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     })
                     .await
                     .map_err(|_| {
-                        RLPxError::InternalError("Receipt retrieval task was cancelled or panicked".to_string())
+                        RLPxError::InternalError(
+                            "Receipt retrieval task was cancelled or panicked".to_string(),
+                        )
                     })??;
                 let response = match eth.version {
                     68 => Message::Receipts68(Receipts68::new(id, receipts)),
