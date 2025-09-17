@@ -1595,11 +1595,13 @@ impl PeerHandler {
                 .remove(&account_done);
         }
 
-        while completed_tasks < task_count {
+        // Dropping the task sender so that the recv returns None
+        drop(task_sender);
+
+        loop {
             match task_receiver.recv().await {
                 None => break,
                 Some(result) => {
-                    completed_tasks += 1;
                     self.peer_table.free_peer(result.peer_id).await;
                 }
             }
