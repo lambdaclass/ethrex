@@ -101,11 +101,11 @@ jobs:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
         run: |
-          FLAGS='--sim.parallelism 8 --sim.loglevel 1'
+          FLAGS='--sim.parallelism 4 --sim.loglevel 1'
           if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
             FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
-            FLAGS+=" --sim.buildarg branch=main"
-            FLAGS+=" --client.timelimit=20s"
+            FLAGS+=" --sim.buildarg branch=v5.0.0"
+            FLAGS+=" --client.checktimelimit=180s"
           fi
           if [[ -n "$SIM_LIMIT" ]]; then
             FLAGS+=" --sim.limit \"$SIM_LIMIT\""
