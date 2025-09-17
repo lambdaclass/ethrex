@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758121137623,
+  "lastUpdate": 1758123670301,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15055,6 +15055,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169472430600,
             "range": "± 342677130",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a429e2dcec07d64e585e9346efa1b0b7b3b6142c",
+          "message": "refactor(l1): decouple version-specific rlpx messages (#4395)\n\n**Motivation**\nWe already know which version of messages such as `Status` and\n`Receipts` we are going to send/expecting to receive, so we should\nhandle them separately instead of having unified logic for both eth/68 &\neth/68 variants. This will save us from having overly-complicated logic\nwhen decoding these messages.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Remove `Receipts` enum message and instead use `Receipts68` &\n`Receipts69` directly\n* Remove `Status` enum message and instead use `StatusMessage68` &\n`StatusMessage69` directly. Add `StatusMessage` trait to allow using\npre-existing status validation logic\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3032",
+          "timestamp": "2025-09-17T14:47:12Z",
+          "tree_id": "36983a1498fd93c84dea8ea81bedf8b76ce54ab5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a429e2dcec07d64e585e9346efa1b0b7b3b6142c"
+        },
+        "date": 1758123650167,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169826805348,
+            "range": "± 1343230466",
             "unit": "ns/iter"
           }
         ]
