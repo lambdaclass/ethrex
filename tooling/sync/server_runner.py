@@ -85,7 +85,7 @@ def send_slack_message_failed(header: str, hostname: str, timeout, log_file: str
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*Server:* `{hostname}`{timeout}\n*Logs in:* `{log_file}`\n*Branch*: {branch}\n*Commit*: {commit if commit else 'N/A'}"
+                        "text": f"*Server:* `{hostname}`{timeout}\n*Logs in:* `{log_file}`\n*Branch:* `{branch}`\n*Commit:* `{commit if commit else 'N/A'}`"
                     }
                 }
             ]
