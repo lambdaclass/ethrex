@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758097232285,
+  "lastUpdate": 1758102654173,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -30576,6 +30576,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015340595630050882,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4c8ac740b5d78a57ba9addc49861596c72df7719",
+          "message": "refactor(l1): moved peer scores into kademlia's PeerData (#4444)\n\n**Motivation**\nPeer Scores were stored separately from the rest of peer data and that\nled to probable inconsistencies and errors\n\n**Description**\nThis PR combines PeerScores inside PeerData, and removes the requirement\nto update the peer_score table periodically, as now it is the same as\nthe peer_table\n\nCloses #4352\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-09-16T15:45:09Z",
+          "tree_id": "81027ec1b3853170981aaae0148dbc972b92aa93",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4c8ac740b5d78a57ba9addc49861596c72df7719"
+        },
+        "date": 1758102652818,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004429812445980986,
             "unit": "Mgas/s"
           }
         ]
