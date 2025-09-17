@@ -48,18 +48,7 @@ impl CodeHashCollector {
     pub async fn flush_if_needed(&mut self) -> Result<(), SyncError> {
         if self.buffer.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
             let buffer = std::mem::take(&mut self.buffer);
-            let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
-                buffer,
-                self.file_index,
-                self.snapshots_dir.clone(),
-            );
-
-            let sender_clone = self.sender.clone();
-            tokio::task::spawn(async move {
-                let result = dump_to_file(file_name, encoded_buffer);
-                sender_clone.send(result).await.ok();
-            });
-            self.file_index += 1;
+            self.flush_buffer(buffer);
         }
         Ok(())
     }
@@ -84,18 +73,8 @@ impl CodeHashCollector {
     pub async fn finish(mut self) -> Result<u64, SyncError> {
         // Final flush if needed
         if !self.buffer.is_empty() {
-            let (encoded_buffer, file_name) = prepare_bytecode_buffer_for_dump(
-                self.buffer,
-                self.file_index,
-                self.snapshots_dir.clone(),
-            );
-
-            let sender_clone = self.sender.clone();
-            tokio::task::spawn(async move {
-                let result = dump_to_file(file_name, encoded_buffer);
-                sender_clone.send(result).await.ok();
-            });
-            self.file_index += 1;
+            let buffer = std::mem::take(&mut self.buffer);
+            self.flush_buffer(buffer);
         }
 
         // Wait for all pending writes
@@ -114,6 +93,19 @@ impl CodeHashCollector {
         }
 
         Ok(self.file_index)
+    }
+
+    /// Flushes the given buffer to a file
+    fn flush_buffer(&mut self, buffer: Vec<H256>) {
+        let (encoded_buffer, file_name) =
+            prepare_bytecode_buffer_for_dump(buffer, self.file_index, self.snapshots_dir.clone());
+
+        let sender_clone = self.sender.clone();
+        tokio::task::spawn(async move {
+            let result = dump_to_file(file_name, encoded_buffer);
+            sender_clone.send(result).await.ok();
+        });
+        self.file_index += 1;
     }
 }
 
