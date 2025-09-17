@@ -76,8 +76,9 @@ pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -
 #[cfg(feature = "rocksdb")]
 pub fn dump_to_rocks_db(
     path: String,
-    contents: Vec<(Vec<u8>, Vec<u8>)>,
+    mut contents: Vec<(Vec<u8>, Vec<u8>)>,
 ) -> Result<(), rocksdb::Error> {
+    contents.sort();
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     writer.open(std::path::Path::new(&path))?;
