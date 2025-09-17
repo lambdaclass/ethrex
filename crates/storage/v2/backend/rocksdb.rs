@@ -171,18 +171,6 @@ impl StorageBackend for RocksDBBackend {
         .map_err(|e| StorageError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    fn init_namespace(&self, namespace: &str) -> Result<(), StorageError> {
-        // Column families are already created during DB initialization
-        // Just verify the namespace exists
-        if self.db.cf_handle(namespace).is_none() {
-            return Err(StorageError::Custom(format!(
-                "Column family not found: {}",
-                namespace
-            )));
-        }
-        Ok(())
-    }
-
     async fn range(
         &self,
         namespace: &str,

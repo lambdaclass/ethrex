@@ -17,7 +17,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 
 use std::{fmt::Debug, sync::Arc};
-use tracing::info;
 
 /// Domain store that implements StoreEngine using the new layered architecture
 ///
@@ -136,8 +135,7 @@ impl DomainStore {
             }
         }
 
-        let result = self.schema.batch_write(batch_ops).await;
-        result
+        self.schema.batch_write(batch_ops).await
     }
 
     /// Add a batch of blocks in a single transaction.
@@ -356,15 +354,12 @@ impl DomainStore {
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StorageError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-        let result = self
-            .schema
+        self.schema
             .get_async(DBTable::Bodies, hash_key)
             .await?
             .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from);
-
-        result
+            .map_err(StorageError::from)
     }
 
     pub fn get_block_header_by_hash(
@@ -372,14 +367,11 @@ impl DomainStore {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StorageError> {
         let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-        let result = self
-            .schema
+        self.schema
             .get_sync(DBTable::Headers, hash_key)?
             .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
             .transpose()
-            .map_err(StorageError::from);
-
-        result
+            .map_err(StorageError::from)
     }
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StorageError> {
@@ -535,7 +527,7 @@ impl DomainStore {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StorageError> {
-        let key = (block_hash, index as u64).encode_to_vec();
+        let key = (block_hash, index).encode_to_vec();
         self.schema
             .get_async(DBTable::Receipts, key)
             .await?

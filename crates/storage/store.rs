@@ -1,10 +1,10 @@
 use crate::error::StoreError;
-use crate::v2::backend::StorageBackend;
-use crate::{v2::backend::InMemoryBackend, v2::domain::DomainStore};
 #[cfg(feature = "libmdbx")]
 use crate::v2::backend::LibmdbxBackend;
 #[cfg(feature = "rocksdb")]
 use crate::v2::backend::RocksDBBackend;
+use crate::v2::backend::StorageBackend;
+use crate::{v2::backend::InMemoryBackend, v2::domain::DomainStore};
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -428,7 +428,6 @@ impl Store {
         };
         let account_state = AccountState::decode(&encoded_state)?;
         self.get_account_code(account_state.code_hash)
-            .map_err(StoreError::from)
     }
 
     pub async fn get_nonce_by_account_address(

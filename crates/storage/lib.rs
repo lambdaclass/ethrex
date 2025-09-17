@@ -1,10 +1,6 @@
-mod api;
-
 // #[cfg(any(feature = "libmdbx", feature = "rocksdb"))]
 mod rlp;
 mod store;
-mod store_db;
-mod trie_db;
 mod utils;
 
 // New v2 architecture - experimental

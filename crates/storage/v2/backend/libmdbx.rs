@@ -64,10 +64,6 @@ impl StorageBackend for LibmdbxBackend {
         todo!("LibMDBX batch_write implementation pending")
     }
 
-    fn init_namespace(&self, _namespace: &str) -> Result<(), StorageError> {
-        todo!("LibMDBX init_namespace implementation pending")
-    }
-
     async fn range(
         &self,
         _namespace: &str,

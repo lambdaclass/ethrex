@@ -77,10 +77,6 @@ impl StorageBackend for InMemoryBackend {
         todo!()
     }
 
-    fn init_namespace(&self, namespace: &str) -> Result<(), StorageError> {
-        self.ensure_namespace_exists(namespace)
-    }
-
     async fn range(
         &self,
         namespace: &str,

@@ -39,9 +39,6 @@ impl SchemaRegistry {
     fn register_table(&mut self, table: DBTable) -> Result<(), StorageError> {
         let namespace = table.namespace().to_string();
 
-        // Ensure the namespace exists in the backend
-        self.backend.init_namespace(&namespace)?;
-
         // Register the table definition
         let definition = TableDefinition {
             table,

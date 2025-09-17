@@ -36,9 +36,6 @@ pub trait StorageBackend: Send + Sync + Debug + RefUnwindSafe {
     /// Execute multiple operations atomically
     async fn batch_write(&self, ops: Vec<BatchOp>) -> Result<(), StorageError>;
 
-    /// Initialize/ensure a namespace exists (for DBs that require pre-creation)
-    fn init_namespace(&self, namespace: &str) -> Result<(), StorageError>;
-
     /// Get a range of key-value pairs from start_key (inclusive) to end_key (exclusive)
     /// If end_key is None, iterate from start_key to end of namespace
     async fn range(
