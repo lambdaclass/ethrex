@@ -944,54 +944,14 @@ impl Syncer {
             *METRICS.current_step.lock().await =
                 "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
-            for entry in std::fs::read_dir(&account_storages_snapshots_dir)
-                .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-            {
-                let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
-                })?;
-                info!("Reading account storage file from entry {entry:?}");
+            insert_storages_into_db(
+                store.clone(),
+                &account_storages_snapshots_dir,
+                &maybe_big_account_storage_state_roots,
+                &pivot_header,
+            )
+            .await?;
 
-                let snapshot_path = entry.path();
-
-                let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-
-                let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
-                    RLPDecode::decode(&snapshot_contents)
-                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-                let maybe_big_account_storage_state_roots_clone =
-                    maybe_big_account_storage_state_roots.clone();
-                let store_clone = store.clone();
-                let pivot_hash_moved = pivot_header.hash();
-                info!("Starting compute of account_storages_snapshot");
-                let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
-                    let store: Store = store_clone;
-
-                    // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
-                    // We need to fix this issue in request_storage_ranges and remove this filter.
-                    account_storages_snapshot
-                        .into_par_iter()
-                        .filter(|(_account_hash, storage)| !storage.is_empty())
-                        .map(|(account_hash, key_value_pairs)| {
-                            compute_storage_roots(
-                                maybe_big_account_storage_state_roots_clone.clone(),
-                                store.clone(),
-                                account_hash,
-                                key_value_pairs,
-                                pivot_hash_moved,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, SyncError>>()
-                })
-                .await??;
-                info!("Writing to db");
-
-                store
-                    .write_storage_trie_nodes_batch(storage_trie_node_changes)
-                    .await?;
-            }
             *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
             info!("Finished storing storage tries");
@@ -1352,9 +1312,8 @@ async fn insert_accounts_into_db(
     for entry in std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
     {
-        let entry = entry.map_err(|err| {
-            SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
-        })?;
+        let entry = entry
+            .map_err(|err| SyncError::SnapshotReadError(account_state_snapshots_dir.into(), err))?;
         info!("Reading account file from entry {entry:?}");
         let snapshot_path = entry.path();
         let snapshot_contents = std::fs::read(&snapshot_path)
@@ -1389,4 +1348,61 @@ async fn insert_accounts_into_db(
     }
     info!("computed_state_root {computed_state_root}");
     Ok(computed_state_root)
+}
+
+async fn insert_storages_into_db(
+    store: Store,
+    account_storages_snapshots_dir: &str,
+    maybe_big_account_storage_state_roots: &Arc<Mutex<HashMap<H256, H256>>>,
+    pivot_header: &BlockHeader,
+) -> Result<(), SyncError> {
+    for entry in std::fs::read_dir(account_storages_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
+    {
+        let entry = entry.map_err(|err| {
+            SyncError::SnapshotReadError(account_storages_snapshots_dir.into(), err)
+        })?;
+        info!("Reading account storage file from entry {entry:?}");
+
+        let snapshot_path = entry.path();
+
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+
+        let account_storages_snapshot: Vec<(H256, Vec<(H256, U256)>)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        let maybe_big_account_storage_state_roots_clone =
+            maybe_big_account_storage_state_roots.clone();
+        let store_clone = store.clone();
+        let pivot_hash_moved = pivot_header.hash();
+        info!("Starting compute of account_storages_snapshot");
+        let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
+            let store: Store = store_clone;
+
+            // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
+            // We need to fix this issue in request_storage_ranges and remove this filter.
+            account_storages_snapshot
+                .into_par_iter()
+                .filter(|(_account_hash, storage)| !storage.is_empty())
+                .map(|(account_hash, key_value_pairs)| {
+                    compute_storage_roots(
+                        maybe_big_account_storage_state_roots_clone.clone(),
+                        store.clone(),
+                        account_hash,
+                        key_value_pairs,
+                        pivot_hash_moved,
+                    )
+                })
+                .collect::<Result<Vec<_>, SyncError>>()
+        })
+        .await??;
+        info!("Writing to db");
+
+        store
+            .write_storage_trie_nodes_batch(storage_trie_node_changes)
+            .await?;
+    }
+    Ok(())
 }
