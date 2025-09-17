@@ -69,15 +69,15 @@ use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
-#[cfg(feature = "jemalloc_profiling")]
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 use axum::response::IntoResponse;
-
-#[cfg(feature = "jemalloc_profiling")]
+// only works on linux
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
     let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
         return Err((
             StatusCode::NOT_IMPLEMENTED,
-            "jemalloc profiling is not available (compile with `jemalloc_profiling` and make sure env_target is not msvc)".into(),
+            "jemalloc profiling is not available".into(),
         ));
     };
     let mut prof_ctl = mutex.lock().await;
@@ -89,7 +89,7 @@ pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)
 }
 
 /// Checks whether jemalloc profiling is activated an returns an error response if not.
-#[cfg(feature = "jemalloc_profiling")]
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 fn require_profiling_activated(
     prof_ctl: &jemalloc_pprof::JemallocProfCtl,
 ) -> Result<(), (StatusCode, String)> {
@@ -103,7 +103,7 @@ fn require_profiling_activated(
     }
 }
 
-#[cfg(feature = "jemalloc_profiling")]
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCode, String)> {
     use axum::body::Body;
     use axum::http::header::CONTENT_TYPE;
@@ -112,7 +112,7 @@ pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCo
     let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
         return Err((
             StatusCode::NOT_IMPLEMENTED,
-            "jemalloc profiling is not available (compile with `jemalloc_profiling` and make sure env_target is not msvc)".into(),
+            "jemalloc profiling is not available".into(),
         ));
     };
     let mut prof_ctl = mutex.lock().await;
@@ -126,20 +126,20 @@ pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCo
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
 }
 
-// Feature-disabled stubs (no dependency on jemalloc_pprof, build always)
-#[cfg(not(feature = "jemalloc_profiling"))]
+// Feature-disabled stubs (no dependency on jemalloc_pprof)
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
 pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
     Err((
         StatusCode::NOT_IMPLEMENTED,
-        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`)".into(),
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
     ))
 }
 
-#[cfg(not(feature = "jemalloc_profiling"))]
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
 pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
     Err((
         StatusCode::NOT_IMPLEMENTED,
-        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`)".into(),
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
     ))
 }
 
