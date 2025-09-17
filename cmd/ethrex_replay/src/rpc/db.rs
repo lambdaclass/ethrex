@@ -585,7 +585,7 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
     } else {
         *EMPTY_KECCACK_HASH
     };
-    let trie = Trie::from_nodes(hash.into(), &state_nodes).ok()?;
+    let trie = Trie::from_nodes(hash, &state_nodes).ok()?;
 
     // return some only if this is a proof of exclusion
     if trie.get(key).ok()?.is_none() {
