@@ -105,6 +105,7 @@ jobs:
           if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
             FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
             FLAGS+=" --sim.buildarg branch=main"
+            FLAGS+=" --client.checktimelimit=20s"
           fi
           if [[ -n "$SIM_LIMIT" ]]; then
             FLAGS+=" --sim.limit \"$SIM_LIMIT\""
@@ -116,8 +117,8 @@ jobs:
         uses: ethpandaops/hive-github-action@a9ec89442df18ee579d3179b76c47f5f93954307
         continue-on-error: true
         with:
-          hive_repository: lambdaclass/hive
-          hive_version: master
+          # hive_repository: lambdaclass/hive
+          # hive_version: master
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
