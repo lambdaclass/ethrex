@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758127467048,
+  "lastUpdate": 1758142307015,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -30753,6 +30753,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015308521505376345,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7a7525b1566bca5ab2108e9670cd29e2ef7ec069",
+          "message": "chore(l1): add specific logs to ipv6 bug (#4511)\n\n**Motivation**\nThere's currently an error `MessageSendFailure(Os { code: 97, kind:\nUncategorized, message: \"Address family not supported by protocol\" })`\nthat happens once in a while.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdds logs to help debug if the error occurs\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-09-16T20:13:15Z",
+          "tree_id": "64413edd0ad6a11d991f0e4ff225b9513aef03e2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7a7525b1566bca5ab2108e9670cd29e2ef7ec069"
+        },
+        "date": 1758142271498,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004460655352480418,
             "unit": "Mgas/s"
           }
         ]
