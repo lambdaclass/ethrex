@@ -4,6 +4,8 @@ use crate::utils::{dump_to_file, get_code_hashes_snapshot_file};
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use std::collections::HashSet;
+use tokio::task::JoinSet;
+use tracing::error;
 
 /// Size of the buffer to store code hashes before flushing to a file
 const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
@@ -16,22 +18,18 @@ pub struct CodeHashCollector {
     snapshots_dir: String,
     // Index of the current code hash file
     file_index: u64,
-    // Sender to send code hash dump results
-    sender: tokio::sync::mpsc::Sender<Result<(), DumpError>>,
-    // Receiver to receive code hash dump results
-    receiver: tokio::sync::mpsc::Receiver<Result<(), DumpError>>,
+    // JoinSet to manage async disk writes
+    disk_tasks: JoinSet<Result<(), DumpError>>,
 }
 
 impl CodeHashCollector {
     /// Creates a new code collector
-    pub fn new(initial_index: u64, snapshots_dir: String) -> Self {
-        let (sender, receiver) = tokio::sync::mpsc::channel(100);
+    pub fn new(snapshots_dir: String) -> Self {
         Self {
             buffer: HashSet::new(),
             snapshots_dir,
-            file_index: initial_index,
-            sender,
-            receiver,
+            file_index: 0,
+            disk_tasks: JoinSet::new(),
         }
     }
 
@@ -54,18 +52,13 @@ impl CodeHashCollector {
         Ok(())
     }
 
-    /// Handles errors from the receiver when flushing the buffer to a file
-    /// and retries the dump to the file
+    /// Handles completed disk write tasks, terminating on any error
     pub async fn handle_errors(&mut self) -> Result<(), SyncError> {
-        if let Ok(Err(dump_error)) = self.receiver.try_recv() {
-            if dump_error.error == std::io::ErrorKind::StorageFull {
-                return Err(SyncError::BytecodeFileError);
-            }
-            let sender_clone = self.sender.clone();
-            tokio::task::spawn(async move {
-                let result = dump_to_file(dump_error.path, dump_error.contents);
-                sender_clone.send(result).await.ok();
-            });
+        while let Some(result) = self.disk_tasks.try_join_next() {
+            result
+                .expect("Shouldn't have a join error")
+                .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
+                .map_err(|_| SyncError::BytecodeFileError)?;
         }
         Ok(())
     }
@@ -78,20 +71,18 @@ impl CodeHashCollector {
             self.flush_buffer(buffer);
         }
 
-        // Wait for all pending writes
-        drop(self.sender);
-        while let Some(result) = self.receiver.recv().await {
-            if let Err(dump_error) = result {
-                if dump_error.error == std::io::ErrorKind::StorageFull {
-                    return Err(SyncError::BytecodeFileError);
-                }
-                dump_to_file(dump_error.path, dump_error.contents)
-                    .inspect_err(|err| {
-                        tracing::error!("Failed final retry for bytecode dump: {:?}", err);
-                    })
-                    .map_err(|_| SyncError::BytecodeFileError)?;
-            }
-        }
+        // Wait for all pending writes using join_all pattern from peer_handler
+        self.disk_tasks
+            .join_all()
+            .await
+            .into_iter()
+            .map(|result| {
+                result.inspect_err(|err| {
+                    error!("Failed final write for code hashes: {err:?}");
+                })
+            })
+            .collect::<Result<Vec<()>, DumpError>>()
+            .map_err(|_| SyncError::BytecodeFileError)?;
 
         Ok(self.file_index)
     }
@@ -101,11 +92,8 @@ impl CodeHashCollector {
         let (encoded_buffer, file_name) =
             prepare_bytecode_buffer_for_dump(buffer, self.file_index, self.snapshots_dir.clone());
 
-        let sender_clone = self.sender.clone();
-        tokio::task::spawn(async move {
-            let result = dump_to_file(file_name, encoded_buffer);
-            sender_clone.send(result).await.ok();
-        });
+        self.disk_tasks
+            .spawn(async move { dump_to_file(file_name, encoded_buffer) });
         self.file_index += 1;
     }
 }

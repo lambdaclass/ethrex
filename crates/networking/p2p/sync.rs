@@ -840,7 +840,7 @@ impl Syncer {
         std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
 
         // Create collector to store code hashes in files
-        let mut codehash_collector = CodeHashCollector::new(0, code_hashes_snapshot_dir.clone());
+        let mut codehash_collector = CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -925,7 +925,7 @@ impl Syncer {
 
                 computed_state_root = current_state_root;
 
-                // Check if any dump task failed and retry if necessary
+                // Check if any dump task failed
                 codehash_collector.handle_errors().await?;
             }
 

@@ -84,6 +84,7 @@ pub async fn heal_state_trie_wrap(
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 /// This method also stores modified storage roots in the db for heal_storage_trie
 /// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
+#[allow(clippy::too_many_arguments)]
 async fn heal_state_trie(
     state_root: H256,
     store: Store,
@@ -318,6 +319,7 @@ async fn heal_state_trie(
             is_stale = true;
         }
 
+        // Check if any dump task failed
         code_hashes_collector.handle_errors().await?;
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
