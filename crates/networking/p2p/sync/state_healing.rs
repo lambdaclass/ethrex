@@ -26,7 +26,7 @@ use crate::{
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     sync::{AccountStorageRoots, code_collector::CodeHashCollector},
-    utils::{current_unix_time, get_code_hashes_snapshots_dir},
+    utils::current_unix_time,
 };
 
 /// Max size of a bach to start a storage fetch request in queues
@@ -45,7 +45,6 @@ pub struct MembatchEntryValue {
     parent_path: Nibbles,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn heal_state_trie_wrap(
     state_root: H256,
     store: Store,
@@ -53,16 +52,11 @@ pub async fn heal_state_trie_wrap(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     storage_accounts: &mut AccountStorageRoots,
-    code_hashes_index_file: &mut u64,
-    datadir: &str,
+    code_hashes_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     *METRICS.current_step.lock().await = "Healing State".to_string();
     info!("Starting state healing");
-
-    let code_hashes_snapshots_dir = get_code_hashes_snapshots_dir(&datadir.to_string());
-    let mut code_hashes_collector =
-        CodeHashCollector::new(*code_hashes_index_file, code_hashes_snapshots_dir);
 
     while !healing_done {
         healing_done = heal_state_trie(
@@ -73,7 +67,7 @@ pub async fn heal_state_trie_wrap(
             global_leafs_healed,
             HashMap::new(),
             storage_accounts,
-            &mut code_hashes_collector,
+            code_hashes_collector,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -83,8 +77,6 @@ pub async fn heal_state_trie_wrap(
     }
     info!("Stopped state healing");
 
-    code_hashes_collector.finish().await?;
-
     Ok(healing_done)
 }
 
@@ -92,7 +84,6 @@ pub async fn heal_state_trie_wrap(
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 /// This method also stores modified storage roots in the db for heal_storage_trie
 /// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
-#[allow(clippy::too_many_arguments)]
 async fn heal_state_trie(
     state_root: H256,
     store: Store,

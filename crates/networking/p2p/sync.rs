@@ -841,7 +841,6 @@ impl Syncer {
 
         // Create collector to store code hashes in files
         let mut codehash_collector = CodeHashCollector::new(0, code_hashes_snapshot_dir.clone());
-        let mut code_index_file = 0_u64;
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -930,9 +929,6 @@ impl Syncer {
                 codehash_collector.handle_errors().await?;
             }
 
-            // Finish code hash collection and get final index
-            code_index_file = codehash_collector.finish().await?;
-
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
@@ -970,8 +966,7 @@ impl Syncer {
                     calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut state_leafs_healed,
                     &mut storage_accounts,
-                    &mut code_index_file,
-                    &self.datadir,
+                    &mut codehash_collector,
                 )
                 .await?
                 {
@@ -1095,8 +1090,7 @@ impl Syncer {
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_state_leafs_healed,
                 &mut storage_accounts,
-                &mut code_index_file,
-                &self.datadir,
+                &mut codehash_collector,
             )
             .await?;
             if !healing_done {
@@ -1118,6 +1112,9 @@ impl Syncer {
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
+
+        // Finish code hash collection
+        codehash_collector.finish().await?;
 
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
