@@ -56,7 +56,6 @@ tui-scrollview = "0.5.1"
 tui-logger.workspace = true
 tabwriter = "1.4.1"
 color-eyre = "0.6.5"
-tokio-stream = { version = "0.1.17", features = ["net"] }
 axum.workspace = true
 
 guest_program = { path = "./prover/src/guest_program/" }
