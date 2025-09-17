@@ -75,7 +75,6 @@ impl DBTable {
     }
 
     /// Returns all table variants
-    #[cfg(any(feature = "libmdbx", feature = "rocksdb"))]
     pub fn all() -> &'static [DBTable] {
         &[
             Self::Headers,

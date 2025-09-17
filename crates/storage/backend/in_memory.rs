@@ -1,4 +1,5 @@
 use super::{BatchOp, StorageBackend};
+use crate::engine::DBTable;
 use crate::error::StoreError;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
@@ -19,7 +20,16 @@ pub struct InMemoryBackend {
 impl InMemoryBackend {
     /// Creates a new InMemoryBackend
     pub fn new() -> Self {
-        Self::default()
+        let namespaces = DBTable::all()
+            .iter()
+            .map(|table| {
+                (
+                    table.namespace().to_string(),
+                    Arc::new(Mutex::new(BTreeMap::new())),
+                )
+            })
+            .collect();
+        Self { namespaces }
     }
 
     /// Gets a table by namespace
