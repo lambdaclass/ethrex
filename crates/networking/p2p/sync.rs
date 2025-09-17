@@ -458,7 +458,7 @@ impl Syncer {
 /// Fetches all block bodies for the given block hashes via p2p and stores them
 async fn store_block_bodies(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
@@ -584,7 +584,7 @@ impl FullBlockSyncState {
         sync_head: H256,
         sync_head_found_in_block_headers: bool,
         blockchain: Arc<Blockchain>,
-        peers: PeerHandler,
+        mut peers: PeerHandler,
         cancel_token: CancellationToken,
     ) -> Result<(bool, bool), SyncError> {
         info!("Processing incoming headers full sync");
@@ -822,7 +822,7 @@ impl Syncer {
             pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
-                &self.peers,
+                &mut self.peers,
                 block_sync_state,
             )
             .await?;
@@ -956,7 +956,7 @@ impl Syncer {
                     pivot_header = update_pivot(
                         pivot_header.number,
                         pivot_header.timestamp,
-                        &self.peers,
+                        &mut self.peers,
                         block_sync_state,
                     )
                     .await?;
@@ -1083,7 +1083,7 @@ impl Syncer {
                 pivot_header = update_pivot(
                     pivot_header.number,
                     pivot_header.timestamp,
-                    &self.peers,
+                    &mut self.peers,
                     block_sync_state,
                 )
                 .await?;
@@ -1260,7 +1260,7 @@ fn compute_storage_roots(
 pub async fn update_pivot(
     block_number: u64,
     block_timestamp: u64,
-    peers: &PeerHandler,
+    peers: &mut PeerHandler,
     block_sync_state: &mut BlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
@@ -1272,21 +1272,13 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        peers
-            .peer_scores
-            .lock()
-            .await
-            .update_peers(&peers.peer_table)
-            .await;
         let (peer_id, mut peer_channel) = peers
-            .peer_scores
-            .lock()
-            .await
-            .get_peer_channel_with_highest_score(&peers.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+            .peer_table
+            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES)
             .await
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
+        let peer_score = peers.peer_table.get_score(&peer_id).await;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1296,8 +1288,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_scores.lock().await.record_failure(peer_id);
-            let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
+            peers.peer_table.record_failure(peer_id).await;
+            let peer_score = peers.peer_table.get_score(&peer_id).await;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1305,7 +1297,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_scores.lock().await.record_success(peer_id);
+        peers.peer_table.record_success(peer_id).await;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
