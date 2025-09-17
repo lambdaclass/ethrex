@@ -562,7 +562,7 @@ async fn send_response(
 }
 
 async fn start_prover_listener(
-    mut proof_coordinator: GenServerHandle<ProofCoordinator>,
+    proof_coordinator: GenServerHandle<ProofCoordinator>,
     ip: IpAddr,
     port: u16,
 ) -> Result<(), ProofCoordinatorError> {
@@ -575,28 +575,31 @@ async fn start_prover_listener(
     loop {
         match listener.accept().await {
             Ok((mut stream, _address)) => {
-                let mut buffer = Vec::new();
-                if stream
-                    .read_to_end(&mut buffer)
-                    .await
-                    .inspect_err(|err| error!("Failed to read from tcp stream: {err}"))
-                    .is_err()
-                {
-                    continue;
-                }
+                let mut proof_coordinator = proof_coordinator.clone();
+                spawned_rt::tasks::spawn(async move {
+                    let mut buffer = Vec::new();
+                    if stream
+                        .read_to_end(&mut buffer)
+                        .await
+                        .inspect_err(|err: &std::io::Error| {
+                            error!("Failed to read from tcp stream: {err}")
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
 
-                let Ok(message) = serde_json::from_slice(&buffer)
-                    .map(|data| ProofCordInMessage::Request(data, Arc::new(stream)))
-                    .inspect_err(|err| error!("Failed to deserialize data: {}", err))
-                else {
-                    continue;
-                };
+                    let Ok(message) = serde_json::from_slice(&buffer)
+                        .map(|data| ProofCordInMessage::Request(data, Arc::new(stream)))
+                        .inspect_err(|err| error!("Failed to deserialize data: {}", err))
+                    else {
+                        return;
+                    };
 
-                proof_coordinator
-                    .cast(message)
-                    .await
-                    .inspect_err(|e| error!("Failed to send cast message to proof coordinator {e}"))
-                    .map_err(|e| ProofCoordinatorError::InternalError(e.to_string()))?;
+                    let _ = proof_coordinator.cast(message).await.inspect_err(|e| {
+                        error!("Failed to send cast message to proof coordinator {e}")
+                    });
+                });
             }
             Err(err) => {
                 error!("Error while accepting tpc connection {err}");
