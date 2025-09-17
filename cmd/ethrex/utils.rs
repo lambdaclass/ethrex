@@ -105,7 +105,12 @@ pub fn default_datadir() -> PathBuf {
     project_dir.data_local_dir().to_path_buf()
 }
 
-// TODO: Use PathBuf instead of strings
+/// Ensures that the provided data directory exists and is a directory.
+///
+/// # Panics
+///
+/// Panics if the path points to something different than a directory, or
+/// if the directory cannot be created.
 pub fn init_datadir(datadir: &Path) {
     if datadir.exists() {
         if !datadir.is_dir() {
