@@ -51,7 +51,8 @@ COPY .git ./.git
 COPY .cargo/ ./.cargo
 
 # Optional build flags
-ARG BUILD_FLAGS=""
+# FIXME: Remove this before merging. Rocksdb is not our default db
+ARG BUILD_FLAGS="--features rocksdb"
 ENV COMPILE_CONTRACTS=true
 RUN cargo build --release $BUILD_FLAGS
 
