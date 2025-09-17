@@ -1,4 +1,6 @@
 use crate::rlpx::{
+    error::RLPxError,
+    eth::status::StatusMessage,
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
@@ -11,6 +13,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+use ethrex_storage::Store;
 
 #[derive(Debug, Clone)]
 pub struct StatusMessage68 {
@@ -63,5 +66,59 @@ impl RLPxMessage for StatusMessage68 {
             genesis,
             fork_id,
         })
+    }
+}
+
+impl StatusMessage68 {
+    pub async fn new(storage: &Store) -> Result<Self, RLPxError> {
+        let chain_config = storage.get_chain_config()?;
+        let total_difficulty =
+            U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
+        let network_id = chain_config.chain_id;
+
+        // These blocks must always be available
+        let genesis_header = storage
+            .get_block_header(0)?
+            .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
+        let lastest_block = storage.get_latest_block_number().await?;
+        let block_header = storage
+            .get_block_header(lastest_block)?
+            .ok_or(RLPxError::NotFound(format!("Block {lastest_block}")))?;
+
+        let genesis = genesis_header.hash();
+        let lastest_block_hash = block_header.hash();
+        let fork_id = ForkId::new(
+            chain_config,
+            genesis_header,
+            block_header.timestamp,
+            lastest_block,
+        );
+
+        Ok(StatusMessage68 {
+            eth_version: 68,
+            network_id,
+            total_difficulty,
+            block_hash: lastest_block_hash,
+            genesis,
+            fork_id,
+        })
+    }
+}
+
+impl StatusMessage for StatusMessage68 {
+    fn get_network_id(&self) -> u64 {
+        self.network_id
+    }
+
+    fn get_eth_version(&self) -> u8 {
+        self.eth_version
+    }
+
+    fn get_fork_id(&self) -> ForkId {
+        self.fork_id.clone()
+    }
+
+    fn get_genesis(&self) -> BlockHash {
+        self.genesis
     }
 }
