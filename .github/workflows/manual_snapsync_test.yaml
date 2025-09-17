@@ -40,7 +40,7 @@ jobs:
 
       - name: Generate Kurtosis args
         run: |
-          cat > .github/config/assertoor/network_params.generated.yaml <<'YAML'
+          cat > .github/config/assertoor/network_params.generated.yaml <<YAML
           participants:
             - el_type: ethrex
               el_image: ghcr.io/lambdaclass/ethrex:main
