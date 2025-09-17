@@ -6,12 +6,16 @@ use std::sync::Arc;
 
 /// TrieDB adapter that wraps a StorageBackend to provide trie functionality
 pub struct StorageBackendTrieDB {
+    /// Storage backend
     backend: Arc<dyn StorageBackend>,
+    /// Available tables
     namespace: DBTable,
+    /// Account prefix for storage tries
     account_prefix: Option<H256>,
 }
 
 impl StorageBackendTrieDB {
+    /// Creates a new state trie
     pub fn new_state_trie(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             backend,
@@ -20,6 +24,7 @@ impl StorageBackendTrieDB {
         }
     }
 
+    /// Creates a new storage trie with an account prefix
     pub fn new_storage_trie(backend: Arc<dyn StorageBackend>, account_prefix: H256) -> Self {
         Self {
             backend,
@@ -28,6 +33,7 @@ impl StorageBackendTrieDB {
         }
     }
 
+    /// Encodes a node hash into a key with the account prefix if present
     fn encode_key(&self, node_hash: NodeHash) -> Vec<u8> {
         match &self.account_prefix {
             Some(prefix) => {

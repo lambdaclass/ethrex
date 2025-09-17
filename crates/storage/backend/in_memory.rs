@@ -1,37 +1,34 @@
 use super::{BatchOp, StorageBackend};
 use crate::error::StoreError;
 use std::collections::{BTreeMap, HashMap};
-use std::panic::RefUnwindSafe;
 use std::sync::{Arc, Mutex};
+
+/// Table type for the InMemoryBackend
+type Table = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 /// In-memory storage backend implementation
 ///
 /// This is the simplest possible implementation of StorageBackend.
-/// It stores everything in HashMaps in memory, providing a baseline
+/// It stores everything in BTreeMaps in memory, providing a baseline
 /// for testing and development.
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryBackend {
-    namespaces: HashMap<String, Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>>,
+    namespaces: HashMap<String, Table>,
 }
 
-// Implement RefUnwindSafe manually since Mutex<T> doesn't automatically implement it
-impl RefUnwindSafe for InMemoryBackend {}
-
 impl InMemoryBackend {
+    /// Creates a new InMemoryBackend
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn get_table(
-        &self,
-        namespace: &str,
-    ) -> Result<Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>, StoreError> {
+    /// Gets a table by namespace
+    fn get_table(&self, namespace: &str) -> Result<Table, StoreError> {
         let table = self
             .namespaces
             .get(namespace)
             .ok_or(StoreError::Custom(format!(
-                "Namespace not found: {}",
-                namespace
+                "Namespace not found: {namespace}"
             )))?;
         Ok(table.clone())
     }
