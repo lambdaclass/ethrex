@@ -110,10 +110,8 @@ pub enum BatchOperation {
     },
 }
 
-/// Domain store that implements StoreEngine using the new layered architecture
-///
-/// This is the single implementation that replaces all the duplicated logic
-/// in rocksdb.rs, libmdbx.rs, and in_memory.rs
+/// Engine that implements the storage backend interface
+/// TODO: Could we move this logic to the store?
 #[derive(Debug)]
 pub struct Engine {
     backend: Arc<dyn StorageBackend>,
@@ -125,7 +123,7 @@ impl Engine {
         Self { backend }
     }
 
-    /// Convert BatchOperation to BackendBatchOp for execution
+    /// Execute a batch of operations
     async fn execute_batch(&self, batch_ops: Vec<BatchOperation>) -> Result<(), StoreError> {
         let backend_ops: Vec<BatchOp> = batch_ops
             .into_iter()
