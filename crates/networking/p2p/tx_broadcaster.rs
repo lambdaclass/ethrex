@@ -16,9 +16,12 @@ use spawned_concurrency::{
 use tracing::{debug, error, info};
 
 use crate::{
-    discv4::peer_table::{PeerTable, PeerTableHandle, PeerChannels},
+    discv4::peer_table::{PeerChannels, PeerTable, PeerTableHandle},
     rlpx::{
-        connection::server::CastMessage, eth::transactions::{NewPooledTransactionHashes, Transactions}, p2p::{Capability, SUPPORTED_ETH_CAPABILITIES}, Message
+        Message,
+        connection::server::CastMessage,
+        eth::transactions::{NewPooledTransactionHashes, Transactions},
+        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
     },
 };
 
@@ -36,7 +39,7 @@ const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
 
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
-    kademlia: PeerTableHandle,
+    peer_table: PeerTableHandle,
     blockchain: Arc<Blockchain>,
     broadcasted_txs_per_peer: HashMap<(H256, H256), Instant>, // (peer_id,tx_hash) -> timestamp
 }
@@ -61,7 +64,7 @@ impl TxBroadcaster {
         info!("Starting Transaction Broadcaster");
 
         let state = TxBroadcaster {
-            kademlia,
+            peer_table: kademlia,
             blockchain,
             broadcasted_txs_per_peer: HashMap::new(),
         };
@@ -102,7 +105,10 @@ impl TxBroadcaster {
             debug!("No transactions to broadcast");
             return Ok(());
         }
-        let peers = self.kademlia.get_peer_channels_with_capabilities(&[]).await;
+        let peers = PeerTable::get_peers_with_capabilities(&mut self.peer_table)
+            .await
+            // TODO proper error
+            .map_err(|_| TxBroadcasterError::Broadcast)?;
         let peer_sqrt = (peers.len() as f64).sqrt();
 
         let full_txs = txs_to_broadcast

@@ -1,6 +1,7 @@
 mod state_healing;
 mod storage_healing;
 
+use crate::discv4::peer_table::PeerTable;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
@@ -1207,13 +1208,17 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        let (peer_id, mut peer_channel) = peers
-            .kademlia
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES)
-            .await
-            .ok_or(SyncError::NoPeers)?;
+        let (peer_id, mut peer_channel) =
+            PeerTable::get_best_peer(&mut peers.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+                .await
+                // TODO Return correct error
+                .map_err(|_| SyncError::NoPeers)?
+                .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peers.kademlia.get_score(&peer_id).await;
+        let peer_score = PeerTable::get_score(&mut peers.peer_table, &peer_id)
+            .await
+            // TODO Return correct error
+            .map_err(|_| SyncError::NoPeers)?;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1223,8 +1228,11 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.kademlia.record_failure(peer_id).await;
-            let peer_score = peers.kademlia.get_score(&peer_id).await;
+            PeerTable::record_failure(&mut peers.peer_table, &peer_id).await;
+            let peer_score = PeerTable::get_score(&mut peers.peer_table, &peer_id)
+                .await
+                // TODO Return correct error
+                .map_err(|_| SyncError::NoPeers)?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1232,7 +1240,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.kademlia.record_success(peer_id).await;
+        PeerTable::record_success(&mut peers.peer_table, &peer_id).await;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers

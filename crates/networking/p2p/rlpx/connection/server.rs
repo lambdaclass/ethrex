@@ -31,7 +31,7 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    discv4::peer_table::{PeerTable, PeerTableHandle, PeerChannels},
+    discv4::peer_table::{PeerChannels, PeerTable, PeerTableHandle},
     metrics::METRICS,
     network::P2PContext,
     rlpx::{

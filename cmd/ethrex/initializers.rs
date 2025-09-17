@@ -199,7 +199,7 @@ pub async fn init_network(
         local_node_record,
         tracker.clone(),
         signer,
-        peer_handler.kademlia.clone(),
+        peer_handler.peer_table.clone(),
         store,
         blockchain.clone(),
         get_client_version(),
@@ -214,7 +214,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_handler.kademlia.peers.clone(),
+        peer_handler.peer_table.peers.clone(),
     ));
 }
 
@@ -453,7 +453,7 @@ pub async fn init_l1(
     Ok((
         data_dir,
         cancel_token,
-        peer_handler.kademlia,
+        peer_handler.peer_table,
         local_node_record,
     ))
 }

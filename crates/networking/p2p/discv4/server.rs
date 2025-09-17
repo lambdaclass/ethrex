@@ -238,19 +238,21 @@ impl DiscoveryServer {
         }
     }
 
-    async fn lookup(&self) {
-        for contact in self.peer_table.table.lock().await.values_mut() {
-            if contact.n_find_node_sent == 20 || contact.disposable {
-                continue;
-            }
-
+    async fn lookup(&mut self) {
+        for contact in PeerTable::get_contacts_for_lookup(&mut self.peer_table, 20)
+            .await
+            // proper error handling
+            .unwrap()
+        {
             if let Err(err) = self.send_find_node(&contact.node).await {
                 error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err, "Error sending message");
-                contact.disposable = true;
+                PeerTable::set_disposable(&mut self.peer_table, &contact.node.node_id());
+                //contact.disposable = true;
                 METRICS.record_new_discarded_node().await;
             }
 
-            contact.n_find_node_sent += 1;
+            PeerTable::increment_find_node_sent(&mut self.peer_table, &contact.node.node_id());
+            //contact.n_find_node_sent += 1;
         }
     }
 

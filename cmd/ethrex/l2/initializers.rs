@@ -190,7 +190,7 @@ pub async fn init_l2(
     init_rpc_api(
         &opts.node_opts,
         &opts,
-        peer_handler.kademlia.clone(),
+        peer_handler.peer_table.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
         store.clone(),
@@ -279,7 +279,7 @@ pub async fn init_l2(
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(
-        peer_handler.kademlia,
+        peer_handler.peer_table,
         local_node_record.lock().await.clone(),
     )
     .await;

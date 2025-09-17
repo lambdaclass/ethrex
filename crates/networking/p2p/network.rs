@@ -1,5 +1,8 @@
 use crate::{
-    discv4::{peer_table::{PeerTable, PeerTableHandle, PeerData}, server::{DiscoveryServer, DiscoveryServerError}},
+    discv4::{
+        peer_table::{PeerData, PeerTable, PeerTableHandle},
+        server::{DiscoveryServer, DiscoveryServerError},
+    },
     metrics::METRICS,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},

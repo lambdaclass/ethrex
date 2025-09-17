@@ -16,13 +16,14 @@ use ethrex_trie::{Node, verify_range};
 use rand::seq::SliceRandom;
 
 use crate::{
-    discv4::peer_table::{PeerTable, PeerTableHandle, PeerChannels, PeerData},
+    discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableHandle},
     metrics::METRICS,
     rlpx::{
         connection::server::CastMessage,
         eth::{
             blocks::{
-                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber, BLOCK_HEADER_LIMIT
+                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+                HashOrNumber,
             },
             receipts::GetReceipts,
         },
@@ -34,9 +35,10 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{block_is_stale, update_pivot, AccountStorageRoots, BlockSyncState},
+    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
-        dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file, SendMessageError
+        SendMessageError, dump_to_file, get_account_state_snapshot_file,
+        get_account_storages_snapshot_file,
     },
 };
 use tracing::{debug, error, info, trace, warn};
@@ -65,7 +67,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
-    pub kademlia: PeerTableHandle,
+    pub peer_table: PeerTableHandle,
 }
 
 pub enum BlockRequestOrder {
@@ -143,7 +145,9 @@ async fn ask_peer_head_number(
 
 impl PeerHandler {
     pub fn new(kademlia: PeerTableHandle) -> PeerHandler {
-        Self { kademlia }
+        Self {
+            peer_table: kademlia,
+        }
     }
 
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
@@ -160,7 +164,7 @@ impl PeerHandler {
         &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
-        let mut peer_channels = self.kademlia.get_peer_channels(capabilities).await;
+        let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
 
         peer_channels.shuffle(&mut rand::rngs::OsRng);
 
@@ -197,7 +201,7 @@ impl PeerHandler {
                 return None;
             }
             let peers_table = self
-                .kademlia
+                .peer_table
                 .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
@@ -276,8 +280,8 @@ impl PeerHandler {
             {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    self.kademlia.free_peer(peer_id).await;
-                    self.kademlia.record_failure(peer_id).await;
+                    self.peer_table.free_peer(peer_id).await;
+                    self.peer_table.record_failure(peer_id).await;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
@@ -321,12 +325,12 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
-                self.kademlia.record_success(peer_id).await;
-                self.kademlia.free_peer(peer_id).await;
+                self.peer_table.record_success(peer_id).await;
+                self.peer_table.free_peer(peer_id).await;
                 debug!("Downloader {peer_id} freed");
             }
             let Some((peer_id, mut peer_channel)) = self
-                .kademlia
+                .peer_table
                 .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_ETH_CAPABILITIES)
                 .await
             else {
@@ -335,7 +339,7 @@ impl PeerHandler {
             };
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
-                self.kademlia.free_peer(peer_id).await;
+                self.peer_table.free_peer(peer_id).await;
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -558,7 +562,7 @@ impl PeerHandler {
             .cast(CastMessage::BackendMessage(request))
             .await
         {
-            self.kademlia.record_failure(peer_id).await;
+            self.peer_table.record_failure(peer_id).await;
             debug!("Failed to send message to peer: {err:?}");
             return None;
         }
@@ -583,12 +587,12 @@ impl PeerHandler {
             // Check that the response is not empty and does not contain more bodies than the ones requested
             (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
         }) {
-            self.kademlia.record_success(peer_id).await;
+            self.peer_table.record_success(peer_id).await;
             return Some((block_bodies, peer_id));
         }
 
         warn!("[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}...");
-        self.kademlia.record_failure(peer_id).await;
+        self.peer_table.record_failure(peer_id).await;
         None
     }
 
@@ -635,7 +639,7 @@ impl PeerHandler {
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
                     );
                     validation_success = false;
-                    self.kademlia.record_critical_failure(peer_id).await;
+                    self.peer_table.record_critical_failure(peer_id).await;
                     break;
                 }
                 res.push(body);
@@ -816,7 +820,7 @@ impl PeerHandler {
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-                self.kademlia.free_peer(peer_id).await;
+                self.peer_table.free_peer(peer_id).await;
 
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
@@ -829,10 +833,10 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    self.kademlia.record_failure(peer_id).await;
+                    self.peer_table.record_failure(peer_id).await;
                     continue;
                 }
-                self.kademlia.record_success(peer_id).await;
+                self.peer_table.record_success(peer_id).await;
 
                 downloaded_count += accounts.len() as u64;
 
@@ -874,7 +878,7 @@ impl PeerHandler {
             }
 
             let Some((peer_id, peer_channel)) = self
-                .kademlia
+                .peer_table
                 .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
             else {
@@ -883,7 +887,7 @@ impl PeerHandler {
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                self.kademlia.free_peer(peer_id).await;
+                self.peer_table.free_peer(peer_id).await;
                 if completed_tasks >= chunk_count {
                     info!("All account ranges downloaded successfully");
                     break;
@@ -1124,7 +1128,7 @@ impl PeerHandler {
                     remaining_start,
                     remaining_end,
                 } = result;
-                self.kademlia.free_peer(peer_id).await;
+                self.peer_table.free_peer(peer_id).await;
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1137,20 +1141,20 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
-                    self.kademlia.record_failure(peer_id).await;
+                    self.peer_table.record_failure(peer_id).await;
                     continue;
                 }
 
                 downloaded_count += bytecodes.len() as u64;
 
-                self.kademlia.record_success(peer_id).await;
+                self.peer_table.record_success(peer_id).await;
                 for (i, bytecode) in bytecodes.into_iter().enumerate() {
                     all_bytecodes[start_index + i] = bytecode;
                 }
             }
 
             let Some((peer_id, mut peer_channel)) = self
-                .kademlia
+                .peer_table
                 .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
             else {
@@ -1158,7 +1162,7 @@ impl PeerHandler {
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                self.kademlia.free_peer(peer_id).await;
+                self.peer_table.free_peer(peer_id).await;
                 if completed_tasks >= chunk_count {
                     info!("All bytecodes downloaded successfully");
                     break;
@@ -1372,7 +1376,7 @@ impl PeerHandler {
                 } = result;
                 completed_tasks += 1;
 
-                self.kademlia.free_peer(peer_id).await;
+                self.peer_table.free_peer(peer_id).await;
 
                 for account in &current_account_hashes[start_index..remaining_start] {
                     accounts_done.push(*account);
@@ -1460,7 +1464,7 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    self.kademlia.record_failure(peer_id).await;
+                    self.peer_table.record_failure(peer_id).await;
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1470,7 +1474,7 @@ impl PeerHandler {
                     }
                 }
 
-                self.kademlia.record_success(peer_id).await;
+                self.peer_table.record_success(peer_id).await;
 
                 let n_storages = account_storages.len();
                 let n_slots = account_storages
@@ -1503,7 +1507,7 @@ impl PeerHandler {
             }
 
             let Some((peer_id, peer_channel)) = self
-                .kademlia
+                .peer_table
                 .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
             else {
@@ -1511,7 +1515,7 @@ impl PeerHandler {
             };
 
             let Some(task) = tasks_queue_not_started.pop_front() else {
-                self.kademlia.free_peer(peer_id).await;
+                self.peer_table.free_peer(peer_id).await;
                 if completed_tasks >= task_count {
                     break;
                 }
@@ -1826,7 +1830,7 @@ impl PeerHandler {
 
     /// Returns the PeerData for each connected Peer
     pub async fn read_connected_peers(&self) -> Vec<PeerData> {
-        self.kademlia
+        self.peer_table
             .peers
             .lock()
             .await
@@ -1837,7 +1841,9 @@ impl PeerHandler {
     }
 
     pub async fn count_total_peers(&mut self) -> usize {
-        PeerTable::peer_count(&mut self.kademlia).await.unwrap_or(0)
+        PeerTable::peer_count(&mut self.peer_table)
+            .await
+            .unwrap_or(0)
     }
 
     // TODO: Implement the logic to remove a peer from the peer table

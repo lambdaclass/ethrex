@@ -11,7 +11,7 @@ use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
 
 use crate::{
-    discv4::kademlia::PeerChannels,
+    discv4::peer_table::PeerChannels,
     rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
 };
 
