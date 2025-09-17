@@ -20,10 +20,7 @@ impl StorageBackendTrieDB {
         }
     }
 
-    pub fn new_storage_trie(
-        backend: Arc<dyn StorageBackend>,
-        account_prefix: H256,
-    ) -> Self {
+    pub fn new_storage_trie(backend: Arc<dyn StorageBackend>, account_prefix: H256) -> Self {
         Self {
             backend,
             namespace: DBTable::StorageTrieNodes,
@@ -81,10 +78,7 @@ impl StorageBackendLockedTrieDB {
         }
     }
 
-    pub fn new_storage_trie(
-        backend: Arc<dyn StorageBackend>,
-        account_prefix: H256,
-    ) -> Self {
+    pub fn new_storage_trie(backend: Arc<dyn StorageBackend>, account_prefix: H256) -> Self {
         Self {
             backend,
             namespace: DBTable::StorageTrieNodes,

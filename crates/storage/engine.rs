@@ -16,6 +16,9 @@ use ethrex_trie::{Nibbles, NodeHash, Trie};
 
 use std::{fmt::Debug, sync::Arc};
 
+/// Struct for storage trie nodes - [address_hash, [(node_hash, node_data)]]
+type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+
 /// Defines all the logical tables needed for Ethereum storage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DBTable {
@@ -94,7 +97,7 @@ impl DBTable {
 
 /// Batch operation at the domain level (before translation to backend operations)
 #[derive(Debug, Clone)]
-pub enum DomainBatchOp {
+pub enum BatchOperation {
     Put {
         table: DBTable,
         key: Vec<u8>,
@@ -104,15 +107,6 @@ pub enum DomainBatchOp {
         table: DBTable,
         key: Vec<u8>,
     },
-}
-
-impl DomainBatchOp {
-    fn table(&self) -> DBTable {
-        match self {
-            Self::Put { table, .. } => *table,
-            Self::Delete { table, .. } => *table,
-        }
-    }
 }
 
 /// Domain store that implements StoreEngine using the new layered architecture
@@ -130,17 +124,17 @@ impl Engine {
         Self { backend }
     }
 
-    /// Convert DomainBatchOp to BackendBatchOp for execution
-    async fn execute_batch(&self, batch_ops: Vec<DomainBatchOp>) -> Result<(), StoreError> {
+    /// Convert BatchOperation to BackendBatchOp for execution
+    async fn execute_batch(&self, batch_ops: Vec<BatchOperation>) -> Result<(), StoreError> {
         let backend_ops: Vec<BatchOp> = batch_ops
             .into_iter()
             .map(|op| match op {
-                DomainBatchOp::Put { table, key, value } => BatchOp::Put {
+                BatchOperation::Put { table, key, value } => BatchOp::Put {
                     namespace: table.namespace().to_string(),
                     key,
                     value,
                 },
-                DomainBatchOp::Delete { table, key } => BatchOp::Delete {
+                BatchOperation::Delete { table, key } => BatchOp::Delete {
                     namespace: table.namespace().to_string(),
                     key,
                 },
@@ -159,7 +153,7 @@ impl Engine {
         // Process account updates
         for (node_hash, account_node) in update_batch.account_updates {
             let key = node_hash.as_ref().to_vec();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::StateTrieNodes,
                 key,
                 value: account_node,
@@ -172,7 +166,7 @@ impl Engine {
                 let mut key = Vec::with_capacity(64);
                 key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
-                batch_ops.push(DomainBatchOp::Put {
+                batch_ops.push(BatchOperation::Put {
                     table: DBTable::StorageTrieNodes,
                     key,
                     value: node_data,
@@ -184,7 +178,7 @@ impl Engine {
         for (code_hash, code) in update_batch.code_updates {
             let key = code_hash.as_bytes().to_vec();
             let value = AccountCodeRLP::from(code).bytes().clone();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::AccountCodes,
                 key,
                 value,
@@ -196,7 +190,7 @@ impl Engine {
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let key = (block_hash, index).encode_to_vec();
                 let value = receipt.encode_to_vec();
-                batch_ops.push(DomainBatchOp::Put {
+                batch_ops.push(BatchOperation::Put {
                     table: DBTable::Receipts,
                     key,
                     value,
@@ -212,7 +206,7 @@ impl Engine {
             // Store header
             let header_key = BlockHashRLP::from(block_hash).bytes().clone();
             let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::Headers,
                 key: header_key.clone(),
                 value: header_value,
@@ -220,7 +214,7 @@ impl Engine {
 
             // Store body
             let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::Bodies,
                 key: header_key.clone(),
                 value: body_value,
@@ -228,7 +222,7 @@ impl Engine {
 
             // Store block number mapping
             let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::BlockNumbers,
                 key: hash_key,
                 value: block_number.to_le_bytes().to_vec(),
@@ -241,7 +235,7 @@ impl Engine {
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                batch_ops.push(DomainBatchOp::Put {
+                batch_ops.push(BatchOperation::Put {
                     table: DBTable::TransactionLocations,
                     key: composite_key,
                     value: location_value,
@@ -264,7 +258,7 @@ impl Engine {
             // Store header
             let header_key = BlockHashRLP::from(block_hash).bytes().clone();
             let header_value = BlockHeaderRLP::from(block.header).bytes().clone();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::Headers,
                 key: header_key.clone(),
                 value: header_value,
@@ -272,7 +266,7 @@ impl Engine {
 
             // Store body
             let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::Bodies,
                 key: header_key.clone(),
                 value: body_value,
@@ -280,7 +274,7 @@ impl Engine {
 
             // Store block number mapping
             let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::BlockNumbers,
                 key: hash_key,
                 value: block_number.to_le_bytes().to_vec(),
@@ -294,7 +288,7 @@ impl Engine {
                 location_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (block_number, block_hash, index as u64).encode_to_vec();
 
-                batch_ops.push(DomainBatchOp::Put {
+                batch_ops.push(BatchOperation::Put {
                     table: DBTable::TransactionLocations,
                     key: location_key,
                     value: location_value,
@@ -331,7 +325,7 @@ impl Engine {
             let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
 
             // Add header to headers table
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::Headers,
                 key: hash_key.clone(),
                 value: header_value,
@@ -339,7 +333,7 @@ impl Engine {
 
             // Add block number mapping
             let number_key = header.number.to_le_bytes().to_vec();
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::BlockNumbers,
                 key: hash_key,
                 value: number_key,
@@ -392,19 +386,19 @@ impl Engine {
             return Ok(());
         };
 
-        let canonical = DomainBatchOp::Delete {
+        let canonical = BatchOperation::Delete {
             table: DBTable::Headers,
             key: block_number.to_le_bytes().to_vec(),
         };
-        let body = DomainBatchOp::Delete {
+        let body = BatchOperation::Delete {
             table: DBTable::BlockNumbers,
             key: hash.as_bytes().to_vec(),
         };
-        let batch_body = DomainBatchOp::Delete {
+        let batch_body = BatchOperation::Delete {
             table: DBTable::Bodies,
             key: hash.as_bytes().to_vec(),
         };
-        let batch_number = DomainBatchOp::Delete {
+        let batch_number = BatchOperation::Delete {
             table: DBTable::BlockNumbers,
             key: hash.as_bytes().to_vec(),
         };
@@ -578,7 +572,7 @@ impl Engine {
 
             let location_value = (block_number, block_hash, index).encode_to_vec();
 
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::TransactionLocations,
                 key: composite_key,
                 value: location_value,
@@ -640,7 +634,7 @@ impl Engine {
             let key = (block_hash, index as u64).encode_to_vec();
             let value = receipt.encode_to_vec();
 
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::Receipts,
                 key,
                 value,
@@ -688,7 +682,7 @@ impl Engine {
 
         let mut batch_ops = Vec::new();
         for (key, _) in all_data {
-            batch_ops.push(DomainBatchOp::Delete {
+            batch_ops.push(BatchOperation::Delete {
                 table: DBTable::SnapState,
                 key,
             });
@@ -901,7 +895,7 @@ impl Engine {
             for (block_number, block_hash) in canonical_blocks {
                 let number_key = block_number.to_le_bytes().to_vec();
                 let hash_value = BlockHashRLP::from(block_hash).bytes().clone();
-                batch_ops.push(DomainBatchOp::Put {
+                batch_ops.push(BatchOperation::Put {
                     table: DBTable::CanonicalHashes,
                     key: number_key,
                     value: hash_value,
@@ -912,7 +906,7 @@ impl Engine {
         // Remove anything after the head from the canonical chain
         for number in (head_number + 1)..=(latest) {
             let number_key = number.to_le_bytes().to_vec();
-            batch_ops.push(DomainBatchOp::Delete {
+            batch_ops.push(BatchOperation::Delete {
                 table: DBTable::CanonicalHashes,
                 key: number_key,
             });
@@ -921,7 +915,7 @@ impl Engine {
         // Make head canonical
         let head_key = head_number.to_le_bytes().to_vec();
         let head_value = BlockHashRLP::from(head_hash).bytes().clone();
-        batch_ops.push(DomainBatchOp::Put {
+        batch_ops.push(BatchOperation::Put {
             table: DBTable::CanonicalHashes,
             key: head_key,
             value: head_value,
@@ -929,7 +923,7 @@ impl Engine {
 
         // Update chain data
         let latest_key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
-        batch_ops.push(DomainBatchOp::Put {
+        batch_ops.push(BatchOperation::Put {
             table: DBTable::ChainData,
             key: latest_key,
             value: head_number.to_le_bytes().to_vec(),
@@ -937,7 +931,7 @@ impl Engine {
 
         if let Some(safe_number) = safe {
             let safe_key = Self::chain_data_key(ChainDataIndex::SafeBlockNumber);
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::ChainData,
                 key: safe_key,
                 value: safe_number.to_le_bytes().to_vec(),
@@ -946,7 +940,7 @@ impl Engine {
 
         if let Some(finalized_number) = finalized {
             let finalized_key = Self::chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::ChainData,
                 key: finalized_key,
                 value: finalized_number.to_le_bytes().to_vec(),
@@ -1073,7 +1067,7 @@ impl Engine {
             composite_key.extend_from_slice(key.as_bytes());
             let value_bytes = u256_to_big_endian(value).to_vec();
 
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::StorageSnapshot,
                 key: composite_key,
                 value: value_bytes,
@@ -1117,7 +1111,7 @@ impl Engine {
                 composite_key.extend_from_slice(key.as_bytes());
                 let value_bytes = u256_to_big_endian(value).to_vec();
 
-                batch_ops.push(DomainBatchOp::Put {
+                batch_ops.push(BatchOperation::Put {
                     table: DBTable::StorageSnapshot,
                     key: composite_key,
                     value: value_bytes,
@@ -1297,7 +1291,7 @@ impl Engine {
 
     pub async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: StorageTrieNodes,
     ) -> Result<(), StoreError> {
         let mut batch_ops = Vec::new();
         for (address_hash, nodes) in storage_trie_nodes {
@@ -1307,7 +1301,7 @@ impl Engine {
                 key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
 
-                batch_ops.push(DomainBatchOp::Put {
+                batch_ops.push(BatchOperation::Put {
                     table: DBTable::StorageTrieNodes,
                     key,
                     value: node_data,
@@ -1327,7 +1321,7 @@ impl Engine {
             let key = code_hash.as_bytes().to_vec();
             let value = AccountCodeRLP::from(code).bytes().clone();
 
-            batch_ops.push(DomainBatchOp::Put {
+            batch_ops.push(BatchOperation::Put {
                 table: DBTable::AccountCodes,
                 key,
                 value,
