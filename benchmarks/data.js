@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758110434967,
+  "lastUpdate": 1758119081593,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15025,6 +15025,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168103383795,
             "range": "± 536828463",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e0c018e8b5c7c400ed14950f3ad3b9e487a15701",
+          "message": "feat(l1)!: change `--datadir` to be relative to current working directory (#4521)\n\nMay supersede https://github.com/lambdaclass/ethrex/pull/4514\n\n**Motivation**\n\nCurrently, the datadir is specified relative to the application\ndirectory (i.e. `/Users/<user>/Library/Application Support/` in macOS).\nThis behavior is confusing, since usually path args are relative to the\ncurrent working directory. Also, it seems to be prone to weird edge\ncases like #4514.\n\n**Description**\n\nThis PR changes this behavior by removing the path-prefixing behavior.\nIt also fixes the issue found in #4514, where any spaces in the path are\nreplaced by slashes (even if the path is the default path).",
+          "timestamp": "2025-09-17T13:26:41Z",
+          "tree_id": "798ff3d42cd3ef475c35c914e2debb96431de82e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e0c018e8b5c7c400ed14950f3ad3b9e487a15701"
+        },
+        "date": 1758119060732,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169472430600,
+            "range": "± 342677130",
             "unit": "ns/iter"
           }
         ]
