@@ -291,13 +291,24 @@ impl Mempool {
             .collect())
     }
 
-    /// Returns all mempool transactions currently in the pool
-    pub fn mempool_content(&self) -> Result<Vec<MempoolTransaction>, MempoolError> {
-        let pooled_transactions = self
+    /// Applies the filter as a mempool transaction and returns the hashes.
+    pub fn get_hashes_with_filter_fn(
+        &self,
+        filter: &dyn Fn(&MempoolTransaction) -> bool,
+    ) -> Result<HashSet<H256>, StoreError> {
+        let mut hashes: HashSet<H256> = HashSet::new();
+        let tx_pool = self
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
-        Ok(pooled_transactions.values().cloned().collect())
+
+        for (_, tx) in tx_pool.iter() {
+            if filter(tx) {
+                hashes.insert(tx.hash());
+            }
+        }
+
+        Ok(hashes)
     }
 
     /// Returns all blobs bundles currently in the pool

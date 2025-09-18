@@ -5,7 +5,7 @@ use crate::{
         read_jwtsecret_file, read_node_config_file,
     },
 };
-use ethrex_blockchain::{Blockchain, BlockchainType, mempool_tx_pruner::MempoolTxPruner};
+use ethrex_blockchain::{Blockchain, BlockchainType, mempool_tx_pruner::MempoolPruner};
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
@@ -391,9 +391,9 @@ pub async fn init_l1(
 
     let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
 
-    MempoolTxPruner::spawn(blockchain.clone())
+    MempoolPruner::spawn(blockchain.clone())
         .await
-        .expect("Failed to start mempool transaction pruner");
+        .expect("Failed to start mempool pruner");
 
     let signer = get_signer(&data_dir);
 
