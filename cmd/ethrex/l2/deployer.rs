@@ -17,8 +17,8 @@ use ethrex_l2::sequencer::utils::DEV_MODE_ADDRESS;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    DeployError, build_generic_tx, call_contract, create2_deploy_from_bytecode,
-    deploy_with_proxy_from_bytecode, send_generic_transaction,
+    DeployError, build_generic_tx, call_contract, deploy_contract, deploy_with_proxy,
+    send_generic_transaction,
 };
 use ethrex_rpc::{
     EthClient,
@@ -510,13 +510,12 @@ async fn deploy_contracts(
 ) -> Result<ContractAddresses, DeployerError> {
     info!("Deploying OnChainProposer");
 
-    let salt = opts.create2_salt.unwrap_or_else(H256::random);
-    debug!("Salt used: {salt:#x}");
+    let salt = opts.create2_salt.as_ref().map(|salt| salt.as_bytes());
 
     let bytecode = if opts.deploy_based_contracts {
-        ON_CHAIN_PROPOSER_BASED_BYTECODE.to_vec()
+        ON_CHAIN_PROPOSER_BASED_BYTECODE
     } else {
-        ON_CHAIN_PROPOSER_BYTECODE.to_vec()
+        ON_CHAIN_PROPOSER_BYTECODE
     };
 
     if bytecode.is_empty() {
@@ -524,7 +523,7 @@ async fn deploy_contracts(
     }
 
     let on_chain_proposer_deployment =
-        deploy_with_proxy_from_bytecode(deployer, eth_client, &bytecode, salt.as_bytes()).await?;
+        deploy_with_proxy(eth_client, deployer, bytecode, salt).await?;
     info!(
         address =? on_chain_proposer_deployment.implementation_address,
         tx_hash =? on_chain_proposer_deployment.implementation_tx_hash,
@@ -538,13 +537,8 @@ async fn deploy_contracts(
 
     info!("Deploying CommonBridge");
 
-    let bridge_deployment = deploy_with_proxy_from_bytecode(
-        deployer,
-        eth_client,
-        COMMON_BRIDGE_BYTECODE,
-        salt.as_bytes(),
-    )
-    .await?;
+    let bridge_deployment =
+        deploy_with_proxy(eth_client, deployer, COMMON_BRIDGE_BYTECODE, salt).await?;
 
     info!(
         address =? bridge_deployment.implementation_address,
@@ -560,13 +554,8 @@ async fn deploy_contracts(
     let sequencer_registry_deployment = if opts.deploy_based_contracts {
         info!("Deploying SequencerRegistry");
 
-        let sequencer_registry_deployment = deploy_with_proxy_from_bytecode(
-            deployer,
-            eth_client,
-            SEQUENCER_REGISTRY_BYTECODE,
-            salt.as_bytes(),
-        )
-        .await?;
+        let sequencer_registry_deployment =
+            deploy_with_proxy(eth_client, deployer, SEQUENCER_REGISTRY_BYTECODE, salt).await?;
 
         info!(
             address =? sequencer_registry_deployment.implementation_address,
@@ -588,12 +577,13 @@ async fn deploy_contracts(
 
     let sp1_verifier_address = if opts.deploy_sp1_verifier {
         info!("Deploying SP1 verifier");
-        create2_deploy_from_bytecode(
-            &[],
-            SP1_VERIFIER_BYTECODE,
-            deployer,
-            salt.as_bytes(),
+        deploy_contract(
             eth_client,
+            deployer,
+            SP1_VERIFIER_BYTECODE,
+            &[],
+            Overrides::default(),
+            salt,
         )
         .await
         .map(|(tx_hash, address)| {

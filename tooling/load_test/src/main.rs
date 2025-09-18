@@ -93,7 +93,7 @@ async fn deploy_contract(
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
     let (_, contract_address) =
-        create_deploy(&client, deployer, contract.into(), Overrides::default()).await?;
+        create_deploy(&client, deployer, &contract, &[], Overrides::default()).await?;
 
     eyre::Ok(contract_address)
 }

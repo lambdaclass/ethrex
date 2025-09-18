@@ -27,7 +27,6 @@ use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};
 use std::str::FromStr;
-use std::{fs::read_to_string, path::Path};
 use tracing::{error, warn};
 
 pub mod calldata;
@@ -378,22 +377,26 @@ pub enum DeployError {
     ProxyBytecodeNotFound,
 }
 
+// Deploy functions
+/// Deploy a contract using `CREATE`
 pub async fn create_deploy(
     client: &EthClient,
     deployer: &Signer,
-    init_code: Bytes,
-    overrides: Overrides,
-) -> Result<(H256, Address), EthClientError> {
-    let mut deploy_overrides = overrides;
-    deploy_overrides.to = Some(TxKind::Create);
+    bytecode: &[u8],
+    constructor_args: &[u8],
+    mut overrides: Overrides,
+) -> Result<(H256, Address), DeployError> {
+    let init_code = [bytecode, constructor_args].concat();
+
+    overrides.to = Some(TxKind::Create);
 
     let deploy_tx = build_generic_tx(
         client,
         TxType::EIP1559,
         Address::zero(),
         deployer.address(),
-        init_code,
-        deploy_overrides,
+        init_code.into(),
+        overrides,
     )
     .await?;
     let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
@@ -414,138 +417,132 @@ pub async fn create_deploy(
     Ok((deploy_tx_hash, deployed_address))
 }
 
-pub async fn create2_deploy_from_path(
-    constructor_args: &[u8],
-    contract_path: &Path,
+/// Deploys a contract using `CREATE2`
+pub async fn create2_deploy(
+    client: &EthClient,
     deployer: &Signer,
-    salt: &[u8],
-    eth_client: &EthClient,
-) -> Result<(H256, Address), DeployError> {
-    let bytecode = hex::decode(read_to_string(contract_path)?)?;
-    create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
-}
-
-pub async fn create2_deploy_from_bytecode(
-    constructor_args: &[u8],
     bytecode: &[u8],
-    deployer: &Signer,
+    constructor_args: &[u8],
+    mut overrides: Overrides,
     salt: &[u8],
-    eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let init_code = [bytecode, constructor_args].concat();
-    let (deploy_tx_hash, contract_address) =
-        create2_deploy(salt, &init_code, deployer, eth_client).await?;
-    Ok((deploy_tx_hash, contract_address))
+    let calldata = [salt, &init_code].concat();
+
+    overrides.to = Some(TxKind::Call(DETERMINISTIC_CREATE2_ADDRESS));
+
+    let deploy_tx = build_generic_tx(
+        client,
+        TxType::EIP1559,
+        DETERMINISTIC_CREATE2_ADDRESS,
+        deployer.address(),
+        calldata.into(),
+        overrides,
+    )
+    .await?;
+
+    let deploy_tx_hash = send_tx_bump_gas_exponential_backoff(client, deploy_tx, deployer).await?;
+
+    wait_for_transaction_receipt(deploy_tx_hash, client, 10).await?;
+
+    let deployed_address = create2_address(salt, keccak(init_code));
+
+    Ok((deploy_tx_hash, deployed_address))
 }
 
-/// Deploys a contract behind an OpenZeppelin's `ERC1967Proxy`.
+/// Deploy a contract from the bytecode directly.
+/// If `salt` is provided, the contract will be deployed using `CREATE2`,
+/// otherwise `CREATE` will be used.
+pub async fn deploy_contract(
+    client: &EthClient,
+    deployer: &Signer,
+    bytecode: &[u8],
+    constructor_args: &[u8],
+    overrides: Overrides,
+    salt: Option<&[u8]>,
+) -> Result<(H256, Address), DeployError> {
+    match salt {
+        Some(salt) => {
+            create2_deploy(
+                client,
+                deployer,
+                bytecode,
+                constructor_args,
+                overrides,
+                salt,
+            )
+            .await
+        }
+        None => create_deploy(client, deployer, bytecode, constructor_args, overrides).await,
+    }
+}
+
+/// Deploys an OpenZeppelin's `ERC1967Proxy`.
+/// If `salt` is provided, the proxy will be deployed using `CREATE2`,
+/// otherwise `CREATE` will be used.
+///
 /// The embedded `ERC1967_PROXY_BYTECODE` may be empty if the crate was compiled
 /// without the `COMPILE_CONTRACTS` env var set. In that case, this function
 /// will return `DeployError::ProxyBytecodeNotFound`.
 async fn deploy_proxy(
-    deployer: &Signer,
     eth_client: &EthClient,
+    deployer: &Signer,
     implementation_address: Address,
-    salt: &[u8],
+    salt: Option<&[u8]>,
 ) -> Result<(H256, Address), DeployError> {
     #[allow(clippy::const_is_empty)]
     if ERC1967_PROXY_BYTECODE.is_empty() {
         return Err(DeployError::ProxyBytecodeNotFound);
     }
 
-    let mut init_code = ERC1967_PROXY_BYTECODE.to_vec();
+    let constructor_args = [
+        H256::from(implementation_address).0,
+        H256::from_low_u64_be(0x40).0,
+        H256::zero().0,
+    ]
+    .concat();
 
-    init_code.extend(H256::from(implementation_address).0);
-    init_code.extend(H256::from_low_u64_be(0x40).0);
-    init_code.extend(H256::zero().0);
-
-    let (deploy_tx_hash, proxy_address) =
-        create2_deploy(salt, &Bytes::from(init_code), deployer, eth_client)
-            .await
-            .map_err(DeployError::from)?;
+    let (deploy_tx_hash, proxy_address) = deploy_contract(
+        eth_client,
+        deployer,
+        ERC1967_PROXY_BYTECODE,
+        &constructor_args,
+        Overrides::default(),
+        salt,
+    )
+    .await?;
 
     Ok((deploy_tx_hash, proxy_address))
 }
 
 /// Deploys a contract behind an OpenZeppelin's `ERC1967Proxy`.
+/// If `salt` is provided, both the implementation and the proxy
+/// will be deployed using `CREATE2`, otherwise `CREATE` will be used.
 pub async fn deploy_with_proxy(
-    deployer: &Signer,
     eth_client: &EthClient,
-    contract_path: &Path,
-    salt: &[u8],
-) -> Result<ProxyDeployment, DeployError> {
-    let (implementation_tx_hash, implementation_address) =
-        create2_deploy_from_path(&[], contract_path, deployer, salt, eth_client).await?;
-
-    let (proxy_tx_hash, proxy_address) =
-        deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
-
-    Ok(ProxyDeployment {
-        proxy_address,
-        proxy_tx_hash,
-        implementation_address,
-        implementation_tx_hash,
-    })
-}
-
-/// Same as `deploy_with_proxy`, but takes the contract bytecode directly instead of a path.
-pub async fn deploy_with_proxy_from_bytecode(
     deployer: &Signer,
-    eth_client: &EthClient,
     bytecode: &[u8],
-    salt: &[u8],
+    salt: Option<&[u8]>,
 ) -> Result<ProxyDeployment, DeployError> {
-    let (implementation_tx_hash, implementation_address) =
-        create2_deploy_from_bytecode(&[], bytecode, deployer, salt, eth_client).await?;
-
-    let (proxy_tx_hash, proxy_address) =
-        deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
-
-    Ok(ProxyDeployment {
-        proxy_address,
-        proxy_tx_hash,
-        implementation_address,
-        implementation_tx_hash,
-    })
-}
-
-async fn create2_deploy(
-    salt: &[u8],
-    init_code: &[u8],
-    deployer: &Signer,
-    eth_client: &EthClient,
-) -> Result<(H256, Address), EthClientError> {
-    let calldata = [salt, init_code].concat();
-    let gas_price = eth_client
-        .get_gas_price_with_extra(20)
-        .await?
-        .try_into()
-        .map_err(|_| {
-            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
-        })?;
-
-    let deploy_tx = build_generic_tx(
+    let (implementation_tx_hash, implementation_address) = deploy_contract(
         eth_client,
-        TxType::EIP1559,
-        DETERMINISTIC_CREATE2_ADDRESS,
-        deployer.address(),
-        calldata.into(),
-        Overrides {
-            max_fee_per_gas: Some(gas_price),
-            max_priority_fee_per_gas: Some(gas_price),
-            ..Default::default()
-        },
+        deployer,
+        bytecode,
+        &[],
+        Overrides::default(),
+        salt.clone(),
     )
     .await?;
 
-    let deploy_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer).await?;
+    let (proxy_tx_hash, proxy_address) =
+        deploy_proxy(eth_client, deployer, implementation_address, salt).await?;
 
-    wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
-
-    let deployed_address = create2_address(salt, keccak(init_code));
-
-    Ok((deploy_tx_hash, deployed_address))
+    Ok(ProxyDeployment {
+        proxy_address,
+        proxy_tx_hash,
+        implementation_address,
+        implementation_tx_hash,
+    })
 }
 
 #[allow(clippy::indexing_slicing)]
