@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758215358650,
+  "lastUpdate": 1758218003578,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15295,6 +15295,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 164920752402,
             "range": "± 663837081",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6e09bf00005ffc7b5a830393541efb44ee5db906",
+          "message": "feat(replay): allow replay in range from some block to the latest (#4546)\n\n**Motivation**\n\nhttps://github.com/lambdaclass/ethrex/pull/4125\n\n**Description**\n\n- `--from` arg doesn't require `--to` anymore.\n- If `--from` is passed alone, then the `--to` is set to the latest\nblock.",
+          "timestamp": "2025-09-18T16:59:00Z",
+          "tree_id": "62af38ab15a43e75571cb50ade8bc4b0883ef962",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6e09bf00005ffc7b5a830393541efb44ee5db906"
+        },
+        "date": 1758217977907,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166777964325,
+            "range": "± 293946772",
             "unit": "ns/iter"
           }
         ]
