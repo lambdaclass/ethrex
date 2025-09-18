@@ -45,7 +45,7 @@ jobs:
       # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.
       - name: Clean .env
         # if: ${{ always() && github.event_name == 'merge_group' }}
-        run: rm -rf crates/l2/.env
+        run: rm -rf cmd/.env
 
       - name: Build prover
         # if: ${{ always() && github.event_name == 'merge_group' }}
