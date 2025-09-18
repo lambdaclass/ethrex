@@ -1,10 +1,19 @@
-use std::{
-    collections::{BTreeMap, btree_map::Entry},
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, Instant},
+use crate::{
+    discv4::{
+        codec::Discv4Codec,
+        messages::{
+            ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
+            PacketDecodeErr, PingMessage, PongMessage,
+        },
+        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableHandle},
+    },
+    metrics::METRICS,
+    types::{Endpoint, Node, NodeRecord},
+    utils::{
+        get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
+        unmap_ipv4in6_address,
+    },
 };
-
 use ethrex_common::{H512, U256};
 use futures::{SinkExt as _, StreamExt, stream::SplitSink};
 use keccak_hash::H256;
@@ -17,29 +26,12 @@ use spawned_concurrency::{
         spawn_listener,
     },
 };
+use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::udp::UdpFramed;
-
 use tracing::{debug, error, info, trace};
 
-use crate::{
-    discv4::{
-        codec::Discv4Codec,
-        messages::{
-            ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
-            PacketDecodeErr, PingMessage, PongMessage,
-        },
-        peer_table::{Contact, PeerTable, PeerTableHandle},
-    },
-    metrics::METRICS,
-    types::{Endpoint, Node, NodeRecord},
-    utils::{
-        get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
-        unmap_ipv4in6_address,
-    },
-};
-
-const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
+pub(crate) const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
 const EXPIRATION_SECONDS: u64 = 20;
 /// Interval between revalidation checks.
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
@@ -52,9 +44,9 @@ const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_secs(5);
 const LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// The target number of RLPx connections to reach.
-const TARGET_PEERS: u64 = 100;
+const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
-const TARGET_CONTACTS: u64 = 100_000;
+const TARGET_CONTACTS: usize = 100_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -66,6 +58,8 @@ pub enum DiscoveryServerError {
     MessageSendFailure(PacketDecodeErr),
     #[error("Only partial message was sent")]
     PartialMessageSent,
+    #[error("Unknown or invalid contact")]
+    InvalidContact,
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +103,7 @@ impl DiscoveryServer {
             NodeRecord::from_node(&local_node, 1, &signer)
                 .expect("Failed to create local node record"),
         ));
-        let discovery_server = Self {
+        let mut discovery_server = Self {
             local_node,
             local_node_record,
             signer,
@@ -121,10 +115,9 @@ impl DiscoveryServer {
         info!(count = bootnodes.len(), "Adding bootnodes");
 
         for bootnode in &bootnodes {
-            let _ = discovery_server.send_ping(bootnode).await.inspect_err(|e| {
-                error!(sent = "Ping", to = %format!("{:#x}", bootnode.public_key), err = ?e, "Error sending message to bootnode");
-            });
-            PeerTable::new_contact(&mut peer_table, bootnode.node_id(), bootnode.clone().into());
+            discovery_server.send_ping(bootnode).await;
+            PeerTable::new_contact(&mut peer_table, bootnode.node_id(), bootnode.clone().into())
+                .await;
         }
 
         discovery_server.start();
@@ -216,42 +209,32 @@ impl DiscoveryServer {
         }
     }
 
-    async fn revalidate(&self) {
-        for contact in self.peer_table.table.lock().await.values_mut() {
-            if contact.disposable || !self.is_validation_needed(contact) {
-                continue;
-            }
-
-            match self.send_ping(&contact.node).await {
-                Ok(ping_hash) => {
-                    METRICS.record_ping_sent().await;
-                    contact.record_sent_ping(ping_hash);
-                }
-                Err(err) => {
-                    error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err, "Error sending message");
-
-                    contact.disposable = true;
-
-                    METRICS.record_new_discarded_node().await;
-                }
-            }
+    async fn revalidate(&mut self) {
+        for contact in
+            PeerTable::get_contacts_to_revalidate(&mut self.peer_table, REVALIDATION_INTERVAL)
+                .await
+                // TODO proper error handling
+                .unwrap_or(Vec::new())
+        {
+            self.send_ping(&contact.node).await;
         }
     }
 
     async fn lookup(&mut self) {
         for contact in PeerTable::get_contacts_for_lookup(&mut self.peer_table, 20)
             .await
-            // proper error handling
-            .unwrap()
+            // TODO proper error handling
+            .unwrap_or(Vec::new())
         {
             if let Err(err) = self.send_find_node(&contact.node).await {
                 error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err, "Error sending message");
-                PeerTable::set_disposable(&mut self.peer_table, &contact.node.node_id());
+                PeerTable::set_disposable(&mut self.peer_table, &contact.node.node_id()).await;
                 //contact.disposable = true;
                 METRICS.record_new_discarded_node().await;
             }
 
-            PeerTable::increment_find_node_sent(&mut self.peer_table, &contact.node.node_id());
+            PeerTable::increment_find_node_sent(&mut self.peer_table, &contact.node.node_id())
+                .await;
             //contact.n_find_node_sent += 1;
         }
     }
@@ -262,27 +245,11 @@ impl DiscoveryServer {
             .inspect_err(|e| error!(err= ?e, "Failed to prune peer table"));
     }
 
-    fn is_validation_needed(&self, contact: &Contact) -> bool {
-        let sent_ping_ttl = Duration::from_secs(30);
-
-        let validation_is_stale = !contact.was_validated()
-            || contact
-                .validation_timestamp
-                .map(|ts| Instant::now().saturating_duration_since(ts) > REVALIDATION_INTERVAL)
-                .unwrap_or(false);
-
-        let sent_ping_is_stale = contact
-            .validation_timestamp
-            .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
-            .unwrap_or(false);
-
-        validation_is_stale || sent_ping_is_stale
-    }
-
-    async fn get_lookup_interval(&self) -> Duration {
-        let number_of_contacts = self.peer_table.table.lock().await.len() as u64;
-        let number_of_peers = self.peer_table.peers.lock().await.len() as u64;
-        if number_of_peers < TARGET_PEERS && number_of_contacts < TARGET_CONTACTS {
+    async fn get_lookup_interval(&mut self) -> Duration {
+        if PeerTable::target_reached(&mut self.peer_table, TARGET_CONTACTS, TARGET_PEERS)
+            .await
+            .unwrap_or(false)
+        {
             INITIAL_LOOKUP_INTERVAL
         } else {
             trace!("Reached target number of peers or contacts. Using longer lookup interval.");
@@ -290,7 +257,21 @@ impl DiscoveryServer {
         }
     }
 
-    async fn send_ping(&self, node: &Node) -> Result<H256, DiscoveryServerError> {
+    async fn send_ping(&mut self, node: &Node) {
+        match self.send_ping_internal(node).await {
+            Ok(ping_hash) => {
+                METRICS.record_ping_sent().await;
+                PeerTable::record_ping_sent(&mut self.peer_table, &node.node_id(), ping_hash).await;
+            }
+            Err(err) => {
+                error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?err, "Error sending message");
+                PeerTable::set_disposable(&mut self.peer_table, &node.node_id()).await;
+                METRICS.record_new_discarded_node().await;
+            }
+        }
+    }
+
+    async fn send_ping_internal(&self, node: &Node) -> Result<H256, DiscoveryServerError> {
         let mut buf = Vec::new();
         // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
@@ -382,109 +363,64 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn handle_ping(&self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
+    async fn handle_ping(&mut self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
         self.send_pong(hash, &node).await?;
 
-        let mut table = self.peer_table.table.lock().await;
-
-        match table.entry(node.node_id()) {
-            Entry::Occupied(_) => (),
-            Entry::Vacant(entry) => {
-                let ping_hash = self.send_ping(&node).await?;
-                let contact = entry.insert(Contact::from(node));
-                contact.record_sent_ping(ping_hash);
-            }
+        if PeerTable::insert_if_new(&mut self.peer_table, &node)
+            .await
+            .unwrap_or(false)
+        {
+            self.send_ping(&node).await;
         }
 
         Ok(())
     }
 
-    async fn handle_pong(&self, message: PongMessage, node_id: H256) {
-        let mut contacts = self.peer_table.table.lock().await;
+    async fn handle_pong(&mut self, message: PongMessage, node_id: H256) {
+        PeerTable::record_pong_received(&mut self.peer_table, &node_id, message.ping_hash).await;
+    }
 
-        // Received a pong from a node we don't know about
-        let Some(contact) = contacts.get_mut(&node_id) else {
-            return;
-        };
-        // Received a pong for an unknown ping
-        if !contact
-            .ping_hash
-            .map(|ph| ph == message.ping_hash)
-            .unwrap_or(false)
+    async fn handle_find_node(&mut self, sender_public_key: H512, from: SocketAddr) {
+        let node_id = node_id(&sender_public_key);
+        if let Ok(contact) = self
+            .validate_contact(sender_public_key, node_id, from, "FindNode")
+            .await
         {
-            return;
-        }
-        contact.ping_hash = None;
-    }
-
-    async fn handle_find_node(&self, sender_public_key: H512, from: SocketAddr) {
-        let table = self.peer_table.table.lock().await;
-
-        let node_id = node_id(&sender_public_key);
-
-        let Some(contact) = table.get(&node_id) else {
-            debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
-            return;
-        };
-        if !contact.was_validated() {
-            debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
-            return;
-        }
-        let node = contact.node.clone();
-
-        // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
-        // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
-        // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
-        // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-        if from.ip() != node.ip {
-            debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
-            return;
-        }
-
-        let neighbors = get_closest_nodes(node_id, table.clone());
-
-        drop(table);
-
-        // we are sending the neighbors in 2 different messages to avoid exceeding the
-        // maximum packet size
-        for chunk in neighbors.chunks(8) {
-            let _ = self
-                .send_neighbors(chunk.to_vec(), &node)
+            let neighbors = PeerTable::get_closest_nodes(&mut self.peer_table, &node_id)
                 .await
-                .inspect_err(|e| {
-                    error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e, "Error sending message");
-                });
+                // TODO: Proper error handling
+                .unwrap_or(Vec::new());
+
+            // we are sending the neighbors in 2 different messages to avoid exceeding the
+            // maximum packet size
+            for chunk in neighbors.chunks(8) {
+                let _ = self
+                    .send_neighbors(chunk.to_vec(), &contact.node)
+                    .await
+                    .inspect_err(|e| {
+                        error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e, "Error sending message");
+                    });
+            }
         }
     }
 
-    async fn handle_neighbors(&self, neighbors_message: NeighborsMessage) {
+    async fn handle_neighbors(&mut self, neighbors_message: NeighborsMessage) {
         // TODO(#3746): check that we requested neighbors from the node
-
-        let mut contacts = self.peer_table.table.lock().await;
-        let discarded_contacts = self.peer_table.discarded_contacts.lock().await;
-
-        for node in neighbors_message.nodes {
-            let node_id = node.node_id();
-            if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
-                if !discarded_contacts.contains(&node_id) && node_id != self.local_node.node_id() {
-                    vacant_entry.insert(Contact::from(node));
-                    METRICS.record_new_discovery().await;
-                }
-            };
-        }
+        PeerTable::new_contacts(
+            &mut self.peer_table,
+            neighbors_message.nodes,
+            self.local_node.node_id(),
+        )
+        .await;
     }
 
-    async fn handle_enr_request(&self, sender_public_key: H512, from: SocketAddr, hash: H256) {
+    async fn handle_enr_request(&mut self, sender_public_key: H512, from: SocketAddr, hash: H256) {
         let node_id = node_id(&sender_public_key);
 
-        let mut table = self.peer_table.table.lock().await;
-
-        let Some(contact) = table.get(&node_id) else {
-            debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
-            return;
-        };
-        if !contact.was_validated() {
-            debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+        if self
+            .validate_contact(sender_public_key, node_id, from, "ENRRequest")
+            .await.is_err()
+        {
             return;
         }
 
@@ -493,7 +429,40 @@ impl DiscoveryServer {
             return;
         }
 
-        table.entry(node_id).and_modify(|c| c.knows_us = true);
+        PeerTable::knows_us(&mut self.peer_table, &node_id).await;
+    }
+
+    async fn validate_contact(
+        &mut self,
+        sender_public_key: H512,
+        node_id: H256,
+        from: SocketAddr,
+        message_type: &str,
+    ) -> Result<Contact, DiscoveryServerError> {
+        match PeerTable::validate_contact(&mut self.peer_table, &node_id, from.ip())
+            .await
+            // TODO proper error handling
+            .unwrap_or(PeerTableOutMessage::UnknownContact)
+        {
+            PeerTableOutMessage::UnknownContact => {
+                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
+                Err(DiscoveryServerError::InvalidContact)
+            }
+            PeerTableOutMessage::InvalidContact => {
+                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+                Err(DiscoveryServerError::InvalidContact)
+            }
+            // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
+            // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
+            // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
+            // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
+            PeerTableOutMessage::IpMismatch => {
+                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
+                Err(DiscoveryServerError::InvalidContact)
+            }
+            PeerTableOutMessage::ValidContact(contact) => Ok(contact),
+            _ => unreachable!(),
+        }
     }
 
     async fn send(&self, message: Message, addr: SocketAddr) -> Result<(), DiscoveryServerError> {

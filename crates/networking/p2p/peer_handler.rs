@@ -13,7 +13,6 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use rand::seq::SliceRandom;
 
 use crate::{
     discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableHandle},
@@ -28,7 +27,7 @@ use crate::{
             receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
-        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
+        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
         snap::{
             AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
@@ -144,10 +143,8 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(kademlia: PeerTableHandle) -> PeerHandler {
-        Self {
-            peer_table: kademlia,
-        }
+    pub fn new(peer_table: PeerTableHandle) -> PeerHandler {
+        Self { peer_table }
     }
 
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
@@ -157,18 +154,17 @@ impl PeerHandler {
         PeerHandler::new(dummy_peer_table)
     }
 
-    /// Returns the node id and the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(
-        &self,
-        capabilities: &[Capability],
+    /// Returns a random node id and the channel ends to an active peer connection that supports the given capability
+    /// It doesn't guarantee that the selected peer is not currently busy
+    async fn get_random_peer(
+        &mut self,
+        // TODO implement filter by capabilities
+        _capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
-        let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
-
-        peer_channels.shuffle(&mut rand::rngs::OsRng);
-
-        peer_channels.first().cloned()
+        return PeerTable::get_random_peer(&mut self.peer_table)
+            .await
+            // TODO proper error handling
+            .unwrap_or(None);
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -176,7 +172,7 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_headers(
-        &self,
+        &mut self,
         start: u64,
         sync_head: H256,
     ) -> Option<Vec<BlockHeader>> {
@@ -200,12 +196,13 @@ impl PeerHandler {
                 // sync_head might be invalid
                 return None;
             }
-            let peers_table = self
-                .peer_table
-                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-                .await;
+            // TODO filter by capability &SUPPORTED_ETH_CAPABILITIES
+            let peer_channels = PeerTable::get_peer_channels(&mut self.peer_table)
+                .await
+                // TODO handle error properly
+                .unwrap_or(Vec::new());
 
-            for (peer_id, mut peer_channel) in peers_table {
+            for (peer_id, mut peer_channel) in peer_channels {
                 match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
                     Ok(number) => {
                         sync_head_number = number;
@@ -280,8 +277,9 @@ impl PeerHandler {
             {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    self.peer_table.free_peer(peer_id).await;
-                    self.peer_table.record_failure(peer_id).await;
+                    // TODO handle errors
+                    let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
+                    let _ = PeerTable::record_success(&mut self.peer_table, &peer_id).await;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
@@ -325,21 +323,26 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
-                self.peer_table.record_success(peer_id).await;
-                self.peer_table.free_peer(peer_id).await;
+                // TODO handle errors
+                let _ = PeerTable::record_success(&mut self.peer_table, &peer_id).await;
+                let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
                 debug!("Downloader {peer_id} freed");
             }
-            let Some((peer_id, mut peer_channel)) = self
-                .peer_table
-                .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_ETH_CAPABILITIES)
-                .await
+            let Some((peer_id, mut peer_channel)) =
+                PeerTable::use_best_peer(&mut self.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+                    .await
+                    .inspect_err(
+                        |err| error!(err= ?err, "Error requesting a peer to get block headers"),
+                    )
+                    .unwrap_or(None)
             else {
                 trace!("We didn't get a peer from the table");
                 continue;
             };
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(peer_id).await;
+                // TODO handle errors
+                let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -429,7 +432,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     ///   Since request_block_headers brought problems in cases of reorg seen in this pr https://github.com/lambdaclass/ethrex/pull/4028, we have this other function to request block headers only for full sync.
     pub async fn request_block_headers_from_hash(
-        &self,
+        &mut self,
         start: H256,
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
@@ -442,9 +445,8 @@ impl PeerHandler {
                 skip: 0,
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-                .await?;
+            let (peer_id, mut peer_channel) =
+                self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel
                 .connection
@@ -553,16 +555,14 @@ impl PeerHandler {
             id: request_id,
             block_hashes: block_hashes.clone(),
         });
-        let (peer_id, mut peer_channel) = self
-            .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-            .await?;
+        let (peer_id, mut peer_channel) = self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await?;
         let mut receiver = peer_channel.receiver.lock().await;
         if let Err(err) = peer_channel
             .connection
             .cast(CastMessage::BackendMessage(request))
             .await
         {
-            self.peer_table.record_failure(peer_id).await;
+            let _ = PeerTable::record_failure(&mut self.peer_table, &peer_id).await;
             debug!("Failed to send message to peer: {err:?}");
             return None;
         }
@@ -587,12 +587,12 @@ impl PeerHandler {
             // Check that the response is not empty and does not contain more bodies than the ones requested
             (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
         }) {
-            self.peer_table.record_success(peer_id).await;
+            let _ = PeerTable::record_success(&mut self.peer_table, &peer_id).await;
             return Some((block_bodies, peer_id));
         }
 
         warn!("[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}...");
-        self.peer_table.record_failure(peer_id).await;
+        let _ = PeerTable::record_failure(&mut self.peer_table, &peer_id).await;
         None
     }
 
@@ -639,7 +639,8 @@ impl PeerHandler {
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
                     );
                     validation_success = false;
-                    self.peer_table.record_critical_failure(peer_id).await;
+                    let _ =
+                        PeerTable::record_critical_failure(&mut self.peer_table, &peer_id).await;
                     break;
                 }
                 res.push(body);
@@ -656,7 +657,7 @@ impl PeerHandler {
     /// Returns the lists of receipts or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
+    pub async fn request_receipts(&mut self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         let block_hashes_len = block_hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
@@ -664,9 +665,7 @@ impl PeerHandler {
                 id: request_id,
                 block_hashes: block_hashes.clone(),
             });
-            let (_, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-                .await?;
+            let (_, mut peer_channel) = self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel
                 .connection
@@ -820,7 +819,7 @@ impl PeerHandler {
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-                self.peer_table.free_peer(peer_id).await;
+                let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
 
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
@@ -833,10 +832,10 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if accounts.is_empty() {
-                    self.peer_table.record_failure(peer_id).await;
+                    let _ = PeerTable::record_failure(&mut self.peer_table, &peer_id).await;
                     continue;
                 }
-                self.peer_table.record_success(peer_id).await;
+                let _ = PeerTable::record_success(&mut self.peer_table, &peer_id).await;
 
                 downloaded_count += accounts.len() as u64;
 
@@ -876,18 +875,20 @@ impl PeerHandler {
                         })
                 });
             }
-
-            let Some((peer_id, peer_channel)) = self
-                .peer_table
-                .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
-                .await
+            let Some((peer_id, peer_channel)) =
+                PeerTable::use_best_peer(&mut self.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+                    .await
+                    .inspect_err(
+                        |err| error!(err= ?err, "Error requesting a peer for account range"),
+                    )
+                    .unwrap_or(None)
             else {
                 trace!("We are missing peers in request_account_range_request");
                 continue;
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(peer_id).await;
+                let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
                 if completed_tasks >= chunk_count {
                     info!("All account ranges downloaded successfully");
                     break;
@@ -1128,7 +1129,7 @@ impl PeerHandler {
                     remaining_start,
                     remaining_end,
                 } = result;
-                self.peer_table.free_peer(peer_id).await;
+                let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1141,28 +1142,29 @@ impl PeerHandler {
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
-                    self.peer_table.record_failure(peer_id).await;
+                    let _ = PeerTable::record_failure(&mut self.peer_table, &peer_id).await;
                     continue;
                 }
 
                 downloaded_count += bytecodes.len() as u64;
 
-                self.peer_table.record_success(peer_id).await;
+                let _ = PeerTable::record_success(&mut self.peer_table, &peer_id).await;
                 for (i, bytecode) in bytecodes.into_iter().enumerate() {
                     all_bytecodes[start_index + i] = bytecode;
                 }
             }
 
-            let Some((peer_id, mut peer_channel)) = self
-                .peer_table
-                .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
-                .await
+            let Some((peer_id, mut peer_channel)) =
+                PeerTable::use_best_peer(&mut self.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+                    .await
+                    .inspect_err(|err| error!(err= ?err, "Error requesting a peer to get bycodes"))
+                    .unwrap_or(None)
             else {
                 continue;
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(peer_id).await;
+                let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
                 if completed_tasks >= chunk_count {
                     info!("All bytecodes downloaded successfully");
                     break;
@@ -1376,7 +1378,7 @@ impl PeerHandler {
                 } = result;
                 completed_tasks += 1;
 
-                self.peer_table.free_peer(peer_id).await;
+                let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
 
                 for account in &current_account_hashes[start_index..remaining_start] {
                     accounts_done.push(*account);
@@ -1464,7 +1466,7 @@ impl PeerHandler {
                 }
 
                 if account_storages.is_empty() {
-                    self.peer_table.record_failure(peer_id).await;
+                    let _ = PeerTable::record_failure(&mut self.peer_table, &peer_id).await;
                     continue;
                 }
                 if let Some(hash_end) = hash_end {
@@ -1474,7 +1476,7 @@ impl PeerHandler {
                     }
                 }
 
-                self.peer_table.record_success(peer_id).await;
+                let _ = PeerTable::record_success(&mut self.peer_table, &peer_id).await;
 
                 let n_storages = account_storages.len();
                 let n_slots = account_storages
@@ -1506,16 +1508,19 @@ impl PeerHandler {
                 break;
             }
 
-            let Some((peer_id, peer_channel)) = self
-                .peer_table
-                .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
-                .await
+            let Some((peer_id, peer_channel)) =
+                PeerTable::use_best_peer(&mut self.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+                    .await
+                    .inspect_err(
+                        |err| error!(err= ?err, "Error requesting a peer to get storage ranges"),
+                    )
+                    .unwrap_or(None)
             else {
                 continue;
             };
 
             let Some(task) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(peer_id).await;
+                let _ = PeerTable::free_peer(&mut self.peer_table, &peer_id).await;
                 if completed_tasks >= task_count {
                     break;
                 }
@@ -1829,15 +1834,11 @@ impl PeerHandler {
     }
 
     /// Returns the PeerData for each connected Peer
-    pub async fn read_connected_peers(&self) -> Vec<PeerData> {
-        self.peer_table
-            .peers
-            .lock()
+    pub async fn read_connected_peers(&mut self) -> Vec<PeerData> {
+        PeerTable::get_peers_data(&mut self.peer_table)
             .await
-            .iter()
-            .map(|(_, peer)| peer)
-            .cloned()
-            .collect()
+            // Proper error handling
+            .unwrap_or(Vec::new())
     }
 
     pub async fn count_total_peers(&mut self) -> usize {

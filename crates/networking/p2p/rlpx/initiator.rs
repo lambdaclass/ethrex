@@ -68,7 +68,7 @@ impl RLPxInitiator {
         )
         .await
         // TODO proper error handling
-        .unwrap();
+        .unwrap_or(Vec::new());
 
         for contact in contacts {
             RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;

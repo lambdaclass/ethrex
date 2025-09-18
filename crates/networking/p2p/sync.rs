@@ -484,7 +484,7 @@ async fn store_block_bodies(
 #[allow(unused)]
 async fn store_receipts(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {

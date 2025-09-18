@@ -1,14 +1,18 @@
 use crate::{
+    discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
+    metrics::METRICS,
     rlpx::{self, connection::server::RLPxConnection, p2p::Capability},
     types::{Node, NodeRecord},
 };
-use ethrex_common::H256;
+use ethrex_common::{H256, U256};
+use rand::seq::SliceRandom;
 use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
 use spawned_rt::tasks::mpsc;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet, btree_map::Entry},
+    net::IpAddr,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -49,7 +53,7 @@ impl Contact {
         self.ping_hash.is_some()
     }
 
-    pub fn record_sent_ping(&mut self, ping_hash: H256) {
+    pub fn record_ping_sent(&mut self, ping_hash: H256) {
         self.validation_timestamp = Some(Instant::now());
         self.ping_hash = Some(ping_hash);
     }
@@ -129,12 +133,12 @@ impl PeerChannels {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PeerTable {
-    pub table: BTreeMap<H256, Contact>,
-    pub peers: BTreeMap<H256, PeerData>,
-    pub already_tried_peers: HashSet<H256>,
-    pub discarded_contacts: HashSet<H256>,
+    contacts: BTreeMap<H256, Contact>,
+    peers: BTreeMap<H256, PeerData>,
+    already_tried_peers: HashSet<H256>,
+    discarded_contacts: HashSet<H256>,
 }
 
 impl PeerTable {
@@ -204,6 +208,20 @@ impl PeerTable {
         }
     }
 
+    pub async fn get_contacts_to_revalidate(
+        peer_table: &mut PeerTableHandle,
+        revalidation_interval: Duration,
+    ) -> Result<Vec<Contact>, PeerTableError> {
+        match peer_table
+            .call(CallMessage::GetContactsToRevalidate(revalidation_interval))
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            OutMessage::Contacts(contacts) => Ok(contacts),
+            _ => unreachable!(),
+        }
+    }
+
     pub async fn peer_count(peer_table: &mut PeerTableHandle) -> Result<usize, PeerTableError> {
         if let OutMessage::PeerCount(peer_count) = peer_table
             .call(CallMessage::PeerCount)
@@ -229,6 +247,27 @@ impl PeerTable {
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
         {
             Ok(peer_count)
+        } else {
+            Err(PeerTableError::InternalError(
+                "Failed to obtain peers".to_owned(),
+            ))
+        }
+    }
+
+    pub async fn target_reached(
+        peer_table: &mut PeerTableHandle,
+        target_contacts: usize,
+        target_peers: usize,
+    ) -> Result<bool, PeerTableError> {
+        if let OutMessage::TargetReached(result) = peer_table
+            .call(CallMessage::TargetReached {
+                target_contacts,
+                target_peers,
+            })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            Ok(result)
         } else {
             Err(PeerTableError::InternalError(
                 "Failed to obtain peers".to_owned(),
@@ -321,6 +360,37 @@ impl PeerTable {
         Ok(())
     }
 
+    pub async fn record_ping_sent(
+        peer_table: &mut PeerTableHandle,
+        node_id: &H256,
+        hash: H256,
+    ) -> Result<(), PeerTableError> {
+        peer_table
+            .call(CallMessage::RecordPingSent {
+                node_id: *node_id,
+                hash,
+            })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn record_pong_received(
+        peer_table: &mut PeerTableHandle,
+        node_id: &H256,
+        ping_hash: H256,
+    ) -> Result<(), PeerTableError> {
+        peer_table
+            .call(CallMessage::RecordPongReceived {
+                node_id: *node_id,
+                ping_hash,
+            })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Returns the peer with the highest score and its peer channel.
     pub async fn get_best_peer(
         peer_table: &mut PeerTableHandle,
         capabilities: &[Capability],
@@ -376,6 +446,19 @@ impl PeerTable {
         }
     }
 
+    pub async fn get_connected_nodes(
+        peer_table: &mut PeerTableHandle,
+    ) -> Result<Vec<Node>, PeerTableError> {
+        match peer_table
+            .call(CallMessage::GetConnectedNodes)
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            OutMessage::Nodes(nodes) => Ok(nodes),
+            _ => unreachable!(),
+        }
+    }
+
     pub async fn get_peers_with_capabilities(
         peer_table: &mut PeerTableHandle,
     ) -> Result<Vec<(H256, PeerChannels, Vec<Capability>)>, PeerTableError> {
@@ -387,6 +470,19 @@ impl PeerTable {
             OutMessage::PeersWithCapabilities(peers_with_capabilities) => {
                 Ok(peers_with_capabilities)
             }
+            _ => unreachable!(),
+        }
+    }
+
+    pub async fn get_peer_channels(
+        peer_table: &mut PeerTableHandle,
+    ) -> Result<Vec<(H256, PeerChannels)>, PeerTableError> {
+        match peer_table
+            .call(CallMessage::GetPeerChannels)
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            OutMessage::PeerChannels(peer_channels) => Ok(peer_channels),
             _ => unreachable!(),
         }
     }
@@ -413,45 +509,106 @@ impl PeerTable {
         Ok(())
     }
 
-    pub async fn get_peer_channels(
-        &self,
-        _capabilities: &[Capability],
-    ) -> Vec<(H256, PeerChannels)> {
-        self.peers
-            .iter()
-            .filter_map(|(peer_id, peer_data)| {
-                peer_data
-                    .channels
-                    .clone()
-                    .map(|peer_channels| (*peer_id, peer_channels))
+    pub async fn insert_if_new(
+        peer_table: &mut PeerTableHandle,
+        node: &Node,
+    ) -> Result<bool, PeerTableError> {
+        match peer_table
+            .call(CallMessage::InsertIfNew { node: node.clone() })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            OutMessage::IsNew(is_new) => Ok(is_new),
+            _ => unreachable!(),
+        }
+    }
+
+    pub async fn validate_contact(
+        peer_table: &mut PeerTableHandle,
+        node_id: &H256,
+        sender_ip: IpAddr,
+    ) -> Result<OutMessage, PeerTableError> {
+        peer_table
+            .call(CallMessage::ValidateContact {
+                node_id: *node_id,
+                sender_ip,
             })
-            .collect()
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))
     }
 
-    pub async fn get_peer_channels_with_capabilities(
-        &self,
-        _capabilities: &[Capability],
-    ) -> Vec<(H256, PeerChannels, Vec<Capability>)> {
-        self.peers
-            .iter()
-            .filter_map(|(peer_id, peer_data)| {
-                peer_data.channels.clone().map(|peer_channels| {
-                    (
-                        *peer_id,
-                        peer_channels,
-                        peer_data.supported_capabilities.clone(),
-                    )
-                })
+    pub async fn get_closest_nodes(
+        peer_table: &mut PeerTableHandle,
+        node_id: &H256,
+    ) -> Result<Vec<Node>, PeerTableError> {
+        match peer_table
+            .call(CallMessage::GetClosestNodes { node_id: *node_id })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            OutMessage::Nodes(nodes) => Ok(nodes),
+            _ => unreachable!(),
+        }
+    }
+
+    pub async fn new_contacts(
+        peer_table: &mut PeerTableHandle,
+        nodes: Vec<Node>,
+        local_node_id: H256,
+    ) -> Result<(), PeerTableError> {
+        peer_table
+            .call(CallMessage::NewContacts {
+                nodes,
+                local_node_id,
             })
-            .collect()
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
     }
 
-    pub async fn get_peer_channel(&self, peer_id: H256) -> Option<PeerChannels> {
-        let peer_data = self.peers.get(&peer_id)?;
-        peer_data.channels.clone()
+    pub async fn knows_us(
+        peer_table: &mut PeerTableHandle,
+        node_id: &H256,
+    ) -> Result<(), PeerTableError> {
+        peer_table
+            .call(CallMessage::KnowsUs { node_id: *node_id })
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
+        Ok(())
     }
 
-    /// Returns the peer with the highest score and its peer channel.
+    pub async fn get_peers_data(
+        peer_table: &mut PeerTableHandle,
+    ) -> Result<Vec<PeerData>, PeerTableError> {
+        match peer_table
+            .call(CallMessage::GetPeersData)
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            OutMessage::PeersData(peers_data) => Ok(peers_data),
+            _ => unreachable!(),
+        }
+    }
+
+    pub async fn get_random_peer(
+        peer_table: &mut PeerTableHandle,
+    ) -> Result<Option<(H256, PeerChannels)>, PeerTableError> {
+        match peer_table
+            .call(CallMessage::GetRandomPeer)
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            OutMessage::FoundPeer {
+                node_id,
+                peer_channels,
+            } => Ok(Some((node_id, peer_channels))),
+            OutMessage::NotFound => Ok(None),
+            _ => unreachable!(),
+        }
+    }
+
+    // Internal functions //
+
     async fn get_best_peer_internal(
         &self,
         capabilities: &[Capability],
@@ -499,13 +656,13 @@ impl PeerTable {
 
     fn prune_internal(&mut self) {
         let disposable_contacts = self
-            .table
+            .contacts
             .iter()
             .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
             .collect::<Vec<_>>();
 
         for contact_to_discard_id in disposable_contacts {
-            self.table.remove(&contact_to_discard_id);
+            self.contacts.remove(&contact_to_discard_id);
             self.discarded_contacts.insert(contact_to_discard_id);
         }
     }
@@ -514,7 +671,7 @@ impl PeerTable {
         let mut contacts = Vec::new();
         let mut tried_connections = 0;
 
-        for contact in self.table.values() {
+        for contact in self.contacts.values() {
             let node_id = contact.node.node_id();
             if !self.peers.contains_key(&node_id)
                 && !self.already_tried_peers.contains(&node_id)
@@ -541,24 +698,97 @@ impl PeerTable {
     }
 
     fn get_contacts_for_lookup_internal(&mut self, max_amount: usize) -> Vec<Contact> {
-        return self
-            .table
+        self
+            .contacts
             .values()
             .take(max_amount)
             .filter(|c| !c.disposable)
             .cloned()
-            .collect();
+            .collect()
     }
-}
 
-impl Default for PeerTable {
-    fn default() -> Self {
-        Self {
-            table: BTreeMap::new(),
-            peers: BTreeMap::new(),
-            already_tried_peers: HashSet::new(),
-            discarded_contacts: HashSet::new(),
+    fn get_contacts_to_revalidate_internal(
+        &mut self,
+        revalidation_interval: Duration,
+    ) -> Vec<Contact> {
+        self
+            .contacts
+            .values()
+            .filter(|c| Self::is_validation_needed(c, revalidation_interval))
+            .cloned()
+            .collect()
+    }
+
+    fn validate_contact_internal(&mut self, node_id: H256, sender_ip: IpAddr) -> OutMessage {
+        let Some(contact) = self.contacts.get(&node_id) else {
+            return OutMessage::UnknownContact;
+        };
+        if !contact.was_validated() {
+            return OutMessage::InvalidContact;
         }
+
+        // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
+        // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
+        // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
+        // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
+        if sender_ip != contact.node.ip {
+            return OutMessage::IpMismatch;
+        }
+        OutMessage::ValidContact(contact.clone())
+    }
+
+    fn get_closest_nodes_internal(&mut self, node_id: H256) -> Vec<Node> {
+        let mut nodes: Vec<(Node, usize)> = vec![];
+
+        for (contact_id, contact) in &self.contacts {
+            let distance = Self::distance(&node_id, contact_id);
+            if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
+                nodes.push((contact.node.clone(), distance));
+            } else {
+                for (i, (_, dis)) in &mut nodes.iter().enumerate() {
+                    if distance < *dis {
+                        nodes[i] = (contact.node.clone(), distance);
+                        break;
+                    }
+                }
+            }
+        }
+        nodes.into_iter().map(|(node, _distance)| node).collect()
+    }
+
+    async fn new_contacts_internal(&mut self, nodes: Vec<Node>, local_node_id: H256) {
+        for node in nodes {
+            let node_id = node.node_id();
+            if let Entry::Vacant(vacant_entry) = self.contacts.entry(node_id) {
+                if !self.discarded_contacts.contains(&node_id) && node_id != local_node_id {
+                    vacant_entry.insert(Contact::from(node));
+                    METRICS.record_new_discovery().await;
+                }
+            };
+        }
+    }
+
+    pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
+        let xor = node_id_1 ^ node_id_2;
+        let distance = U256::from_big_endian(xor.as_bytes());
+        distance.bits().saturating_sub(1)
+    }
+
+    fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
+        let sent_ping_ttl = Duration::from_secs(30);
+
+        let validation_is_stale = !contact.was_validated()
+            || contact
+                .validation_timestamp
+                .map(|ts| Instant::now().saturating_duration_since(ts) > revalidation_interval)
+                .unwrap_or(false);
+
+        let sent_ping_is_stale = contact
+            .validation_timestamp
+            .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
+            .unwrap_or(false);
+
+        !contact.disposable || validation_is_stale || sent_ping_is_stale
     }
 }
 
@@ -595,6 +825,14 @@ pub enum CallMessage {
     RecordCriticalFailure {
         node_id: H256,
     },
+    RecordPingSent {
+        node_id: H256,
+        hash: H256,
+    },
+    RecordPongReceived {
+        node_id: H256,
+        ping_hash: H256,
+    },
     GetScore {
         node_id: H256,
     },
@@ -604,15 +842,41 @@ pub enum CallMessage {
     UseBestPeer {
         capabilities: Vec<Capability>,
     },
+    GetConnectedNodes,
     GetPeersWithCapabilities,
+    GetPeerChannels,
     GetContactsToInitiate(usize),
     GetContactsForLookup(usize),
+    GetContactsToRevalidate(Duration),
     SetDisposable {
         node_id: H256,
     },
     IncrementFindNodeSent {
         node_id: H256,
     },
+    TargetReached {
+        target_contacts: usize,
+        target_peers: usize,
+    },
+    InsertIfNew {
+        node: Node,
+    },
+    ValidateContact {
+        node_id: H256,
+        sender_ip: IpAddr,
+    },
+    GetClosestNodes {
+        node_id: H256,
+    },
+    NewContacts {
+        nodes: Vec<Node>,
+        local_node_id: H256,
+    },
+    KnowsUs {
+        node_id: H256,
+    },
+    GetPeersData,
+    GetRandomPeer,
 }
 
 #[derive(Debug)]
@@ -626,7 +890,16 @@ pub enum OutMessage {
     NotFound,
     PeerScore(i64),
     PeersWithCapabilities(Vec<(H256, PeerChannels, Vec<Capability>)>),
+    PeerChannels(Vec<(H256, PeerChannels)>),
     Contacts(Vec<Contact>),
+    TargetReached(bool),
+    IsNew(bool),
+    Nodes(Vec<Node>),
+    ValidContact(Contact),
+    InvalidContact,
+    UnknownContact,
+    IpMismatch,
+    PeersData(Vec<PeerData>),
 }
 
 #[derive(Clone, Debug)]
@@ -666,12 +939,12 @@ impl GenServer for PeerTable {
                 self.peers.remove(&node_id);
             }
             CallMessage::SetUnwanted { node_id } => {
-                if let Some(contact) = self.table.get_mut(&node_id) {
+                if let Some(contact) = self.contacts.get_mut(&node_id) {
                     contact.unwanted = true;
                 }
             }
             CallMessage::NewContact { node_id, contact } => {
-                self.table.insert(node_id, contact);
+                self.contacts.insert(node_id, contact);
             }
             CallMessage::PeerCount => {
                 return CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()));
@@ -729,6 +1002,14 @@ impl GenServer for PeerTable {
                         .unwrap_or(0),
                 ));
             }
+            CallMessage::GetConnectedNodes => {
+                return CallResponse::Reply(Self::OutMsg::Nodes(
+                    self.peers
+                        .values()
+                        .map(|peer_data| peer_data.node.clone())
+                        .collect(),
+                ));
+            }
             CallMessage::GetPeersWithCapabilities => {
                 return CallResponse::Reply(Self::OutMsg::PeersWithCapabilities(
                     self.peers
@@ -745,6 +1026,19 @@ impl GenServer for PeerTable {
                         .collect(),
                 ));
             }
+            CallMessage::GetPeerChannels => {
+                return CallResponse::Reply(Self::OutMsg::PeerChannels(
+                    self.peers
+                        .iter()
+                        .filter_map(|(peer_id, peer_data)| {
+                            peer_data
+                                .channels
+                                .clone()
+                                .map(|peer_channels| (*peer_id, peer_channels))
+                        })
+                        .collect(),
+                ));
+            }
             CallMessage::GetContactsToInitiate(amount) => {
                 return CallResponse::Reply(Self::OutMsg::Contacts(
                     self.get_contacts_to_initiate_internal(amount),
@@ -755,15 +1049,102 @@ impl GenServer for PeerTable {
                     self.get_contacts_for_lookup_internal(amount),
                 ));
             }
+            CallMessage::GetContactsToRevalidate(revalidation_interval) => {
+                return CallResponse::Reply(Self::OutMsg::Contacts(
+                    self.get_contacts_to_revalidate_internal(revalidation_interval),
+                ));
+            }
             CallMessage::SetDisposable { node_id } => {
-                self.table
+                self.contacts
                     .entry(node_id)
                     .and_modify(|contact| contact.disposable = true);
             }
             CallMessage::IncrementFindNodeSent { node_id } => {
-                self.table
+                self.contacts
                     .entry(node_id)
                     .and_modify(|contact| contact.n_find_node_sent += 1);
+            }
+            CallMessage::TargetReached {
+                target_contacts,
+                target_peers,
+            } => {
+                return CallResponse::Reply(Self::OutMsg::TargetReached(
+                    self.contacts.len() < target_contacts && self.peers.len() < target_peers,
+                ));
+            }
+            CallMessage::RecordPingSent { node_id, hash } => {
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|contact| contact.record_ping_sent(hash));
+            }
+            CallMessage::InsertIfNew { node } => {
+                return CallResponse::Reply(Self::OutMsg::IsNew(
+                    match self.contacts.entry(node.node_id()) {
+                        Entry::Occupied(_) => false,
+                        Entry::Vacant(entry) => {
+                            entry.insert(Contact::from(node));
+                            true
+                        }
+                    },
+                ));
+            }
+            CallMessage::RecordPongReceived { node_id, ping_hash } => {
+                // If entry does not exist or hash does not match, ignore pong record
+                // Otherwise, reset ping_hash
+                self.contacts.entry(node_id).and_modify(|contact| {
+                    if contact
+                        .ping_hash
+                        .map(|value| value == ping_hash)
+                        .unwrap_or(false)
+                    {
+                        contact.ping_hash = None
+                    }
+                });
+            }
+            CallMessage::ValidateContact { node_id, sender_ip } => {
+                return CallResponse::Reply(self.validate_contact_internal(node_id, sender_ip));
+            }
+            CallMessage::GetClosestNodes { node_id } => {
+                return CallResponse::Reply(Self::OutMsg::Nodes(
+                    self.get_closest_nodes_internal(node_id),
+                ));
+            }
+            CallMessage::NewContacts {
+                nodes,
+                local_node_id,
+            } => {
+                self.new_contacts_internal(nodes, local_node_id).await;
+            }
+            CallMessage::KnowsUs { node_id } => {
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|c| c.knows_us = true);
+            }
+            CallMessage::GetPeersData => {
+                return CallResponse::Reply(OutMessage::PeersData(
+                    self.peers.values().cloned().collect(),
+                ));
+            }
+            CallMessage::GetRandomPeer => {
+                let mut peers: Vec<(H256, PeerChannels)> = self
+                    .peers
+                    .iter()
+                    .filter_map(|(node_id, peer_data)| {
+                        peer_data
+                            .channels
+                            .clone()
+                            .map(|peer_channels| (*node_id, peer_channels))
+                    })
+                    .collect();
+                peers.shuffle(&mut rand::rngs::OsRng);
+                if let Some((node_id, peer_channels)) = peers.first() {
+                    return CallResponse::Reply(OutMessage::FoundPeer {
+                        node_id: *node_id,
+                        peer_channels: peer_channels.clone(),
+                    });
+                } else {
+                    return CallResponse::Reply(OutMessage::NotFound);
+                }
             }
         }
         CallResponse::Reply(Self::OutMsg::Ok)

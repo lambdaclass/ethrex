@@ -287,7 +287,9 @@ pub async fn heal_storage_trie(
                 state
                     .download_queue
                     .extend(inflight_request.requests.clone());
-                PeerTable::record_failure(&mut peers.peer_table, &inflight_request.peer_id).await;
+                // TODO Handle errors
+                let _ = PeerTable::record_failure(&mut peers.peer_table, &inflight_request.peer_id)
+                    .await;
                 PeerTable::free_peer(&mut peers.peer_table, &inflight_request.peer_id).await;
             }
         }

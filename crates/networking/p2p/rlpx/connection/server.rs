@@ -140,7 +140,7 @@ pub enum InnerState {
     HandshakeFailed,
     Initiator(Initiator),
     Receiver(Receiver),
-    Established(Established),
+    Established(Box<Established>),
 }
 
 #[derive(Clone, Debug)]
@@ -218,7 +218,8 @@ impl GenServer for RLPxConnection {
                             PeerTable::set_unwanted(
                                 &mut established_state.kademlia,
                                 &established_state.node.node_id(),
-                            );
+                            )
+                            .await;
                         }
                         _ => {}
                     }
@@ -231,7 +232,7 @@ impl GenServer for RLPxConnection {
 
                     METRICS.record_new_rlpx_conn_failure(reason).await;
 
-                    self.inner_state = InnerState::Established(established_state);
+                    self.inner_state = InnerState::Established(Box::new(established_state));
                     Ok(NoSuccess(self))
                 } else {
                     METRICS
@@ -244,7 +245,7 @@ impl GenServer for RLPxConnection {
                         )
                         .await;
                     // New state
-                    self.inner_state = InnerState::Established(established_state);
+                    self.inner_state = InnerState::Established(Box::new(established_state));
                     Ok(Success(self))
                 }
             }
@@ -369,7 +370,8 @@ impl GenServer for RLPxConnection {
                 PeerTable::remove_peer(
                     &mut established_state.kademlia,
                     established_state.node.node_id(),
-                );
+                )
+                .await;
                 established_state.teardown().await;
             }
             _ => {
@@ -752,7 +754,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 )
                 .await;
 
-            PeerTable::remove_peer(&mut state.kademlia, state.node.node_id());
+            PeerTable::remove_peer(&mut state.kademlia, state.node.node_id()).await;
 
             // TODO handle the disconnection request
 

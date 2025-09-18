@@ -1,7 +1,7 @@
 use crate::{rpc::RpcApiContext, utils::RpcErr};
 use core::net::SocketAddr;
 use ethrex_common::H256;
-use ethrex_p2p::{discv4::kademlia::PeerData, rlpx::p2p::Capability};
+use ethrex_p2p::{discv4::peer_table::PeerData, rlpx::p2p::Capability};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -78,7 +78,7 @@ impl From<PeerData> for RpcPeer {
     }
 }
 
-pub async fn peers(context: &RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn peers(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
     let peers = context
         .peer_handler
         .read_connected_peers()

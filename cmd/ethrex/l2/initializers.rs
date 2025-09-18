@@ -7,7 +7,7 @@ use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
 use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_l2::SequencerConfig;
-use ethrex_p2p::discv4::peer_table::PeerTable;
+use ethrex_p2p::discv4::peer_table::PeerTableHandle;
 use ethrex_p2p::network::peer_table;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
@@ -39,7 +39,7 @@ use crate::utils::{
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: PeerTable,
+    peer_table: PeerTableHandle,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
