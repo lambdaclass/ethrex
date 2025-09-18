@@ -1468,6 +1468,9 @@ async fn insert_accounts_into_rocksdb(
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
             .inspect(|(k, v)| {
+                METRICS
+                    .account_tries_inserted
+                    .fetch_add(1, Ordering::Relaxed);
                 let account_state = AccountState::decode(v).expect("We should have accounts here");
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
                     storage_accounts
@@ -1488,6 +1491,7 @@ async fn insert_storage_into_rocksdb(
     temp_db_dir: &str,
 ) -> Result<(), SyncError> {
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+    use rayon::iter::IntoParallelRefIterator;
 
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
@@ -1503,8 +1507,8 @@ async fn insert_storage_into_rocksdb(
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
 
-    for account_hash in accounts_with_storage {
-        let trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    accounts_with_storage.par_iter().for_each(|account_hash| {
+        let trie = store.open_storage_trie(*account_hash, *EMPTY_TRIE_HASH);
         let iter = db.prefix_iterator(account_hash.as_bytes());
         trie_from_sorted_accounts_wrap(
             trie.db(),
@@ -1512,7 +1516,7 @@ async fn insert_storage_into_rocksdb(
                 .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
                 .map(|(k, v)| (H256::from_slice(&k[32..]), v.to_vec())),
         )
-        .map_err(SyncError::TrieGenerationError)?;
-    }
+        .map_err(SyncError::TrieGenerationError);
+    });
     Ok(())
 }
