@@ -1510,7 +1510,7 @@ async fn insert_storage_into_rocksdb(
             trie.db(),
             &mut iter
                 .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-                .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
+                .map(|(k, v)| (H256::from_slice(&k[32..]), v.to_vec())),
         )
         .map_err(SyncError::TrieGenerationError)?;
     }
