@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758212426190,
+  "lastUpdate": 1758214591220,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15205,6 +15205,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170781190391,
             "range": "± 489702235",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "FredrikaPhililip@proton.me",
+            "name": "Suuuuuuperrrrr fred",
+            "username": "FredPhilipy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "05ac12c2771f0e3f99003219e9490c15ba23f4de",
+          "message": "feat(l2): add panic handling for exec and prove functions (#4525)\n\nFixes #4452\n\nImproves panic handling in the `exec` and `prove` functions across\ndifferent backends to prevent crashes and provide meaningful error\nmessages.\n\n- Added panic catching with `catch_unwind` in replay functions\n- Improved error messages for different backends (SP1, RISC0, Exec)\n- Added proper error context for execution and proving failures\n- Extracted common panic handling logic to helper functions",
+          "timestamp": "2025-09-18T16:02:32Z",
+          "tree_id": "6b15981e42f06fd869d4aff37ef0c8eebbb6c1b8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/05ac12c2771f0e3f99003219e9490c15ba23f4de"
+        },
+        "date": 1758214569947,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168096456064,
+            "range": "± 588155217",
             "unit": "ns/iter"
           }
         ]
