@@ -13,7 +13,6 @@ use libmdbx::orm::{Decodable, Encodable};
 // Account types
 pub type AccountCodeHashRLP = Rlp<H256>;
 pub type AccountCodeRLP = Rlp<Bytes>;
-pub type AccountHashRLP = Rlp<H256>;
 
 // Block types
 pub type BlockHashRLP = Rlp<BlockHash>;
