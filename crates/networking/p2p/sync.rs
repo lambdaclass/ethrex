@@ -1126,7 +1126,6 @@ impl Syncer {
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
-        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
         // Finish code hash collection
@@ -1191,6 +1190,8 @@ impl Syncer {
         }
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
+
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
