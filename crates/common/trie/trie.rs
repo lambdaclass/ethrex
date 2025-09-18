@@ -92,19 +92,18 @@ impl Trie {
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        println!("idk man");
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                println!(
-                    "I'm going to get node for hash {:?} and path {}",
-                    hash,
-                    hex::encode(&path)
-                );
+                // println!(
+                //     "I'm going to get node for hash {:?} and path {}",
+                //     hash,
+                //     hex::encode(&path)
+                // );
                 let rlp = self.db.get(hash).unwrap().unwrap();
-                println!("RLP: {}", hex::encode(&rlp));
+                // println!("RLP: {}", hex::encode(&rlp));
                 let node = Node::decode(&rlp).map_err(TrieError::RLPDecode)?;
-                println!("Decoded node");
+                // println!("Decoded node");
                 node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
             _ => None,

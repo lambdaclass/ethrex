@@ -19,6 +19,7 @@ impl LeafNode {
 
     /// Returns the stored value if the given path matches the stored path
     pub fn get(&self, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+        // println!("Leaf: {}", hex::encode(&self.partial.data));
         if self.partial == path {
             Ok(Some(self.value.clone()))
         } else {

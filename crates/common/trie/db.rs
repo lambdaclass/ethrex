@@ -1,6 +1,7 @@
 use ethereum_types::H256;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
-use crate::{NodeHash, NodeRLP, Trie, error::TrieError};
+use crate::{Node, NodeHash, NodeRLP, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -38,7 +39,17 @@ impl InMemoryTrieDB {
         let mut hashed_nodes: Vec<(NodeHash, Vec<u8>)> = vec![];
         embedded_root.commit(&mut hashed_nodes);
 
-        let hashed_nodes = hashed_nodes.into_iter().collect();
+        let hashed_nodes: BTreeMap<NodeHash, Vec<u8>> = hashed_nodes.into_iter().collect();
+
+        // for (hash, node_rlp) in &hashed_nodes {
+        //     // Nodes in our RLP
+        //     let node = Node::decode(&node_rlp).unwrap();
+        //     let real_rlp = node.encode_raw();
+        //     let NodeHash::Hashed(h) = *hash else {
+        //         unreachable!()
+        //     };
+        //     println!("Hash: {:#x}, real rlp: {}", h, hex::encode(real_rlp));
+        // }
 
         let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
         Ok(Self::new(in_memory_trie))

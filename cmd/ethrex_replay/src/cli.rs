@@ -21,7 +21,7 @@ use ethrex_rpc::{
 use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, node::LeafNode};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, node::LeafNode};
 use eyre::Ok;
 use reqwest::Url;
 use std::{
@@ -458,13 +458,13 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     // Set up internal state of in-memory store
     {
         // Set up state trie nodes
-        let mut all_nodes = guest_program.nodes_hashed.clone();
+        let all_nodes = &guest_program.nodes_hashed;
         let state_root_hash = guest_program.parent_block_header.state_root;
 
+        // This is an arbitrary key that should be in the nodes rlp but is not present so i insert it manually, for hoodi block 1232010 when asking revm for the witness.
         let key =
             H256::from_str("0x7f32058f93569f9aa4c7af485ef080cd363beccaf059b80b739d1ee66852265c")
                 .unwrap();
-        // let value = vec![];
         let value = AccountState::default().encode_to_vec();
         let nibbles = Nibbles {
             data: vec![
@@ -476,24 +476,19 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
             ],
         };
         let leaf_node = LeafNode::new(nibbles, value);
-        let raw_encoded = leaf_node.encode_raw();
-        println!("Node raw encoded: {}", hex::encode(&raw_encoded));
-
-        all_nodes.insert(key, raw_encoded);
-
-        let key_to_get =
-            H256::from_str("0x4d57b262aa69fa5781d854150fccd30311a815a0a61c1a6062ede9306212737d")
-                .unwrap();
+        let node: Node = leaf_node.into();
 
         let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, &all_nodes)
             .unwrap()
             .inner;
 
         {
-            let a = state_trie_nodes.lock().unwrap();
-            let sth = a.get(&ethrex_trie::NodeHash::Hashed(key_to_get)).unwrap();
-            println!("node: {}", hex::encode(sth));
-            std::process::exit(1);
+            // Insert the invented node to the trie that says "This node exists and it's a leaf node with a default account :D"
+            // Note that the RLP hash doesn't match to the actual hash being inserted here, the key is that it's not going to be recomputed.
+            state_trie_nodes
+                .lock()
+                .unwrap()
+                .insert(ethrex_trie::NodeHash::Hashed(key), node.encode_to_vec());
         }
 
         let mut inner_store = in_memory_store.inner()?;
@@ -550,6 +545,14 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     for (_n, header) in guest_program.block_headers.clone() {
         store.add_block_header(header.hash(), header).await?;
     }
+
+    // println!("Cutting point ---------------------------------");
+    // let block_hash =
+    //     H256::from_str("0xfad7095e22885da517436876c3a212e901041a207b5ae5126724ff2d21be6be5")
+    //         .unwrap();
+    // let address = Address::from_str("0xac20a634ac84cccd3f2d2f610f32da00a9d2d623").unwrap();
+    // let address = Address::from_str("0xfffffffffffffffffffffffffffffffffffffffe").unwrap();
+    // store.get_account_info_by_hash(block_hash, address).unwrap();
 
     let blockchain = Blockchain::default_with_store(store);
 

@@ -135,6 +135,10 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        // println!(
+        //     "Get acc info by hash {:#x}, addr {:#x}",
+        //     block_hash, address
+        // );
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -145,6 +149,7 @@ impl Store {
             return Ok(None);
         };
 
+        // println!("before decode of account state");
         let account_state = AccountState::decode(&encoded_state)?;
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,

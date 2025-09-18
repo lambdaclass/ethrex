@@ -38,13 +38,16 @@ impl BranchNode {
 
     /// Retrieves a value from the subtrie originating from this node given its path
     pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+        // println!("Branch");
         // If path is at the end, return to its own value if present.
         // Otherwise, check the corresponding choice and delegate accordingly if present.
         if let Some(choice) = path.next_choice() {
             // Delegate to children if present
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
+                // println!("Before getting child node");
                 let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                // println!("After getting child node");
                 child_node.get(db, path)
             } else {
                 Ok(None)
