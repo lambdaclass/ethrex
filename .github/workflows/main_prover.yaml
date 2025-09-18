@@ -3,6 +3,9 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
+  pull_request:
+    paths:
+      - ".github/workflows/main_prover.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
