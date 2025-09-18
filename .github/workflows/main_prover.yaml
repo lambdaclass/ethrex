@@ -1,8 +1,8 @@
 # TODO: uncomment "if: ${{ always() && github.event_name == 'merge_group' }}" lines when reenabling this workflow in the merge queue
 name: L2 (SP1 Backend)
 on:
-  # push:
-  #   branches: ["main"]
+  push:
+    branches: ["main"]
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
@@ -45,7 +45,7 @@ jobs:
       # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.
       - name: Clean .env
         # if: ${{ always() && github.event_name == 'merge_group' }}
-        run: rm -rf crates/l2/.env
+        run: rm -rf cmd/.env
 
       - name: Build prover
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -77,7 +77,7 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
-          ETHREX_COMMITTER_COMMIT_TIME=180000 \
+          ETHREX_COMMITTER_COMMIT_TIME=30000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           docker compose up --build --detach --no-deps ethrex_l2
 
@@ -86,8 +86,10 @@ jobs:
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
+          docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
+          kill $DOCKER_LOGS_PID || true
 
       - name: Destroy Docker containers
         if: always()

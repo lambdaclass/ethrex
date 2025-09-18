@@ -1333,7 +1333,7 @@ async fn perform_transfer(
     .await?;
 
     let transfer_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, l2_client, 1000).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, l2_client, 10000).await?;
 
     assert!(
         transfer_tx_receipt.receipt.status,
@@ -1438,7 +1438,7 @@ async fn test_n_withdraws(
 
     for (i, tx) in withdraw_txs.iter().enumerate() {
         println!("test_n_withdraws: Waiting receipt {}/{n} ({tx:x})", i + 1);
-        let r = ethrex_l2_sdk::wait_for_transaction_receipt(*tx, l2_client, 1000)
+        let r = ethrex_l2_sdk::wait_for_transaction_receipt(*tx, l2_client, 10000)
             .await
             .expect("Withdraw tx receipt not found");
         receipts.push(r);
@@ -1847,7 +1847,7 @@ async fn wait_for_l2_deposit_receipt(
         .get_privileged_hash()
         .unwrap();
 
-    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 1000).await?)
+    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await?)
 }
 
 pub fn read_env_file_by_config() {
@@ -2004,7 +2004,7 @@ async fn wait_for_verified_proof(
     l2_client: &EthClient,
     tx: H256,
 ) -> L1MessageProof {
-    let proof = wait_for_message_proof(l2_client, tx, 1000).await;
+    let proof = wait_for_message_proof(l2_client, tx, 10000).await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
     loop {

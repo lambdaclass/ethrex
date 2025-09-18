@@ -198,6 +198,7 @@ impl L1ProofSender {
                 .map(|proof_type| format!("{proof_type:?}"))
                 .collect();
             info!(
+                ?batch_to_send,
                 "Missing {} batch proof(s), will not send",
                 missing_proof_types.join(", ")
             );
