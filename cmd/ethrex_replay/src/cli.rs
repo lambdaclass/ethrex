@@ -209,17 +209,7 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let to = if to.is_none() {
-                    let eth_client = EthClient::new(opts.rpc_url.as_str())?;
-
-                    let latest_block = eth_client.get_block_number().await?;
-
-                    Some(latest_block.as_u64())
-                } else {
-                    to
-                };
-
-                let blocks = resolve_blocks(blocks, from, to)?;
+                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
 
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!(
@@ -257,17 +247,7 @@ impl EthrexReplayCommand {
                 to,
                 opts,
             })) => {
-                let to = if to.is_none() {
-                    let eth_client = EthClient::new(opts.rpc_url.as_str())?;
-
-                    let latest_block = eth_client.get_block_number().await?;
-
-                    Some(latest_block.as_u64())
-                } else {
-                    to
-                };
-
-                let blocks = resolve_blocks(blocks, from, to)?;
+                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
 
                 let (eth_client, network) = setup(&opts).await?;
 
@@ -557,17 +537,15 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
     })
 }
 
-fn resolve_blocks(
+async fn resolve_blocks(
     mut blocks: Vec<u64>,
     from: Option<u64>,
     to: Option<u64>,
+    rpc_url: Url,
 ) -> eyre::Result<Vec<u64>> {
-    if let (Some(start), Some(end)) = (from, to) {
-        if start > end {
-            return Err(eyre::Error::msg(
-                "starting point can't be greater than ending point",
-            ));
-        }
+    if let Some(start) = from {
+        let end = to.unwrap_or(fetch_latest_block_number(rpc_url).await?);
+
         for block in start..=end {
             blocks.push(block);
         }
@@ -915,4 +893,10 @@ pub async fn produce_custom_l2_block(
     apply_fork_choice(store, new_block_hash, new_block_hash, new_block_hash).await?;
 
     Ok(new_block)
+}
+
+async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
+    let eth_client = EthClient::new(rpc_url.as_str())?;
+    let latest_block = eth_client.get_block_number().await?;
+    Ok(latest_block.as_u64())
 }
