@@ -192,7 +192,7 @@ async fn fetch_rangedata_from_client(
         let block = eth_client
             .get_raw_block(BlockIdentifier::Number(block_number))
             .await
-            .wrap_err("failed to fetch block")?;
+            .wrap_err(format!("failed to fetch block {block_number}"))?;
         blocks.push(block);
     }
 
