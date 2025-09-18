@@ -1470,7 +1470,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
 }
 
 pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
-    info!("Starting validate_state_root");
+    info!("Starting validate_bytecodes");
     let mut is_valid = true;
     for (account_hash, account_state) in store
         .iter_accounts(state_root)
