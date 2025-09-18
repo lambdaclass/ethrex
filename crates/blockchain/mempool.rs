@@ -291,6 +291,15 @@ impl Mempool {
             .collect())
     }
 
+    /// Returns all mempool transactions currently in the pool
+    pub fn mempool_content(&self) -> Result<Vec<MempoolTransaction>, MempoolError> {
+        let pooled_transactions = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(pooled_transactions.values().cloned().collect())
+    }
+
     /// Returns all blobs bundles currently in the pool
     pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
         let blobs_bundle_pool = self

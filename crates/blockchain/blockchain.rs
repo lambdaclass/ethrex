@@ -2,6 +2,7 @@ pub mod constants;
 pub mod error;
 pub mod fork_choice;
 pub mod mempool;
+pub mod mempool_tx_pruner;
 pub mod payload;
 mod smoke_test;
 pub mod tracing;

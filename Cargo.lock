@@ -4064,6 +4064,7 @@ dependencies = [
  "secp256k1",
  "serde_json",
  "sha3",
+ "spawned-concurrency",
  "thiserror 2.0.16",
  "tokio",
  "tokio-util",
