@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758214687278,
+  "lastUpdate": 1758215358650,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15265,6 +15265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168297226720,
             "range": "± 407086433",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "02330e2a0f36ceab463a7756d596d826070d1309",
+          "message": "docs(l1): document rlpx messages (#4560)\n\n**Motivation**\nThe difference between `PeerMessage` and `BackendMessage` is not clear\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nDocument its differences\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4271",
+          "timestamp": "2025-09-18T16:17:19Z",
+          "tree_id": "a6b2a07d122eeea9b4eae20163210fdb1ab19f7c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/02330e2a0f36ceab463a7756d596d826070d1309"
+        },
+        "date": 1758215337324,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 164920752402,
+            "range": "± 663837081",
             "unit": "ns/iter"
           }
         ]
