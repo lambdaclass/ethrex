@@ -37,8 +37,8 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
             let panic_msg = extract_panic_message(&panic_info);
 
             Err(eyre::Error::msg(format!(
-                "Execution panicked with backend {:?}: {}",
-                backend, panic_msg
+                "Execution panicked: {}",
+                panic_msg
             )))
         }
     }
@@ -64,19 +64,7 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
             // Try to extract meaningful error message from panic info
             let panic_msg = extract_panic_message(&panic_info);
 
-            // Provide more specific error messages based on different backends
-            let backend_name = match backend {
-                Backend::Exec => "Exec",
-                #[cfg(feature = "sp1")]
-                Backend::SP1 => "SP1",
-                #[cfg(feature = "risc0")]
-                Backend::RISC0 => "RISC0",
-            };
-
-            Err(eyre::Error::msg(format!(
-                "{} backend panicked while proving: {}",
-                backend_name, panic_msg
-            )))
+            Err(eyre::Error::msg(format!("Proving panicked: {}", panic_msg)))
         }
     }
 }
