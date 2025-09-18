@@ -632,8 +632,16 @@ fn deploy_tdx_contracts(
     Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
-        // TODO: This can panic
-        .env("RPC_URL", &opts.eth_options.rpc_url[0])
+        .env(
+            "RPC_URL",
+            &opts
+                .eth_options
+                .rpc_url
+                .first()
+                .ok_or(DeployerError::ConfigValueNotSet(
+                    "--eth.rpc-url".to_string(),
+                ))?,
+        )
         .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
