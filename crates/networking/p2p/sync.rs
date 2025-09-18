@@ -1075,6 +1075,7 @@ impl Syncer {
                 )
                 .await?;
             }
+            debug!("The accounts that have storage {:?}", storage_accounts);
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
@@ -1087,6 +1088,7 @@ impl Syncer {
             if !healing_done {
                 continue;
             }
+            debug!("The accounts that have storage {:?}", storage_accounts);
             healing_done = heal_storage_trie(
                 pivot_header.state_root,
                 &storage_accounts,
@@ -1100,6 +1102,7 @@ impl Syncer {
 
             free_peers_and_log_if_not_empty(&self.peers).await;
         }
+        debug!("The accounts that have storage {:?}", storage_accounts);
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
@@ -1388,14 +1391,18 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
         let tree_validated = account_state.storage_root == computed_storage_root;
         if !tree_validated {
             error!(
-                "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
-                account_state.storage_root
+                "We have failed the validation of the storage tree {:x} expected but {computed_storage_root:x} found for the account {:x}",
+                account_state.storage_root,
+                hashed_address
             );
         }
         tree_validated
     })
     .all(|valid| valid);
     info!("Finished validate_storage_root");
+    if !is_valid {
+        std::process::exit(-1);
+    }
     is_valid
 }
 
