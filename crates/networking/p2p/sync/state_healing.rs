@@ -15,8 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::H256;
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
 use tracing::{debug, error, info};
@@ -25,7 +25,7 @@ use crate::{
     metrics::METRICS,
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
-    sync::AccountStorageRoots,
+    sync::{AccountStorageRoots, code_collector::CodeHashCollector},
     utils::current_unix_time,
 };
 
@@ -52,6 +52,7 @@ pub async fn heal_state_trie_wrap(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     storage_accounts: &mut AccountStorageRoots,
+    code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     *METRICS.current_step.lock().await = "Healing State".to_string();
@@ -65,6 +66,7 @@ pub async fn heal_state_trie_wrap(
             global_leafs_healed,
             HashMap::new(),
             storage_accounts,
+            code_hash_collector,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -80,6 +82,7 @@ pub async fn heal_state_trie_wrap(
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 /// This method also stores modified storage roots in the db for heal_storage_trie
 /// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
+#[allow(clippy::too_many_arguments)]
 async fn heal_state_trie(
     state_root: H256,
     store: Store,
@@ -88,6 +91,7 @@ async fn heal_state_trie(
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
+    code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
@@ -165,9 +169,17 @@ async fn heal_state_trie(
                 Ok(nodes) => {
                     for (node, meta) in nodes.iter().zip(batch.iter()) {
                         if let Node::Leaf(node) = node {
+                            let account = AccountState::decode(&node.value)?;
                             let account_hash = H256::from_slice(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
+
+                            // // Collect valid code hash
+                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                                code_hash_collector.add(account.code_hash);
+                                code_hash_collector.flush_if_needed().await?;
+                            }
+
                             storage_accounts.healed_accounts.insert(account_hash);
                             storage_accounts
                                 .accounts_with_storage_root
