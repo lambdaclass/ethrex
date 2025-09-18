@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use ethrex_common::addresses::*;
+use ethrex_common::types::Fork;
+use ethrex_common::{H32, addresses::*};
 use ethrex_common::{H160, serde_utils, types::ForkBlobSchedule};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -75,8 +76,7 @@ struct ConfigRpcResponse {
     blob_schedule: ForkBlobSchedule,
     #[serde(with = "serde_utils::u64::hex_str")]
     chain_id: u64,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    fork_id: u64,
+    fork_id: H32,
     precompiles: BTreeMap<String, H160>,
     system_contracts: BTreeMap<String, H160>,
 }
@@ -89,10 +89,10 @@ impl RpcHandler for Config {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let latest_block_number = context.storage.get_latest_block_number().await?;
         let chain_config = context.storage.get_chain_config()?;
-        let fork = chain_config.get_fork(latest_block_number);
+        let fork_id = context.storage.get_fork_id().await?;
         let mut system_contracts = BTreeMap::new();
-        system_contracts.insert("BEACON_ROOTS_ADDRESS".to_string(), *BEACON_ROOTS_ADDRESS);
-        if chain_config.is_prague_activated(latest_block_number) {
+        system_contracts.insert("BECON_ROOTS_ADDRESS".to_string(), *BEACON_ROOTS_ADDRESS);
+        if chain_config.fork(latest_block_number) >= Fork::Prague {
             system_contracts.insert(
                 "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
                 *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -124,7 +124,7 @@ impl RpcHandler for Config {
         precompiles.insert("BLAKE2F".to_string(), BLAKE2F_ADDRESS);
         precompiles.insert("KZG_POINT_EVALUATION".to_string(), POINT_EVALUATION_ADDRESS);
 
-        if chain_config.is_cancun_activated(latest_block_number) {
+        if chain_config.fork(latest_block_number) >= Fork::Cancun {
             precompiles.insert("BLS12_G1ADD".to_string(), BLS12_G1ADD_ADDRESS);
             precompiles.insert("BLS12_G1MSM".to_string(), BLS12_G1MSM_ADDRESS);
             precompiles.insert("BLS12_G2ADD".to_string(), BLS12_G2ADD_ADDRESS);
@@ -140,7 +140,7 @@ impl RpcHandler for Config {
             );
         }
 
-        if chain_config.is_osaka_activated(latest_block_number) {
+        if chain_config.fork(latest_block_number) >= Fork::Osaka {
             precompiles.insert("P256_VERIFY".to_string(), P256_VERIFICATION_ADDRESS);
         }
         let config = ConfigRpcResponse {
@@ -149,7 +149,7 @@ impl RpcHandler for Config {
                 .get_fork_blob_schedule(latest_block_number)
                 .unwrap_or_default(),
             chain_id: chain_config.chain_id,
-            fork_id: fork as u64,
+            fork_id: fork_id.fork_hash,
             precompiles,
             system_contracts,
         };
