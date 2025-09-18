@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758219407417,
+  "lastUpdate": 1758220274436,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15415,6 +15415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169277879836,
             "range": "± 408684805",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ea9f3c1e086197a005bc207bd09c0415af80cf5c",
+          "message": "chore(l1): pending snapsync comments (#4539)\n\n**Motivation**\nThere were pending comments on snapsync pr that needed to be addressed\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAddress those comments:\n- Replaced `tmux kill-server` by `kill-session`\n- Removed unnecessary methods on storage\n- Re add serialize peer data test\n- Remove empty function on handshake\n- Simplify node digest\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4428",
+          "timestamp": "2025-09-18T17:34:16Z",
+          "tree_id": "bb364be5d5e81d82666fb06c9b9211dfd2cc5f9a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ea9f3c1e086197a005bc207bd09c0415af80cf5c"
+        },
+        "date": 1758220108664,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169378320892,
+            "range": "± 465608914",
             "unit": "ns/iter"
           }
         ]
