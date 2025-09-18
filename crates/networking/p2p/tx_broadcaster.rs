@@ -96,6 +96,8 @@ impl TxBroadcaster {
     }
 
     async fn broadcast_txs(&mut self) -> Result<(), TxBroadcasterError> {
+        let (txs_size,blob_size) = self.blockchain.mempool.get_mempool_size().unwrap();
+        info!("Mempool size transactions: {} blobs: {}", txs_size, blob_size);
         let txs_to_broadcast = self
             .blockchain
             .mempool
