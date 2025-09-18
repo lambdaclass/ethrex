@@ -442,6 +442,7 @@ impl<'a> VM<'a> {
                 self.env.config.fork,
             );
         }
+        let opcode_table = &VM::OPCODE_TABLES[self.env.config.fork as usize];
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
@@ -449,7 +450,7 @@ impl<'a> VM<'a> {
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = VM::OPCODE_TABLE[opcode as usize].call(self);
+            let op_result = opcode_table[opcode as usize].call(self);
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {

@@ -1,9 +1,9 @@
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
+use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -55,10 +55,6 @@ impl<'a> VM<'a> {
 
     // PUSH0
     pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-3855] - PUSH0 is only available from SHANGHAI
-        if self.env.config.fork < Fork::Shanghai {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
         let current_call_frame = &mut self.current_call_frame;
 
         current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
