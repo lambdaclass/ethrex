@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758225883518,
+  "lastUpdate": 1758230116616,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -31346,6 +31346,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004418356034482759,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "efa0fe651ed40668ed607026e69c8e0ab868ba89",
+          "message": "ci(l2): improve sp1 workflow logs",
+          "timestamp": "2025-09-18T19:37:12Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4547/commits/efa0fe651ed40668ed607026e69c8e0ab868ba89"
+        },
+        "date": 1758230093750,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015276581222056632,
             "unit": "Mgas/s"
           }
         ]
