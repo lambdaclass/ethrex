@@ -71,7 +71,7 @@ impl CodeHashCollector {
             self.flush_buffer(buffer);
         }
 
-        // Wait for all pending writes using join_all pattern from peer_handler
+        // Wait for all pending writes
         self.disk_tasks
             .join_all()
             .await

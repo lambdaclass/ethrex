@@ -52,7 +52,7 @@ pub async fn heal_state_trie_wrap(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     storage_accounts: &mut AccountStorageRoots,
-    code_hashes_collector: &mut CodeHashCollector,
+    code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
     *METRICS.current_step.lock().await = "Healing State".to_string();
@@ -67,7 +67,7 @@ pub async fn heal_state_trie_wrap(
             global_leafs_healed,
             HashMap::new(),
             storage_accounts,
-            code_hashes_collector,
+            code_hash_collector,
         )
         .await?;
         if current_unix_time() > staleness_timestamp {
@@ -93,7 +93,7 @@ async fn heal_state_trie(
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
     storage_accounts: &mut AccountStorageRoots,
-    code_hashes_collector: &mut CodeHashCollector,
+    code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
@@ -178,9 +178,12 @@ async fn heal_state_trie(
 
                             // Collect valid code hash
                             if account.code_hash != *EMPTY_KECCACK_HASH {
-                                code_hashes_collector.add(account.code_hash);
-                                code_hashes_collector.flush_if_needed().await?;
+                                code_hash_collector.add(account.code_hash);
+                                code_hash_collector.flush_if_needed().await?;
                             }
+
+                            // Check if any dump task failed
+                            code_hash_collector.handle_errors().await?;
 
                             if account.storage_root != *EMPTY_TRIE_HASH {
                                 storage_accounts.healed_accounts.insert(account_hash);
@@ -318,9 +321,6 @@ async fn heal_state_trie(
             info!("state healing is stale");
             is_stale = true;
         }
-
-        // Check if any dump task failed
-        code_hashes_collector.handle_errors().await?;
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             info!("Finisehd inflight tasks");

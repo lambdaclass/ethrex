@@ -840,7 +840,7 @@ impl Syncer {
         std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
 
         // Create collector to store code hashes in files
-        let mut codehash_collector = CodeHashCollector::new(code_hashes_snapshot_dir.clone());
+        let mut code_hash_collector = CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -902,8 +902,8 @@ impl Syncer {
                     })
                     .collect();
 
-                codehash_collector.extend(code_hashes_from_snapshot);
-                codehash_collector.flush_if_needed().await?;
+                code_hash_collector.extend(code_hashes_from_snapshot);
+                code_hash_collector.flush_if_needed().await?;
 
                 let store_clone = store.clone();
                 let current_state_root =
@@ -926,7 +926,7 @@ impl Syncer {
                 computed_state_root = current_state_root;
 
                 // Check if any dump task failed
-                codehash_collector.handle_errors().await?;
+                code_hash_collector.handle_errors().await?;
             }
 
             info!(
@@ -966,7 +966,7 @@ impl Syncer {
                     calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut state_leafs_healed,
                     &mut storage_accounts,
-                    &mut codehash_collector,
+                    &mut code_hash_collector,
                 )
                 .await?
                 {
@@ -1090,7 +1090,7 @@ impl Syncer {
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_state_leafs_healed,
                 &mut storage_accounts,
-                &mut codehash_collector,
+                &mut code_hash_collector,
             )
             .await?;
             if !healing_done {
@@ -1114,7 +1114,7 @@ impl Syncer {
         info!("Finished healing");
 
         // Finish code hash collection
-        codehash_collector.finish().await?;
+        code_hash_collector.finish().await?;
 
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
