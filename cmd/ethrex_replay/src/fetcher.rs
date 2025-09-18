@@ -150,16 +150,12 @@ pub async fn get_blockdata(
     }
     #[cfg(feature = "l2")]
     {
-        Ok(Cache {
-            blocks: vec![block],
-            witness: witness_rpc,
-            network: Some(network),
-            chain_config: Some(chain_config),
-            l2_fields: Some(L2Fields {
-                blob_commitment: [0u8; 48],
-                blob_proof: [0u8; 48],
-            }),
-        })
+        Ok(Cache::new_for_l2(
+            vec![block],
+            witness_rpc,
+            network,
+            chain_config,
+        ))
     }
 }
 
@@ -232,16 +228,7 @@ async fn fetch_rangedata_from_client(
     let network = network_from_chain_id(chain_config.chain_id);
 
     #[cfg(feature = "l2")]
-    let cache = Cache {
-        blocks,
-        witness: witness_rpc,
-        network: Some(network),
-        chain_config: Some(chain_config),
-        l2_fields: Some(L2Fields {
-            blob_commitment: [0u8; 48],
-            blob_proof: [0u8; 48],
-        }),
-    };
+    let cache = Cache::new_for_l2(blocks, witness_rpc, network, chain_config);
     #[cfg(not(feature = "l2"))]
     let cache = Cache::new(blocks, witness_rpc, Some(network));
 

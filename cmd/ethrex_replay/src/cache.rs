@@ -55,6 +55,24 @@ impl Cache {
             l2_fields: None,
         }
     }
+    #[cfg(feature = "l2")]
+    pub fn new_for_l2(
+        blocks: Vec<Block>,
+        witness: RpcExecutionWitness,
+        network: Network,
+        chain_config: ChainConfig,
+    ) -> Self {
+        Self {
+            blocks,
+            witness,
+            network: Some(network),
+            chain_config: Some(chain_config),
+            l2_fields: Some(L2Fields {
+                blob_commitment: [0u8; 48],
+                blob_proof: [0u8; 48],
+            }),
+        }
+    }
     pub fn load(file_name: &str) -> eyre::Result<Self> {
         let file = BufReader::new(
             File::open(file_name).map_err(|e| eyre::Error::msg(format!("{e} ({file_name})")))?,

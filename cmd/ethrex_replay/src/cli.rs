@@ -759,8 +759,6 @@ pub async fn produce_l1_block(
 }
 
 #[cfg(feature = "l2")]
-use crate::cache::L2Fields;
-#[cfg(feature = "l2")]
 use ethrex_blockchain::validate_block;
 #[cfg(feature = "l2")]
 use ethrex_l2::sequencer::block_producer::build_payload;
@@ -814,16 +812,12 @@ pub async fn replay_custom_l2_blocks(
 
     let network = network_from_chain_id(execution_witness.chain_config.chain_id);
 
-    let cache = Cache {
+    let cache = Cache::new_for_l2(
         blocks,
-        witness: RpcExecutionWitness::from(execution_witness),
-        network: Some(network),
-        chain_config: Some(genesis.config),
-        l2_fields: Some(L2Fields {
-            blob_commitment: [0_u8; 48],
-            blob_proof: [0_u8; 48],
-        }),
-    };
+        RpcExecutionWitness::from(execution_witness),
+        network,
+        genesis.config,
+    );
 
     let start = SystemTime::now();
 
