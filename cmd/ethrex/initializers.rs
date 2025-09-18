@@ -42,8 +42,7 @@ use tracing_subscriber::{
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
-        .from_env_lossy()
-        .add_directive(Directive::from(opts.log_level));
+        .from_env_lossy();
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
@@ -215,7 +214,6 @@ pub async fn init_network(
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
         peer_handler.peer_table.peers.clone(),
-        peer_handler.peer_scores,
     ));
 }
 

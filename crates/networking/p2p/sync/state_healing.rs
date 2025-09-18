@@ -15,8 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::{H256, types::AccountState};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_common::H256;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
 use tracing::{debug, error, info};
@@ -148,13 +148,6 @@ async fn heal_state_trie(
             }
             downloads_success = 0;
             downloads_fail = 0;
-
-            peers
-                .peer_scores
-                .lock()
-                .await
-                .update_peers(&peers.peer_table)
-                .await;
         }
 
         // Attempt to receive a response from one of the peers
@@ -166,19 +159,16 @@ async fn heal_state_trie(
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
             // Mark the peer as available
-            peers.peer_scores.lock().await.free_peer(peer_id);
+            peers.peer_table.free_peer(peer_id).await;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
                     for (node, meta) in nodes.iter().zip(batch.iter()) {
                         if let Node::Leaf(node) = node {
-                            let account = AccountState::decode(&node.value).expect("decode failed");
                             let account_hash = H256::from_slice(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
-                            if account.storage_root != *EMPTY_TRIE_HASH {
-                                storage_accounts.healed_accounts.insert(account_hash);
-                            }
+                            storage_accounts.healed_accounts.insert(account_hash);
                             storage_accounts
                                 .accounts_with_storage_root
                                 .remove(&account_hash);
@@ -194,7 +184,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    peers.peer_scores.lock().await.record_success(peer_id);
+                    peers.peer_table.record_success(peer_id).await;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -203,7 +193,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    peers.peer_scores.lock().await.record_failure(peer_id);
+                    peers.peer_table.record_failure(peer_id).await;
                 }
             }
         }
@@ -221,11 +211,8 @@ async fn heal_state_trie(
                     longest_path_seen,
                 );
                 let Some((peer_id, mut peer_channel)) = peers
-                    .peer_scores
-                    .lock()
-                    .await
+                    .peer_table
                     .get_peer_channel_with_highest_score_and_mark_as_used(
-                        &peers.peer_table,
                         &SUPPORTED_SNAP_CAPABILITIES,
                     )
                     .await
