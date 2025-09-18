@@ -923,10 +923,7 @@ impl Syncer {
                     })
                     .await??;
 
-                computed_state_root = current_state_root;
-
-                // Check if any dump task failed
-                code_hash_collector.handle_errors().await?;
+                computed_state_root = current_state_root
             }
 
             info!(

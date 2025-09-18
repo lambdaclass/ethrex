@@ -45,20 +45,20 @@ impl CodeHashCollector {
 
     /// Flushes the buffer to a file if the buffer is larger than [`CODE_HASH_WRITE_BUFFER_SIZE`]
     pub async fn flush_if_needed(&mut self) -> Result<(), SyncError> {
-        if self.buffer.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
-            let buffer = std::mem::take(&mut self.buffer);
-            self.flush_buffer(buffer);
-        }
-        Ok(())
-    }
-
-    /// Handles completed disk write tasks, terminating on any error
-    pub async fn handle_errors(&mut self) -> Result<(), SyncError> {
-        while let Some(result) = self.disk_tasks.try_join_next() {
-            result
+        // Check the result of the previous task
+        if !self.disk_tasks.is_empty() {
+            self.disk_tasks
+                .join_next()
+                .await
+                .expect("Shouldn't be empty")
                 .expect("Shouldn't have a join error")
                 .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
                 .map_err(|_| SyncError::BytecodeFileError)?;
+        }
+
+        if self.buffer.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
+            let buffer = std::mem::take(&mut self.buffer);
+            self.flush_buffer(buffer);
         }
         Ok(())
     }

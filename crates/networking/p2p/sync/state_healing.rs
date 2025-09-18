@@ -182,9 +182,6 @@ async fn heal_state_trie(
                                 code_hash_collector.flush_if_needed().await?;
                             }
 
-                            // Check if any dump task failed
-                            code_hash_collector.handle_errors().await?;
-
                             if account.storage_root != *EMPTY_TRIE_HASH {
                                 storage_accounts.healed_accounts.insert(account_hash);
                             }
