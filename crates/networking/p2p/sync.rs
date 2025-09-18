@@ -1191,6 +1191,8 @@ impl Syncer {
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
+
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
         let block = store
@@ -1462,6 +1464,31 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     })
     .all(|valid| valid);
     info!("Finished validate_storage_root");
+    if !is_valid {
+        std::process::exit(-1);
+    }
+    is_valid
+}
+
+pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+    info!("Starting validate_bytecodes");
+    let mut is_valid = true;
+    for (account_hash, account_state) in store
+        .iter_accounts(state_root)
+        .expect("we couldn't iterate over accounts")
+    {
+        if account_state.code_hash != *EMPTY_KECCACK_HASH
+            && !store
+                .get_account_code(account_state.code_hash)
+                .is_ok_and(|code| code.is_some())
+        {
+            error!(
+                "Missing code hash {:x} for account {:x}",
+                account_state.code_hash, account_hash
+            );
+            is_valid = false
+        }
+    }
     if !is_valid {
         std::process::exit(-1);
     }
