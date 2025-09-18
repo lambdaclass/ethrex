@@ -1103,6 +1103,7 @@ impl Syncer {
                 let storage_trie = store.open_storage_trie(
                     H256::from_slice(&path.to_bytes()),
                     account_state.storage_root,
+                    todo!(),
                 )?;
                 let storage_db = storage_trie.db();
                 let mut storages_to_write = Vec::new();
@@ -1110,6 +1111,7 @@ impl Syncer {
                     .open_storage_trie(
                         H256::from_slice(&path.to_bytes()),
                         account_state.storage_root,
+                        todo!(),
                     )?
                     .into_iter()
                     .try_for_each(|(path, node)| -> Result<(), SyncError> {
@@ -1208,7 +1210,7 @@ fn compute_storage_roots(
         Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
     };
 
-    let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root)?;
+    let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root, todo!())?;
 
     for (hashed_key, value) in key_value_pairs {
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {

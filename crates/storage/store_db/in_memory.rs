@@ -408,6 +408,7 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
         let trie_backend = store

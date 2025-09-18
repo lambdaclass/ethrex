@@ -571,6 +571,7 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        _state_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
@@ -596,6 +597,7 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        _state_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(
             LibmdbxLockedDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(

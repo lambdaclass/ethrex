@@ -235,6 +235,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError>;
 
     /// Obtain a state trie from the given state root
@@ -256,8 +257,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError> {
-        self.open_storage_trie(hashed_address, storage_root)
+        self.open_storage_trie(hashed_address, storage_root, state_root)
     }
 
     async fn forkchoice_update(

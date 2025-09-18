@@ -44,9 +44,10 @@ impl RocksDBTrieDB {
         match &self.address_prefix {
             Some(address) => {
                 // For storage tries, prefix with address
-                let mut key = address.as_bytes().to_vec();
-                key.extend_from_slice(node_hash.as_ref());
-                key
+                Nibbles::from_bytes(address.as_ref())
+                    .concat(node_hash)
+                    .as_ref()
+                    .to_vec()
             }
             None => {
                 // For state trie, use node hash directly
