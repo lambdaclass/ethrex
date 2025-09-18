@@ -90,7 +90,8 @@ impl TrieDB for TrieWrapper {
         }
         self.db.get(key)
     }
-    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        Err(TrieError::DbError(anyhow!("not supported")))
+    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        // TODO: this is probably wrong
+        self.db.put_batch(key_values)
     }
 }
