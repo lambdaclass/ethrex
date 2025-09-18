@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758218003578,
+  "lastUpdate": 1758218305779,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15325,6 +15325,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166777964325,
             "range": "± 293946772",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bf862f90e2bbad64a222c4b81a391b1dbe6efaad",
+          "message": "docs(l1): discv4 send neighbors chunk size comment (#4532)\n\n**Motivation**\nWe send batches of 8 neighbors to avoid exceeding the package max\nlength, this is not properly explained.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdds a better explanation\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4493",
+          "timestamp": "2025-09-18T17:04:20Z",
+          "tree_id": "1c5db403a1ebba3aeeddbc5adcf7384da197dc68",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bf862f90e2bbad64a222c4b81a391b1dbe6efaad"
+        },
+        "date": 1758218281632,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167463895610,
+            "range": "± 476694859",
             "unit": "ns/iter"
           }
         ]
