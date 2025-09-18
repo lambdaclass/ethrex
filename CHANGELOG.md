@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-09-18
+
+- Fetch receipts for block in single DB transaction for the RCP queries [#xxxx](https://github.com/lambdaclass/ethrex/pull/xxxx)
+
 ### 2025-09-15
 
 - Fix caching mechanism of the latest block's hash [#4479](https://github.com/lambdaclass/ethrex/pull/4479)
