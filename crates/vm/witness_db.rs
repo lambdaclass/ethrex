@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
 pub struct GuestProgramStateWrapper {
-    inner: Arc<Mutex<GuestProgramState>>,
+    pub inner: Arc<Mutex<GuestProgramState>>,
 }
 
 impl GuestProgramStateWrapper {
@@ -21,7 +21,7 @@ impl GuestProgramStateWrapper {
         }
     }
 
-    fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, GuestProgramStateError> {
+    pub fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, GuestProgramStateError> {
         self.inner
             .lock()
             .map_err(|_| GuestProgramStateError::Database("Failed to lock DB".to_string()))
