@@ -61,11 +61,10 @@ jobs:
       - name: Start L1 & Deploy contracts
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          touch cmd/.env
+          touch .env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
+          ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER=true \
           docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work

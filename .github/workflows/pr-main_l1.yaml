@@ -34,10 +34,13 @@ jobs:
           ~/.risc0/bin/rzup install risc0-groth16
           ~/.risc0/bin/rzup install rust
 
-      - name: Create placeholder SP1 ELF
+      - name: Create placeholder for SP1 and RISC0 VKs
         run: |
           mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
           touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p crates/l2/prover/src/guest_program/src/risc0/out
+          touch crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk
 
       - name: Run cargo check
         run: cargo check --workspace

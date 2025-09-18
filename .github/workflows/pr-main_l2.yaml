@@ -40,10 +40,13 @@ jobs:
           ~/.risc0/bin/rzup install risc0-groth16
           ~/.risc0/bin/rzup install rust
 
-      - name: Create placeholder SP1 ELF
+      - name: Create placeholder for SP1 and RISC0 VKs
         run: |
           mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
           touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p crates/l2/prover/src/guest_program/src/risc0/out
+          touch crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -141,15 +144,14 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch cmd/.env
+          touch .env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          docker compose up -d ethrex_l1
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          docker compose up contract_deployer
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
+          docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Start Sequencer
         run: |
@@ -205,16 +207,14 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch cmd/.env
+          touch .env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          docker compose up -d ethrex_l1
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
-          COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
+          docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Install rex
         run: |
@@ -227,7 +227,6 @@ jobs:
 
       - name: Register sequencer
         run: |
-          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
 
@@ -240,13 +239,11 @@ jobs:
 
       - name: Start Sequencer
         run: |
-          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
-          cd ../crates/l2
+          cd crates/l2
 
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_COMMITTER_VALIDIUM=false \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
@@ -320,23 +317,37 @@ jobs:
           cd crates/l2/tee/quote-gen
           make image.raw
 
-      - name: Start L1 & Deploy contracts
+      - name: Start L1
         run: |
-          touch cmd/.env
+          touch .env
           cd crates/l2
-          make init-l1-docker;
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
+          make init-l1-docker
+
+      - name: Deploy TDX contracts
+        run: |
+          cd crates/l2/tee/contracts
+          # This address is result of a CREATE2 deploy. Should be replaced if the contract change
+          ON_CHAIN_PROPOSER=0x937bc1a524f22de858203b2cbbad073a98fff0b5 \
+          RPC_URL=http://localhost:8545 \
+          PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
           ETHREX_TDX_DEV_MODE=true \
+          make deploy-all
+
+      - name: Deploy L1 contracts
+        run: |
+          cd crates/l2
+          ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER_ADDRESS=$(cat tee/contracts/deploydeps/automata-dcap-attestation/evm/deployment/TDXVerifier) \
           make deploy-l1
 
       - name: Start Sequencer and test
         run: |
           cd crates/l2
+          make rm-db-l2
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+          ETHREX_NO_MONITOR=true \
           make init-l2 &
           sleep 30
           cd tee/quote-gen/
@@ -384,15 +395,13 @@ jobs:
 
       - name: Start L1 & Deploy contracts
         run: |
-          touch cmd/.env
+          touch .env
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
-          COMPILE_CONTRACTS=true \
-          docker compose up contract_deployer
+          docker compose up -d ethrex_l1
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS=0x4417092B70a3E5f10Dc504d0947DD256B965fc62 \
+          docker compose up --no-deps --exit-code-from contract_deployer contract_deployer
 
       - name: Run tests
         run: |

@@ -2,23 +2,22 @@
 #![allow(clippy::expect_used)]
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use ethrex_common::types::TxType;
-use ethrex_common::{Address, H160, H256, U256};
-use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
-use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
+use ethrex_common::{Address, H160, H256, U256, types::TxType};
+use ethrex_l2::monitor::widget::{
+    L2ToL1MessagesTable,
+    l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageRow, L2ToL1MessageStatus},
+};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
-use ethrex_l2_common::calldata::Value;
-use ethrex_l2_common::l1_messages::L1MessageProof;
-use ethrex_l2_common::utils::get_address_from_secret_key;
+use ethrex_l2_common::{
+    calldata::Value, l1_messages::L1MessageProof, utils::get_address_from_secret_key,
+};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata, claim_erc20withdraw,
-    claim_withdraw, compile_contract, create_deploy, deposit_erc20, get_address_alias,
-    get_erc1967_slot, git_clone, l1_to_l2_tx_data::L1ToL2TransactionData,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, build_generic_tx, calldata::encode_calldata,
+    claim_erc20withdraw, claim_withdraw, compile_contract, create_deploy, deposit_erc20,
+    get_address_alias, get_erc1967_slot, get_last_verified_batch, git_clone,
+    l1_to_l2_tx_data::L1ToL2TransactionData, send_generic_transaction, wait_for_message_proof,
     wait_for_transaction_receipt,
-};
-use ethrex_l2_sdk::{
-    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -1618,13 +1617,8 @@ async fn test_deploy(
         .get_balance(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let (deploy_tx_hash, contract_address) = create_deploy(
-        l2_client,
-        &deployer,
-        init_code.to_vec().into(),
-        Overrides::default(),
-    )
-    .await?;
+    let (deploy_tx_hash, contract_address) =
+        create_deploy(l2_client, &deployer, init_code, &[], Overrides::default()).await?;
 
     let deploy_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, l2_client, 5).await?;
@@ -1668,7 +1662,8 @@ async fn test_deploy_l1(
     let (deploy_tx_hash, contract_address) = create_deploy(
         client,
         &deployer_signer,
-        init_code.to_vec().into(),
+        init_code,
+        &[],
         Overrides::default(),
     )
     .await?;
@@ -1851,7 +1846,7 @@ async fn wait_for_l2_deposit_receipt(
 }
 
 pub fn read_env_file_by_config() {
-    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.env");
     let reader = BufReader::new(File::open(env_file_path).expect("Failed to open .env file"));
 
     for line in reader.lines() {
@@ -1928,11 +1923,11 @@ fn test_private_keys_path() -> PathBuf {
 }
 
 fn rich_keys_file_path() -> PathBuf {
-    match std::env::var("ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH") {
+    match std::env::var("ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH") {
         Ok(path) => PathBuf::from(path),
         Err(_) => {
             println!(
-                "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_RICH_KEYS_FILE_PATH}",
+                "ETHREX_DEPLOYER_DEPOSIT_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_RICH_KEYS_FILE_PATH}",
             );
             PathBuf::from(DEFAULT_RICH_KEYS_FILE_PATH)
         }
