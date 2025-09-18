@@ -1,12 +1,11 @@
-use crate::{rlp::Rlp, trie_db::rocksdb_locked::RocksDBLockedTrieDB};
+use crate::{rlp::AccountCodeHashRLP, trie_db::rocksdb_locked::RocksDBLockedTrieDB};
 use bytes::Bytes;
 use ethrex_common::{
-    H256, U256,
+    H256,
     types::{
         Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
         Transaction,
     },
-    utils::u256_to_big_endian,
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use rocksdb::{
@@ -60,9 +59,9 @@ const CF_RECEIPTS: &str = "receipts";
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
-///     let mut composite_key = Vec::with_capacity(64);
-///     composite_key.extend_from_slice(transaction_hash.as_bytes());
-///     composite_key.extend_from_slice(block_hash.as_bytes());
+///     // let mut composite_key = Vec::with_capacity(64);
+///     // composite_key.extend_from_slice(transaction_hash.as_bytes());
+///     // composite_key.extend_from_slice(block_hash.as_bytes());
 ///    ```
 /// - [`Vec<u8>`] = `(block_number, block_hash, index).encode_to_vec()`
 const CF_TRANSACTION_LOCATIONS: &str = "transaction_locations";
@@ -85,9 +84,9 @@ const CF_STATE_TRIE_NODES: &str = "state_trie_nodes";
 /// Storage tries nodes column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///   ```rust,no_run
-///     let mut key = Vec::with_capacity(64);
-///     key.extend_from_slice(address_hash.as_bytes());
-///     key.extend_from_slice(node_hash.as_ref());
+///     // let mut key = Vec::with_capacity(64);
+///     // key.extend_from_slice(address_hash.as_bytes());
+///     // key.extend_from_slice(node_hash.as_ref());
 ///   ```
 /// - [`Vec<u8>`] = `node_data`
 const CF_STORAGE_TRIES_NODES: &str = "storage_tries_nodes";
@@ -488,7 +487,7 @@ impl StoreEngine for Store {
                 let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
                 batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
 
-                let hash_key: Rlp<H256> = block_hash.into();
+                let hash_key: AccountCodeHashRLP = block_hash.into();
                 let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
                 batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
 
