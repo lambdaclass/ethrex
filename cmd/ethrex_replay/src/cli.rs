@@ -1,5 +1,3 @@
-#[cfg(feature = "l2")]
-use std::path::PathBuf;
 use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
@@ -150,9 +148,6 @@ pub struct EthrexReplayOptions {
         default_value = "on"
     )]
     pub cache_level: CacheLevel,
-    #[cfg(feature = "l2")]
-    #[arg(long, help = "Path to the genesis file for the L2 network.")]
-    pub genesis_path: Option<PathBuf>,
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Default)]
@@ -388,7 +383,6 @@ impl EthrexReplayCommand {
                     bench: false,
                     to_csv: false,
                     cache_level: CacheLevel::default(),
-                    genesis_path: None,
                 };
 
                 let elapsed = replay_custom_l2_blocks(max(1, n_blocks), &opts).await?;
@@ -538,7 +532,7 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
         SEPOLIA_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Sepolia),
         _ => {
             if cfg!(feature = "l2") {
-                Network::CustomL2(chain_id)
+                Network::L2Chain(chain_id)
             } else {
                 Network::LocalDevnet
             }
@@ -818,8 +812,7 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    // TODO: see if we can use the chain id from the execution witness
-    let network = network_from_chain_id(genesis.config.chain_id);
+    let network = network_from_chain_id(execution_witness.chain_config.chain_id);
 
     let cache = Cache {
         blocks,

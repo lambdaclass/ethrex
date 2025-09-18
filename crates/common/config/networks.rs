@@ -38,7 +38,7 @@ pub enum Network {
     PublicNetwork(PublicNetwork),
     LocalDevnet,
     LocalDevnetL2,
-    CustomL2(u64),
+    L2Chain(u64),
     #[serde(skip)]
     GenesisPath(PathBuf),
 }
@@ -99,7 +99,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
-            Network::CustomL2(chain_id) => write!(f, "custom-l2-{}", chain_id),
+            Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
             Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
         }
     }
@@ -117,7 +117,7 @@ impl Network {
             }
             Network::LocalDevnet => Ok(serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS)?),
             Network::LocalDevnetL2 => Ok(serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)?),
-            Network::CustomL2(chain_id) => Ok(Genesis {
+            Network::L2Chain(chain_id) => Ok(Genesis {
                 config: ChainConfig {
                     chain_id: *chain_id,
                     prague_time: Some(0),
