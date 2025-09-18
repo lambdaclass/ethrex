@@ -129,7 +129,29 @@ pub fn dump_storages_to_file(
     path: String,
     storages: Vec<(H256, Vec<(H256, U256)>)>,
 ) -> Result<(), DumpError> {
-    dump_to_file(path, storages.encode_to_vec())
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "rocksdb")] {
+            dump_to_rocks_db(
+                path.clone(),
+                storages
+                    .into_iter()
+                    .flat_map(|(hash, slots)| {
+                        slots.into_iter().map(move |(slot_hash, slot_value)| {
+                            let key = [hash.as_bytes(), slot_hash.as_bytes()].concat();
+                            (key, slot_value.encode_to_vec())
+                        })
+                    }).collect::<Vec<_>>()
+            )
+                .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+                .map_err(|_| DumpError {
+                    path,
+                    contents: Vec::new(),
+                    error: std::io::ErrorKind::Other,
+                })
+        } else {
+            dump_to_file(path, storages.encode_to_vec())
+        }
+    }
 }
 
 /// TODO: make it more generic
