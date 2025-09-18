@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758223003205,
+  "lastUpdate": 1758225883518,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15475,6 +15475,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166834457366,
             "range": "± 299972126",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "101a11dce6e86332de330699a54dc549df03f651",
+          "message": "feat(l1): make rocksdb the default database (#4490)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-18T19:11:59Z",
+          "tree_id": "8bcc5e1bf28817f9dd4b386f2ab852b2b1cae21c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/101a11dce6e86332de330699a54dc549df03f651"
+        },
+        "date": 1758225861376,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90753731838,
+            "range": "± 279145361",
             "unit": "ns/iter"
           }
         ]
