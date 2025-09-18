@@ -1,5 +1,6 @@
-use ethrex_common::types::{
-    BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError,
+use ethrex_common::{
+    H256,
+    types::{BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError},
 };
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
@@ -99,6 +100,10 @@ pub enum MempoolError {
     TxMaxDataSizeError,
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
+    #[error(
+        "Transaction gas limit exceeds maximum. Transaction hash: {0}, transaction gas limit: {1}"
+    )]
+    TxMaxGasLimitExceededError(H256, u64),
     #[error("Transaction priority fee above gas fee")]
     TxGasOverflowError,
     #[error("Transaction intrinsic gas overflow")]
