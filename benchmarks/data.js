@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758218305779,
+  "lastUpdate": 1758219202255,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15355,6 +15355,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167463895610,
             "range": "± 476694859",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "043415bad78f44db22568835b9af42ff2cac63f4",
+          "message": "feat(l1): [EIP-7825] Set gas limit cap for tx and block validation (#4309)\n\n**Motivation**\n\nImplement EIP-7825 for Osaka fork.\n\n**Description**\n\nThis pr introduces the limit cap of 16,777,216 gas (2^24) for individual\ntransactions, as indicated in the\n[EIP-7825](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7825.md).\n\nThis check is used in the `validate_transaction` and `validate_block`\nmethods of the blockchain crate and in `prepare_execution` for\ntransactions in `default_hooks`.\n\nAlso it updates the tests runners for running the tests associated to\nthe eip and it sets the gas_limit field of transactions for running the\nstate tests.\n\nCloses #4154\n\n---------\n\nCo-authored-by: Jeremías Salomón 🐃🐄🥚 <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-09-18T17:18:22Z",
+          "tree_id": "8cde4568db4a09f51b4829d9d9f9c8ff967c70b8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/043415bad78f44db22568835b9af42ff2cac63f4"
+        },
+        "date": 1758219180416,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167014522707,
+            "range": "± 1017546810",
             "unit": "ns/iter"
           }
         ]
