@@ -17,6 +17,9 @@ const PRUNE_WAIT_TIME_SECS: u128 = 300; // 5 minutes
 // Amount of seconds between each prune
 const PRUNE_INTERVAL_SECS: u64 = 300; // 5 minutes
 
+// Number of microseconds in a second
+const MICROS_PER_SECOND: u128 = 1_000_000;
+
 #[derive(Debug, Clone)]
 pub struct MempoolTxPruner {
     blockchain: Arc<Blockchain>,
@@ -55,7 +58,7 @@ impl MempoolTxPruner {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros();
         let mempool_txs = self.blockchain.mempool.mempool_content()?;
         for tx in &mempool_txs {
-            if now.saturating_sub(tx.time()) > PRUNE_WAIT_TIME_SECS * 1_000_000 {
+            if now.saturating_sub(tx.time()) > PRUNE_WAIT_TIME_SECS * MICROS_PER_SECOND {
                 self.blockchain.remove_transaction_from_pool(&tx.hash())?;
             }
         }
