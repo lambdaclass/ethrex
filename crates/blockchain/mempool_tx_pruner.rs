@@ -12,10 +12,10 @@ use spawned_concurrency::{
 use tracing::{debug, info};
 
 // Amount of seconds after which we prune old entries from mempool (We should fine tune this)
-const PRUNE_WAIT_TIME_SECS: u128 = 60; // 5 minutes
+const PRUNE_WAIT_TIME_SECS: u128 = 300; // 5 minutes
 
 // Amount of seconds between each prune
-const PRUNE_INTERVAL_SECS: u64 = 60; // 5 minutes
+const PRUNE_INTERVAL_SECS: u64 = 300; // 5 minutes
 
 #[derive(Debug, Clone)]
 pub struct MempoolTxPruner {
