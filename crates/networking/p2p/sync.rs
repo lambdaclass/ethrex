@@ -923,7 +923,7 @@ impl Syncer {
                     })
                     .await??;
 
-                computed_state_root = current_state_root
+                computed_state_root = current_state_root;
             }
 
             info!(
