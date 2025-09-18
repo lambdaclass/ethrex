@@ -326,7 +326,7 @@ jobs:
         run: |
           cd crates/l2/tee/contracts
           # This address is result of a CREATE2 deploy. Should be replaced if the contract change
-          ON_CHAIN_PROPOSER=0x04b028fca384d29f03c02996d5ee56cb76b67159 \
+          ON_CHAIN_PROPOSER=0x937bc1a524f22de858203b2cbbad073a98fff0b5 \
           RPC_URL=http://localhost:8545 \
           PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
           ETHREX_TDX_DEV_MODE=true \
