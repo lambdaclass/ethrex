@@ -2002,13 +2002,21 @@ async fn wait_for_verified_proof(
     let proof = wait_for_message_proof(l2_client, tx, 1000).await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
-    while get_last_verified_batch(l1_client, on_chain_proposer_address())
-        .await
-        .unwrap()
-        < proof.batch_number
-    {
-        println!("Withdrawal is not verified on L1 yet");
+    loop {
+        let latest = get_last_verified_batch(l1_client, on_chain_proposer_address())
+            .await
+            .unwrap();
+
+        if latest >= proof.batch_number {
+            break;
+        }
+
+        println!(
+            "Withdrawal is not verified yet. Latest verified batch: {}, waiting for: {}",
+            latest, proof.batch_number
+        );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
+
     proof
 }

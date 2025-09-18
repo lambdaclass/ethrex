@@ -306,6 +306,7 @@ jobs:
           cd /tmp
           git clone https://github.com/lambdaclass/rex
           cd rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
           cargo build --release
           cp target/release/rex /usr/local/bin
 
