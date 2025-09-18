@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758231933415,
+  "lastUpdate": 1758239740468,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15505,6 +15505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90753731838,
             "range": "± 279145361",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b2f5ffef89e08ac81fd91bc1f689438d24dfd7f2",
+          "message": "fix(l2): properly update message hashes in committer (#4547)\n\n**Motivation**\n\nWe are prematurely updating the\n[acc_messages](https://github.com/lambdaclass/ethrex/blob/101a11dce6e86332de330699a54dc549df03f651/crates/l2/sequencer/l1_committer.rs#L316)\nvariable in our committer, even though the block may later be discarded\ndue to `stateDiff` or privileged transaction limits.\nThe SP1 workflow is getting stuck in batches 1 or 2 for this reason. We\nhad not seen the error before because we weren’t spamming enough\ntransactions to hit the limit.\nI also noticed that, since we are spamming 3000 privileged transactions\nin our integration tests, 1000 retries to obtain a privileged receipt\nfalls short.\n\nSuccessful run\n[here](https://github.com/lambdaclass/ethrex/actions/runs/17838300648/job/50721020331).\n\n**Description**\n\n- Displays the sequencer logs in the SP1 workflow.  \n- Increases the number of retries in `wait_for_transaction_receipt` to\n10000.\n- Correctly calculates the message hashes of the batch.  \n- Re-enables the prover workflows on pushes to `main`.\n\nCloses #4550",
+          "timestamp": "2025-09-18T23:09:12Z",
+          "tree_id": "6c7141c1162aa5ab4a66734581288d86d3979b43",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b2f5ffef89e08ac81fd91bc1f689438d24dfd7f2"
+        },
+        "date": 1758239720751,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 91400296857,
+            "range": "± 595892549",
             "unit": "ns/iter"
           }
         ]
