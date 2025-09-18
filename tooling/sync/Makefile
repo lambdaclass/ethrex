@@ -95,7 +95,7 @@ flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flame
 		--p2p.port 30303\
 		--discovery.port 30303 \
 		--network $(NETWORK) \
-		--datadir ${NETWORK}_data/ethrex/$(EVM) \
+		--datadir $(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM) \
 		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
 		$(BOOTNODES_FLAG) \
 
@@ -181,7 +181,7 @@ start-ethrex: ## Start ethrex for the network given by NETWORK.
     		--metrics \
     		--metrics.port 3701 \
     		--network $(NETWORK) \
-    		--datadir "${NETWORK}_data/ethrex/$(EVM)" \
+    		--datadir "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)" \
     		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
     		$(BOOTNODES_FLAG) \
 
