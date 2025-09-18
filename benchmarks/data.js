@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758180486646,
+  "lastUpdate": 1758208653374,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15145,6 +15145,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168150659989,
             "range": "± 232028620",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e795d4de06022d2200bc514faa851f747cf70b90",
+          "message": "ci(l2): silent prover slack notifications (#4549)\n\n**Motivation**\n\nWe will be cancelling workflows manually for debugging purposes.\n\n**Description**\n\n- Cancel slack notifications for `Replay proving` and `L2 (SP1\nBackend)`.\n- #4550 was created to re-enable slack notifications.\n\nCloses None",
+          "timestamp": "2025-09-18T14:24:51Z",
+          "tree_id": "367db0f7f29f32dcd189a0fc57cf4a8e425dc12a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e795d4de06022d2200bc514faa851f747cf70b90"
+        },
+        "date": 1758208633065,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166223488261,
+            "range": "± 543997568",
             "unit": "ns/iter"
           }
         ]
