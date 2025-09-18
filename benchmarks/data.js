@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758219202255,
+  "lastUpdate": 1758219407417,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15385,6 +15385,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 167014522707,
             "range": "± 1017546810",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6f1a106a5e57a8eb5098298ec490e7439da1e0af",
+          "message": "test(l1): enable snapsync tests (#4561)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-18T17:22:49Z",
+          "tree_id": "2595fd572b208c5d472abee295776fdff0ff8b92",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6f1a106a5e57a8eb5098298ec490e7439da1e0af"
+        },
+        "date": 1758219386764,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169277879836,
+            "range": "± 408684805",
             "unit": "ns/iter"
           }
         ]
