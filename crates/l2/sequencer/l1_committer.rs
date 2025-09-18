@@ -481,7 +481,7 @@ impl L1Committer {
                     .collect::<Vec<H256>>(),
             );
 
-            message_hashes.extend(acc_messages.iter().map(|msg| get_l1_message_hash(msg)));
+            message_hashes.extend(acc_messages.iter().map(get_l1_message_hash));
 
             new_state_root = self
                 .store
