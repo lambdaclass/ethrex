@@ -209,11 +209,10 @@ jobs:
           - name: "Sync full"
             simulation: ethereum/sync
             test_pattern: ""
-          # Flaky, reenable when fixed
-          # - name: "Sync snap"
-          #   simulation: ethereum/sync
-          #   test_pattern: ""
-          #   ethrex_flags: "--syncmode snap"
+          - name: "Sync snap"
+            simulation: ethereum/sync
+            test_pattern: ""
+            ethrex_flags: "--syncmode snap"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
