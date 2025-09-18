@@ -13,6 +13,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     cache::{Cache, get_block_cache_file_name},
+    cli::network_from_chain_id,
     rpc::db::RpcDB,
 };
 
@@ -228,10 +229,20 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let network = Network::try_from(chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
+    let network = network_from_chain_id(chain_config.chain_id);
 
+    #[cfg(feature = "l2")]
+    let cache = Cache {
+        blocks,
+        witness: witness_rpc,
+        network: Some(network),
+        chain_config: Some(chain_config),
+        l2_fields: Some(L2Fields {
+            blob_commitment: [0u8; 48],
+            blob_proof: [0u8; 48],
+        }),
+    };
+    #[cfg(not(feature = "l2"))]
     let cache = Cache::new(blocks, witness_rpc, Some(network));
 
     Ok(cache)
