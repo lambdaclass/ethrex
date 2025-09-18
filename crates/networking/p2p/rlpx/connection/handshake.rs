@@ -134,7 +134,7 @@ pub(crate) async fn perform(
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
-            kademlia: context.table.clone(),
+            peer_table: context.table.clone(),
             backend_channel: None,
             _inbound: inbound,
             l2_state: context

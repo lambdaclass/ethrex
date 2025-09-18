@@ -678,9 +678,15 @@ impl PeerHandler {
             if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
-                        Some(RLPxMessage::Receipts(receipts)) => {
-                            if receipts.get_id() == request_id {
-                                return Some(receipts.get_receipts());
+                        Some(RLPxMessage::Receipts68(res)) => {
+                            if res.get_id() == request_id {
+                                return Some(res.get_receipts());
+                            }
+                            return None;
+                        }
+                        Some(RLPxMessage::Receipts69(res)) => {
+                            if res.get_id() == request_id {
+                                return Some(res.receipts.clone());
                             }
                             return None;
                         }
@@ -1600,6 +1606,13 @@ impl PeerHandler {
             account_storage_roots
                 .accounts_with_storage_root
                 .remove(&account_done);
+        }
+
+        // Dropping the task sender so that the recv returns None
+        drop(task_sender);
+
+        while let Some(result) = task_receiver.recv().await {
+            let _ = PeerTable::free_peer(&mut self.peer_table, &result.peer_id).await;
         }
 
         Ok(chunk_index + 1)

@@ -15,8 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::{H256, types::AccountState};
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_common::H256;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
 use tracing::{debug, error, info};
@@ -167,13 +167,10 @@ async fn heal_state_trie(
                 Ok(nodes) => {
                     for (node, meta) in nodes.iter().zip(batch.iter()) {
                         if let Node::Leaf(node) = node {
-                            let account = AccountState::decode(&node.value).expect("decode failed");
                             let account_hash = H256::from_slice(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
-                            if account.storage_root != *EMPTY_TRIE_HASH {
-                                storage_accounts.healed_accounts.insert(account_hash);
-                            }
+                            storage_accounts.healed_accounts.insert(account_hash);
                             storage_accounts
                                 .accounts_with_storage_root
                                 .remove(&account_hash);

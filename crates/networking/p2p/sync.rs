@@ -795,6 +795,19 @@ impl SnapBlockSyncState {
     }
 }
 
+/// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
+/// Logs with where the function was when it found this error
+/// TODO: remove this function once peer table has moved to spawned implementation
+async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) {
+    if PeerTable::free_peers(&mut peer_handler.peer_table).await.unwrap_or(0) != 0 {
+        let step = METRICS.current_step.lock().await.clone();
+        error!(
+            step = step,
+            "Found peers marked as used even though we just finished this step"
+        );
+    }
+}
+
 impl Syncer {
     async fn snap_sync(
         &mut self,
@@ -850,6 +863,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
+            free_peers_and_log_if_not_empty(&mut self.peers).await;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -949,6 +963,7 @@ impl Syncer {
                 {
                     continue;
                 };
+                free_peers_and_log_if_not_empty(&mut self.peers).await;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -964,6 +979,7 @@ impl Syncer {
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
+                free_peers_and_log_if_not_empty(&mut self.peers).await;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -1082,6 +1098,8 @@ impl Syncer {
                 &mut global_storage_leafs_healed,
             )
             .await;
+
+            free_peers_and_log_if_not_empty(&mut self.peers).await;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1378,14 +1396,18 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
         let tree_validated = account_state.storage_root == computed_storage_root;
         if !tree_validated {
             error!(
-                "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
-                account_state.storage_root
+                "We have failed the validation of the storage tree {:x} expected but {computed_storage_root:x} found for the account {:x}",
+                account_state.storage_root,
+                hashed_address
             );
         }
         tree_validated
     })
     .all(|valid| valid);
     info!("Finished validate_storage_root");
+    if !is_valid {
+        std::process::exit(-1);
+    }
     is_valid
 }
 

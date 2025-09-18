@@ -94,7 +94,7 @@ impl PeerData {
     pub fn new(
         node: Node,
         record: Option<NodeRecord>,
-        channels: PeerChannels,
+        channels: Option<PeerChannels>,
         capabilities: Vec<Capability>,
     ) -> Self {
         Self {
@@ -102,7 +102,7 @@ impl PeerData {
             record,
             supported_capabilities: capabilities,
             is_connection_inbound: false,
-            channels: Some(channels),
+            channels,
             in_use: false,
             score: Default::default(),
         }
@@ -325,6 +325,17 @@ impl PeerTable {
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
+    }
+
+    pub async fn free_peers(peer_table: &mut PeerTableHandle) -> Result<usize, PeerTableError> {
+        match peer_table
+            .call(CallMessage::FreePeers)
+            .await
+            .map_err(|e| PeerTableError::InternalError(e.to_string()))?
+        {
+            OutMessage::PeerCount(result) => Ok(result),
+            _ => unreachable!(),
+        }
     }
 
     pub async fn record_success(
@@ -698,8 +709,7 @@ impl PeerTable {
     }
 
     fn get_contacts_for_lookup_internal(&mut self, max_amount: usize) -> Vec<Contact> {
-        self
-            .contacts
+        self.contacts
             .values()
             .take(max_amount)
             .filter(|c| !c.disposable)
@@ -711,8 +721,7 @@ impl PeerTable {
         &mut self,
         revalidation_interval: Duration,
     ) -> Vec<Contact> {
-        self
-            .contacts
+        self.contacts
             .values()
             .filter(|c| Self::is_validation_needed(c, revalidation_interval))
             .cloned()
@@ -813,6 +822,7 @@ pub enum CallMessage {
     FreePeer {
         node_id: H256,
     },
+    FreePeers,
     MarkInUse {
         node_id: H256,
     },
@@ -932,7 +942,7 @@ impl GenServer for PeerTable {
             } => {
                 debug!("New peer connected");
                 let new_peer_id = node.node_id();
-                let new_peer = PeerData::new(node, None, channels, capabilities);
+                let new_peer = PeerData::new(node, None, Some(channels), capabilities);
                 self.peers.insert(new_peer_id, new_peer);
             }
             CallMessage::RemovePeer { node_id } => {
@@ -1145,6 +1155,21 @@ impl GenServer for PeerTable {
                 } else {
                     return CallResponse::Reply(OutMessage::NotFound);
                 }
+            }
+            CallMessage::FreePeers => {
+                return CallResponse::Reply(Self::OutMsg::PeerCount(
+                    self.peers
+                        .iter_mut()
+                        .filter_map(|(_, peer_data)| {
+                            if peer_data.in_use {
+                                peer_data.in_use = false;
+                                Some(peer_data)
+                            } else {
+                                None
+                            }
+                        })
+                        .count(),
+                ));
             }
         }
         CallResponse::Reply(Self::OutMsg::Ok)

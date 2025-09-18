@@ -157,6 +157,7 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
 
@@ -246,6 +247,7 @@ jobs:
 
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
@@ -307,6 +309,7 @@ jobs:
           cd /tmp
           git clone https://github.com/lambdaclass/rex
           cd rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
           cargo build --release
           cp target/release/rex /usr/local/bin
 
@@ -332,6 +335,7 @@ jobs:
           cd crates/l2
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
           make init-l2 &
           sleep 30
@@ -348,6 +352,7 @@ jobs:
             -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
           tail -f tdx_prover.log &
           cd ../../
+          docker logs --follow ethrex_l1 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           pkill -9 -f ethrex_tdx_prover
 
@@ -399,7 +404,13 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [integration-test, state-diff-test, integration-test-based, integration-test-tdx]
+    needs:
+      [
+        integration-test,
+        state-diff-test,
+        integration-test-based,
+        integration-test-tdx,
+      ]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' }}
     steps:
