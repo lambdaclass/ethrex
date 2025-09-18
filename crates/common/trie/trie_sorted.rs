@@ -266,7 +266,7 @@ where
     Ok(hash)
 }
 
-fn trie_from_sorted_accounts_wrap<T>(
+pub fn trie_from_sorted_accounts_wrap<T>(
     db: &dyn TrieDB,
     accounts_iter: &mut T,
 ) -> Result<H256, TrieGenerationError>

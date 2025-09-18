@@ -65,6 +65,14 @@ pub fn get_account_state_snapshots_dir(datadir: &String) -> String {
     format!("{datadir}/account_state_snapshots")
 }
 
+pub fn get_rocksdb_temp_accounts_dir(datadir: &String) -> String {
+    format!("{datadir}/temp_acc_dir")
+}
+
+pub fn get_rocksdb_temp_storage_dir(datadir: &String) -> String {
+    format!("{datadir}/temp_storage_dir")
+}
+
 pub fn get_account_state_snapshot_file(directory: String, chunk_index: u64) -> String {
     format!("{directory}/account_state_chunk.rlp.{chunk_index}")
 }
