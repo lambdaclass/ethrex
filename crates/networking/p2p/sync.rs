@@ -1388,14 +1388,18 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
         let tree_validated = account_state.storage_root == computed_storage_root;
         if !tree_validated {
             error!(
-                "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
-                account_state.storage_root
+                "We have failed the validation of the storage tree {:x} expected but {computed_storage_root:x} found for the account {:x}",
+                account_state.storage_root,
+                hashed_address
             );
         }
         tree_validated
     })
     .all(|valid| valid);
     info!("Finished validate_storage_root");
+    if !is_valid {
+        std::process::exit(-1);
+    }
     is_valid
 }
 
