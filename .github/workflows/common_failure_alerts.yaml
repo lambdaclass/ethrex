@@ -4,14 +4,14 @@ on:
   workflow_run:
     workflows:
       - L1
-      # - L2 (SP1 Backend)
+      - L2 (SP1 Backend)
       - L2 (without proving)
       - L2 Prover
       - L2 Prover (TDX)
       - L2 TDX build
       - LEVM
       - Publish Docker
-      # - Replay proving
+      - Replay proving
     branches:
       - main
     types:
