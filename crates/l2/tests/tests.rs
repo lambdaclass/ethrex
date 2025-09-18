@@ -1767,13 +1767,10 @@ fn bridge_owner_private_key() -> SecretKey {
     SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
 }
 
-// Keep #[allow(dead_code)] to suppress warnings if FeesDetails is not used in all test configurations or future refactors.
-#[allow(dead_code)]
 #[derive(Debug)]
 struct FeesDetails {
     total_fees: U256,
     recoverable_fees: U256,
-    burned_fees: U256,
 }
 
 async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> FeesDetails {
@@ -1799,7 +1796,6 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
     FeesDetails {
         total_fees,
         recoverable_fees,
-        burned_fees: total_fees - recoverable_fees,
     }
 }
 
