@@ -28,7 +28,14 @@ $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfi
 	docker build -t ethrex:local .
 	touch $(STAMP_FILE)
 
+REVM_STAMP_FILE := .docker_revm_build_stamp
+$(REVM_STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
+	docker build -t ethrex:local --build-arg BUILD_FLAGS="--features revm" .
+	touch $(REVM_STAMP_FILE)
+
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
+
+build-image-revm: $(REVM_STAMP_FILE) ## 🐳 Build the Docker image with the revm feature
 
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
