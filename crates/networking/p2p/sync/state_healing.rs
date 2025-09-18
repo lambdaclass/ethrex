@@ -169,9 +169,7 @@ async fn heal_state_trie(
                             let account_hash = H256::from_slice(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
-                            if account.storage_root != *EMPTY_TRIE_HASH {
-                                storage_accounts.healed_accounts.insert(account_hash);
-                            }
+                            storage_accounts.healed_accounts.insert(account_hash);
                             storage_accounts
                                 .accounts_with_storage_root
                                 .remove(&account_hash);
