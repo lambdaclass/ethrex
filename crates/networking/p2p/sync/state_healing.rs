@@ -165,7 +165,6 @@ async fn heal_state_trie(
                 Ok(nodes) => {
                     for (node, meta) in nodes.iter().zip(batch.iter()) {
                         if let Node::Leaf(node) = node {
-                            let account = AccountState::decode(&node.value).expect("decode failed");
                             let account_hash = H256::from_slice(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
