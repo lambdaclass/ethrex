@@ -530,7 +530,7 @@ pub async fn deploy_with_proxy(
         bytecode,
         &[],
         Overrides::default(),
-        salt.clone(),
+        salt,
     )
     .await?;
 
