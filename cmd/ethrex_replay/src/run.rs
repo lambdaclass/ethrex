@@ -34,7 +34,7 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
         }
         Err(panic_info) => {
             // Try to extract meaningful error message from panic info
-            let panic_msg = ethrex_prover_lib::extract_panic_message(&panic_info);
+            let panic_msg = extract_panic_message(&panic_info);
 
             Err(eyre::Error::msg(format!(
                 "Execution panicked with backend {:?}: {}",
@@ -62,7 +62,7 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
         }
         Err(panic_info) => {
             // Try to extract meaningful error message from panic info
-            let panic_msg = ethrex_prover_lib::extract_panic_message(&panic_info);
+            let panic_msg = extract_panic_message(&panic_info);
 
             // Provide more specific error messages based on different backends
             let backend_name = match backend {
@@ -183,6 +183,17 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
         // inclusion of this crate in the workspace.
         ..Default::default()
     })
+}
+
+/// Extract a meaningful error message from panic information.
+fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = panic_info.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+        s.to_string()
+    } else {
+        "Unknown panic occurred".to_string()
+    }
 }
 
 #[cfg(feature = "l2")]

@@ -59,89 +59,40 @@ impl ProveOutput {
     }
 }
 
-/// Execute a program using the SP1 backend with panic handling.
-///
-/// This function executes the zkVM program and catches any panics that may occur
-/// during execution, converting them to proper error results.
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
+    let mut stdin = SP1Stdin::new();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
 
-    let result = catch_unwind(AssertUnwindSafe(
-        || -> Result<(), Box<dyn std::error::Error>> {
-            let mut stdin = SP1Stdin::new();
-            let bytes = rkyv::to_bytes::<Error>(&input)?;
-            stdin.write_slice(bytes.as_slice());
+    let setup = &*PROVER_SETUP;
 
-            let setup = &*PROVER_SETUP;
+    let now = Instant::now();
+    setup.client.execute(PROGRAM_ELF, &stdin).run()?;
+    let elapsed = now.elapsed();
 
-            let now = Instant::now();
-            setup.client.execute(PROGRAM_ELF, &stdin).run()?;
-            let elapsed = now.elapsed();
-
-            info!("Successfully executed SP1 program in {:.2?}", elapsed);
-            Ok(())
-        },
-    ));
-
-    match result {
-        Ok(exec_result) => exec_result,
-        Err(panic_info) => {
-            let panic_msg = crate::extract_panic_message(&panic_info);
-
-            Err(Box::new(std::io::Error::other(format!(
-                "SP1 execution panicked: {}. This may be due to insufficient memory or invalid program input.",
-                panic_msg
-            ))))
-        }
-    }
+    info!("Successfully executed SP1 program in {:.2?}", elapsed);
+    Ok(())
 }
 
-/// Generate a proof using the SP1 backend with panic handling.
-///
-/// This function generates a zkVM proof and catches any panics that may occur
-/// during proving, converting them to proper error results.
 pub fn prove(
     input: ProgramInput,
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
+    let mut stdin = SP1Stdin::new();
+    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    stdin.write_slice(bytes.as_slice());
 
-    let result = catch_unwind(AssertUnwindSafe(
-        || -> Result<ProveOutput, Box<dyn std::error::Error>> {
-            let mut stdin = SP1Stdin::new();
-            let bytes = rkyv::to_bytes::<Error>(&input)?;
-            stdin.write_slice(bytes.as_slice());
+    let setup = &*PROVER_SETUP;
 
-            let setup = &*PROVER_SETUP;
+    // contains the receipt along with statistics about execution of the guest
+    let proof = if aligned_mode {
+        setup.client.prove(&setup.pk, &stdin).compressed().run()?
+    } else {
+        setup.client.prove(&setup.pk, &stdin).groth16().run()?
+    };
 
-            // Generate proof based on the requested mode
-            let proof = if aligned_mode {
-                setup.client.prove(&setup.pk, &stdin).compressed().run()?
-            } else {
-                setup.client.prove(&setup.pk, &stdin).groth16().run()?
-            };
-
-            info!("Successfully generated SP1Proof.");
-            Ok(ProveOutput::new(proof, setup.vk.clone()))
-        },
-    ));
-
-    match result {
-        Ok(prove_result) => prove_result,
-        Err(panic_info) => {
-            let panic_msg = crate::extract_panic_message(&panic_info);
-
-            let mode_str = if aligned_mode {
-                "compressed"
-            } else {
-                "groth16"
-            };
-            Err(Box::new(std::io::Error::other(format!(
-                "SP1 proving ({} mode) panicked: {}. This may be due to insufficient memory, invalid program input, or zkVM constraints violation.",
-                mode_str, panic_msg
-            ))))
-        }
-    }
+    info!("Successfully generated SP1Proof.");
+    Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
