@@ -32,21 +32,15 @@ pub enum NodeRef {
 
 impl NodeRef {
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
-        // println!("Inside get node");
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
-                // println!("Inside hash");
-                db.get(hash)?
-                    .map(|rlp| {
-                        // println!("I'm trying to decode rlp {}", hex::encode(&rlp));
-                        Node::decode(&rlp).map_err(TrieError::RLPDecode)
-                    })
-                    .transpose()
-            }
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
+                .get(hash)?
+                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                .transpose(),
         }
     }
 
@@ -168,7 +162,6 @@ impl From<LeafNode> for Node {
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
     pub fn get(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
-        // println!("Inside get with path {}", hex::encode(&path));
         match self {
             Node::Branch(n) => n.get(db, path),
             Node::Extension(n) => n.get(db, path),

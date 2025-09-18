@@ -95,15 +95,8 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                // println!(
-                //     "I'm going to get node for hash {:?} and path {}",
-                //     hash,
-                //     hex::encode(&path)
-                // );
                 let rlp = self.db.get(hash).unwrap().unwrap();
-                // println!("RLP: {}", hex::encode(&rlp));
                 let node = Node::decode(&rlp).map_err(TrieError::RLPDecode)?;
-                // println!("Decoded node");
                 node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
             _ => None,

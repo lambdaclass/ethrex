@@ -567,14 +567,6 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         store.add_block_header(header.hash(), header).await?;
     }
 
-    // println!("Cutting point ---------------------------------");
-    // let block_hash =
-    //     H256::from_str("0xfad7095e22885da517436876c3a212e901041a207b5ae5126724ff2d21be6be5")
-    //         .unwrap();
-    // let address = Address::from_str("0xac20a634ac84cccd3f2d2f610f32da00a9d2d623").unwrap();
-    // let address = Address::from_str("0xfffffffffffffffffffffffffffffffffffffffe").unwrap();
-    // store.get_account_info_by_hash(block_hash, address).unwrap();
-
     let blockchain = Blockchain::default_with_store(store);
 
     info!("Storage preparation finished in {:.2?}", start.elapsed());
