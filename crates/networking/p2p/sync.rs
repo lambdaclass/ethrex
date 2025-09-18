@@ -1508,7 +1508,9 @@ async fn insert_storage_into_rocksdb(
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
 
     accounts_with_storage.par_iter().for_each(|account_hash| {
-        let trie = store.open_storage_trie(*account_hash, *EMPTY_TRIE_HASH);
+        let trie = store
+            .open_storage_trie(*account_hash, *EMPTY_TRIE_HASH)
+            .expect("Should be able to open trie");
         let iter = db.prefix_iterator(account_hash.as_bytes());
         trie_from_sorted_accounts_wrap(
             trie.db(),
