@@ -897,6 +897,8 @@ pub async fn produce_custom_l2_block(
 
 async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
     let eth_client = EthClient::new(rpc_url.as_str())?;
+
     let latest_block = eth_client.get_block_number().await?;
+
     Ok(latest_block.as_u64())
 }
