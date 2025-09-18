@@ -45,18 +45,9 @@ impl CodeHashCollector {
 
     /// Flushes the buffer to a file if the buffer is larger than [`CODE_HASH_WRITE_BUFFER_SIZE`]
     pub async fn flush_if_needed(&mut self) -> Result<(), SyncError> {
-        // Check the result of the previous task
-        if !self.disk_tasks.is_empty() {
-            self.disk_tasks
-                .join_next()
-                .await
-                .expect("Shouldn't be empty")
-                .expect("Shouldn't have a join error")
-                .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
-                .map_err(|_| SyncError::BytecodeFileError)?;
-        }
-
         if self.buffer.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
+            self.check_previous_task().await?;
+
             let buffer = std::mem::take(&mut self.buffer);
             self.flush_buffer(buffer);
         }
@@ -94,5 +85,15 @@ impl CodeHashCollector {
         self.disk_tasks
             .spawn(async move { dump_to_file(file_name, encoded) });
         self.file_index += 1;
+    }
+
+    /// Check possible errors from the previous task
+    async fn check_previous_task(&mut self) -> Result<(), SyncError> {
+        if let Some(task) = self.disk_tasks.join_next().await {
+            task?
+                .inspect_err(|err| error!("Error when dumping code hashes to file: {err:?}"))
+                .map_err(|_| SyncError::BytecodeFileError)?;
+        }
+        Ok(())
     }
 }
