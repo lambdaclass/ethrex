@@ -86,9 +86,10 @@ jobs:
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
-          docker logs --follow ethrex_l2 &
+          docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
+          kill $DOCKER_LOGS_PID || true
 
       - name: Destroy Docker containers
         if: always()
