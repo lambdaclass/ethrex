@@ -5,7 +5,7 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
-    Address, H160, H256,
+    Address, H256,
     types::{
         AccountState, AccountUpdate, Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL,
         ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
@@ -21,13 +21,11 @@ use ethrex_rpc::{
 use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeHash, TrieDB, node::LeafNode};
-use ethrex_vm::{Evm, GuestProgramStateWrapper};
-use eyre::Ok;
+use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRef, node::LeafNode};
 use reqwest::Url;
 use std::{
     cmp::max,
-    collections::BTreeMap,
+    collections::HashSet,
     io::Write,
     str::FromStr,
     sync::{Arc, RwLock},
@@ -433,66 +431,6 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     Ok(gas_used)
 }
 
-// in_memory_trie: Ethrex Trie Nodes
-pub fn testing(in_memory_trie: InMemoryTrieDB, root_hash: H256, path: Vec<u8>) {
-    let root_rlp = in_memory_trie
-        .get(NodeHash::Hashed(root_hash))
-        .unwrap()
-        .clone()
-        .unwrap();
-
-    let cur_node = Node::decode(&root_rlp).unwrap();
-
-    let nibbles = Nibbles::from_raw(&path, true);
-
-    let a = cur_node.get(&in_memory_trie, nibbles).unwrap();
-
-    println!(
-        "For path {} found {:?}",
-        hex::encode(&path),
-        a.map(|b| hex::encode(b))
-    );
-
-    // fn get_node(all_nodes: &BTreeMap<H256, Vec<u8>>, cur_node_rlp: &[u8], cur_path: Vec<u8>) {
-    //     let cur_node = Node::decode(cur_node_rlp).unwrap();
-
-    //     Ok(match cur_node {
-    //         Node::Branch(mut node) => {
-    //             for choice in &mut node.choices {
-    //                 let NodeRef::Hash(hash) = *choice else {
-    //                     unreachable!()
-    //                 };
-
-    //                 if hash.is_valid() {
-    //                     *choice = match all_nodes.get(&hash.finalize()) {
-    //                         Some(rlp) => get_node(all_nodes, rlp)?.into(),
-    //                         None => hash.into(),
-    //                     };
-    //                 }
-    //             }
-
-    //             (*node).into()
-    //         }
-    //         Node::Extension(mut node) => {
-    //             let NodeRef::Hash(hash) = node.child else {
-    //                 unreachable!()
-    //             };
-
-    //             node.child = match all_nodes.get(&hash.finalize()) {
-    //                 Some(rlp) => get_node(all_nodes, rlp)?.into(),
-    //                 None => hash.into(),
-    //             };
-
-    //             node.into()
-    //         }
-    //         Node::Leaf(node) => node.into(),
-    //     });
-    // }
-
-    // let root = get_node(all_nodes, root_rlp)?;
-    // Ok(root.into())
-}
-
 async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     let gas_used = get_total_gas_used(&cache.blocks);
 
@@ -515,24 +453,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     witness.nodes.retain(|v| v != &[0x80]);
 
     let guest_program = GuestProgramState::try_from(witness.clone())?;
-
-    // Pre-execution for getting accessed accounts -> We can use the account hashes directly
-    let guest_program_state = GuestProgramState::try_from(witness.clone())?;
-    let wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
-    let mut vm = Evm::new_for_l1(wrapped_db.clone());
-    let block = cache.blocks[0].clone();
-    let result = vm.execute_block(&block).unwrap();
-
-    let account_hashes_by_address = {
-        wrapped_db
-            .lock_mutex()
-            .unwrap()
-            .account_hashes_by_address
-            .clone()
-        // .iter()
-        // .map(|(addr, hash)| (*addr, H256::from_slice(&hash)))
-        // .collect()
-    };
+    let mut all_codes_hashed = guest_program.codes_hashed.clone();
 
     let in_memory_store = InMemoryStore::new();
     // Set up internal state of in-memory store
@@ -541,56 +462,55 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         let all_nodes = &guest_program.nodes_hashed;
         let state_root_hash = guest_program.parent_block_header.state_root;
 
-        // This is an arbitrary key that should be in the nodes rlp but is not present so i insert it manually, for hoodi block 1232010 when asking revm for the witness.
-        let key =
-            H256::from_str("0x7f32058f93569f9aa4c7af485ef080cd363beccaf059b80b739d1ee66852265c")
-                .unwrap();
-        let value = AccountState::default().encode_to_vec();
-        let nibbles = Nibbles {
-            data: vec![
-                0x0b, 0x0d, 0x04, 0x09, 0x0b, 0x03, 0x0a, 0x01, 0x00, 0x06, 0x0f, 0x07, 0x0e, 0x04,
-                0x09, 0x0c, 0x06, 0x0e, 0x01, 0x04, 0x07, 0x0b, 0x07, 0x06, 0x0c, 0x0a, 0x04, 0x06,
-                0x08, 0x02, 0x0a, 0x0e, 0x0f, 0x0d, 0x04, 0x0f, 0x0e, 0x06, 0x0d, 0x00, 0x07, 0x0f,
-                0x04, 0x03, 0x06, 0x08, 0x0f, 0x05, 0x04, 0x02, 0x07, 0x05, 0x01, 0x0a, 0x0a, 0x0f,
-                0x08, 0x05, 0x0d, 0x05, 0x09, 0x06, 0x10,
-            ],
-        };
-        let leaf_node = LeafNode::new(nibbles, value);
-        let node: Node = leaf_node.into();
-
         let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, &all_nodes)
             .unwrap()
             .inner;
 
         {
-            // Insert the invented node to the trie that says "This node exists and it's a leaf node with a default account :D"
-            // Note that the RLP hash doesn't match to the actual hash being inserted here, the key is that it's not going to be recomputed.
-            state_trie_nodes
-                .lock()
-                .unwrap()
-                .insert(ethrex_trie::NodeHash::Hashed(key), node.encode_to_vec());
+            let mut nodes = state_trie_nodes.lock().unwrap();
+            let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie.
+            let mut code_hashes: HashSet<H256> = HashSet::new(); // All code hashes found in account states.
+            for (_node_hash, node_rlp) in nodes.iter() {
+                let node = Node::decode(node_rlp).unwrap();
+                match node {
+                    Node::Branch(node) => {
+                        for choice in &node.choices {
+                            let NodeRef::Hash(hash) = *choice else {
+                                unreachable!()
+                            };
+
+                            if hash.is_valid() {
+                                referenced_node_hashes.insert(hash);
+                            }
+                        }
+                    }
+                    Node::Extension(node) => {
+                        let NodeRef::Hash(hash) = node.child else {
+                            unreachable!()
+                        };
+
+                        if hash.is_valid() {
+                            referenced_node_hashes.insert(hash);
+                        }
+                    }
+                    Node::Leaf(node) => {
+                        let value_rlp = node.value;
+
+                        if let Ok(account_state) = AccountState::decode(&value_rlp) {
+                            code_hashes.insert(account_state.code_hash);
+                        }
+                    }
+                }
+            }
+
+            for hash in referenced_node_hashes {
+                let node: Node = LeafNode::default().into();
+                nodes.entry(hash).or_insert(node.encode_to_vec());
+            }
+            for code_hash in code_hashes {
+                all_codes_hashed.entry(code_hash).or_insert(vec![]);
+            }
         }
-
-        for (addr, hashed_addr) in account_hashes_by_address {
-            // Now I want to traverse the trie with the hashed_addr as path
-            // let mut path = hashed_addr;
-            // let mut cur_hash = state_root_hash;
-
-            // let cur_rlp = state_trie_nodes.lock().unwrap()[&NodeHash::Hashed(cur_hash)].clone();
-            // let cur_node = Node::decode(&cur_rlp).unwrap();
-
-            testing(
-                ethrex_trie::InMemoryTrieDB {
-                    inner: state_trie_nodes.clone(),
-                },
-                state_root_hash,
-                hashed_addr,
-            );
-
-            // println!("Root rlp: {}", hex::encode(&cur_rlp));
-        }
-
-        std::process::exit(1);
 
         let mut inner_store = in_memory_store.inner()?;
 
@@ -638,7 +558,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     };
 
     // Add codes to DB
-    for (code_hash, code) in guest_program.codes_hashed.clone() {
+    for (code_hash, code) in all_codes_hashed {
         store.add_account_code(code_hash, code.into()).await?;
     }
 
