@@ -316,19 +316,27 @@ jobs:
           cd crates/l2/tee/quote-gen
           make image.raw
 
-      - name: Start L1 & Deploy contracts
+      - name: Start L1
         run: |
           touch .env
           cd crates/l2
           make init-l1-docker
-          make deploy-l1
-          export $(xargs < ../../.env)
-          cd tee/contracts
+
+      - name: Deploy TDX contracts
+        run: |
+          cd crates/l2/tee/contracts
+          # This address is result of a CREATE2 deploy. Should be replaced if the contract change
+          ON_CHAIN_PROPOSER=0x04b028fca384d29f03c02996d5ee56cb76b67159 \
           RPC_URL=http://localhost:8545 \
-          ON_CHAIN_PROPOSER=$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS \
-          PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+          PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
           ETHREX_TDX_DEV_MODE=true \
           make deploy-all
+
+      - name: Deploy L1 contracts
+        run: |
+          cd crates/l2
+          ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER_ADDRESS=$(cat tee/contracts/deploydeps/automata-dcap-attestation/evm/deployment/TDXVerifier) \
+          make deploy-l1
 
       - name: Start Sequencer and test
         run: |
