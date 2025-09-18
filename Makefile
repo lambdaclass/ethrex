@@ -30,7 +30,7 @@ $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfi
 
 REVM_STAMP_FILE := .docker_revm_build_stamp
 $(REVM_STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex:local --build-arg BUILD_FLAGS="--features revm" .
+	docker build -t ethrex_revm:local --build-arg BUILD_FLAGS="--features revm" .
 	touch $(REVM_STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
