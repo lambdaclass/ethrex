@@ -57,7 +57,6 @@ pub async fn heal_state_trie_wrap(
     let mut healing_done = false;
     *METRICS.current_step.lock().await = "Healing State".to_string();
     info!("Starting state healing");
-
     while !healing_done {
         healing_done = heal_state_trie(
             state_root,
@@ -76,7 +75,6 @@ pub async fn heal_state_trie_wrap(
         }
     }
     info!("Stopped state healing");
-
     Ok(healing_done)
 }
 
