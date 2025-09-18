@@ -1,7 +1,7 @@
 mod state_healing;
 mod storage_healing;
 
-use crate::peer_handler::{PeerHandlerError, SNAP_LIMIT};
+use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
@@ -127,7 +127,7 @@ impl Syncer {
     }
 
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
-    /// Will perforn either full or snap sync depending on the manager's `snap_mode`
+    /// Will perform either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
     /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
     /// After the sync cycle is complete, the sync mode will be set to full
@@ -281,6 +281,7 @@ impl Syncer {
                         state
                             .process_incoming_headers(
                                 block_headers,
+                                sync_head,
                                 sync_head_found,
                                 self.blockchain.clone(),
                                 self.peers.clone(),
@@ -323,18 +324,10 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
-        let mut current_head_number = store
-            .get_block_number(current_head)
-            .await?
-            .ok_or(SyncError::BlockNumber(current_head))?;
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
-        let pending_block = match store.get_pending_block(sync_head).await {
-            Ok(res) => res,
-            Err(e) => return Err(e.into()),
-        };
 
         loop {
             debug!("Sync Log 1: In Full Sync");
@@ -351,7 +344,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head)
+                .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -389,14 +382,6 @@ impl Syncer {
                 last_block_number
             );
 
-            // If we have a pending block from new_payload request
-            // attach it to the end if it matches the parent_hash of the latest received header
-            if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_hash {
-                    block_headers.push(block.header.clone());
-                }
-            }
-
             // Filter out everything after the sync_head
             let mut sync_head_found = false;
             if let Some(index) = block_headers
@@ -409,16 +394,16 @@ impl Syncer {
 
             // Update current fetch head
             current_head = last_block_hash;
-            current_head_number = last_block_number;
 
             // Discard the first header as we already have it
             block_headers.remove(0);
             if !block_headers.is_empty() {
                 let mut finished = false;
                 while !finished {
-                    finished = block_sync_state
+                    (finished, sync_head_found) = block_sync_state
                         .process_incoming_headers(
                             block_headers.clone(),
+                            sync_head,
                             sync_head_found,
                             self.blockchain.clone(),
                             self.peers.clone(),
@@ -470,7 +455,7 @@ impl Syncer {
 /// Fetches all block bodies for the given block hashes via p2p and stores them
 async fn store_block_bodies(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
@@ -587,16 +572,22 @@ impl FullBlockSyncState {
     /// Saves incoming headers, requests as many block bodies as needed to complete
     /// an execution batch and executes it.
     /// An incomplete batch may be executed if the sync_head was already found
+    /// Returns bool finish to know whether the amount of block headers was less than MAX_BLOCK_BODIES_TO_REQUEST
+    /// to determine if there's still more blocks to download.
+    /// Returns bool sync_head_found to know whether full sync was completed.
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
-        sync_head_found: bool,
+        sync_head: H256,
+        sync_head_found_in_block_headers: bool,
         blockchain: Arc<Blockchain>,
-        peers: PeerHandler,
+        mut peers: PeerHandler,
         cancel_token: CancellationToken,
-    ) -> Result<bool, SyncError> {
+    ) -> Result<(bool, bool), SyncError> {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
+
+        let mut sync_head_found = sync_head_found_in_block_headers;
         let finished = self.current_headers.len() <= MAX_BLOCK_BODIES_TO_REQUEST;
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
         //     // We don't have enough headers to fill up a batch, lets request more
@@ -621,6 +612,17 @@ impl FullBlockSyncState {
             .map(|(header, body)| Block { header, body });
         self.current_blocks.extend(blocks);
         // }
+
+        // If we have the sync_head as a pending block from a new_payload request and its parent_hash matches the hash of the latest received header
+        // we set the sync_head as found. Then we add it in current_blocks for execution.
+        if let Some(block) = self.store.get_pending_block(sync_head).await? {
+            if let Some(last_block) = self.current_blocks.last() {
+                if last_block.hash() == block.header.parent_hash {
+                    self.current_blocks.push(block);
+                    sync_head_found = true;
+                }
+            }
+        }
         // Execute full blocks
         // while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
         //     || (!self.current_blocks.is_empty() && sync_head_found)
@@ -658,6 +660,12 @@ impl FullBlockSyncState {
             .first()
             .cloned()
             .ok_or(SyncError::InvalidRangeReceived)?;
+
+        let block_batch_hashes = block_batch
+            .iter()
+            .map(|block| block.hash())
+            .collect::<Vec<_>>();
+
         // Run the batch
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
@@ -669,12 +677,28 @@ impl FullBlockSyncState {
         {
             if let Some(batch_failure) = batch_failure {
                 warn!("Failed to add block during FullSync: {err}");
-                self.store
-                    .set_latest_valid_ancestor(
-                        batch_failure.failed_block_hash,
-                        batch_failure.last_valid_hash,
-                    )
-                    .await?;
+                // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
+                if let ChainError::InvalidBlock(_) = err {
+                    let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
+                    if let Some(index) = block_batch_hashes
+                        .iter()
+                        .position(|x| x == &batch_failure.failed_block_hash)
+                    {
+                        block_hashes_with_invalid_ancestor = block_batch_hashes[index..].to_vec();
+                    }
+
+                    for hash in block_hashes_with_invalid_ancestor {
+                        self.store
+                            .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
+                            .await?;
+                    }
+                    // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
+                    for header in &self.current_headers {
+                        self.store
+                            .set_latest_valid_ancestor(header.hash(), batch_failure.last_valid_hash)
+                            .await?;
+                    }
+                }
             }
             return Err(err.into());
         }
@@ -706,7 +730,7 @@ impl FullBlockSyncState {
             blocks_per_second
         );
         // }
-        Ok(finished)
+        Ok((finished, sync_head_found))
     }
 }
 
@@ -770,6 +794,19 @@ impl SnapBlockSyncState {
     }
 }
 
+/// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
+/// Logs with where the function was when it found this error
+/// TODO: remove this function once peer table has moved to spawned implementation
+async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
+    if peer_handler.peer_table.free_peers().await != 0 {
+        let step = METRICS.current_step.lock().await.clone();
+        error!(
+            step = step,
+            "Found peers marked as used even though we just finished this step"
+        );
+    }
+}
+
 impl Syncer {
     async fn snap_sync(
         &mut self,
@@ -795,7 +832,7 @@ impl Syncer {
             pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
-                &self.peers,
+                &mut self.peers,
                 block_sync_state,
             )
             .await?;
@@ -825,6 +862,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
+            free_peers_and_log_if_not_empty(&self.peers).await;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -905,7 +943,7 @@ impl Syncer {
                     pivot_header = update_pivot(
                         pivot_header.number,
                         pivot_header.timestamp,
-                        &self.peers,
+                        &mut self.peers,
                         block_sync_state,
                     )
                     .await?;
@@ -924,6 +962,7 @@ impl Syncer {
                 {
                     continue;
                 };
+                free_peers_and_log_if_not_empty(&self.peers).await;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -939,6 +978,7 @@ impl Syncer {
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
+                free_peers_and_log_if_not_empty(&self.peers).await;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -1030,7 +1070,7 @@ impl Syncer {
                 pivot_header = update_pivot(
                     pivot_header.number,
                     pivot_header.timestamp,
-                    &self.peers,
+                    &mut self.peers,
                     block_sync_state,
                 )
                 .await?;
@@ -1057,6 +1097,8 @@ impl Syncer {
                 &mut global_storage_leafs_healed,
             )
             .await;
+
+            free_peers_and_log_if_not_empty(&self.peers).await;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1171,7 +1213,7 @@ fn compute_storage_roots(
 pub async fn update_pivot(
     block_number: u64,
     block_timestamp: u64,
-    peers: &PeerHandler,
+    peers: &mut PeerHandler,
     block_sync_state: &mut BlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
@@ -1183,21 +1225,13 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        peers
-            .peer_scores
-            .lock()
-            .await
-            .update_peers(&peers.peer_table)
-            .await;
         let (peer_id, mut peer_channel) = peers
-            .peer_scores
-            .lock()
-            .await
-            .get_peer_channel_with_highest_score(&peers.peer_table, &SUPPORTED_ETH_CAPABILITIES)
+            .peer_table
+            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES)
             .await
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
+        let peer_score = peers.peer_table.get_score(&peer_id).await;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1207,8 +1241,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_scores.lock().await.record_failure(peer_id);
-            let peer_score = peers.peer_scores.lock().await.get_score(&peer_id);
+            peers.peer_table.record_failure(peer_id).await;
+            let peer_score = peers.peer_table.get_score(&peer_id).await;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1216,7 +1250,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_scores.lock().await.record_success(peer_id);
+        peers.peer_table.record_success(peer_id).await;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
@@ -1354,14 +1388,18 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
         let tree_validated = account_state.storage_root == computed_storage_root;
         if !tree_validated {
             error!(
-                "We have failed the validation of the storage tree {} expected but {computed_storage_root} found",
-                account_state.storage_root
+                "We have failed the validation of the storage tree {:x} expected but {computed_storage_root:x} found for the account {:x}",
+                account_state.storage_root,
+                hashed_address
             );
         }
         tree_validated
     })
     .all(|valid| valid);
     info!("Finished validate_storage_root");
+    if !is_valid {
+        std::process::exit(-1);
+    }
     is_valid
 }
 

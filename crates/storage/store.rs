@@ -1194,30 +1194,6 @@ impl Store {
         self.engine.get_state_heal_paths().await
     }
 
-    /// Write a storage batch into the current storage snapshot
-    pub async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
-            .await
-    }
-
-    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
-    pub async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
-            .await
-    }
-
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     pub async fn set_state_trie_rebuild_checkpoint(
         &self,
@@ -1253,15 +1229,6 @@ impl Store {
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.engine.clear_snap_state().await
-    }
-
-    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
-    pub async fn read_storage_snapshot(
-        &self,
-        account_hash: H256,
-        start: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        self.engine.read_storage_snapshot(account_hash, start).await
     }
 
     /// Fetches the latest valid ancestor for a block that was previously marked as invalid

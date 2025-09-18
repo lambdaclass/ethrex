@@ -1,6 +1,6 @@
-# Ethrex L2
+# Fundamentals
 
-In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.
+In L2 mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.
 
 The main differences between this mode and regular ethrex are:
 
@@ -22,7 +22,6 @@ At a high level, the following new parts are added to the node:
 
 For general documentation, see:
 
-- [General overview](./overview.md) for a high-level view of the ethrex L2 stack.
-- [Smart contracts](./fundamentals/contracts.md) has information on L1 and L2 smart contracts.
-- [Components](./fundamentals/components/components.md) for more detailed documentation on each off-chain component.
-- [Based roadmap (draft)](./based/roadmap.md) contains ethrex's roadmap for becoming based.
+- [Architecture overview](../architecture/overview.md) for a high-level view of the ethrex L2 stack.
+- [Smart contracts](./contracts.md) has information on L1 and L2 smart contracts.
+- [Based sequencing](./based.md) contains ethrex's roadmap for becoming based.
