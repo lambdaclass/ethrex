@@ -27,7 +27,6 @@ use std::{
     cmp::max,
     collections::HashSet,
     io::Write,
-    str::FromStr,
     sync::{Arc, RwLock},
     time::{Instant, SystemTime},
 };
@@ -462,9 +461,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         let all_nodes = &guest_program.nodes_hashed;
         let state_root_hash = guest_program.parent_block_header.state_root;
 
-        let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, &all_nodes)
-            .unwrap()
-            .inner;
+        let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, &all_nodes)?.inner;
 
         {
             let mut nodes = state_trie_nodes.lock().unwrap();

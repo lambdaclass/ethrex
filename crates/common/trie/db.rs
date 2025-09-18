@@ -39,7 +39,7 @@ impl InMemoryTrieDB {
         let mut hashed_nodes: Vec<(NodeHash, Vec<u8>)> = vec![];
         embedded_root.commit(&mut hashed_nodes);
 
-        let hashed_nodes: BTreeMap<NodeHash, Vec<u8>> = hashed_nodes.into_iter().collect();
+        let hashed_nodes = hashed_nodes.into_iter().collect();
 
         let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
         Ok(Self::new(in_memory_trie))
