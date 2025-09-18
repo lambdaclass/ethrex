@@ -95,7 +95,7 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                let rlp = self.db.get(hash).unwrap().unwrap();
+                let rlp = self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?;
                 let node = Node::decode(&rlp).map_err(TrieError::RLPDecode)?;
                 node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
@@ -268,7 +268,7 @@ impl Trie {
             all_nodes: &BTreeMap<H256, Vec<u8>>,
             cur_node_rlp: &[u8],
         ) -> Result<Node, TrieError> {
-            let cur_node = Node::decode_raw(cur_node_rlp).unwrap();
+            let cur_node = Node::decode_raw(cur_node_rlp)?;
 
             Ok(match cur_node {
                 Node::Branch(mut node) => {

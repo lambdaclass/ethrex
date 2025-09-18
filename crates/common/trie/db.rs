@@ -41,16 +41,6 @@ impl InMemoryTrieDB {
 
         let hashed_nodes: BTreeMap<NodeHash, Vec<u8>> = hashed_nodes.into_iter().collect();
 
-        // for (hash, node_rlp) in &hashed_nodes {
-        //     // Nodes in our RLP
-        //     let node = Node::decode(&node_rlp).unwrap();
-        //     let real_rlp = node.encode_raw();
-        //     let NodeHash::Hashed(h) = *hash else {
-        //         unreachable!()
-        //     };
-        //     println!("Hash: {:#x}, real rlp: {}", h, hex::encode(real_rlp));
-        // }
-
         let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
         Ok(Self::new(in_memory_trie))
     }

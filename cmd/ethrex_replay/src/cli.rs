@@ -574,7 +574,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     for block in cache.blocks {
         info!("Starting to execute block {}", block.header.number);
         let start_time = Instant::now();
-        blockchain.add_block(&block).await.unwrap();
+        blockchain.add_block(&block).await?;
         let duration = start_time.elapsed();
         info!("add_block execution time: {:.2?}", duration);
     }
