@@ -147,7 +147,9 @@ pub enum InnerState {
 #[derive(Clone, Debug)]
 #[allow(private_interfaces)]
 pub enum CastMessage {
+    // Received a message from the remote peer
     PeerMessage(Message),
+    // This node requests information from the remote peer
     BackendMessage(Message),
     SendPing,
     BlockRangeUpdate,
