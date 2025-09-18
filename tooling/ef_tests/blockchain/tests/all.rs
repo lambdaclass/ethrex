@@ -42,9 +42,7 @@ const SKIPPED_TESTS: &[&str] = &[
 const SKIPPED_TESTS: &[&str] = &[
     // We skip most of these for the same reason we skip them in LEVM; since we need to do a LEVM run before doing one with the stateless backend
     "system_contract_deployment",
-    "test_excess_blob_gas_fork_transition",
-    "test_invalid_post_fork_block_without_blob_fields",
-    "test_invalid_pre_fork_block_with_blob_fields",
+    "test_tx_gas_larger_than_block_gas_limit",
     "stTransactionTest/HighGasPriceParis",
     "dynamicAccountOverwriteEmpty_Paris",
     "create2collisionStorageParis",
