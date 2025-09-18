@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758214591220,
+  "lastUpdate": 1758214687278,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15235,6 +15235,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168096456064,
             "range": "± 588155217",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5d785814013c194eda0156d94634098a3d00edea",
+          "message": "fix(l1): fix snap sync edge case where we would not heal certain accounts' storages (#4558)\n\n**Motivation**\n\n~Contains changes from #4537 , should merge that one first~\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Francisco Xavier Gauna <francisco.gauna@lambdaclass.com>",
+          "timestamp": "2025-09-18T16:03:40Z",
+          "tree_id": "bc78f28526cdf09e7c207ee4466135b38a7b0610",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5d785814013c194eda0156d94634098a3d00edea"
+        },
+        "date": 1758214666483,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168297226720,
+            "range": "± 407086433",
             "unit": "ns/iter"
           }
         ]
