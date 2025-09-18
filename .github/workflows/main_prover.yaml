@@ -77,7 +77,7 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
-          ETHREX_COMMITTER_COMMIT_TIME=180000 \
+          ETHREX_COMMITTER_COMMIT_TIME=30000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           docker compose up --build --detach --no-deps ethrex_l2
 
