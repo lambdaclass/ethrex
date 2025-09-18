@@ -10,15 +10,24 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, error::StoreError};
 use tracing::{error, trace};
 
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum HashOrNumber {
     Hash(BlockHash),
     Number(BlockNumber),
+}
+
+impl core::fmt::Display for HashOrNumber {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            HashOrNumber::Hash(hash) => write!(f, "{hash:#x}"),
+            HashOrNumber::Number(number) => write!(f, "{number}"),
+        }
+    }
 }
 
 impl RLPEncode for HashOrNumber {
@@ -86,26 +95,25 @@ impl GetBlockHeaders {
     }
     pub async fn fetch_headers(&self, storage: &Store) -> Vec<BlockHeader> {
         let start_block = match self.startblock {
-            // Check we have the given block hash and fetch its number
+            // Try to fetch the block number from the hash
+            // Otherwise keep the hash
             HashOrNumber::Hash(block_hash) => {
-                // TODO(#1073)
-                // Research what we should do when an error is found in a P2P request.
                 if let Ok(Some(block_number)) = storage.get_block_number(block_hash).await {
-                    block_number
+                    HashOrNumber::Number(block_number)
                 } else {
-                    trace!("Could not fetch block number for hash {block_hash}");
-                    return vec![];
+                    self.startblock
                 }
             }
             // Don't check if the block number is available
             // because if it it's not, the loop below will
             // break early and return an empty vec.
-            HashOrNumber::Number(block_num) => block_num,
+            HashOrNumber::Number(_) => self.startblock,
         };
 
         let mut headers = vec![];
 
-        let mut current_block = start_block as i64;
+        let mut current_block = start_block;
+
         let block_skip = if self.reverse {
             -((self.skip + 1) as i64)
         } else {
@@ -119,23 +127,45 @@ impl GetBlockHeaders {
         };
 
         for _ in 0..limit {
-            match storage.get_block_header(current_block as u64) {
-                Ok(Some(block_header)) => {
-                    headers.push(block_header);
-                    current_block += block_skip
-                }
-                Ok(None) => {
+            let block_header_opt = match get_block_header(storage, current_block) {
+                Ok(block_header) => block_header,
+                Err(err) => {
+                    error!(%err, block_number=%current_block, "Error accessing DB while building header response for peer");
                     break;
                 }
-                // TODO(#1073)
-                // Research what we should do when an error is found in a P2P request.
-                Err(err) => {
-                    error!("Error accessing DB while building header response for peer: {err}");
-                    return vec![];
+            };
+            let Some(block_header) = block_header_opt else {
+                trace!(block_number=%current_block, "Block header not found");
+                break;
+            };
+            headers.push(block_header);
+
+            // Update to next block to fetch
+            match current_block {
+                // We don't support fetching headers by hash, unless the hash is
+                // part of the canonical chain, so we break here.
+                // TODO: we could support fetching by hash in descending order,
+                // by fetching the parent of each block.
+                HashOrNumber::Hash(_) => break,
+                HashOrNumber::Number(number) => {
+                    let Ok(new_number) = (number as i64 + block_skip).try_into() else {
+                        break;
+                    };
+                    current_block = HashOrNumber::Number(new_number)
                 }
             }
         }
         headers
+    }
+}
+
+fn get_block_header(
+    storage: &Store,
+    block_ref: HashOrNumber,
+) -> Result<Option<BlockHeader>, StoreError> {
+    match block_ref {
+        HashOrNumber::Hash(block_hash) => storage.get_block_header_by_hash(block_hash),
+        HashOrNumber::Number(block_number) => storage.get_block_header(block_number),
     }
 }
 
@@ -148,7 +178,7 @@ impl RLPxMessage for GetBlockHeaders {
         let reverse = self.reverse as u8;
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
-            .encode_field(&(self.startblock.clone(), limit, skip, reverse))
+            .encode_field(&(self.startblock, limit, skip, reverse))
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
