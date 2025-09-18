@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use ethrex_common::addresses::*;
 use ethrex_common::{H160, serde_utils, types::ForkBlobSchedule};
@@ -69,16 +69,16 @@ impl RpcHandler for Syncing {
 pub struct Config;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ConfigRpcResponse {
-    #[serde(with = "serde_utils::u64::hex_str")]
     activation_time: u64,
     blob_schedule: ForkBlobSchedule,
     #[serde(with = "serde_utils::u64::hex_str")]
     chain_id: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
     fork_id: u64,
-    precompiles: HashMap<String, H160>,
-    system_contracts: HashMap<String, H160>,
+    precompiles: BTreeMap<String, H160>,
+    system_contracts: BTreeMap<String, H160>,
 }
 
 impl RpcHandler for Config {
@@ -90,7 +90,7 @@ impl RpcHandler for Config {
         let latest_block_number = context.storage.get_latest_block_number().await?;
         let chain_config = context.storage.get_chain_config()?;
         let fork = chain_config.get_fork(latest_block_number);
-        let mut system_contracts = HashMap::new();
+        let mut system_contracts = BTreeMap::new();
         system_contracts.insert("BEACON_ROOTS_ADDRESS".to_string(), *BEACON_ROOTS_ADDRESS);
         if chain_config.is_prague_activated(latest_block_number) {
             system_contracts.insert(
@@ -111,18 +111,35 @@ impl RpcHandler for Config {
             );
         }
 
-        let mut precompiles: HashMap<String, H160> = PRECOMPILES
-            .iter()
-            .map(|precompile| (stringify!(precompile).to_string(), *precompile))
-            .collect();
+        let mut precompiles = BTreeMap::new();
+
+        precompiles.insert("ECREC".to_string(), ECRECOVER_ADDRESS);
+        precompiles.insert("SHA256".to_string(), SHA2_256_ADDRESS);
+        precompiles.insert("RIPEMD160".to_string(), RIPEMD_160_ADDRESS);
+        precompiles.insert("ID".to_string(), IDENTITY_ADDRESS);
+        precompiles.insert("MODEXP".to_string(), MODEXP_ADDRESS);
+        precompiles.insert("BN254_ADD".to_string(), ECADD_ADDRESS);
+        precompiles.insert("BN254_MUL".to_string(), ECMUL_ADDRESS);
+        precompiles.insert("BN254_PAIRING".to_string(), ECPAIRING_ADDRESS);
+        precompiles.insert("BLAKE2F".to_string(), BLAKE2F_ADDRESS);
+        precompiles.insert("KZG_POINT_EVALUATION".to_string(), POINT_EVALUATION_ADDRESS);
+
         if chain_config.is_cancun_activated(latest_block_number) {
-            PRECOMPILES_POST_CANCUN.iter().map(|precompile| {
-                precompiles.insert(stringify!(precompile).to_string(), *precompile)
-            });
+            precompiles.insert("BLS12_G1ADD".to_string(), BLS12_G1ADD_ADDRESS);
+            precompiles.insert("BLS12_G1MSM".to_string(), BLS12_G1MSM_ADDRESS);
+            precompiles.insert("BLS12_G2ADD".to_string(), BLS12_G2ADD_ADDRESS);
+            precompiles.insert("BLS12_G2MSM".to_string(), BLS12_G2MSM_ADDRESS);
+            precompiles.insert(
+                "BLS12_PAIRING_CHECK".to_string(),
+                BLS12_PAIRING_CHECK_ADDRESS,
+            );
+            precompiles.insert("BLS12_MAP_FP_TO_G1".to_string(), BLS12_MAP_FP_TO_G1_ADDRESS);
+            precompiles.insert(
+                "BLS12_MAP_FP2_TO_G2".to_string(),
+                BLS12_MAP_FP2_TO_G2_ADDRESS,
+            );
         }
-        precompiles
-            .keys()
-            .map(|name| name.trim_end_matches("_ADDRESS").to_string());
+
         if chain_config.is_osaka_activated(latest_block_number) {
             precompiles.insert("P256_VERIFY".to_string(), P256_VERIFICATION_ADDRESS);
         }
