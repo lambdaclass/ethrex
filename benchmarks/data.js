@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758220274436,
+  "lastUpdate": 1758223003205,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15445,6 +15445,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169378320892,
             "range": "± 465608914",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d02c03fc61afd4c43f4baea872140e0abf8ca2c9",
+          "message": "feat(l1): added the allocator jemalloc (#4301)\n\n**Motivation**\n\nWe want to properly monitor the ram usage and test if we have improved\nperformance with other allocators. For this, we started with jemalloc.\n\n**Description**\n\n- added the jemallocator to ethrex\n- bumped the jemallocator version used in ethrex-replay\n- added an endpoint to our rpc which allows us to view a flamegraph of\ninuse memory\n- gated jemalloc as well as the profiling behind 2 new feature flags\njemalloc and jemalloc-profiling respectively\n- logging the corrent flobal allocator on start\n\n---------\n\nCo-authored-by: Rodrigo Oliveri <rodrigooliveri10@gmail.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>",
+          "timestamp": "2025-09-18T18:23:46Z",
+          "tree_id": "4faed4580829c2195d1b9547212c8a00b0810aca",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d02c03fc61afd4c43f4baea872140e0abf8ca2c9"
+        },
+        "date": 1758222982478,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166834457366,
+            "range": "± 299972126",
             "unit": "ns/iter"
           }
         ]
