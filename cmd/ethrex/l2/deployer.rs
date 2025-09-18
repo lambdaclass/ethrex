@@ -304,11 +304,10 @@ pub struct DeployerOptions {
     /// Path to the SP1 verification key.
     #[arg(
         long = "verifier.sp1-vk-path",
-        // default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")).into(),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
         conflicts_with = "sp1_vk",
-        help_heading = "Verifiers options",
+        help_heading = "Verifiers options"
     )]
     pub sp1_vk_path: Option<PathBuf>,
     /// L1 address of the TDX verifier. If not set, contract will omit TDX verification.
