@@ -171,20 +171,18 @@ async fn heal_state_trie(
                 Ok(nodes) => {
                     for (node, meta) in nodes.iter().zip(batch.iter()) {
                         if let Node::Leaf(node) = node {
-                            let account = AccountState::decode(&node.value).expect("decode failed");
+                            let account = AccountState::decode(&node.value)?;
                             let account_hash = H256::from_slice(
                                 &meta.path.concat(node.partial.clone()).to_bytes(),
                             );
 
-                            // Collect valid code hash
+                            // // Collect valid code hash
                             if account.code_hash != *EMPTY_KECCACK_HASH {
                                 code_hash_collector.add(account.code_hash);
                                 code_hash_collector.flush_if_needed().await?;
                             }
 
-                            if account.storage_root != *EMPTY_TRIE_HASH {
-                                storage_accounts.healed_accounts.insert(account_hash);
-                            }
+                            storage_accounts.healed_accounts.insert(account_hash);
                             storage_accounts
                                 .accounts_with_storage_root
                                 .remove(&account_hash);

@@ -89,7 +89,7 @@ impl PeerData {
     pub fn new(
         node: Node,
         record: Option<NodeRecord>,
-        channels: PeerChannels,
+        channels: Option<PeerChannels>,
         capabilities: Vec<Capability>,
     ) -> Self {
         Self {
@@ -97,7 +97,7 @@ impl PeerData {
             record,
             supported_capabilities: capabilities,
             is_connection_inbound: false,
-            channels: Some(channels),
+            channels,
             in_use: false,
             score: Default::default(),
         }
@@ -152,7 +152,7 @@ impl Kademlia {
 
         let new_peer_id = node.node_id();
 
-        let new_peer = PeerData::new(node, None, channels, capabilities);
+        let new_peer = PeerData::new(node, None, Some(channels), capabilities);
 
         self.peers.lock().await.insert(new_peer_id, new_peer);
     }
@@ -252,6 +252,22 @@ impl Kademlia {
             .await
             .entry(peer_id)
             .and_modify(|peer_data| peer_data.in_use = false);
+    }
+
+    pub async fn free_peers(&self) -> u64 {
+        self.peers
+            .lock()
+            .await
+            .iter_mut()
+            .filter_map(|(_, peer_data)| {
+                if peer_data.in_use {
+                    peer_data.in_use = false;
+                    Some(peer_data)
+                } else {
+                    None
+                }
+            })
+            .count() as u64
     }
 
     /// Returns the peer with the highest score and its peer channel.
