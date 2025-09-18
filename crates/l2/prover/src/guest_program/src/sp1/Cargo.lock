@@ -928,7 +928,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "keccak-hash",
  "kzg-rs",
  "lazy_static",
  "once_cell",
@@ -960,7 +959,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "keccak-hash",
  "lambdaworks-crypto",
  "secp256k1",
  "serde",
@@ -983,7 +981,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "k256",
- "keccak-hash",
  "lambdaworks-math",
  "lazy_static",
  "malachite",
@@ -1282,7 +1279,6 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
- "keccak-hash",
  "rkyv",
  "serde",
  "serde_json",
@@ -1615,16 +1611,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
 dependencies = [
  "cpufeatures",
-]
-
-[[package]]
-name = "keccak-hash"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e1b8590eb6148af2ea2d75f38e7d29f5ca970d5a4df456b3ef19b8b415d0264"
-dependencies = [
- "primitive-types",
- "tiny-keccak",
 ]
 
 [[package]]
