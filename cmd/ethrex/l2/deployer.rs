@@ -634,8 +634,7 @@ fn deploy_tdx_contracts(
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
         .env(
             "RPC_URL",
-            &opts
-                .eth_options
+            opts.eth_options
                 .rpc_url
                 .first()
                 .ok_or(DeployerError::ConfigValueNotSet(
