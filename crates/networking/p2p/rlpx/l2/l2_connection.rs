@@ -274,19 +274,18 @@ async fn should_process_new_block(
 
     let block_hash = msg.block.hash();
 
-    let established_node = established.node.clone();
     let msg_signature = msg.signature;
-    let recovered_lead_sequencer = tokio::task::spawn_blocking(move || {
-        recover_address(msg_signature, block_hash).map_err(|e| {
-            log_peer_error(
-                &established_node,
-                &format!("Failed to recover lead sequencer: {e}"),
-            );
-            RLPxError::CryptographyError(e.to_string())
-        })
-    })
-    .await
-    .map_err(|_| RLPxError::InternalError("Recover Address task failed".to_string()))??;
+    let recovered_lead_sequencer =
+        tokio::task::spawn_blocking(move || recover_address(msg_signature, block_hash))
+            .await
+            .map_err(|_| RLPxError::InternalError("Recover Address task failed".to_string()))?
+            .map_err(|e| {
+                log_peer_error(
+                    &established.node,
+                    &format!("Failed to recover lead sequencer: {e}"),
+                );
+                RLPxError::CryptographyError(e.to_string())
+            })?;
 
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);

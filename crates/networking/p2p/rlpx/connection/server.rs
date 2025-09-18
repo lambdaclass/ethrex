@@ -841,12 +841,12 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                let cloned_state = state.clone();
+                let cloned_storage = state.storage.clone();
                 let receipts =
                     tokio::task::spawn_blocking(move || -> Result<Vec<Vec<Receipt>>, RLPxError> {
                         let mut receipts = Vec::new();
                         for hash in block_hashes.iter() {
-                            receipts.push(cloned_state.storage.get_receipts_for_block(hash)?);
+                            receipts.push(cloned_storage.get_receipts_for_block(hash)?);
                         }
                         Ok(receipts)
                     })
@@ -928,9 +928,9 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::StorageRanges(response)).await?
         }
         Message::GetByteCodes(req) => {
-            let state_clone = state.clone();
+            let storage_clone = state.storage.clone();
             let response = tokio::task::spawn_blocking(move || {
-                process_byte_codes_request(req, state_clone.storage.clone())
+                process_byte_codes_request(req, storage_clone.clone())
             })
             .await
             .map_err(|_| {
