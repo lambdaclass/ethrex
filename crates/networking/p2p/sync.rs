@@ -1126,6 +1126,7 @@ impl Syncer {
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
         // Finish code hash collection
@@ -1462,6 +1463,31 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     })
     .all(|valid| valid);
     info!("Finished validate_storage_root");
+    if !is_valid {
+        std::process::exit(-1);
+    }
+    is_valid
+}
+
+pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+    info!("Starting validate_state_root");
+    let mut is_valid = true;
+    for (account_hash, account_state) in store
+        .iter_accounts(state_root)
+        .expect("we couldn't iterate over accounts")
+    {
+        if account_state.code_hash != *EMPTY_KECCACK_HASH
+            && !store
+                .get_account_code(account_state.code_hash)
+                .is_ok_and(|code| code.is_some())
+        {
+            error!(
+                "Missing code hash {:x} for account {:x}",
+                account_state.code_hash, account_hash
+            );
+            is_valid = false
+        }
+    }
     if !is_valid {
         std::process::exit(-1);
     }
