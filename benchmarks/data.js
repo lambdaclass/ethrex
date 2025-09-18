@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758208653374,
+  "lastUpdate": 1758212426190,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15175,6 +15175,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166223488261,
             "range": "± 543997568",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "800ff398c45a37d27554f1924c1fdb0391ede140",
+          "message": "fix(l1): request storage peer leak (#4537)\n\n**Motivation**\n\nWhenever a step of snap sync is completed, the peers should be marked as\nfree. When requesting storage ranges, the function was ending without\nclearing the peers if the block was stale.\n\n**Description**\n\n- Changes the request_storage_ranges function to wait until all spawned\ntasks end and frees those peers before continuing.\n- Adds utility function that frees the peers when they're supposed to be\nfree and logs an error if it finds peers in that inconsistent state.\n\nThis pr shouldn't be merged before thorough testing on Sepolia!",
+          "timestamp": "2025-09-18T15:26:23Z",
+          "tree_id": "02d3599d6b511ab726a7f077edc5e1535ba27d06",
+          "url": "https://github.com/lambdaclass/ethrex/commit/800ff398c45a37d27554f1924c1fdb0391ede140"
+        },
+        "date": 1758212405677,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170781190391,
+            "range": "± 489702235",
             "unit": "ns/iter"
           }
         ]
