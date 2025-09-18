@@ -1075,7 +1075,6 @@ impl Syncer {
                 )
                 .await?;
             }
-            debug!("The accounts that have storage {:?}", storage_accounts);
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
@@ -1088,7 +1087,6 @@ impl Syncer {
             if !healing_done {
                 continue;
             }
-            debug!("The accounts that have storage {:?}", storage_accounts);
             healing_done = heal_storage_trie(
                 pivot_header.state_root,
                 &storage_accounts,
@@ -1102,7 +1100,6 @@ impl Syncer {
 
             free_peers_and_log_if_not_empty(&self.peers).await;
         }
-        debug!("The accounts that have storage {:?}", storage_accounts);
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
