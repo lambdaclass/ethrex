@@ -1,3 +1,5 @@
+#[cfg(feature = "l2")]
+use std::path::PathBuf;
 use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
@@ -17,10 +19,14 @@ use ethrex_rpc::{
 };
 use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
+#[cfg(not(feature = "l2"))]
 use tracing::info;
 
 use crate::bench::run_and_measure;
-use crate::fetcher::{get_blockdata, get_rangedata};
+use crate::fetcher::get_blockdata;
+#[cfg(not(feature = "l2"))]
+use crate::fetcher::get_rangedata;
+#[cfg(not(feature = "l2"))]
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{
@@ -144,6 +150,9 @@ pub struct EthrexReplayOptions {
         default_value = "on"
     )]
     pub cache_level: CacheLevel,
+    #[cfg(feature = "l2")]
+    #[arg(long, help = "Path to the genesis file for the L2 network.")]
+    pub genesis_path: Option<PathBuf>,
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Default)]
@@ -379,6 +388,7 @@ impl EthrexReplayCommand {
                     bench: false,
                     to_csv: false,
                     cache_level: CacheLevel::default(),
+                    genesis_path: None,
                 };
 
                 let elapsed = replay_custom_l2_blocks(max(1, n_blocks), &opts).await?;
@@ -458,13 +468,6 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    #[cfg(feature = "l2")]
-    if network != Network::LocalDevnetL2 {
-        return Err(eyre::Error::msg(
-            "L2 mode is only supported on LocalDevnetL2 network",
-        ));
-    }
-
     let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
     // Always write the cache after fetching from RPC.
@@ -535,7 +538,7 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
         SEPOLIA_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Sepolia),
         _ => {
             if cfg!(feature = "l2") {
-                Network::LocalDevnetL2
+                Network::CustomL2(chain_id)
             } else {
                 Network::LocalDevnet
             }
@@ -574,6 +577,7 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
     })
 }
 
+#[cfg(not(feature = "l2"))]
 fn resolve_blocks(
     mut blocks: Vec<u64>,
     from: Option<u64>,
@@ -885,12 +889,20 @@ pub async fn produce_custom_l2_block(
         beacon_root: Some(H256::zero()),
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
     let payload = create_payload(&build_payload_args, store)?;
 
-    let payload_build_result =
-        build_payload(blockchain.clone(), payload, store, rollup_store).await?;
+    // TODO: see if the None is correct here
+    let payload_build_result = build_payload(
+        blockchain.clone(),
+        payload,
+        store,
+        &mut None,
+        DEFAULT_BUILDER_GAS_CEIL,
+    )
+    .await?;
 
     let new_block = payload_build_result.payload;
 
