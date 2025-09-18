@@ -89,24 +89,10 @@ impl CodeHashCollector {
 
     /// Flushes the given buffer to a file
     fn flush_buffer(&mut self, buffer: HashSet<H256>) {
-        let (encoded_buffer, file_name) =
-            prepare_bytecode_buffer_for_dump(buffer, self.file_index, self.snapshots_dir.clone());
-
+        let file_name = get_code_hashes_snapshot_file(self.snapshots_dir.clone(), self.file_index);
+        let encoded = buffer.into_iter().collect::<Vec<_>>().encode_to_vec();
         self.disk_tasks
-            .spawn(async move { dump_to_file(file_name, encoded_buffer) });
+            .spawn(async move { dump_to_file(file_name, encoded) });
         self.file_index += 1;
     }
-}
-
-/// Encode code hashes to a vector
-fn prepare_bytecode_buffer_for_dump(
-    buffer: HashSet<H256>,
-    file_index: u64,
-    dir: String,
-) -> (Vec<u8>, String) {
-    let mut sorted_buffer: Vec<H256> = buffer.into_iter().collect();
-    sorted_buffer.sort();
-    let encoded = sorted_buffer.encode_to_vec();
-    let filename = get_code_hashes_snapshot_file(dir, file_index);
-    (encoded, filename)
 }
