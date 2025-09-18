@@ -255,18 +255,19 @@ impl Kademlia {
     }
 
     pub async fn free_peers(&self) -> u64 {
-        let mut free_count = 0;
         self.peers
             .lock()
             .await
             .iter_mut()
-            .for_each(|(_, peer_data)| {
+            .filter_map(|(_, peer_data)| {
                 if peer_data.in_use {
-                    free_count += 1;
+                    peer_data.in_use = false;
+                    Some(peer_data)
+                } else {
+                    None
                 }
-                peer_data.in_use = false;
-            });
-        free_count
+            })
+            .count() as u64
     }
 
     /// Returns the peer with the highest score and its peer channel.
