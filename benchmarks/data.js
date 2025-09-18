@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758156545794,
+  "lastUpdate": 1758161151455,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -30870,6 +30870,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004418356034482759,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ffd0cae8f20b267c08b718fb7c9731a36058bd30",
+          "message": "chore(l1): add branch and commit to script runner (#4517)\n\n**Motivation**\nWe want to add the branch and the commit to the script\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdds the branch and commit\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-09-17T15:45:50Z",
+          "tree_id": "fc2599c571653fe080577f7c0093ac8cf5bae862",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ffd0cae8f20b267c08b718fb7c9731a36058bd30"
+        },
+        "date": 1758161150773,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015493630592503024,
             "unit": "Mgas/s"
           }
         ]
