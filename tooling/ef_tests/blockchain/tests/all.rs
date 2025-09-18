@@ -10,7 +10,7 @@ const SKIPPED_TESTS: &[&str] = &[
     "dynamicAccountOverwriteEmpty_Paris", // Skipped because the scenario described is virtually impossible
     "create2collisionStorageParis", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
     "RevertInCreateInInitCreate2Paris", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
-    "test_tx_gas_larger_than_block_gas_limit[fork_Osaka-blockchain_test-exceed_block_gas_limit_True]",
+    "test_tx_gas_larger_than_block_gas_limit",
 ];
 // We are skipping test_tx_gas_larger_than_block_gas_limit[fork_Osaka-blockchain_test-exceed_block_gas_limit_True] because of an
 // inconsistency on the expected exception. Exception returned is InvalidBlock(GasUsedMismatch(0x06000000,0x05000000)) while
