@@ -64,7 +64,7 @@ impl CodeHashCollector {
     }
 
     /// Finishes the code collector and returns the final index of file
-    pub async fn finish(mut self) -> Result<u64, SyncError> {
+    pub async fn finish(mut self) -> Result<(), SyncError> {
         // Final flush if needed
         if !self.buffer.is_empty() {
             let buffer = std::mem::take(&mut self.buffer);
@@ -84,7 +84,7 @@ impl CodeHashCollector {
             .collect::<Result<Vec<()>, DumpError>>()
             .map_err(|_| SyncError::BytecodeFileError)?;
 
-        Ok(self.file_index)
+        Ok(())
     }
 
     /// Flushes the given buffer to a file
