@@ -794,6 +794,19 @@ impl SnapBlockSyncState {
     }
 }
 
+/// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
+/// Logs with where the function was when it found this error
+/// TODO: remove this function once peer table has moved to spawned implementation
+async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
+    if peer_handler.peer_table.free_peers().await != 0 {
+        let step = METRICS.current_step.lock().await.clone();
+        error!(
+            step = step,
+            "Found peers marked as used even though we just finished this step"
+        );
+    }
+}
+
 impl Syncer {
     async fn snap_sync(
         &mut self,
@@ -849,6 +862,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
+            free_peers_and_log_if_not_empty(&self.peers).await;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -948,6 +962,7 @@ impl Syncer {
                 {
                     continue;
                 };
+                free_peers_and_log_if_not_empty(&self.peers).await;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -963,6 +978,7 @@ impl Syncer {
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
+                free_peers_and_log_if_not_empty(&self.peers).await;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -1081,6 +1097,8 @@ impl Syncer {
                 &mut global_storage_leafs_healed,
             )
             .await;
+
+            free_peers_and_log_if_not_empty(&self.peers).await;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
