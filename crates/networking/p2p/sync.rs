@@ -1094,7 +1094,7 @@ impl Syncer {
         store
             .open_state_trie(pivot_header.state_root)?
             .into_iter()
-            .map(|(path, node)| -> Result<(), SyncError> {
+            .try_for_each(|(path, node)| -> Result<(), SyncError> {
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
@@ -1112,22 +1112,23 @@ impl Syncer {
                         account_state.storage_root,
                     )?
                     .into_iter()
-                    .map(|(path, node)| -> Result<(), SyncError> {
+                    .try_for_each(|(path, node)| -> Result<(), SyncError> {
+                        let Node::Leaf(node) = node else {
+                            return Ok(());
+                        };
                         storages_to_write.push((path, node.encode_to_vec()));
                         if storages_to_write.len() > 100_000 {
                             storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
                         }
                         Ok(())
-                    })
-                    .collect::<Result<(), _>>()?;
+                    })?;
 
                 nodes_to_write.push((path, node.encode_to_vec()));
                 if nodes_to_write.len() > 100_000 {
                     db.put_batch(std::mem::take(&mut nodes_to_write))?;
                 }
                 Ok(())
-            })
-            .collect::<Result<(), _>>()?;
+            })?;
         info!("Finished healing");
 
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
