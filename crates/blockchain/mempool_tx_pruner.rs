@@ -36,7 +36,7 @@ impl MempoolTxPruner {
     pub async fn spawn(
         blockchain: Arc<Blockchain>,
     ) -> Result<GenServerHandle<MempoolTxPruner>, MempoolTxPrunerError> {
-        info!("Starting Transaction Broadcaster");
+        info!("Starting Mempool Tx Pruner");
 
         let state = MempoolTxPruner { blockchain };
 
