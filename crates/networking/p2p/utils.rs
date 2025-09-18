@@ -87,6 +87,11 @@ pub fn dump_to_rocks_db(
     mut contents: Vec<(Vec<u8>, Vec<u8>)>,
 ) -> Result<(), rocksdb::Error> {
     contents.sort();
+    contents.dedup_by_key(|(k, _)| {
+        let mut buf = [0u8; 64];
+        buf[..k.len()].copy_from_slice(k);
+        buf
+    });
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     writer.open(std::path::Path::new(&path))?;
