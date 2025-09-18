@@ -256,7 +256,6 @@ pub fn get_network(opts: &Options) -> Network {
     opts.network.clone().unwrap_or(default)
 }
 
-
 pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
