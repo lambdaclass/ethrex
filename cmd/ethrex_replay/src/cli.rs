@@ -663,15 +663,12 @@ pub async fn replay_custom_l1_blocks(
     .await?;
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
-
-    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
+    let chain_config = execution_witness.chain_config;
 
     let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        Some(network),
+        chain_config,
     );
 
     let start = SystemTime::now();
@@ -810,12 +807,9 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let network = network_from_chain_id(execution_witness.chain_config.chain_id);
-
-    let cache = Cache::new_for_l2(
+    let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        network,
         genesis.config,
     );
 

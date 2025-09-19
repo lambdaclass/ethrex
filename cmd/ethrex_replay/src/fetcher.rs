@@ -13,7 +13,6 @@ use tracing::{debug, info, warn};
 
 use crate::{
     cache::{Cache, get_block_cache_file_name},
-    cli::network_from_chain_id,
     rpc::db::RpcDB,
 };
 
@@ -144,19 +143,7 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    #[cfg(not(feature = "l2"))]
-    {
-        Ok(Cache::new(vec![block], witness_rpc, Some(network)))
-    }
-    #[cfg(feature = "l2")]
-    {
-        Ok(Cache::new_for_l2(
-            vec![block],
-            witness_rpc,
-            network,
-            chain_config,
-        ))
-    }
+    Ok(Cache::new(vec![block], witness_rpc, chain_config))
 }
 
 async fn fetch_rangedata_from_client(
@@ -225,12 +212,7 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let network = network_from_chain_id(chain_config.chain_id);
-
-    #[cfg(feature = "l2")]
-    let cache = Cache::new_for_l2(blocks, witness_rpc, network, chain_config);
-    #[cfg(not(feature = "l2"))]
-    let cache = Cache::new(blocks, witness_rpc, Some(network));
+    let cache = Cache::new(blocks, witness_rpc, chain_config);
 
     Ok(cache)
 }
