@@ -88,9 +88,11 @@ jobs:
         id: client-config
         shell: bash
         run: |
-          echo "config<<EOF" >> "$GITHUB_OUTPUT"
-          cat .github/config/hive/clients.yaml >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "config<<EOF"
+            cat .github/config/hive/clients.yaml
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
