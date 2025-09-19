@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758289222776,
+  "lastUpdate": 1758290533438,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15595,6 +15595,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 92995623530,
             "range": "± 811245515",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "44e5b59b3f16b2561e754c41137071612eb64795",
+          "message": "feat(l1): make `jemalloc` the default global allocator (#4575)\n\n**Motivation**\n\n`jemalloc` reduce RAM usage in ~80% during snapsync\n\n**Description**\n\nThis PR adds the `jemalloc` feature flag to the default cmd features.",
+          "timestamp": "2025-09-19T13:12:36Z",
+          "tree_id": "b2326a4a5e0fc384e3453acabfe39434791379e3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/44e5b59b3f16b2561e754c41137071612eb64795"
+        },
+        "date": 1758290508480,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 92311583970,
+            "range": "± 602130445",
             "unit": "ns/iter"
           }
         ]
