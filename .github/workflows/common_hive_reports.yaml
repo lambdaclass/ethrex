@@ -123,8 +123,6 @@ jobs:
           # Uncomment to use a custom hive version
           # hive_repository: lambdaclass/hive
           # hive_version: master
-          # hive_repository: lambdaclass/hive
-          # hive_version: master
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
