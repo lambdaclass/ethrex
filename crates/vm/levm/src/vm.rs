@@ -453,10 +453,13 @@ impl<'a> VM<'a> {
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
-                    self.increment_pc_by(pc_increment)?;
+                    self.advance_pc(pc_increment)?;
                     continue;
                 }
-
+                Ok(OpcodeResult::SetPc { new_pc }) => {
+                    self.set_pc(new_pc);
+                    continue;
+                }
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };
@@ -468,7 +471,8 @@ impl<'a> VM<'a> {
             }
 
             // Handle interaction between child and parent callframe.
-            self.handle_return(&result)?;
+            let pc_increment = self.handle_return(&result)?;
+            self.advance_pc(pc_increment)?;
         }
     }
 

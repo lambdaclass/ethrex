@@ -798,15 +798,14 @@ impl<'a> VM<'a> {
                 TxResult::Revert(_) => FAIL,
             })?;
 
-            // Increment PC of the parent callframe after execution of the child.
-            call_frame.increment_pc_by(1)?;
-
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
             }
 
             self.tracer.exit_context(&ctx_result, false)?;
+
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
@@ -856,7 +855,7 @@ impl<'a> VM<'a> {
     }
 
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
-    pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
+    pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<usize, VMError> {
         self.handle_state_backup(ctx_result)?;
         let executed_call_frame = self.pop_call_frame()?;
 
@@ -867,10 +866,8 @@ impl<'a> VM<'a> {
             self.handle_return_call(executed_call_frame, ctx_result)?;
         }
 
-        // Increment PC of the parent callframe after execution of the child.
-        self.increment_pc_by(1)?;
-
-        Ok(())
+        // Parent callframe should advance past the CALL/CREATE opcode now that the child completed.
+        Ok(1)
     }
 
     pub fn handle_return_call(
