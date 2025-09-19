@@ -1,12 +1,11 @@
 use crate::{rlp::Rlp, trie_db::rocksdb_locked::RocksDBLockedTrieDB};
 use bytes::Bytes;
 use ethrex_common::{
-    H256, U256,
+    H256,
     types::{
         Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
         Transaction,
     },
-    utils::u256_to_big_endian,
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use rocksdb::{

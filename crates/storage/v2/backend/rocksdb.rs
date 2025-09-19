@@ -56,6 +56,27 @@ impl StorageRoTx<'_> for RocksDBRoTx<'_> {
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
+
+    fn prefix_iterator(
+        &self,
+        table: &str,
+        prefix: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
+    {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        let iter = self.tx.prefix_iterator_cf(&cf, prefix);
+        let mapped_iter = iter.map(|result| {
+            result
+                .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+        });
+
+        Ok(Box::new(mapped_iter))
+    }
 }
 
 pub struct RocksDBRwTx<'a> {

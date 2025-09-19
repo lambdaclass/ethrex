@@ -412,15 +412,52 @@ impl StoreV2 {
         txn.commit()
     }
 
+    // FIXME: Check libmdbx implementation to see if we can replicate it
     /// Obtain transaction location (block hash and index)
     pub async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        // FIXME: When inserting transaction, we are using a composite key (transaction hash + block hash)
-        // But here we don't have the block hash, so we should use a prefix iterator
-        // Add a prefix iterator/cursor to the StorageBackend trait
-        todo!()
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx_hash_bytes = transaction_hash.as_bytes();
+            let tx = db.begin_read()?;
+
+            // Use prefix iterator to find all entries with this transaction hash
+            let mut iter = tx.prefix_iterator(TRANSACTION_LOCATIONS, tx_hash_bytes)?;
+            let mut transaction_locations = Vec::new();
+
+            while let Some(Ok((key, value))) = iter.next() {
+                // Ensure key is exactly tx_hash + block_hash (32 + 32 = 64 bytes)
+                // and starts with our exact tx_hash
+                if key.len() == 64 && &key[0..32] == tx_hash_bytes {
+                    transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
+                }
+            }
+
+            if transaction_locations.is_empty() {
+                return Ok(None);
+            }
+
+            // If there are multiple locations, filter by the canonical chain
+            for (block_number, block_hash, index) in transaction_locations {
+                let canonical_hash = {
+                    tx.get(
+                        CANONICAL_BLOCK_HASHES,
+                        block_number.to_le_bytes().as_slice(),
+                    )?
+                    .and_then(|bytes| BlockHashRLP::from_bytes(bytes).to().ok())
+                };
+
+                if canonical_hash == Some(block_hash) {
+                    return Ok(Some((block_number, block_hash, index)));
+                }
+            }
+
+            Ok(None)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Add receipt
