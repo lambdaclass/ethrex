@@ -32,9 +32,7 @@ where
                     )
                 }
                 "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
-                    BlockChainExpectedException::TxtException(
-                        "Contract creation in blob transaction".to_string(),
-                    )
+                    BlockChainExpectedException::RLPException
                 }
                 "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
                     BlockChainExpectedException::TxtException(

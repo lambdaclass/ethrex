@@ -3,10 +3,14 @@ use std::path::Path;
 
 const TEST_FOLDER: &str = "vectors/";
 
-#[cfg(not(feature = "revm"))]
+#[cfg(not(any(feature = "revm", feature = "sp1", feature = "stateless")))]
 const SKIPPED_TESTS: &[&str] = &[
     "system_contract_deployment",
-    "test_tx_gas_larger_than_block_gas_limit[fork_Osaka-blockchain_test-exceed_block_gas_limit_True]",
+    "stTransactionTest/HighGasPriceParis", // Skipped because it sets a gas price higher than u64::MAX, which most clients don't implement and is a virtually impossible scenario
+    "dynamicAccountOverwriteEmpty_Paris", // Skipped because the scenario described is virtually impossible
+    "create2collisionStorageParis", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
+    "RevertInCreateInInitCreate2Paris", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
+    "test_tx_gas_larger_than_block_gas_limit",
 ];
 // We are skipping test_tx_gas_larger_than_block_gas_limit[fork_Osaka-blockchain_test-exceed_block_gas_limit_True] because of an
 // inconsistency on the expected exception. Exception returned is InvalidBlock(GasUsedMismatch(0x06000000,0x05000000)) while
@@ -15,14 +19,38 @@ const SKIPPED_TESTS: &[&str] = &[
 // This test has a block with "gasLimit": "0x055d4a80", "gasUsed": "0x05000000" and six transactions with "gasLimit": "0x01000000",
 // Apparently each transaction consumes up to its gas limit, which together is larger than the block's. Then when executing validate_gas_used
 // after the block's execution, it throws InvalidBlock(GasUsedMismatch(0x06000000,0x05000000)) on comparing the receipt's cumulative gas used agains the block's gas limit.
+
 #[cfg(feature = "revm")]
 const SKIPPED_TESTS: &[&str] = &[
     "system_contract_deployment",
+    // We skip these tests because the version of REVM we're using doesn't support Osaka
     "fork_Osaka",
     "fork_PragueToOsaka",
     "fork_BPO0",
     "fork_BPO1",
     "fork_BPO2",
+    "test_reserve_price_at_transition",
+    "CreateTransactionHighNonce",
+    "lowGasLimit",
+    // We skip these because they fail in REVM
+    "stTransactionTest/HighGasPriceParis",
+    "create2collisionStorageParis",
+    "dynamicAccountOverwriteEmpty_Paris",
+    "RevertInCreateInInitCreate2Paris",
+];
+#[cfg(any(feature = "sp1", feature = "stateless"))]
+const SKIPPED_TESTS: &[&str] = &[
+    // We skip most of these for the same reason we skip them in LEVM; since we need to do a LEVM run before doing one with the stateless backend
+    "system_contract_deployment",
+    "test_tx_gas_larger_than_block_gas_limit",
+    "stTransactionTest/HighGasPriceParis",
+    "dynamicAccountOverwriteEmpty_Paris",
+    "create2collisionStorageParis",
+    "RevertInCreateInInitCreate2Paris",
+    "createBlobhashTx",
+    // We skip these two tests because they fail with stateless backend specifically. See https://github.com/lambdaclass/ethrex/issues/4502
+    "test_large_amount",
+    "test_multiple_withdrawals_same_address",
 ];
 
 // If neither `sp1` nor `stateless` is enabled: run with whichever engine
