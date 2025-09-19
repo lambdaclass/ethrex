@@ -65,7 +65,7 @@ impl Mempool {
         let mut transaction_pool = self
             .transaction_pool
             .write()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if transaction_pool.len() >= MEMPOOL_MAX_SIZE {
             self.remove_oldest_transaction(&mut transaction_pool)?;
         }
