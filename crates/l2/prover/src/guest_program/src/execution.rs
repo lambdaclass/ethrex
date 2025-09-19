@@ -76,7 +76,10 @@ pub enum StatelessExecutionError {
     #[error("Invalid initial state trie")]
     InvalidInitialStateTrie,
     #[error("Invalid final state trie")]
-    InvalidFinalStateTrie,
+    InvalidFinalStateTrie {
+        final_state_hash: H256,
+        last_block_state_root: H256,
+    },
     #[error("Missing privileged transaction hash")]
     MissingPrivilegedTransactionHash,
     #[error("Failed to apply account updates {0}")]
