@@ -17,10 +17,14 @@ use ethrex_rpc::{
 };
 use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
+#[cfg(not(feature = "l2"))]
 use tracing::info;
 
 use crate::bench::run_and_measure;
-use crate::fetcher::{get_blockdata, get_rangedata};
+use crate::fetcher::get_blockdata;
+#[cfg(not(feature = "l2"))]
+use crate::fetcher::get_rangedata;
+#[cfg(not(feature = "l2"))]
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 use crate::{
@@ -458,13 +462,6 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    #[cfg(feature = "l2")]
-    if network != Network::LocalDevnetL2 {
-        return Err(eyre::Error::msg(
-            "L2 mode is only supported on LocalDevnetL2 network",
-        ));
-    }
-
     let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
     // Always write the cache after fetching from RPC.
@@ -535,7 +532,7 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
         SEPOLIA_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Sepolia),
         _ => {
             if cfg!(feature = "l2") {
-                Network::LocalDevnetL2
+                Network::L2Chain(chain_id)
             } else {
                 Network::LocalDevnet
             }
@@ -574,6 +571,7 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
     })
 }
 
+#[cfg(not(feature = "l2"))]
 async fn resolve_blocks(
     mut blocks: Vec<u64>,
     from: Option<u64>,
@@ -663,15 +661,12 @@ pub async fn replay_custom_l1_blocks(
     .await?;
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
-
-    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
+    let chain_config = execution_witness.chain_config;
 
     let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        Some(network),
+        chain_config,
     );
 
     let start = SystemTime::now();
@@ -759,8 +754,6 @@ pub async fn produce_l1_block(
 }
 
 #[cfg(feature = "l2")]
-use crate::cache::L2Fields;
-#[cfg(feature = "l2")]
 use ethrex_blockchain::validate_block;
 #[cfg(feature = "l2")]
 use ethrex_l2::sequencer::block_producer::build_payload;
@@ -812,20 +805,11 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
-
-    let mut cache = Cache::new(
+    let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        Some(network),
+        genesis.config,
     );
-
-    cache.l2_fields = Some(L2Fields {
-        blob_commitment: [0_u8; 48],
-        blob_proof: [0_u8; 48],
-    });
 
     let start = SystemTime::now();
 
@@ -848,6 +832,7 @@ pub async fn produce_custom_l2_blocks(
     let mut blocks = Vec::new();
     let mut current_parent_hash = head_block_hash;
     let mut current_timestamp = initial_timestamp;
+    let mut last_privilege_nonce = None;
 
     for _ in 0..n_blocks {
         let block = produce_custom_l2_block(
@@ -856,6 +841,7 @@ pub async fn produce_custom_l2_blocks(
             rollup_store,
             current_parent_hash,
             current_timestamp,
+            &mut last_privilege_nonce,
         )
         .await?;
         current_parent_hash = block.hash();
@@ -873,6 +859,7 @@ pub async fn produce_custom_l2_block(
     rollup_store: &StoreRollup,
     head_block_hash: H256,
     timestamp: u64,
+    last_privilege_nonce: &mut Option<u64>,
 ) -> eyre::Result<Block> {
     let build_payload_args = BuildPayloadArgs {
         parent: head_block_hash,
@@ -883,12 +870,19 @@ pub async fn produce_custom_l2_block(
         beacon_root: Some(H256::zero()),
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
     let payload = create_payload(&build_payload_args, store)?;
 
-    let payload_build_result =
-        build_payload(blockchain.clone(), payload, store, rollup_store).await?;
+    let payload_build_result = build_payload(
+        blockchain.clone(),
+        payload,
+        store,
+        last_privilege_nonce,
+        DEFAULT_BUILDER_GAS_CEIL,
+    )
+    .await?;
 
     let new_block = payload_build_result.payload;
 
