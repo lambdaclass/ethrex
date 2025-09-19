@@ -1,8 +1,9 @@
 use anyhow::anyhow;
 use ethrex_common::H256;
+use ethrex_rlp::decode::RLPDecode;
 use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
-use ethrex_trie::{Nibbles, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 
 #[derive(Debug)]
 struct TrieLayer {
@@ -91,7 +92,12 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        // TODO: this is probably wrong
-        self.db.put_batch(key_values)
+        let root_node = Node::decode(&key_values.last().unwrap().1).unwrap();
+        let new_state_root = root_node.compute_hash().finalize();
+        self.inner
+            .write()
+            .map_err(|_| TrieError::LockError)?
+            .put_batch(self.state_root, new_state_root, key_values);
+        Ok(())
     }
 }
