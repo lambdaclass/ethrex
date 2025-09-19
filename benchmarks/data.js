@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758300704394,
+  "lastUpdate": 1758306866400,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -31722,6 +31722,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004460655352480418,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "52646071+Peponks9@users.noreply.github.com",
+            "name": "josé v",
+            "username": "Peponks9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5a83b191fe7b05b22d23aa172c5f3d757ec8a2fd",
+          "message": "chore(l1): remove `#[allow(dead_code)]` attributes throughout codebase (#4530)\n\n- Removed `#[allow(dead_code)]` from various functions and structs where\nno longer needed.\n- Added explanatory comment for the remaining `#[allow(dead_code)]` on\nFeesDetails struct in tests.rs.\n\n\nResolves #3968",
+          "timestamp": "2025-09-19T12:56:00Z",
+          "tree_id": "0297954ac4f3d2b415cd21e273f1ea215afaeddf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5a83b191fe7b05b22d23aa172c5f3d757ec8a2fd"
+        },
+        "date": 1758306842186,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001529938208955224,
             "unit": "Mgas/s"
           }
         ]
