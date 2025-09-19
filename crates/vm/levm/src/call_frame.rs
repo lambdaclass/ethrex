@@ -12,7 +12,7 @@ use keccak_hash::H256;
 use std::{
     cell::OnceCell,
     collections::{BTreeMap, HashMap},
-    fmt, ptr,
+    fmt,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -217,10 +217,6 @@ pub struct CallFrame {
     pub code_address: Address,
     /// Bytecode to execute
     pub bytecode: Bytes,
-    /// Cached pointer to bytecode bytes for faster opcode fetches.
-    pub bytecode_ptr: *const u8,
-    /// Cached bytecode length to avoid repeated len calls.
-    pub bytecode_len: usize,
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
@@ -309,7 +305,8 @@ impl CallFrame {
         memory: Memory,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
-        let mut call_frame = Self {
+
+        Self {
             gas_limit,
             gas_remaining: gas_limit,
             msg_sender,
@@ -317,8 +314,6 @@ impl CallFrame {
             to,
             code_address,
             bytecode: bytecode.clone(),
-            bytecode_ptr: ptr::null(),
-            bytecode_len: 0,
             msg_value,
             calldata,
             is_static,
@@ -334,20 +329,15 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
-        };
-
-        call_frame.refresh_bytecode_cache();
-
-        call_frame
+        }
     }
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode_len {
+        if self.pc < self.bytecode.len() {
             #[expect(unsafe_code, reason = "bounds checked above")]
             unsafe {
-                // 0 is the opcode stop.
-                *self.bytecode_ptr.add(self.pc)
+                *self.bytecode.get_unchecked(self.pc)
             }
         } else {
             0
@@ -370,15 +360,7 @@ impl CallFrame {
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
         self.jump_target_filter = JumpTargetFilter::new(code.clone());
         self.bytecode = code;
-        self.refresh_bytecode_cache();
         Ok(())
-    }
-
-    #[inline(always)]
-    fn refresh_bytecode_cache(&mut self) {
-        let slice = self.bytecode.as_ref();
-        self.bytecode_ptr = slice.as_ptr();
-        self.bytecode_len = slice.len();
     }
 }
 

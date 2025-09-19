@@ -329,9 +329,7 @@ impl<'a> VM<'a> {
         if Self::target_address_is_valid(call_frame, jump_address_usize) {
             call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
 
-            let new_pc = jump_address_usize
-                .checked_add(1)
-                .ok_or(InternalError::Overflow)?;
+            let new_pc = jump_address_usize + 1;
             Ok(new_pc)
         } else {
             Err(ExceptionalHalt::InvalidJump.into())
