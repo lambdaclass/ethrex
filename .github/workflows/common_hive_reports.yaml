@@ -119,6 +119,10 @@ jobs:
         uses: ethpandaops/hive-github-action@a9ec89442df18ee579d3179b76c47f5f93954307
         continue-on-error: true
         with:
+          # This uses ethereum/hive as default
+          # Uncomment to use a custom hive version
+          # hive_repository: lambdaclass/hive
+          # hive_version: master
           # hive_repository: lambdaclass/hive
           # hive_version: master
           simulator: ${{ matrix.test.simulation }}

@@ -1,4 +1,4 @@
-name: Daily Reports
+name: Daily Hive Report
 
 on:
   schedule:
