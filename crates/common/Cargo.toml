@@ -18,7 +18,7 @@ thiserror.workspace = true
 sha2.workspace = true
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "^1.0.3", optional = true }
-kzg-rs.workspace = true
+kzg-rs = { workspace = true, optional = true }
 keccak-hash.workspace = true
 sha3.workspace = true
 secp256k1.workspace = true
@@ -37,6 +37,7 @@ hex-literal.workspace = true
 [features]
 default = []
 c-kzg = ["dep:c-kzg"]
+kzg-rs = ["dep:kzg-rs"]
 
 [lib]
 path = "./common.rs"
