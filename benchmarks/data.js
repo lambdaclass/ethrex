@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758293853606,
+  "lastUpdate": 1758295118061,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15655,6 +15655,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 96008454766,
             "range": "± 492065644",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1d9fdf41e0e549db862112eb8e618eff85220f2a",
+          "message": "feat(l1): update EEST to version 5.0 (#4484)\n\n**Motivation**\n\nKeeping up to date with the latest EF tests for Osaka.\n\n**Description**\n\nThis PR updates the fixture URL for the blockchain and state test\nrunners. It also adds some necessary code for some of the tests to pass,\nand skips those which are poorly contructed.",
+          "timestamp": "2025-09-19T14:29:52Z",
+          "tree_id": "aab6f5dfb139ef6fafc0db203c3571b2efbf863f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1d9fdf41e0e549db862112eb8e618eff85220f2a"
+        },
+        "date": 1758295095473,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90343054919,
+            "range": "± 247304038",
             "unit": "ns/iter"
           }
         ]
