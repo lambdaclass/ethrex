@@ -67,7 +67,7 @@ impl TrieWrapperInner {
             layer
                 .nodes
                 .drain()
-                .chain(parent_nodes.unwrap_or_default().into_iter())
+                .chain(parent_nodes.unwrap_or_default())
                 .collect(),
         )
     }
@@ -92,7 +92,10 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let root_node = Node::decode(&key_values.last().unwrap().1).unwrap();
+        let Some(last_pair) = key_values.last() else {
+            return Ok(());
+        };
+        let root_node = Node::decode(&last_pair.1)?;
         let new_state_root = root_node.compute_hash().finalize();
         self.inner
             .write()
