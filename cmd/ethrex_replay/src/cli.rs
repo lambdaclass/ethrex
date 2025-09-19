@@ -476,7 +476,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie (by Branch or Ext nodes).
 
         for (_node_hash, node_rlp) in nodes.iter() {
-            let node = Node::decode(node_rlp).unwrap();
+            let node = Node::decode(node_rlp)?;
             match node {
                 Node::Branch(node) => {
                     for choice in &node.choices {
