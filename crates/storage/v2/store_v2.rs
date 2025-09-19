@@ -32,6 +32,8 @@ const INVALID_CHAINS: &str = "invalid_chains";
 const STATE_TRIE_NODES: &str = "state_trie_nodes";
 const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
+type AccountStorage = (H256, Vec<(NodeHash, Vec<u8>)>);
+
 pub struct StoreV2 {
     backend: Arc<dyn StorageBackend>,
 }
@@ -1065,7 +1067,7 @@ impl StoreV2 {
 
     pub async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<AccountStorage>,
     ) -> Result<(), StoreError> {
         let mut txn = self.backend.begin_write()?;
         for (address_hash, nodes) in storage_trie_nodes {

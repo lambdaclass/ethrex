@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use crate::error::StoreError;
 
+type PrefixIterator<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + 'a>;
+
 pub trait StorageBackend: Send + Sync {
     fn open(path: &str) -> Result<Arc<impl StorageBackend>, StoreError>
     where
@@ -22,11 +24,7 @@ pub trait StorageRoTx<'a> {
     /// Returns iterator over all key-value pairs where key starts with prefix
     /// For RocksDB: iterates over composite keys like tx_hash+block_hash
     /// For LibMDBX: if table supports dupsort, iterates over all values for the exact prefix key
-    fn prefix_iterator(
-        &self,
-        table: &str,
-        prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>;
+    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<PrefixIterator, StoreError>;
 }
 
 pub trait StorageRwTx<'a> {

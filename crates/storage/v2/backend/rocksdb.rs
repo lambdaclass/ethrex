@@ -120,7 +120,8 @@ impl StorageRwTx<'_> for RocksDBRwTx<'_> {
     }
 }
 
-mod test {
+#[cfg(test)]
+mod tests {
     use super::*;
 
     #[test]
