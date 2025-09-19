@@ -253,7 +253,12 @@ impl RpcHandler for GetTransactionByHashRequest {
             else {
                 return Ok(Value::Null);
             };
-            RpcTransaction::build(tx, Some(block_number), block_hash, Some(index as usize))?
+            RpcTransaction::build(
+                tx,
+                Some(block_number),
+                Some(block_hash),
+                Some(index as usize),
+            )?
         } else {
             let Some(tx) = context
                 .blockchain
@@ -262,7 +267,7 @@ impl RpcHandler for GetTransactionByHashRequest {
             else {
                 return Ok(Value::Null);
             };
-            RpcTransaction::build(tx, Some(0), BlockHash::default(), Some(0))?
+            RpcTransaction::build(tx, None, None, None)?
         };
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
