@@ -33,7 +33,7 @@ pub struct RLPxInitiator {
     /// The target number of RLPx connections to reach.
     target_peers: u64,
     /// The rate at which to try new connections.
-    new_connections_per_lookup: u64,
+    new_connections_per_lookup: usize,
 }
 
 impl RLPxInitiator {
@@ -59,40 +59,25 @@ impl RLPxInitiator {
         Ok(())
     }
 
-    async fn look_for_peers(&self) {
+    async fn look_for_peers(&mut self) {
         info!("Looking for peers");
 
-        let mut already_tried_peers = self.context.table.already_tried_peers.lock().await;
+        let contacts = self
+            .context
+            .table
+            .get_contacts_to_initiate(self.new_connections_per_lookup)
+            .await
+            // TODO proper error handling
+            .unwrap_or(Vec::new());
 
-        let mut tried_connections = 0;
-
-        for contact in self.context.table.table.lock().await.values() {
-            let node_id = contact.node.node_id();
-            if !self.context.table.peers.lock().await.contains_key(&node_id)
-                && !already_tried_peers.contains(&node_id)
-                && contact.knows_us
-                && !contact.unwanted
-            {
-                already_tried_peers.insert(node_id);
-
-                RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
-
-                METRICS.record_new_rlpx_conn_attempt().await;
-                tried_connections += 1;
-                if tried_connections >= self.new_connections_per_lookup {
-                    break;
-                }
-            }
-        }
-
-        if tried_connections < self.new_connections_per_lookup {
-            info!("Resetting list of tried peers.");
-            already_tried_peers.clear();
+        for contact in contacts {
+            RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
+            METRICS.record_new_rlpx_conn_attempt().await;
         }
     }
 
-    async fn get_lookup_interval(&self) -> Duration {
-        let num_peers = self.context.table.peers.lock().await.len() as u64;
+    async fn get_lookup_interval(&mut self) -> Duration {
+        let num_peers = self.context.table.peer_count().await.unwrap_or(0) as u64;
 
         if num_peers < self.target_peers {
             self.initial_lookup_interval

@@ -486,7 +486,7 @@ async fn store_block_bodies(
 #[allow(unused)]
 async fn store_receipts(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
@@ -800,8 +800,8 @@ impl SnapBlockSyncState {
 /// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
 /// Logs with where the function was when it found this error
 /// TODO: remove this function once peer table has moved to spawned implementation
-async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
-    if peer_handler.peer_table.free_peers().await != 0 {
+async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) {
+    if peer_handler.peer_table.free_peers().await.unwrap_or(0) != 0 {
         let step = METRICS.current_step.lock().await.clone();
         error!(
             step = step,
@@ -871,7 +871,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-            free_peers_and_log_if_not_empty(&self.peers).await;
+            free_peers_and_log_if_not_empty(&mut self.peers).await;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -983,7 +983,7 @@ impl Syncer {
                 {
                     continue;
                 };
-                free_peers_and_log_if_not_empty(&self.peers).await;
+                free_peers_and_log_if_not_empty(&mut self.peers).await;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -999,7 +999,7 @@ impl Syncer {
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
-                free_peers_and_log_if_not_empty(&self.peers).await;
+                free_peers_and_log_if_not_empty(&mut self.peers).await;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -1120,7 +1120,7 @@ impl Syncer {
             )
             .await;
 
-            free_peers_and_log_if_not_empty(&self.peers).await;
+            free_peers_and_log_if_not_empty(&mut self.peers).await;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1288,11 +1288,18 @@ pub async fn update_pivot(
     loop {
         let (peer_id, mut peer_channel) = peers
             .peer_table
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES)
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await
+            // TODO Return correct error
+            .map_err(|_| SyncError::NoPeers)?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peers.peer_table.get_score(&peer_id).await;
+        let peer_score = peers
+            .peer_table
+            .get_score(&peer_id)
+            .await
+            // TODO Return correct error
+            .map_err(|_| SyncError::NoPeers)?;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1302,8 +1309,13 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_table.record_failure(peer_id).await;
-            let peer_score = peers.peer_table.get_score(&peer_id).await;
+            peers.peer_table.record_failure(&peer_id).await;
+            let peer_score = peers
+                .peer_table
+                .get_score(&peer_id)
+                .await
+                // TODO Return correct error
+                .map_err(|_| SyncError::NoPeers)?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1311,7 +1323,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_table.record_success(peer_id).await;
+        peers.peer_table.record_success(&peer_id).await;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers

@@ -419,6 +419,12 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            RLPxError::KademliaError(error) => {
+                failures_grouped_by_reason
+                    .entry(format!("InternalError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
         }
     }
 }
