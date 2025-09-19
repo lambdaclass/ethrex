@@ -3,8 +3,10 @@ use crate::{
     error::StoreError,
     rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
     utils::{ChainDataIndex, SnapStateIndex},
-    v2::api::StorageBackend,
-    v2::backend_trie::BackendTrieDB,
+    v2::{
+        api::{StorageBackend, TableOptions},
+        backend_trie::BackendTrieDB,
+    },
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -34,11 +36,29 @@ const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
 type AccountStorage = (H256, Vec<(NodeHash, Vec<u8>)>);
 
+#[derive(Clone, Debug)]
 pub struct StoreV2 {
     backend: Arc<dyn StorageBackend>,
 }
 
 impl StoreV2 {
+    pub fn new(backend: Arc<dyn StorageBackend>) -> Result<Self, StoreError> {
+        backend.create_table(CHAIN_DATA, TableOptions { dupsort: false })?;
+        backend.create_table(ACCOUNT_CODES, TableOptions { dupsort: false })?;
+        backend.create_table(BODIES, TableOptions { dupsort: false })?;
+        backend.create_table(BLOCK_NUMBERS, TableOptions { dupsort: false })?;
+        backend.create_table(CANONICAL_BLOCK_HASHES, TableOptions { dupsort: false })?;
+        backend.create_table(HEADERS, TableOptions { dupsort: false })?;
+        backend.create_table(PENDING_BLOCKS, TableOptions { dupsort: false })?;
+        backend.create_table(TRANSACTION_LOCATIONS, TableOptions { dupsort: false })?;
+        backend.create_table(RECEIPTS, TableOptions { dupsort: false })?;
+        backend.create_table(SNAP_STATE, TableOptions { dupsort: false })?;
+        backend.create_table(INVALID_CHAINS, TableOptions { dupsort: false })?;
+        backend.create_table(STATE_TRIE_NODES, TableOptions { dupsort: false })?;
+        backend.create_table(STORAGE_TRIE_NODES, TableOptions { dupsort: false })?;
+        Ok(Self { backend })
+    }
+
     /// Store changes in a batch from a vec of blocks
     pub async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.backend.clone();

@@ -3,12 +3,13 @@ use crate::v2::api::{StorageBackend, StorageRoTx, StorageRwTx, TableOptions};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB, Options, Transaction};
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct RocksDBBackend {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
 }
 
 impl StorageBackend for RocksDBBackend {
-    fn open(path: &str) -> Result<Arc<impl StorageBackend>, StoreError>
+    fn open(path: &str) -> Result<Arc<dyn StorageBackend>, StoreError>
     where
         Self: Sized,
     {

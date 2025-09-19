@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use crate::error::StoreError;
 
-type PrefixIterator<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + 'a>;
+pub type PrefixIterator<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + 'a>;
 
-pub trait StorageBackend: Send + Sync {
-    fn open(path: &str) -> Result<Arc<impl StorageBackend>, StoreError>
+pub trait StorageBackend: Debug + Send + Sync {
+    fn open(path: &str) -> Result<Arc<dyn StorageBackend>, StoreError>
     where
         Self: Sized;
     fn create_table(&self, name: &str, options: TableOptions) -> Result<(), StoreError>;

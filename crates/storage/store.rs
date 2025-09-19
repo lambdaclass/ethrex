@@ -1,12 +1,9 @@
-use crate::api::StoreEngine;
-use crate::error::StoreError;
-use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
+use crate::v2::api::StorageBackend;
 #[cfg(feature = "rocksdb")]
-use crate::store_db::rocksdb::Store as RocksDBStore;
+use crate::v2::backend::rocksdb::RocksDBBackend;
+use crate::v2::store_v2::StoreV2;
+use crate::{error::StoreError, v2::backend::in_memory::InMemoryBackend};
 use bytes::Bytes;
-
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
@@ -35,7 +32,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<dyn StoreEngine>,
+    engine: Arc<StoreV2>,
     chain_config: Arc<RwLock<ChainConfig>>,
     latest_block_header: Arc<RwLock<BlockHeader>>,
 }
@@ -84,18 +81,14 @@ impl Store {
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
-                engine: Arc::new(RocksDBStore::new(path)?),
+                engine: Arc::new(StoreV2::new(RocksDBBackend::open(path)?)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
+            EngineType::Libmdbx => todo!(),
             EngineType::InMemory => Self {
-                engine: Arc::new(InMemoryStore::new()),
+                engine: Arc::new(StoreV2::new(InMemoryBackend::open(path)?)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
