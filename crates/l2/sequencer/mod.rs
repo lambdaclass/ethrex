@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
-use crate::based::sequencer_state::SequencerState;
-use crate::based::sequencer_state::SequencerStatus;
+use crate::SequencerConfig;
+use crate::based::{
+    block_fetcher::BlockFetcher,
+    sequencer_state::{SequencerState, SequencerStatus},
+    state_updater::StateUpdater,
+};
 use crate::monitor::EthrexMonitor;
 use crate::sequencer::admin_server::start_api;
 use crate::sequencer::errors::SequencerError;
-use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_l2_common::prover::ProverType;
@@ -157,8 +160,8 @@ pub async fn start_l2(
             rollup_store.clone(),
         )));
     }
-    if cfg.based.enabled {
-        let _ = StateUpdater::spawn(
+    let (state_updater, block_fetcher) = if cfg.based.enabled {
+        let state_updater = StateUpdater::spawn(
             cfg.clone(),
             shared_state.clone(),
             blockchain.clone(),
@@ -170,7 +173,7 @@ pub async fn start_l2(
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(
+        let block_fetcher = BlockFetcher::spawn(
             &cfg,
             store.clone(),
             rollup_store.clone(),
@@ -181,7 +184,10 @@ pub async fn start_l2(
         .inspect_err(|err| {
             error!("Error starting Block Fetcher: {err}");
         });
-    }
+        (state_updater.ok(), block_fetcher.ok())
+    } else {
+        (None, None)
+    };
 
     if cfg.monitor.enabled {
         EthrexMonitor::spawn(
@@ -205,6 +211,8 @@ pub async fn start_l2(
         block_producer.ok(),
         #[cfg(feature = "metrics")]
         metrics_gatherer.ok(),
+        state_updater,
+        block_fetcher,
     )
     .await
     .inspect_err(|err| {
