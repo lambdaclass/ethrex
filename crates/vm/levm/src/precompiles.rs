@@ -64,79 +64,58 @@ use crate::{
     },
 };
 
-pub const ECRECOVER_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x01,
-]);
-pub const SHA2_256_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x02,
-]);
-pub const RIPEMD_160_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x03,
-]);
-pub const IDENTITY_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x04,
-]);
-pub const MODEXP_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x05,
-]);
-pub const ECADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x06,
-]);
-pub const ECMUL_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x07,
-]);
-pub const ECPAIRING_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x08,
-]);
-pub const BLAKE2F_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x09,
-]);
+// Standard precompile addresses
+pub const ECRECOVER_ADDRESS: H160 =
+    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+pub const SHA2_256_ADDRESS: H160 =
+    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
+pub const RIPEMD_160_ADDRESS: H160 =
+    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]);
+pub const IDENTITY_ADDRESS: H160 =
+    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4]);
+pub const MODEXP_ADDRESS: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5]);
+pub const ECADD_ADDRESS: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6]);
+pub const ECMUL_ADDRESS: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7]);
+pub const ECPAIRING_ADDRESS: H160 =
+    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8]);
+pub const BLAKE2F_ADDRESS: H160 =
+    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9]);
 pub const POINT_EVALUATION_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0a,
-]);
-pub const BLS12_G1ADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0b,
-]);
-pub const BLS12_G1MSM_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0c,
-]);
-pub const BLS12_G2ADD_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0d,
-]);
-pub const BLS12_G2MSM_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0e,
-]);
-pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x0f,
-]);
-pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x10,
-]);
-pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x11,
-]);
-pub const P256_VERIFICATION_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x00,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0a,
 ]);
 
+// BLS12-381 precompile addresses
+pub const BLS12_G1ADD_ADDRESS: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0b,
+]);
+pub const BLS12_G1MSM_ADDRESS: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0c,
+]);
+pub const BLS12_G2ADD_ADDRESS: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0d,
+]);
+pub const BLS12_G2MSM_ADDRESS: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0e,
+]);
+pub const BLS12_PAIRING_CHECK_ADDRESS: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0f,
+]);
+pub const BLS12_MAP_FP_TO_G1_ADDRESS: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+]);
+pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11,
+]);
+
+// P256 verification precompile address
+pub const P256_VERIFICATION_ADDRESS: H160 =
+    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]);
+
+// =============================================================================
+// PRECOMPILE COLLECTIONS
+// =============================================================================
+
+/// Standard precompiles available from the beginning (addresses 0x01-0x0a)
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
     SHA2_256_ADDRESS,
@@ -150,6 +129,7 @@ pub const PRECOMPILES: [H160; 10] = [
     POINT_EVALUATION_ADDRESS,
 ];
 
+/// BLS12-381 precompiles introduced in Prague fork (addresses 0x0b-0x11)
 pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
     BLS12_G1ADD_ADDRESS,
     BLS12_G1MSM_ADDRESS,
@@ -160,25 +140,55 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
     BLS12_MAP_FP2_TO_G2_ADDRESS,
 ];
 
-pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
+// =============================================================================
+// FORK-SPECIFIC PRECOMPILE COUNTS
+// =============================================================================
 
+/// Number of precompiles available before Cancun fork
 pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
+/// Number of precompiles available from Cancun fork (adds point evaluation)
 pub const SIZE_PRECOMPILES_CANCUN: u64 = 10;
+/// Number of precompiles available from Prague fork (adds BLS12-381 precompiles)
 pub const SIZE_PRECOMPILES_PRAGUE: u64 = 17;
 
-pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
-pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
-pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
+// =============================================================================
+// BLAKE2F CONSTANTS
+// =============================================================================
 
+/// Size of each element in BLAKE2F input data
+pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
+
+// =============================================================================
+// BLS12-381 CONSTANTS
+// =============================================================================
+
+/// Input length for BLS12-381 G1 point addition (two G1 points)
 const BLS12_381_G1ADD_VALID_INPUT_LENGTH: usize = 256;
+/// Input length for BLS12-381 G2 point addition (two G2 points)
 const BLS12_381_G2ADD_VALID_INPUT_LENGTH: usize = 512;
 
-const BLS12_381_FP2_VALID_INPUT_LENGTH: usize = 128;
-const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
+/// Length of each G1 point-scalar pair for MSM operations
+pub const BLS12_381_G1_MSM_PAIR_LENGTH: usize = 160;
+/// Length of each G2 point-scalar pair for MSM operations
+pub const BLS12_381_G2_MSM_PAIR_LENGTH: usize = 288;
+/// Length of each G1-G2 point pair for pairing check operations
+pub const BLS12_381_PAIRING_CHECK_PAIR_LENGTH: usize = 384;
 
+/// Input length for BLS12-381 Fp field element (single field element)
+const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
+/// Input length for BLS12-381 Fp2 field element (two field elements)
+const BLS12_381_FP2_VALID_INPUT_LENGTH: usize = 128;
+
+/// Length of a BLS12-381 field element without padding
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
+/// Length of a BLS12-381 field element with padding
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
 
+// =============================================================================
+// BLS12-381 SPECIAL POINTS AND VALUES
+// =============================================================================
+
+/// The result of mapping Fp2 zero element to G2 point
 const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 131, 32, 137, 110, 201, 238, 249, 213, 230,
     25, 132, 141, 194, 156, 226, 102, 244, 19, 208, 45, 211, 29, 155, 157, 68, 236, 12, 121, 205,
@@ -193,21 +203,24 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
     172, 127, 112, 38, 109, 25, 155, 79, 118, 174, 39, 198, 38, 154, 60, 238, 189, 174, 48, 128,
     110, 154, 118, 170, 223, 92,
 ];
+
+/// Representation of G1 point at infinity (all zeros)
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
+/// Representation of G2 point at infinity (all zeros)
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    // Cancun specs is the only one that allows point evaluation precompile
+    // Point evaluation precompile requires Cancun or later
     if *address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
         return false;
     }
-    // Prague or newers forks should only use these precompiles
-    // https://eips.ethereum.org/EIPS/eip-2537
+
+    // BLS12-381 precompiles require Prague or later
     if PRECOMPILES_POST_CANCUN.contains(address) && fork < Fork::Prague {
         return false;
     }
 
-    // P256 verify Precompile only existed on L2 before Osaka
+    // P256 verify precompile only existed on L2 before Osaka
     if fork < Fork::Osaka && matches!(vm_type, VMType::L1) && address == &P256_VERIFICATION_ADDRESS
     {
         return false;
@@ -218,7 +231,7 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || address == &P256_VERIFICATION_ADDRESS
 }
 
-#[expect(clippy::as_conversions, clippy::indexing_slicing)]
+#[expect(clippy::as_conversions)]
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
@@ -229,31 +242,24 @@ pub fn execute_precompile(
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
-        precompiles[ECRECOVER_ADDRESS.0[19] as usize] = Some(ecrecover as PrecompileFn);
-        precompiles[IDENTITY_ADDRESS.0[19] as usize] = Some(identity as PrecompileFn);
-        precompiles[SHA2_256_ADDRESS.0[19] as usize] = Some(sha2_256 as PrecompileFn);
-        precompiles[RIPEMD_160_ADDRESS.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
-        precompiles[MODEXP_ADDRESS.0[19] as usize] = Some(modexp as PrecompileFn);
-        precompiles[ECADD_ADDRESS.0[19] as usize] = Some(ecadd as PrecompileFn);
-        precompiles[ECMUL_ADDRESS.0[19] as usize] = Some(ecmul as PrecompileFn);
-        precompiles[ECPAIRING_ADDRESS.0[19] as usize] = Some(ecpairing as PrecompileFn);
-        precompiles[BLAKE2F_ADDRESS.0[19] as usize] = Some(blake2f as PrecompileFn);
-        precompiles[POINT_EVALUATION_ADDRESS.0[19] as usize] =
-            Some(point_evaluation as PrecompileFn);
-        precompiles[BLS12_G1ADD_ADDRESS.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
-        precompiles[BLS12_G1MSM_ADDRESS.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
-        precompiles[BLS12_G2ADD_ADDRESS.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
-        precompiles[BLS12_G2MSM_ADDRESS.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
-        precompiles[BLS12_PAIRING_CHECK_ADDRESS.0[19] as usize] =
-            Some(bls12_pairing_check as PrecompileFn);
-        precompiles[BLS12_MAP_FP_TO_G1_ADDRESS.0[19] as usize] =
-            Some(bls12_map_fp_to_g1 as PrecompileFn);
-        precompiles[BLS12_MAP_FP2_TO_G2_ADDRESS.0[19] as usize] =
-            Some(bls12_map_fp2_tp_g2 as PrecompileFn);
-        precompiles[u16::from_be_bytes([
-            P256_VERIFICATION_ADDRESS.0[18],
-            P256_VERIFICATION_ADDRESS.0[19],
-        ]) as usize] = Some(p_256_verify as PrecompileFn);
+        precompiles[0x01] = Some(ecrecover as PrecompileFn);
+        precompiles[0x02] = Some(sha2_256 as PrecompileFn);
+        precompiles[0x03] = Some(ripemd_160 as PrecompileFn);
+        precompiles[0x04] = Some(identity as PrecompileFn);
+        precompiles[0x05] = Some(modexp as PrecompileFn);
+        precompiles[0x06] = Some(ecadd as PrecompileFn);
+        precompiles[0x07] = Some(ecmul as PrecompileFn);
+        precompiles[0x08] = Some(ecpairing as PrecompileFn);
+        precompiles[0x09] = Some(blake2f as PrecompileFn);
+        precompiles[0x0a] = Some(point_evaluation as PrecompileFn);
+        precompiles[0x0b] = Some(bls12_g1add as PrecompileFn);
+        precompiles[0x0c] = Some(bls12_g1msm as PrecompileFn);
+        precompiles[0x0d] = Some(bls12_g2add as PrecompileFn);
+        precompiles[0x0e] = Some(bls12_g2msm as PrecompileFn);
+        precompiles[0x0f] = Some(bls12_pairing_check as PrecompileFn);
+        precompiles[0x10] = Some(bls12_map_fp_to_g1 as PrecompileFn);
+        precompiles[0x11] = Some(bls12_map_fp2_tp_g2 as PrecompileFn);
+        precompiles[0x0100] = Some(p_256_verify as PrecompileFn);
         precompiles
     };
 
@@ -674,6 +680,12 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     Ok(Bytes::from(out))
 }
 
+// =============================================================================
+// ELLIPTIC CURVE CONSTANTS
+// =============================================================================
+
+/// Prime field modulus for the alt_bn128 curve (BN254)
+/// Used for coordinate validation in ECADD, ECMUL, and ECPAIRING precompiles
 const ALT_BN128_PRIME: U256 = U256([
     0x3c208c16d87cfd47,
     0x97816a916871ca8d,
@@ -919,6 +931,13 @@ fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
     versioned_hash.into()
 }
 
+// =============================================================================
+// POINT EVALUATION CONSTANTS
+// =============================================================================
+
+/// Fixed output for successful point evaluation precompile
+/// First 32 bytes: FIELD_ELEMENTS_PER_BLOB (4096 = 0x1000)
+/// Last 32 bytes: BLS_MODULUS
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
     // Big endian FIELD_ELEMENTS_PER_BLOB bytes
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
