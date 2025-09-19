@@ -339,6 +339,9 @@ impl RpcHandler for GetPayloadV4Request {
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
+        if chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
+        }
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
