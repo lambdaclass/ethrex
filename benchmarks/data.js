@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758259866677,
+  "lastUpdate": 1758261751629,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -31543,6 +31543,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015326833133971292,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "damian.ramirez@lambdaclass.com",
+            "name": "Damian Ramirez",
+            "username": "damiramirez"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "468ec140e2182e98b8215c1c6ac36d2d0043471c",
+          "message": "perf(l1): save code hash during account insertion and state healing (#4487)\n\n**Motivation**\n\nImprove bytecode download time saving code hash in files\n\n**Description**\n\nWhen we are doing snapsync, we see that we waste too much time\ndownloading bytecode since we are traversing the trie looking for the\ncode hash. Before this step, we are inserting the account state to the\ntrie so we could take advantage of this and start saving the code hash\nin a buffer. When the buffer exceeds the chunk size, flush it to a file.\n\nWe have some constant values ​​that we can adjust and see the numbers.\n- `BYTECODE_CHUNK_SIZE`\n- `CODE_HASH_WRITE_BUFFER_SIZE`\n\nHoodi\n- `main` - `bytecodes progress: downloaded: 719368, elapsed: 00h 03m 28s\n00ms`\n- `pr` - `bytecodes progress: downloaded: 710598, elapsed: 00h 00m 32s\n00ms`\n\nSepolia\n- `main` - `bytecodes progress: downloaded: 11090586, elapsed: 01h 43m\n58s 06ms`\n- `pr` - `bytecodes progress: downloaded: 7979995, elapsed: 00h 07m 59s\n00ms`\n\nMainnet\n- `main` - `bytecodes progress: downloaded: 4930763, elapsed: 03h 15m\n14s 11ms`\n- `pr` - `bytecodes progress: downloaded: 1813931, elapsed: 00h 02m 50s\n00ms`\n---\n\nCloses #4474\n\n---------\n\nCo-authored-by: fedacking <francisco.gauna@lambdaclass.com>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>",
+          "timestamp": "2025-09-18T23:23:51Z",
+          "tree_id": "c67c757cffcb5468b9801224bd25d0d9e1eae15c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/468ec140e2182e98b8215c1c6ac36d2d0043471c"
+        },
+        "date": 1758261750603,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004460655352480418,
             "unit": "Mgas/s"
           }
         ]
