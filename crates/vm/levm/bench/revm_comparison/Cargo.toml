@@ -16,7 +16,7 @@ ethrex-blockchain.workspace = true
 hex.workspace = true
 bytes.workspace = true
 
-revm = "9.0.0"
+revm = "29.0.0"
 sha3 = "0.10.8"
 
 [[bin]]
