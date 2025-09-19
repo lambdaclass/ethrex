@@ -1322,6 +1322,7 @@ pub async fn update_pivot(
         } else {
             return Err(SyncError::NotInSnapSync);
         }
+        *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
     }
 }
