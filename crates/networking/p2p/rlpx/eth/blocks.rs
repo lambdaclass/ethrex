@@ -130,12 +130,12 @@ impl GetBlockHeaders {
             let block_header_opt = match get_block_header(storage, current_block) {
                 Ok(block_header) => block_header,
                 Err(err) => {
-                    error!(%err, block_number=%current_block, "Error accessing DB while building header response for peer");
+                    error!(%err, block_ref=%current_block, "Error accessing DB while building header response for peer");
                     break;
                 }
             };
             let Some(block_header) = block_header_opt else {
-                trace!(block_number=%current_block, "Block header not found");
+                trace!(block_ref=%current_block, "Block header not found");
                 break;
             };
             headers.push(block_header);
