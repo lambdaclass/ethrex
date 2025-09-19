@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::BufReader;
@@ -204,11 +205,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .collect();
 
-    // First by category ascending, then by passed tests descending, then by success percentage descending.
+    // First by category ascending, use fork ordering newest → oldest when applicable, then by passed tests descending.
     results.sort_by(|a, b| {
-        a.category
-            .cmp(&b.category)
-            .then_with(|| b.passed_tests.cmp(&a.passed_tests))
+        let category_cmp = a.category.cmp(&b.category);
+        if category_cmp != Ordering::Equal {
+            return category_cmp;
+        }
+
+        let fork_rank = |display_name: &str| match display_name {
+            "Osaka" => Some(0),
+            "Prague" => Some(1),
+            "Cancun" => Some(2),
+            "Shanghai" => Some(3),
+            "Paris" => Some(4),
+            _ => None,
+        };
+
+        if let (Some(rank_a), Some(rank_b)) = (
+            fork_rank(&a.display_name),
+            fork_rank(&b.display_name),
+        ) {
+            let order_cmp = rank_a.cmp(&rank_b);
+            if order_cmp != Ordering::Equal {
+                return order_cmp;
+            }
+        }
+
+        b.passed_tests
+            .cmp(&a.passed_tests)
             .then_with(|| {
                 b.success_percentage
                     .partial_cmp(&a.success_percentage)
