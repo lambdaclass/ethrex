@@ -456,8 +456,10 @@ impl DiscoveryServer {
 
         drop(table);
 
-        // we are sending the neighbors in 2 different messages to avoid exceeding the
-        // maximum packet size
+        // A single node encodes to at most 89B, so 8 of them are at most 712B plus
+        // recursive length and expiration time, well within bound of 1280B per packet.
+        // Sending all in one packet would exceed bounds with the nodes only, weighing
+        // up to 1424B.
         for chunk in neighbors.chunks(8) {
             let _ = self
                 .send_neighbors(chunk.to_vec(), &node)
