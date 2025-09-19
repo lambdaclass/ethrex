@@ -53,7 +53,7 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 // How much we store in memory of request_account_range and request_storage_ranges
 // before we dump it into the file. This tunes how much memory ethrex uses during
 // the first steps of snap sync
-pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 512; // 512MB
+pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 128; // 128MB
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
