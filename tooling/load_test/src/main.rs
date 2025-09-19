@@ -92,8 +92,10 @@ async fn deploy_contract(
     deployer: &Signer,
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
-    let (_, contract_address) =
+    let (deploy_tx_hash, contract_address) =
         create_deploy(&client, deployer, contract.into(), Overrides::default()).await?;
+
+    wait_for_transaction_receipt(deploy_tx_hash, &client, 1000).await?;
 
     eyre::Ok(contract_address)
 }

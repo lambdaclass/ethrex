@@ -2000,7 +2000,7 @@ async fn wait_for_verified_proof(
     l2_client: &EthClient,
     tx: H256,
 ) -> L1MessageProof {
-    let proof = wait_for_message_proof(l2_client, tx, 10000).await;
+    let proof = wait_for_message_proof(l2_client, tx, 10000, true).await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
     loop {

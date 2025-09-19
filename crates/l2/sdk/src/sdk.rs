@@ -116,7 +116,6 @@ pub async fn transfer(
     private_key: &SecretKey,
     client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    println!("Transferring {amount} from {from:#x} to {to:#x}");
     let gas_price = client
         .get_gas_price_with_extra(20)
         .await?
@@ -150,7 +149,6 @@ pub async fn deposit_through_transfer(
     from_pk: &SecretKey,
     eth_client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    println!("Depositing {amount} from {from:#x} to bridge");
     transfer(
         amount,
         from,
@@ -199,8 +197,6 @@ pub async fn claim_withdraw(
     eth_client: &EthClient,
     message_proof: &L1MessageProof,
 ) -> Result<H256, EthClientError> {
-    println!("Claiming {amount} from bridge to {from:#x}");
-
     const CLAIM_WITHDRAWAL_SIGNATURE: &str = "claimWithdrawal(uint256,uint256,uint256,bytes32[])";
 
     let calldata_values = vec![
@@ -217,11 +213,6 @@ pub async fn claim_withdraw(
     ];
 
     let claim_withdrawal_data = encode_calldata(CLAIM_WITHDRAWAL_SIGNATURE, &calldata_values)?;
-
-    println!(
-        "Claiming withdrawal with calldata: {}",
-        hex::encode(&claim_withdrawal_data)
-    );
 
     let claim_tx = build_generic_tx(
         eth_client,
@@ -271,11 +262,6 @@ pub async fn claim_erc20withdraw(
     let claim_withdrawal_data =
         encode_calldata(CLAIM_WITHDRAWAL_ERC20_SIGNATURE, &calldata_values)?;
 
-    println!(
-        "Claiming withdrawal with calldata: {}",
-        hex::encode(&claim_withdrawal_data)
-    );
-
     let claim_tx = build_generic_tx(
         eth_client,
         TxType::EIP1559,
@@ -300,8 +286,6 @@ pub async fn deposit_erc20(
     from_signer: &Signer,
     eth_client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    println!("Claiming {amount} from bridge to {from:#x}");
-
     const DEPOSIT_ERC20_SIGNATURE: &str = "depositERC20(address,address,address,uint256)";
 
     let calldata_values = vec![
@@ -387,6 +371,10 @@ pub enum DeployError {
     ProxyBytecodeNotFound,
 }
 
+/// Deploys a contract by sending a `CREATE` transaction with the given init code and overrides.
+/// Returns the transaction hash and the expected deployed contract address.
+///
+/// Note: Waiting for the transaction receipt is the caller's responsibility. See `wait_for_transaction_receipt()`.`
 pub async fn create_deploy(
     client: &EthClient,
     deployer: &Signer,
@@ -418,11 +406,14 @@ pub async fn create_deploy(
         EthClientError::Custom("Failed to get deployed_address".to_owned()),
     )?);
 
-    wait_for_transaction_receipt(deploy_tx_hash, client, 1000).await?;
-
     Ok((deploy_tx_hash, deployed_address))
 }
 
+/// Deploys a contract with `CREATE2` using bytecode loaded from a file path
+/// and the provided constructor arguments. Returns the transaction hash and
+/// deployed contract address.
+///
+/// Note: Waiting for the transaction receipt is the caller's responsibility.
 pub async fn create2_deploy_from_path(
     constructor_args: &[u8],
     contract_path: &Path,
@@ -434,6 +425,10 @@ pub async fn create2_deploy_from_path(
     create2_deploy_from_bytecode(constructor_args, &bytecode, deployer, salt, eth_client).await
 }
 
+/// Deploys a contract with `CREATE2` using raw bytecode and constructor arguments.
+/// Returns the transaction hash and deployed contract address.
+///
+/// Note: Waiting for the transaction receipt is the caller's responsibility.
 pub async fn create2_deploy_from_bytecode(
     constructor_args: &[u8],
     bytecode: &[u8],
@@ -477,6 +472,7 @@ async fn deploy_proxy(
 }
 
 /// Deploys a contract behind an OpenZeppelin's `ERC1967Proxy`.
+/// Note: Waiting for the transaction receipts is the caller's responsibility.
 pub async fn deploy_with_proxy(
     deployer: &Signer,
     eth_client: &EthClient,
@@ -518,6 +514,10 @@ pub async fn deploy_with_proxy_from_bytecode(
     })
 }
 
+/// Deploys a contract using the `CREATE2` opcode, given a salt and init code.
+/// Returns the transaction hash and the computed contract address.
+///
+/// Note: Waiting for the transaction receipt is the caller's responsibility.
 async fn create2_deploy(
     salt: &[u8],
     init_code: &[u8],
@@ -549,8 +549,6 @@ async fn create2_deploy(
 
     let deploy_tx_hash =
         send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer).await?;
-
-    wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
 
     let deployed_address = create2_address(salt, keccak(init_code));
 
@@ -918,13 +916,16 @@ pub async fn wait_for_message_proof(
     client: &EthClient,
     transaction_hash: H256,
     max_retries: u64,
+    silent: bool,
 ) -> Result<Vec<L1MessageProof>, EthClientError> {
     let mut message_proof = get_message_proof(client, transaction_hash).await?;
     let mut r#try = 1;
     while message_proof.is_none() {
-        println!(
-            "[{try}/{max_retries}] Retrying to get message proof for tx {transaction_hash:#x}"
-        );
+        if !silent {
+            println!(
+                "[{try}/{max_retries}] Retrying to get message proof for tx {transaction_hash:#x}"
+            );
+        }
 
         if max_retries == r#try {
             return Err(EthClientError::Custom(format!(
