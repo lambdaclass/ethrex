@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758295118061,
+  "lastUpdate": 1758300704394,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15685,6 +15685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90343054919,
             "range": "± 247304038",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "09c4597cf3a5d3f9bf12577d1fe74d22204c647b",
+          "message": "ci(l1): update daily Hive job to use execution-spec-tests@v5.0.0 (#4380)\n\n**Motivation**\nAdds Fusaka tests\n\n**Description**\n- Updates to\nhttps://github.com/ethereum/execution-spec-tests/releases/tag/v5.0.0\n- Include Osaka tests\n- Unrelated: remove risc0 and SP1 dependency",
+          "timestamp": "2025-09-19T16:03:26Z",
+          "tree_id": "05dce60f626a2a9f9798a2f1ef47ca3d6460f578",
+          "url": "https://github.com/lambdaclass/ethrex/commit/09c4597cf3a5d3f9bf12577d1fe74d22204c647b"
+        },
+        "date": 1758300683459,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90916353791,
+            "range": "± 981239684",
             "unit": "ns/iter"
           }
         ]
