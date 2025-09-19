@@ -170,7 +170,10 @@ impl RpcHandler for BlobsV2Request {
                 }
             }
         }
-
+        if res.iter().any(|blob| blob.is_none()) {
+            return Ok(Value::Null);
+        }
+        info!("Correctly supplied BlobsBundleV2");
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
