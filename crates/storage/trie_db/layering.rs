@@ -92,7 +92,7 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let Some(last_pair) = key_values.last() else {
+        let Some(last_pair) = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty()) else {
             return Ok(());
         };
         let root_node = Node::decode(&last_pair.1)?;
