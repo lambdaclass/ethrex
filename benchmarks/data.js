@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758306998693,
+  "lastUpdate": 1758311233515,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15745,6 +15745,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90255997890,
             "range": "± 348417619",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "38e0ffc4487548a7b89de02b8b2b13c791a84682",
+          "message": "refactor(l1): use `Path` instead of `String` for `--datadir` (#4543)\n\n**Motivation**\n\nWe are currently using `String` when dealing with file paths. This\npushes error-handling later into the node's lifecycle, which could delay\nsome errors.\n\n**Description**\n\nThis PR changes the CLI flag `--datadir` to receive a `PathBuf`, and\nalso changes all uses of the flag to receive a `&Path` or similar type.",
+          "timestamp": "2025-09-19T19:01:16Z",
+          "tree_id": "6272d7a8c23a1c2e94bfc90322a5e634d70b1577",
+          "url": "https://github.com/lambdaclass/ethrex/commit/38e0ffc4487548a7b89de02b8b2b13c791a84682"
+        },
+        "date": 1758311212107,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 88991240567,
+            "range": "± 761483836",
             "unit": "ns/iter"
           }
         ]
