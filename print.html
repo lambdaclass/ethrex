@@ -2782,7 +2782,7 @@ Before the <code>zkVM</code> code (or guest), there is a directory called <code>
 <li><code>cd crates/l2</code></li>
 <li><code>make rm-db-l2 &amp;&amp; make down</code>
 <ul>
-<li>It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by <a href="https://docs.rs/dirs/latest/dirs/fn.data_dir.html">data_dir</a>.</li>
+<li>It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by <a href="https://docs.rs/dirs/latest/dirs/fn.datadir.html">datadir</a>.</li>
 </ul>
 </li>
 <li><code>make init</code>
@@ -5967,7 +5967,7 @@ ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k
 <p>The CLI import subcommand executes <code>cmd/ethrex/cli.rs:import_blocks</code>, which can be summarized as:</p>
 <pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>let store = init_store(&amp;data_dir, network).await;
+</span>let store = init_store(&amp;datadir, network).await;
 let blockchain = init_blockchain(evm, store.clone());
 for block in parse(rlp_file) {
     blockchain.add_block(block)
