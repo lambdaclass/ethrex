@@ -132,17 +132,11 @@ impl BlobsBundle {
 
         // Check if the blob versioned hashes and blobs bundle content length mismatch
         if blob_count != self.commitments.len()
-            || (!self.version.is_some_and(|v| v == 1) && blob_count != self.proofs.len())
-            || (self.version.is_some_and(|v| v == 1)
+            || (self.version.is_none_or(|v| v == 0) && blob_count != self.proofs.len())
+            || (self.version.is_some_and(|v| v != 0)
                 && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
             || blob_count != tx.blob_versioned_hashes.len()
         {
-            dbg!(
-                blob_count,
-                self.proofs.len(),
-                fork,
-                tx.blob_versioned_hashes.len()
-            );
             return Err(BlobsBundleError::BlobsBundleWrongLen);
         };
 
@@ -155,7 +149,7 @@ impl BlobsBundle {
             }
         }
 
-        if self.version.is_some_and(|v| v == 1) {
+        if self.version.is_some_and(|v| v != 0) {
             // Validate the blobs with the commitments and cell proofs
             for ((blob, commitment), proof) in self
                 .blobs

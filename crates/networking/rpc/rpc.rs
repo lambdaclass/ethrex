@@ -450,9 +450,8 @@ mod tests {
     use crate::utils::test_utils::default_context_with_storage;
     use ethrex_common::{
         H160,
-        types::{ChainConfig, Genesis, WrappedEIP4844Transaction},
+        types::{ChainConfig, Genesis},
     };
-    use ethrex_rlp::decode::RLPDecode;
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
     use std::fs::File;

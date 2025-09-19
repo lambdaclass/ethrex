@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::{Address, H256};
+use ethrex_common::Address;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
