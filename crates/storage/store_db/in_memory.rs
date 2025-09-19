@@ -1,11 +1,6 @@
-use crate::{
-    UpdateBatch,
-    api::StoreEngine,
-    error::StoreError,
-    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
-};
+use crate::{UpdateBatch, api::StoreEngine, error::StoreError, store::STATE_TRIE_SEGMENTS};
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
+use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
@@ -40,8 +35,6 @@ pub struct StoreInner {
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
     // Stores current Snap Sate
     snap_state: SnapState,
-    // Stores Storage trie leafs from the last downloaded tries
-    storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
 }
 
 #[derive(Default, Debug)]
@@ -568,38 +561,6 @@ impl StoreEngine for Store {
         Ok(self.inner()?.snap_state.state_heal_paths.clone())
     }
 
-    async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError> {
-        self.inner()?
-            .storage_snapshot
-            .entry(account_hash)
-            .or_default()
-            .extend(storage_keys.into_iter().zip(storage_values));
-        Ok(())
-    }
-    async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError> {
-        for (account_hash, (storage_keys, storage_values)) in account_hashes
-            .into_iter()
-            .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
-        {
-            self.inner()?
-                .storage_snapshot
-                .entry(account_hash)
-                .or_default()
-                .extend(storage_keys.into_iter().zip(storage_values));
-        }
-        Ok(())
-    }
-
     async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
@@ -612,23 +573,6 @@ impl StoreEngine for Store {
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         Ok(self.inner()?.snap_state.state_trie_rebuild_checkpoint)
-    }
-
-    async fn read_storage_snapshot(
-        &self,
-        start: H256,
-        account_hash: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        if let Some(snapshot) = self.inner()?.storage_snapshot.get(&account_hash) {
-            Ok(snapshot
-                .iter()
-                .filter(|(hash, _)| **hash < start)
-                .take(MAX_SNAPSHOT_READS)
-                .map(|(k, v)| (*k, *v))
-                .collect())
-        } else {
-            Ok(vec![])
-        }
     }
 
     async fn set_storage_trie_rebuild_pending(

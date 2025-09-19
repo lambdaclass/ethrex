@@ -7,7 +7,6 @@ use tracing::{error, info};
 use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest};
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ReplayerMode {
     Execute,
     ExecuteNoZkvm,

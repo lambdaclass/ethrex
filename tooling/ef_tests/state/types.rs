@@ -165,6 +165,7 @@ pub enum TransactionExpectedException {
     GasLimitPriceProductOverflow,
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
+    TxMaxGasLimitExceeded,
     Other, //TODO: Implement exceptions
 }
 
