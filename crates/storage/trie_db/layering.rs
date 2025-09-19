@@ -64,10 +64,10 @@ impl TrieWrapperInner {
         // older layers are useless
         self.layers.retain(|_, item| item.id > layer.id);
         Some(
-            layer
-                .nodes
-                .drain()
-                .chain(parent_nodes.unwrap_or_default())
+            parent_nodes
+                .unwrap_or_default()
+                .into_iter()
+                .chain(layer.nodes.drain())
                 .collect(),
         )
     }
