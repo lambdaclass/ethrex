@@ -41,6 +41,11 @@ jobs:
               file_name: consume-rlp,
               simulation: ethereum/eest/consume-rlp,
             }
+          - {
+              name: "Execute Blobs tests",
+              file_name: execute-blobs,
+              simulation: ethereum/eest/execute-blobs,
+            }
 
     steps:
       - name: Verify input parameters
