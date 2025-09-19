@@ -221,23 +221,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => None,
         };
 
-        if let (Some(rank_a), Some(rank_b)) = (
-            fork_rank(&a.display_name),
-            fork_rank(&b.display_name),
-        ) {
+        if let (Some(rank_a), Some(rank_b)) =
+            (fork_rank(&a.display_name), fork_rank(&b.display_name))
+        {
             let order_cmp = rank_a.cmp(&rank_b);
             if order_cmp != Ordering::Equal {
                 return order_cmp;
             }
         }
 
-        b.passed_tests
-            .cmp(&a.passed_tests)
-            .then_with(|| {
-                b.success_percentage
-                    .partial_cmp(&a.success_percentage)
-                    .unwrap()
-            })
+        b.passed_tests.cmp(&a.passed_tests).then_with(|| {
+            b.success_percentage
+                .partial_cmp(&a.success_percentage)
+                .unwrap()
+        })
     });
 
     let results_by_category = results.chunk_by(|a, b| a.category == b.category);
