@@ -128,8 +128,7 @@ pub(crate) async fn handle_l2_broadcast(
         msg @ Message::L2(L2Message::BatchSealed(_)) => send(state, msg.clone()).await,
         msg @ Message::L2(L2Message::NewBlock(_)) => send(state, msg.clone()).await,
         _ => Err(RLPxError::BroadcastError(format!(
-            "Message {:?} is not a valid L2 message for broadcast",
-            l2_msg
+            "Message {l2_msg:?} is not a valid L2 message for broadcast"
         )))?,
     }
 }
@@ -171,8 +170,7 @@ pub(crate) fn broadcast_l2_message(state: &Established, l2_msg: Message) -> Resu
             Ok(())
         }
         _ => Err(RLPxError::BroadcastError(format!(
-            "Message {:?} is not a valid L2 message for broadcast",
-            l2_msg
+            "Message {l2_msg:?} is not a valid L2 message for broadcast"
         ))),
     }
 }

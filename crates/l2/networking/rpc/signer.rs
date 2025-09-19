@@ -173,14 +173,14 @@ impl RemoteSigner {
 
         let client = Client::new();
         match client.get(url.clone()).send().await {
-            Err(e) => serde_json::Value::String(format!("GET {} returned an error: {e}", url)),
+            Err(e) => serde_json::Value::String(format!("GET {url} returned an error: {e}")),
             Ok(ok) => match ok.status() {
                 StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE => ok
                     .json::<serde_json::Value>()
                     .await
                     .unwrap_or_else(|e| serde_json::Value::String(e.to_string())),
                 status => {
-                    serde_json::Value::String(format!("GET {} returned an error: {}", url, status))
+                    serde_json::Value::String(format!("GET {url} returned an error: {status}"))
                 }
             },
         }
