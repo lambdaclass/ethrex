@@ -28,13 +28,16 @@ impl TrieWrapperInner {
         }
         None
     }
-    pub fn depth(&self, mut state_root: H256) -> usize {
+    pub fn get_commitable(&mut self, mut state_root: H256) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
+            if counter > 128 {
+                return Some(state_root);
+            }
         }
-        counter
+        None
     }
     pub fn put_batch(
         &mut self,
@@ -44,10 +47,13 @@ impl TrieWrapperInner {
     ) {
         self.layers
             .entry(state_root)
-            .or_insert_with(|| TrieLayer {
-                nodes: HashMap::new(),
-                parent,
-                id: self.counter,
+            .or_insert_with(|| {
+                self.counter += 1;
+                TrieLayer {
+                    nodes: HashMap::new(),
+                    parent,
+                    id: self.counter,
+                }
             })
             .nodes
             .extend(
@@ -55,7 +61,6 @@ impl TrieWrapperInner {
                     .into_iter()
                     .map(|(path, node)| (path.as_ref().to_vec(), node)),
             );
-        self.counter += 1;
     }
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut layer = self.layers.remove(&state_root)?;
@@ -77,10 +82,21 @@ pub struct TrieWrapper {
     pub state_root: H256,
     pub inner: Arc<RwLock<TrieWrapperInner>>,
     pub db: Box<dyn TrieDB>,
+    pub prefix: Option<H256>,
+}
+
+pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
+    match prefix {
+        Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
+            .append_new(17)
+            .concat(path),
+        None => path,
+    }
 }
 
 impl TrieDB for TrieWrapper {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let key = apply_prefix(self.prefix, key);
         if let Some(value) = self
             .inner
             .read()
@@ -97,10 +113,15 @@ impl TrieDB for TrieWrapper {
         };
         let root_node = Node::decode(&last_pair.1)?;
         let new_state_root = root_node.compute_hash().finalize();
-        self.inner
-            .write()
-            .map_err(|_| TrieError::LockError)?
-            .put_batch(self.state_root, new_state_root, key_values);
+        let mut inner = self.inner.write().map_err(|_| TrieError::LockError)?;
+        inner.put_batch(
+            self.state_root,
+            new_state_root,
+            key_values
+                .into_iter()
+                .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
+                .collect(),
+        );
         Ok(())
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
     rlp::AccountCodeHashRLP,
     trie_db::{
-        layering::{TrieWrapper, TrieWrapperInner},
+        layering::{TrieWrapper, TrieWrapperInner, apply_prefix},
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
@@ -485,10 +485,8 @@ impl StoreEngine for Store {
             let mut batch = WriteBatch::default();
 
             let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
-
-            // If the parent is very old, we are probably syncing and should assume it's cannonical
-            if trie.depth(parent_state_root) + update_batch.blocks.len() > 128 {
-                let nodes = trie.commit(parent_state_root).unwrap_or_default();
+            if let Some(root) = trie.get_commitable(parent_state_root) {
+                let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     batch.put_cf(&cf_trie_nodes, key, value);
                 }
@@ -505,12 +503,9 @@ impl StoreEngine for Store {
                     .storage_updates
                     .into_iter()
                     .flat_map(|(account_hash, nodes)| {
-                        nodes.into_iter().map(move |(path, node)| {
-                            (
-                                Nibbles::from_bytes(account_hash.as_bytes()).concat(path),
-                                node,
-                            )
-                        })
+                        nodes
+                            .into_iter()
+                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
                     })
                     .collect(),
             );
@@ -1149,15 +1144,12 @@ impl StoreEngine for Store {
         storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(
-            self.db.clone(),
-            CF_TRIE_NODES,
-            Some(hashed_address),
-        )?);
+        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: self.trie_cache.clone(),
             db,
+            prefix: Some(hashed_address),
         });
         Ok(Trie::open(wrap_db, storage_root))
     }
@@ -1168,6 +1160,7 @@ impl StoreEngine for Store {
             state_root,
             inner: self.trie_cache.clone(),
             db,
+            prefix: None,
         });
         Ok(Trie::open(wrap_db, state_root))
     }
@@ -1182,6 +1175,7 @@ impl StoreEngine for Store {
             state_root,
             inner: self.trie_cache.clone(),
             db,
+            prefix: None,
         });
         Ok(Trie::open(wrap_db, state_root))
     }
@@ -1195,12 +1189,13 @@ impl StoreEngine for Store {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
             CF_TRIE_NODES,
-            Some(hashed_address),
+            None,
         )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: self.trie_cache.clone(),
             db,
+            prefix: Some(hashed_address),
         });
         Ok(Trie::open(wrap_db, storage_root))
     }

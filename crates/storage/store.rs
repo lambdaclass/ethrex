@@ -1,4 +1,4 @@
-use crate::api::StoreEngine;
+use crate::{api::StoreEngine, trie_db::layering::apply_prefix};
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
@@ -539,6 +539,7 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
+        let mut nodes = HashMap::new();
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH)?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
@@ -557,7 +558,8 @@ impl Store {
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
-            let storage_root = storage_trie.hash()?;
+            let (storage_root, new_nodes) = storage_trie.collect_changes_since_last_hash();
+            nodes.insert(H256::from_slice(&hashed_address), new_nodes);
             // Add account to trie
             let account_state = AccountState {
                 nonce: account.nonce,
@@ -567,7 +569,23 @@ impl Store {
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        genesis_state_trie.hash().map_err(StoreError::Trie)
+        let (state_root, state_nodes) = genesis_state_trie.collect_changes_since_last_hash();
+
+        genesis_state_trie.db().put_batch(
+            nodes
+                .into_iter()
+                .flat_map(|(account_hash, nodes)| {
+                    nodes.into_iter().map(move |(path, node)| {
+                        (
+                            apply_prefix(Some(account_hash), path),
+                            node,
+                        )
+                    })
+                })
+                .chain(state_nodes)
+                .collect(),
+        )?;
+        Ok(state_root)
     }
 
     pub async fn add_receipt(
