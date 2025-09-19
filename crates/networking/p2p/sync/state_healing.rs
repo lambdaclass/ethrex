@@ -18,7 +18,7 @@ use std::{
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -107,7 +107,7 @@ async fn heal_state_trie(
     let mut downloads_fail = 0;
     let mut leafs_healed = 0;
     let mut empty_try_recv: u64 = 0;
-    let mut nodes_to_write: Vec<Node> = Vec::new();
+    let mut nodes_to_write: Vec<(Nibbles, Vec<u8>)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -288,16 +288,8 @@ async fn heal_state_trie(
                         .open_state_trie(*EMPTY_TRIE_HASH)
                         .expect("Store should open");
                     let db = trie_db.db();
-                    db.put_batch(
-                        to_write
-                            .into_iter()
-                            .filter_map(|node| match node.compute_hash() {
-                                hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                                NodeHash::Inline(_) => None,
-                            })
-                            .collect(),
-                    )
-                    .expect("The put batch on the store failed");
+                    db.put_batch(to_write)
+                        .expect("The put batch on the store failed");
                 })
             });
         }
@@ -336,7 +328,7 @@ async fn heal_state_batch(
     nodes: Vec<Node>,
     store: Store,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut Vec<Node>, // TODO: change tuple to struct
+    nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
     let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
@@ -369,9 +361,9 @@ fn commit_node(
     path: &Nibbles,
     parent_path: &Nibbles,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut Vec<Node>,
+    nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
 ) {
-    nodes_to_write.push(node);
+    nodes_to_write.push((path.clone(), node.encode_to_vec()));
 
     if parent_path == path {
         return; // Case where we're saving the root
@@ -406,23 +398,30 @@ pub fn node_missing_children(
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
+                let child_path = path.clone().append_new(index as u8);
+                if child.is_valid() && child.get_node(trie_state, child_path.clone())?.is_none() {
                     missing_children_count += 1;
                     paths.extend(vec![RequestMetadata {
                         hash: child.compute_hash().finalize(),
-                        path: path.clone().append_new(index as u8),
+                        path: child_path,
                         parent_path: path.clone(),
                     }]);
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
+            let child_path = path.concat(node.prefix.clone());
+            if node.child.is_valid()
+                && node
+                    .child
+                    .get_node(trie_state, child_path.clone())?
+                    .is_none()
+            {
                 missing_children_count += 1;
 
                 paths.extend(vec![RequestMetadata {
                     hash: node.child.compute_hash().finalize(),
-                    path: path.concat(node.prefix.clone()),
+                    path: child_path,
                     parent_path: path.clone(),
                 }]);
             }

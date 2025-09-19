@@ -23,7 +23,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{NodeHash, Trie, TrieError};
+use ethrex_trie::{Nibbles, Node, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -1126,6 +1126,51 @@ impl Syncer {
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+
+        info!("Adding leaves...");
+        let trie = store.open_state_trie(pivot_header.state_root)?;
+        let db = trie.db();
+        let mut nodes_to_write = Vec::new();
+        store
+            .open_state_trie(pivot_header.state_root)?
+            .into_iter()
+            .try_for_each(|(path, node)| -> Result<(), SyncError> {
+                let Node::Leaf(node) = node else {
+                    return Ok(());
+                };
+
+                let account_state = AccountState::decode(&node.value)?;
+                let storage_trie = store.open_storage_trie(
+                    H256::from_slice(&path.to_bytes()),
+                    account_state.storage_root,
+                    todo!(),
+                )?;
+                let storage_db = storage_trie.db();
+                let mut storages_to_write = Vec::new();
+                store
+                    .open_storage_trie(
+                        H256::from_slice(&path.to_bytes()),
+                        account_state.storage_root,
+                        todo!(),
+                    )?
+                    .into_iter()
+                    .try_for_each(|(path, node)| -> Result<(), SyncError> {
+                        let Node::Leaf(node) = node else {
+                            return Ok(());
+                        };
+                        storages_to_write.push((path, node.encode_to_vec()));
+                        if storages_to_write.len() > 100_000 {
+                            storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
+                        }
+                        Ok(())
+                    })?;
+
+                nodes_to_write.push((path, node.encode_to_vec()));
+                if nodes_to_write.len() > 100_000 {
+                    db.put_batch(std::mem::take(&mut nodes_to_write))?;
+                }
+                Ok(())
+            })?;
         info!("Finished healing");
 
         // Finish code hash collection
@@ -1226,7 +1271,7 @@ impl Syncer {
     }
 }
 
-type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
+type StorageRoots = (H256, Vec<(Nibbles, Vec<u8>)>);
 
 fn compute_storage_roots(
     maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
@@ -1244,7 +1289,7 @@ fn compute_storage_roots(
         Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
     };
 
-    let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root)?;
+    let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root, todo!())?;
 
     for (hashed_key, value) in key_value_pairs {
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
@@ -1267,7 +1312,6 @@ fn compute_storage_roots(
             .map_err(|_| SyncError::MaybeBigAccount)?
             .insert(account_hash, computed_storage_root);
     }
-
     Ok((account_hash, changes))
 }
 

@@ -2,15 +2,13 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp,
-    TransactionHashRLP, TupleRLP,
+    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp
 };
 use crate::store::STATE_TRIE_SEGMENTS;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::libmdbx_dupsort_locked::LibmdbxLockedDupsortTrieDB;
 use crate::trie_db::libmdbx_locked::LibmdbxLockedTrieDB;
-use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -21,7 +19,7 @@ use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, Trie, db::nibbles_to_fixed_size};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use libmdbx::{
@@ -135,7 +133,7 @@ impl StoreEngine for Store {
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                tx.upsert::<StateTrieNodes>(nibbles_to_fixed_size(node_hash), node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
@@ -148,9 +146,12 @@ impl StoreEngine for Store {
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
+                    let key_2 = nibbles_to_fixed_size(node_hash);
+                    let key = (key_1, key_2);
+                    tx.delete::<StorageTriesNodes>(key, None)
+                        .map_err(StoreError::LibmdbxError)?;
 
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                    tx.upsert::<StorageTriesNodes>(key, node_data)
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
@@ -569,6 +570,7 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        _state_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
@@ -594,6 +596,7 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        _state_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(
             LibmdbxLockedDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
@@ -920,7 +923,7 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
@@ -929,7 +932,7 @@ impl StoreEngine for Store {
             for (hashed_address, nodes) in storage_trie_nodes {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
+                    let key_2 = nibbles_to_fixed_size(node_hash);
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
@@ -1141,7 +1144,7 @@ table!(
 
 table!(
     /// state trie nodes
-    ( StateTrieNodes ) NodeHash => Vec<u8>
+    ( StateTrieNodes ) [u8; 33] => Vec<u8>
 );
 
 table!(

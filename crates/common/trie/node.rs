@@ -31,15 +31,24 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
+    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(hash)?
-                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+            NodeRef::Hash(hash) => db
+                .get(path)?
+                .and_then(|rlp| match Node::decode(&rlp) {
+                    Ok(node) => {
+                        if node.compute_hash() == hash {
+                            Some(Ok(node))
+                        } else {
+                            None
+                        }
+                    }
+                    Err(err) => Some(Err(TrieError::RLPDecode(err))),
+                })
                 .transpose(),
         }
     }
@@ -51,23 +60,28 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
+    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
-                        for node in &mut node.choices {
-                            node.commit(acc);
+                        for (choice, node) in &mut node.choices.iter_mut().enumerate() {
+                            node.commit(path.append_new(choice as u8), acc);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(acc);
+                        node.child.commit(path.concat(node.prefix.clone()), acc);
                     }
-                    Node::Leaf(_) => {}
+                    Node::Leaf(_) => {
+                        //path.extend(&node.partial);
+                    }
                 }
-
+                //println!("commit {path:?} => {node:?}");
                 let hash = hash.get_or_init(|| node.compute_hash());
-                acc.push((*hash, node.encode_to_vec()));
+                acc.push((path.clone(), node.encode_to_vec()));
+                if let Node::Leaf(leaf) = node.as_ref() {
+                    acc.push((path.concat(leaf.partial.clone()), node.encode_to_vec()));
+                }
 
                 let hash = *hash;
                 *self = hash.into();

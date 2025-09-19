@@ -7,7 +7,7 @@ use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
@@ -235,6 +235,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError>;
 
     /// Obtain a state trie from the given state root
@@ -256,8 +257,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError> {
-        self.open_storage_trie(hashed_address, storage_root)
+        self.open_storage_trie(hashed_address, storage_root, state_root)
     }
 
     async fn forkchoice_update(
@@ -351,7 +353,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError>;
 
     async fn write_account_code_batch(
