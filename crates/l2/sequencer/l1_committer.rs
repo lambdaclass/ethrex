@@ -73,7 +73,6 @@ pub enum InMessage {
     Commit,
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub enum OutMessage {
     Done,
