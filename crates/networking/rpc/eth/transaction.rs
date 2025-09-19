@@ -595,14 +595,10 @@ fn simulate_tx(
 
 impl RpcHandler for SendRawTransactionRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<SendRawTransactionRequest, RpcErr> {
-        dbg!(&params);
         let data = get_transaction_data(params)?;
 
-        let mut transaction = SendRawTransactionRequest::decode_canonical(&data)
+        let transaction = SendRawTransactionRequest::decode_canonical(&data)
             .map_err(|error| RpcErr::BadParams(error.to_string()))?;
-        if let SendRawTransactionRequest::EIP4844(tx) = &mut transaction {
-            tx.blobs_bundle.version = tx.wrapper_version;
-        }
 
         if matches!(transaction, SendRawTransactionRequest::PrivilegedL2(_)) {
             return Err(RpcErr::BadParams("Invalid transaction type".to_string()));
