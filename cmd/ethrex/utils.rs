@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTableHandle,
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -27,9 +27,7 @@ pub struct NodeConfigFile {
 
 impl NodeConfigFile {
     pub async fn new(mut peer_table: PeerTableHandle, node_record: NodeRecord) -> Self {
-        let connected_peers = PeerTable::get_connected_nodes(&mut peer_table)
-            .await
-            .unwrap_or(Vec::new());
+        let connected_peers = peer_table.get_connected_nodes().await.unwrap_or(Vec::new());
 
         NodeConfigFile {
             known_peers: connected_peers,

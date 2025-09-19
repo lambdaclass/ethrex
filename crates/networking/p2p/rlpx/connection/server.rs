@@ -31,7 +31,7 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerTable, PeerTableHandle},
+    discv4::peer_table::{PeerChannels, PeerTableHandle},
     metrics::METRICS,
     network::P2PContext,
     rlpx::{
@@ -217,11 +217,10 @@ impl GenServer for RLPxConnection {
                 {
                     match &reason {
                         RLPxError::NoMatchingCapabilities() | RLPxError::HandshakeError(_) => {
-                            PeerTable::set_unwanted(
-                                &mut established_state.peer_table,
-                                &established_state.node.node_id(),
-                            )
-                            .await;
+                            established_state
+                                .peer_table
+                                .set_unwanted(&established_state.node.node_id())
+                                .await;
                         }
                         _ => {}
                     }
@@ -369,11 +368,10 @@ impl GenServer for RLPxConnection {
                     &established_state.node,
                     "Closing connection with established peer",
                 );
-                PeerTable::remove_peer(
-                    &mut established_state.peer_table,
-                    established_state.node.node_id(),
-                )
-                .await;
+                established_state
+                    .peer_table
+                    .remove_peer(established_state.node.node_id())
+                    .await;
                 established_state.teardown().await;
             }
             _ => {
@@ -414,13 +412,14 @@ where
 
     init_capabilities(state, &mut stream).await?;
 
-    PeerTable::new_connected_peer(
-        &mut state.peer_table,
-        state.node.clone(),
-        peer_channels.clone(),
-        state.capabilities.clone(),
-    )
-    .await?;
+    state
+        .peer_table
+        .new_connected_peer(
+            state.node.clone(),
+            peer_channels.clone(),
+            state.capabilities.clone(),
+        )
+        .await?;
 
     log_peer_debug(&state.node, "Peer connection initialized.");
 
@@ -762,7 +761,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 )
                 .await;
 
-            PeerTable::remove_peer(&mut state.peer_table, state.node.node_id()).await;
+            state.peer_table.remove_peer(state.node.node_id()).await;
 
             // TODO handle the disconnection request
 

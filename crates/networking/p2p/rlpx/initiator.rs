@@ -7,7 +7,7 @@ use spawned_concurrency::{
 
 use tracing::{debug, info};
 
-use crate::{discv4::peer_table::PeerTable, metrics::METRICS, network::P2PContext};
+use crate::{metrics::METRICS, network::P2PContext};
 
 use crate::rlpx::connection::server::RLPxConnection;
 
@@ -62,13 +62,13 @@ impl RLPxInitiator {
     async fn look_for_peers(&mut self) {
         info!("Looking for peers");
 
-        let contacts = PeerTable::get_contacts_to_initiate(
-            &mut self.context.table,
-            self.new_connections_per_lookup,
-        )
-        .await
-        // TODO proper error handling
-        .unwrap_or(Vec::new());
+        let contacts = self
+            .context
+            .table
+            .get_contacts_to_initiate(self.new_connections_per_lookup)
+            .await
+            // TODO proper error handling
+            .unwrap_or(Vec::new());
 
         for contact in contacts {
             RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
@@ -77,9 +77,7 @@ impl RLPxInitiator {
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        let num_peers = PeerTable::peer_count(&mut self.context.table)
-            .await
-            .unwrap_or(0) as u64;
+        let num_peers = self.context.table.peer_count().await.unwrap_or(0) as u64;
 
         if num_peers < self.target_peers {
             self.initial_lookup_interval

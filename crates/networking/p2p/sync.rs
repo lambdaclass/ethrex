@@ -2,7 +2,6 @@ mod code_collector;
 mod state_healing;
 mod storage_healing;
 
-use crate::discv4::peer_table::PeerTable;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
@@ -802,7 +801,7 @@ impl SnapBlockSyncState {
 /// Logs with where the function was when it found this error
 /// TODO: remove this function once peer table has moved to spawned implementation
 async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) {
-    if PeerTable::free_peers(&mut peer_handler.peer_table).await.unwrap_or(0) != 0 {
+    if peer_handler.peer_table.free_peers().await.unwrap_or(0) != 0 {
         let step = METRICS.current_step.lock().await.clone();
         error!(
             step = step,
@@ -1287,14 +1286,17 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        let (peer_id, mut peer_channel) =
-            PeerTable::get_best_peer(&mut peers.peer_table, &SUPPORTED_ETH_CAPABILITIES)
-                .await
-                // TODO Return correct error
-                .map_err(|_| SyncError::NoPeers)?
-                .ok_or(SyncError::NoPeers)?;
+        let (peer_id, mut peer_channel) = peers
+            .peer_table
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+            .await
+            // TODO Return correct error
+            .map_err(|_| SyncError::NoPeers)?
+            .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = PeerTable::get_score(&mut peers.peer_table, &peer_id)
+        let peer_score = peers
+            .peer_table
+            .get_score(&peer_id)
             .await
             // TODO Return correct error
             .map_err(|_| SyncError::NoPeers)?;
@@ -1307,8 +1309,10 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            PeerTable::record_failure(&mut peers.peer_table, &peer_id).await;
-            let peer_score = PeerTable::get_score(&mut peers.peer_table, &peer_id)
+            peers.peer_table.record_failure(&peer_id).await;
+            let peer_score = peers
+                .peer_table
+                .get_score(&peer_id)
                 .await
                 // TODO Return correct error
                 .map_err(|_| SyncError::NoPeers)?;
@@ -1319,7 +1323,7 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        PeerTable::record_success(&mut peers.peer_table, &peer_id).await;
+        peers.peer_table.record_success(&peer_id).await;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers

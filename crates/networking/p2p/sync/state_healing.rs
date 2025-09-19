@@ -22,7 +22,6 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
 use tracing::{debug, error, info};
 
 use crate::{
-    discv4::peer_table::PeerTable,
     metrics::METRICS,
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -121,12 +120,11 @@ async fn heal_state_trie(
     let mut nodes_to_heal = Vec::new();
     loop {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
-            let num_peers = PeerTable::peer_count_by_capabilities(
-                &mut peers.peer_table,
-                &SUPPORTED_SNAP_CAPABILITIES,
-            )
-            .await
-            .unwrap_or(0);
+            let num_peers = peers
+                .peer_table
+                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                .await
+                .unwrap_or(0);
             last_update = Instant::now();
             let downloads_rate =
                 downloads_success as f64 / (downloads_success + downloads_fail) as f64;
@@ -165,7 +163,7 @@ async fn heal_state_trie(
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
             // Mark the peer as available
-            PeerTable::free_peer(&mut peers.peer_table, &peer_id).await;
+            peers.peer_table.free_peer(&peer_id).await;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -198,7 +196,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    PeerTable::record_success(&mut peers.peer_table, &peer_id).await;
+                    peers.peer_table.record_success(&peer_id).await;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -207,7 +205,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    PeerTable::record_failure(&mut peers.peer_table, &peer_id).await;
+                    peers.peer_table.record_failure(&peer_id).await;
                 }
             }
         }
@@ -224,15 +222,15 @@ async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
-                let Some((peer_id, mut peer_channel)) = PeerTable::use_best_peer(
-                    &mut peers.peer_table,
-                    &SUPPORTED_SNAP_CAPABILITIES,
-                )
-                .await
-                .inspect_err(
-                    |err| error!(err= ?err, "Error requesting a peer to perform state healing"),
-                )
-                .unwrap_or(None) else {
+                let Some((peer_id, mut peer_channel)) = peers
+                    .peer_table
+                    .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                    .await
+                    .inspect_err(
+                        |err| error!(err= ?err, "Error requesting a peer to perform state healing"),
+                    )
+                    .unwrap_or(None)
+                else {
                     // If there are no peers available, re-add the batch to the paths vector, and continue
                     paths.extend(batch);
                     continue;

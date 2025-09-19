@@ -5,7 +5,7 @@ use crate::{
             ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
             PacketDecodeErr, PingMessage, PongMessage,
         },
-        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableHandle},
+        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTableHandle},
     },
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
@@ -116,7 +116,8 @@ impl DiscoveryServer {
 
         for bootnode in &bootnodes {
             discovery_server.send_ping(bootnode).await;
-            PeerTable::new_contact(&mut peer_table, bootnode.node_id(), bootnode.clone().into())
+            peer_table
+                .new_contact(bootnode.node_id(), bootnode.clone().into())
                 .await;
         }
 
@@ -210,43 +211,52 @@ impl DiscoveryServer {
     }
 
     async fn revalidate(&mut self) {
-        for contact in
-            PeerTable::get_contacts_to_revalidate(&mut self.peer_table, REVALIDATION_INTERVAL)
-                .await
-                // TODO proper error handling
-                .unwrap_or(Vec::new())
+        for contact in self
+            .peer_table
+            .get_contacts_to_revalidate(REVALIDATION_INTERVAL)
+            .await
+            // TODO proper error handling
+            .unwrap_or(Vec::new())
         {
             self.send_ping(&contact.node).await;
         }
     }
 
     async fn lookup(&mut self) {
-        for contact in PeerTable::get_contacts_for_lookup(&mut self.peer_table, 20)
+        for contact in self
+            .peer_table
+            .get_contacts_for_lookup(20)
             .await
             // TODO proper error handling
             .unwrap_or(Vec::new())
         {
             if let Err(err) = self.send_find_node(&contact.node).await {
                 error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err, "Error sending message");
-                PeerTable::set_disposable(&mut self.peer_table, &contact.node.node_id()).await;
+                self.peer_table
+                    .set_disposable(&contact.node.node_id())
+                    .await;
                 //contact.disposable = true;
                 METRICS.record_new_discarded_node().await;
             }
 
-            PeerTable::increment_find_node_sent(&mut self.peer_table, &contact.node.node_id())
+            self.peer_table
+                .increment_find_node_sent(&contact.node.node_id())
                 .await;
             //contact.n_find_node_sent += 1;
         }
     }
 
     async fn prune(&mut self) {
-        PeerTable::prune(&mut self.peer_table)
+        self.peer_table
+            .prune()
             .await
             .inspect_err(|e| error!(err= ?e, "Failed to prune peer table"));
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
-        if PeerTable::target_reached(&mut self.peer_table, TARGET_CONTACTS, TARGET_PEERS)
+        if self
+            .peer_table
+            .target_reached(TARGET_CONTACTS, TARGET_PEERS)
             .await
             .unwrap_or(false)
         {
@@ -261,11 +271,13 @@ impl DiscoveryServer {
         match self.send_ping_internal(node).await {
             Ok(ping_hash) => {
                 METRICS.record_ping_sent().await;
-                PeerTable::record_ping_sent(&mut self.peer_table, &node.node_id(), ping_hash).await;
+                self.peer_table
+                    .record_ping_sent(&node.node_id(), ping_hash)
+                    .await;
             }
             Err(err) => {
                 error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?err, "Error sending message");
-                PeerTable::set_disposable(&mut self.peer_table, &node.node_id()).await;
+                self.peer_table.set_disposable(&node.node_id()).await;
                 METRICS.record_new_discarded_node().await;
             }
         }
@@ -368,10 +380,7 @@ impl DiscoveryServer {
     async fn handle_ping(&mut self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
         self.send_pong(hash, &node).await?;
 
-        if PeerTable::insert_if_new(&mut self.peer_table, &node)
-            .await
-            .unwrap_or(false)
-        {
+        if self.peer_table.insert_if_new(&node).await.unwrap_or(false) {
             self.send_ping(&node).await;
         }
 
@@ -379,7 +388,9 @@ impl DiscoveryServer {
     }
 
     async fn handle_pong(&mut self, message: PongMessage, node_id: H256) {
-        PeerTable::record_pong_received(&mut self.peer_table, &node_id, message.ping_hash).await;
+        self.peer_table
+            .record_pong_received(&node_id, message.ping_hash)
+            .await;
     }
 
     async fn handle_find_node(&mut self, sender_public_key: H512, from: SocketAddr) {
@@ -388,7 +399,9 @@ impl DiscoveryServer {
             .validate_contact(sender_public_key, node_id, from, "FindNode")
             .await
         {
-            let neighbors = PeerTable::get_closest_nodes(&mut self.peer_table, &node_id)
+            let neighbors = self
+                .peer_table
+                .get_closest_nodes(&node_id)
                 .await
                 // TODO: Proper error handling
                 .unwrap_or(Vec::new());
@@ -410,12 +423,9 @@ impl DiscoveryServer {
 
     async fn handle_neighbors(&mut self, neighbors_message: NeighborsMessage) {
         // TODO(#3746): check that we requested neighbors from the node
-        PeerTable::new_contacts(
-            &mut self.peer_table,
-            neighbors_message.nodes,
-            self.local_node.node_id(),
-        )
-        .await;
+        self.peer_table
+            .new_contacts(neighbors_message.nodes, self.local_node.node_id())
+            .await;
     }
 
     async fn handle_enr_request(&mut self, sender_public_key: H512, from: SocketAddr, hash: H256) {
@@ -423,7 +433,8 @@ impl DiscoveryServer {
 
         if self
             .validate_contact(sender_public_key, node_id, from, "ENRRequest")
-            .await.is_err()
+            .await
+            .is_err()
         {
             return;
         }
@@ -433,7 +444,7 @@ impl DiscoveryServer {
             return;
         }
 
-        PeerTable::knows_us(&mut self.peer_table, &node_id).await;
+        self.peer_table.knows_us(&node_id).await;
     }
 
     async fn validate_contact(
@@ -443,7 +454,9 @@ impl DiscoveryServer {
         from: SocketAddr,
         message_type: &str,
     ) -> Result<Contact, DiscoveryServerError> {
-        match PeerTable::validate_contact(&mut self.peer_table, &node_id, from.ip())
+        match self
+            .peer_table
+            .validate_contact(&node_id, from.ip())
             .await
             // TODO proper error handling
             .unwrap_or(PeerTableOutMessage::UnknownContact)

@@ -23,8 +23,6 @@ const MIN_SCORE: i64 = -50;
 /// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 
-pub type PeerTableHandle = GenServerHandle<PeerTable>;
-
 #[derive(Debug, Clone)]
 pub struct Contact {
     pub node: Node,
@@ -132,32 +130,17 @@ impl PeerChannels {
         )
     }
 }
+#[derive(Clone, Debug)]
+pub struct PeerTableHandle(GenServerHandle<PeerTable>);
 
-#[derive(Debug, Default)]
-pub struct PeerTable {
-    contacts: BTreeMap<H256, Contact>,
-    peers: BTreeMap<H256, PeerData>,
-    already_tried_peers: HashSet<H256>,
-    discarded_contacts: HashSet<H256>,
-}
-
-impl PeerTable {
-    pub fn spawn() -> PeerTableHandle {
-        let peer_table = Self::new();
-        peer_table.start()
-    }
-
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+impl PeerTableHandle {
     pub async fn new_connected_peer(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         node: Node,
         channels: PeerChannels,
         capabilities: Vec<Capability>,
     ) -> Result<(), PeerTableError> {
-        peer_table
+        self.0
             .call(CallMessage::NewConnectedPeer {
                 node,
                 channels,
@@ -169,11 +152,11 @@ impl PeerTable {
     }
 
     pub async fn new_contact(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         node_id: H256,
         contact: Contact,
     ) -> Result<(), PeerTableError> {
-        peer_table
+        self.0
             .call(CallMessage::NewContact { node_id, contact })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
@@ -181,10 +164,11 @@ impl PeerTable {
     }
 
     pub async fn get_contacts_to_initiate(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         amount: usize,
     ) -> Result<Vec<Contact>, PeerTableError> {
-        match peer_table
+        match self
+            .0
             .call(CallMessage::GetContactsToInitiate(amount))
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -195,10 +179,11 @@ impl PeerTable {
     }
 
     pub async fn get_contacts_for_lookup(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         amount: usize,
     ) -> Result<Vec<Contact>, PeerTableError> {
-        match peer_table
+        match self
+            .0
             .call(CallMessage::GetContactsForLookup(amount))
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -209,10 +194,11 @@ impl PeerTable {
     }
 
     pub async fn get_contacts_to_revalidate(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         revalidation_interval: Duration,
     ) -> Result<Vec<Contact>, PeerTableError> {
-        match peer_table
+        match self
+            .0
             .call(CallMessage::GetContactsToRevalidate(revalidation_interval))
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -222,8 +208,9 @@ impl PeerTable {
         }
     }
 
-    pub async fn peer_count(peer_table: &mut PeerTableHandle) -> Result<usize, PeerTableError> {
-        if let OutMessage::PeerCount(peer_count) = peer_table
+    pub async fn peer_count(&mut self) -> Result<usize, PeerTableError> {
+        if let OutMessage::PeerCount(peer_count) = self
+            .0
             .call(CallMessage::PeerCount)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -238,10 +225,11 @@ impl PeerTable {
 
     // TODO filter results by capabilities
     pub async fn peer_count_by_capabilities(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         _capabilities: &[Capability],
     ) -> Result<usize, PeerTableError> {
-        if let OutMessage::PeerCount(peer_count) = peer_table
+        if let OutMessage::PeerCount(peer_count) = self
+            .0
             .call(CallMessage::PeerCount)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -255,11 +243,12 @@ impl PeerTable {
     }
 
     pub async fn target_reached(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         target_contacts: usize,
         target_peers: usize,
     ) -> Result<bool, PeerTableError> {
-        if let OutMessage::TargetReached(result) = peer_table
+        if let OutMessage::TargetReached(result) = self
+            .0
             .call(CallMessage::TargetReached {
                 target_contacts,
                 target_peers,
@@ -275,60 +264,49 @@ impl PeerTable {
         }
     }
 
-    pub async fn remove_peer(
-        peer_table: &mut PeerTableHandle,
-        node_id: H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn remove_peer(&mut self, node_id: H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::RemovePeer { node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn set_unwanted(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn set_unwanted(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::SetUnwanted { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn prune(peer_table: &mut PeerTableHandle) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn prune(&mut self) -> Result<(), PeerTableError> {
+        self.0
             .cast(CastMessage::Prune)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn mark_in_use(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn mark_in_use(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::MarkInUse { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn free_peer(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn free_peer(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::FreePeer { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn free_peers(peer_table: &mut PeerTableHandle) -> Result<usize, PeerTableError> {
-        match peer_table
+    pub async fn free_peers(&mut self) -> Result<usize, PeerTableError> {
+        match self
+            .0
             .call(CallMessage::FreePeers)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -338,33 +316,24 @@ impl PeerTable {
         }
     }
 
-    pub async fn record_success(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn record_success(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::RecordSuccess { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn record_failure(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn record_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::RecordFailure { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn record_critical_failure(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn record_critical_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::RecordCriticalFailure { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
@@ -372,11 +341,11 @@ impl PeerTable {
     }
 
     pub async fn record_ping_sent(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         node_id: &H256,
         hash: H256,
     ) -> Result<(), PeerTableError> {
-        peer_table
+        self.0
             .call(CallMessage::RecordPingSent {
                 node_id: *node_id,
                 hash,
@@ -387,11 +356,11 @@ impl PeerTable {
     }
 
     pub async fn record_pong_received(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         node_id: &H256,
         ping_hash: H256,
     ) -> Result<(), PeerTableError> {
-        peer_table
+        self.0
             .call(CallMessage::RecordPongReceived {
                 node_id: *node_id,
                 ping_hash,
@@ -403,10 +372,11 @@ impl PeerTable {
 
     /// Returns the peer with the highest score and its peer channel.
     pub async fn get_best_peer(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         capabilities: &[Capability],
     ) -> Result<Option<(H256, PeerChannels)>, PeerTableError> {
-        match peer_table
+        match self
+            .0
             .call(CallMessage::GetBestPeer {
                 capabilities: capabilities.to_vec(),
             })
@@ -424,10 +394,11 @@ impl PeerTable {
 
     /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
     pub async fn use_best_peer(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         capabilities: &[Capability],
     ) -> Result<Option<(H256, PeerChannels)>, PeerTableError> {
-        match peer_table
+        match self
+            .0
             .call(CallMessage::UseBestPeer {
                 capabilities: capabilities.to_vec(),
             })
@@ -443,11 +414,9 @@ impl PeerTable {
         }
     }
 
-    pub async fn get_score(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<i64, PeerTableError> {
-        match peer_table
+    pub async fn get_score(&mut self, node_id: &H256) -> Result<i64, PeerTableError> {
+        match self
+            .0
             .call(CallMessage::GetScore { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -457,10 +426,9 @@ impl PeerTable {
         }
     }
 
-    pub async fn get_connected_nodes(
-        peer_table: &mut PeerTableHandle,
-    ) -> Result<Vec<Node>, PeerTableError> {
-        match peer_table
+    pub async fn get_connected_nodes(&mut self) -> Result<Vec<Node>, PeerTableError> {
+        match self
+            .0
             .call(CallMessage::GetConnectedNodes)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -471,9 +439,10 @@ impl PeerTable {
     }
 
     pub async fn get_peers_with_capabilities(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
     ) -> Result<Vec<(H256, PeerChannels, Vec<Capability>)>, PeerTableError> {
-        match peer_table
+        match self
+            .0
             .call(CallMessage::GetPeersWithCapabilities)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -485,10 +454,9 @@ impl PeerTable {
         }
     }
 
-    pub async fn get_peer_channels(
-        peer_table: &mut PeerTableHandle,
-    ) -> Result<Vec<(H256, PeerChannels)>, PeerTableError> {
-        match peer_table
+    pub async fn get_peer_channels(&mut self) -> Result<Vec<(H256, PeerChannels)>, PeerTableError> {
+        match self
+            .0
             .call(CallMessage::GetPeerChannels)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -498,33 +466,25 @@ impl PeerTable {
         }
     }
 
-    pub async fn set_disposable(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn set_disposable(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::SetDisposable { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn increment_find_node_sent(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn increment_find_node_sent(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::IncrementFindNodeSent { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn insert_if_new(
-        peer_table: &mut PeerTableHandle,
-        node: &Node,
-    ) -> Result<bool, PeerTableError> {
-        match peer_table
+    pub async fn insert_if_new(&mut self, node: &Node) -> Result<bool, PeerTableError> {
+        match self
+            .0
             .call(CallMessage::InsertIfNew { node: node.clone() })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -535,11 +495,11 @@ impl PeerTable {
     }
 
     pub async fn validate_contact(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         node_id: &H256,
         sender_ip: IpAddr,
     ) -> Result<OutMessage, PeerTableError> {
-        peer_table
+        self.0
             .call(CallMessage::ValidateContact {
                 node_id: *node_id,
                 sender_ip,
@@ -548,11 +508,9 @@ impl PeerTable {
             .map_err(|e| PeerTableError::InternalError(e.to_string()))
     }
 
-    pub async fn get_closest_nodes(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<Vec<Node>, PeerTableError> {
-        match peer_table
+    pub async fn get_closest_nodes(&mut self, node_id: &H256) -> Result<Vec<Node>, PeerTableError> {
+        match self
+            .0
             .call(CallMessage::GetClosestNodes { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -563,11 +521,11 @@ impl PeerTable {
     }
 
     pub async fn new_contacts(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
         nodes: Vec<Node>,
         local_node_id: H256,
     ) -> Result<(), PeerTableError> {
-        peer_table
+        self.0
             .call(CallMessage::NewContacts {
                 nodes,
                 local_node_id,
@@ -577,21 +535,17 @@ impl PeerTable {
         Ok(())
     }
 
-    pub async fn knows_us(
-        peer_table: &mut PeerTableHandle,
-        node_id: &H256,
-    ) -> Result<(), PeerTableError> {
-        peer_table
+    pub async fn knows_us(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
             .call(CallMessage::KnowsUs { node_id: *node_id })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
     }
 
-    pub async fn get_peers_data(
-        peer_table: &mut PeerTableHandle,
-    ) -> Result<Vec<PeerData>, PeerTableError> {
-        match peer_table
+    pub async fn get_peers_data(&mut self) -> Result<Vec<PeerData>, PeerTableError> {
+        match self
+            .0
             .call(CallMessage::GetPeersData)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -602,9 +556,10 @@ impl PeerTable {
     }
 
     pub async fn get_random_peer(
-        peer_table: &mut PeerTableHandle,
+        &mut self,
     ) -> Result<Option<(H256, PeerChannels)>, PeerTableError> {
-        match peer_table
+        match self
+            .0
             .call(CallMessage::GetRandomPeer)
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?
@@ -616,6 +571,25 @@ impl PeerTable {
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PeerTable {
+    contacts: BTreeMap<H256, Contact>,
+    peers: BTreeMap<H256, PeerData>,
+    already_tried_peers: HashSet<H256>,
+    discarded_contacts: HashSet<H256>,
+}
+
+impl PeerTable {
+    pub fn spawn() -> PeerTableHandle {
+        let peer_table = Self::new();
+        PeerTableHandle(peer_table.start())
+    }
+
+    pub fn new() -> Self {
+        Self::default()
     }
 
     // Internal functions //
@@ -932,7 +906,7 @@ impl GenServer for PeerTable {
     async fn handle_call(
         &mut self,
         message: Self::CallMsg,
-        _handle: &PeerTableHandle,
+        _handle: &GenServerHandle<PeerTable>,
     ) -> CallResponse<Self> {
         match message {
             CallMessage::NewConnectedPeer {
@@ -1178,7 +1152,7 @@ impl GenServer for PeerTable {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        _handle: &PeerTableHandle,
+        _handle: &GenServerHandle<PeerTable>,
     ) -> CastResponse {
         match message {
             CastMessage::Prune => self.prune_internal(),

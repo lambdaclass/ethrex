@@ -1,5 +1,4 @@
 use crate::{
-    discv4::peer_table::PeerTable,
     metrics::METRICS,
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
     rlpx::{
@@ -177,12 +176,11 @@ pub async fn heal_storage_trie(
             state.last_update = Instant::now();
             debug!(
                 "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
-                PeerTable::peer_count_by_capabilities(
-                    &mut peers.peer_table,
-                    &SUPPORTED_SNAP_CAPABILITIES
-                )
-                .await
-                .unwrap_or(0),
+                peers
+                    .peer_table
+                    .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                    .await
+                    .unwrap_or(0),
                 state.requests.len(),
                 state.download_queue.len(),
                 state.maximum_length_seen,
@@ -288,9 +286,11 @@ pub async fn heal_storage_trie(
                     .download_queue
                     .extend(inflight_request.requests.clone());
                 // TODO Handle errors
-                let _ = PeerTable::record_failure(&mut peers.peer_table, &inflight_request.peer_id)
+                let _ = peers
+                    .peer_table
+                    .record_failure(&inflight_request.peer_id)
                     .await;
-                PeerTable::free_peer(&mut peers.peer_table, &inflight_request.peer_id).await;
+                peers.peer_table.free_peer(&inflight_request.peer_id).await;
             }
         }
     }
@@ -308,13 +308,14 @@ async fn ask_peers_for_nodes(
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
-        let Some((peer_id, mut peer_channel)) =
-            PeerTable::use_best_peer(&mut peers.peer_table, &SUPPORTED_SNAP_CAPABILITIES)
-                .await
-                .inspect_err(
-                    |err| error!(err= ?err, "Error requesting a peer to perform storage healing"),
-                )
-                .unwrap_or(None)
+        let Some((peer_id, mut peer_channel)) = peers
+            .peer_table
+            .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .await
+            .inspect_err(
+                |err| error!(err= ?err, "Error requesting a peer to perform storage healing"),
+            )
+            .unwrap_or(None)
         else {
             // warn!("We have no free peers for storage healing!"); way too spammy, moving to trace
             // If we have no peers we shrug our shoulders and wait until next free peer
@@ -403,12 +404,15 @@ async fn zip_requeue_node_responses_score_peer(
         info!("We received a response where we had a missing requests {trie_nodes:?}");
         return None;
     };
-    PeerTable::free_peer(&mut peer_handler.peer_table, &request.peer_id).await;
+    peer_handler.peer_table.free_peer(&request.peer_id).await;
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
         *failed_downloads += 1;
-        PeerTable::record_failure(&mut peer_handler.peer_table, &request.peer_id).await;
+        peer_handler
+            .peer_table
+            .record_failure(&request.peer_id)
+            .await;
 
         download_queue.extend(request.requests);
         return None;
@@ -443,11 +447,11 @@ async fn zip_requeue_node_responses_score_peer(
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
         *succesful_downloads += 1;
-        PeerTable::record_success(&mut peer_handler.peer_table, &request.peer_id).await;
+        peer_handler.peer_table.record_success(&request.peer_id).await;
         Some(nodes)
     } else {
         *failed_downloads += 1;
-        PeerTable::record_failure(&mut peer_handler.peer_table, &request.peer_id).await;
+        peer_handler.peer_table.record_failure(&request.peer_id).await;
         download_queue.extend(request.requests);
         None
     }

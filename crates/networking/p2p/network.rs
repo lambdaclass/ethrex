@@ -195,7 +195,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
             // Common metrics
             let elapsed = format_duration(start.elapsed());
-            let peer_number = PeerTable::peer_count(peer_table).await.unwrap_or(0);
+            let peer_number = peer_table.peer_count().await.unwrap_or(0);
             let current_step = METRICS.current_step.lock().await.clone();
 
             // Headers metrics
@@ -379,9 +379,7 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTableH
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
         // clone peers to keep the lock short
-        let peers: Vec<PeerData> = PeerTable::get_peers_data(peer_table)
-            .await
-            .unwrap_or(Vec::new());
+        let peers: Vec<PeerData> = peer_table.get_peers_data().await.unwrap_or(Vec::new());
         let active_peers = peers
             .iter()
             .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
