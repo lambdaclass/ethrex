@@ -170,7 +170,7 @@ jobs:
           shopt -s nullglob
           found_failures=false
           for log in hive/workspace/logs/*.log; do
-            mapfile -t failures < <(rg --no-heading --color=never 'FAILED ' "$log" | sed -E 's/^.*FAILED ([^ ]+).*/\1/' || true)
+            mapfile -t failures < <(grep 'FAILED ' "$log" | sed -E 's/^.*FAILED ([^ ]+).*/\1/' || true)
             if (( ${#failures[@]} )); then
               found_failures=true
               echo "Failures in $(basename "$log"):"
