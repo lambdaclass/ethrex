@@ -2,9 +2,9 @@ use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
     error::StoreError,
     rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
-    trie_db::backend_trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
     v2::api::StorageBackend,
+    v2::backend_trie::BackendTrieDB,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -42,7 +42,7 @@ impl StoreV2 {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
-            let mut txn = db.begin_write().map_err(StoreError::from)?;
+            let mut txn = db.begin_write()?;
 
             for (node_hash, node_data) in update_batch.account_updates {
                 txn.put(STATE_TRIE_NODES, node_hash.as_ref(), node_data.as_slice())?;
@@ -700,9 +700,15 @@ impl StoreV2 {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let txn = self.backend.begin_read()?;
-        let trie_db = BackendTrieDBLocked::new(
-            txn,
+        // FIXME: Use BackendTrieDBLocked
+        // let txn = self.backend.begin_read()?;
+        // let trie_db = BackendTrieDBLocked::new(
+        //     txn,
+        //     STATE_TRIE_NODES,
+        //     None, // No prefix for state trie
+        // );
+        let trie_db = BackendTrieDB::new(
+            self.backend.clone(),
             STATE_TRIE_NODES,
             None, // No prefix for state trie
         );
@@ -717,9 +723,15 @@ impl StoreV2 {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let txn = self.backend.begin_read()?;
-        let trie_db = BackendTrieDBLocked::new(
-            txn,
+        // FIXME: Use BackendTrieDBLocked
+        // let txn = self.backend.begin_read()?;
+        // let trie_db = BackendTrieDBLocked::new(
+        //     txn,
+        //     STORAGE_TRIE_NODES,
+        //     Some(hashed_address), // Use address as prefix for storage trie
+        // );
+        let trie_db = BackendTrieDB::new(
+            self.backend.clone(),
             STORAGE_TRIE_NODES,
             Some(hashed_address), // Use address as prefix for storage trie
         );
@@ -734,7 +746,59 @@ impl StoreV2 {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        todo!()
+        // FIXME: Create a new transaction
+        let latest = self.get_latest_block_number().await?.unwrap_or(0);
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut tx = db.begin_write()?;
+
+            if let Some(canonical_blocks) = new_canonical_blocks {
+                for (block_number, block_hash) in canonical_blocks {
+                    let head_value = BlockHashRLP::from(block_hash).bytes().clone();
+                    tx.put(
+                        CANONICAL_BLOCK_HASHES,
+                        block_number.to_le_bytes().as_slice(),
+                        head_value.as_slice(),
+                    )?;
+                }
+            }
+
+            for number in (head_number + 1)..(latest + 1) {
+                tx.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
+            }
+
+            // Make head canonical
+            let head_value = BlockHashRLP::from(head_hash).bytes().clone();
+            tx.put(
+                CANONICAL_BLOCK_HASHES,
+                head_number.to_le_bytes().as_slice(),
+                head_value.as_slice(),
+            )?;
+
+            // Update chain data
+            let latest_key = [ChainDataIndex::LatestBlockNumber as u8];
+            tx.put(CHAIN_DATA, &latest_key, &head_number.to_le_bytes())?;
+
+            if let Some(finalized) = finalized {
+                tx.put(
+                    CHAIN_DATA,
+                    &[ChainDataIndex::FinalizedBlockNumber as u8],
+                    finalized.to_le_bytes().as_slice(),
+                )?;
+            }
+
+            if let Some(safe) = safe {
+                tx.put(
+                    CHAIN_DATA,
+                    &[ChainDataIndex::SafeBlockNumber as u8],
+                    safe.to_le_bytes().as_slice(),
+                )?;
+            }
+
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     pub fn get_receipts_for_block(
