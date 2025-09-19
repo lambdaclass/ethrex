@@ -1,4 +1,5 @@
 use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_common::H256;
 use ethrex_common::{
     U256,
     types::{Fork, Genesis},
@@ -6,7 +7,6 @@ use ethrex_common::{
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::DynVmDatabase;
-use keccak_hash::H256;
 
 use std::sync::Arc;
 

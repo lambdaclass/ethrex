@@ -1,5 +1,5 @@
 use ethrex_common::Address;
-use keccak_hash::keccak;
+use ethrex_common::utils::keccak;
 use secp256k1::SecretKey;
 
 pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, String> {

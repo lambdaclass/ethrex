@@ -1,4 +1,5 @@
 use aligned_sdk::common::types::Network;
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, types::TxType};
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_rpc::signer::Signer;
@@ -11,7 +12,6 @@ use ethrex_rpc::{
     clients::{EthClientError, Overrides},
 };
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
-use keccak_hash::keccak;
 use rand::Rng;
 use std::time::{Duration, SystemTime};
 use std::{str::FromStr, time::UNIX_EPOCH};
