@@ -432,20 +432,19 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
 }
 
 async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
-    let gas_used = get_total_gas_used(&cache.blocks);
-
     if opts.prove {
         eyre::bail!("Proving not enabled without backend");
+    }
+    if cache.blocks.len() > 1 {
+        eyre::bail!("Cache for L1 witness should contain only one block.");
     }
 
     let start = Instant::now();
     info!("Preparing Storage for execution without zkVM");
 
     let chain_config = cache.get_chain_config()?;
-    if cache.blocks.len() > 1 {
-        eyre::bail!("Cache for L1 witness should contain only one block.");
-    }
     let block = cache.blocks[0].clone();
+    let gas_used = block.header.gas_used as f64;
 
     let mut witness = execution_witness_from_rpc_chain_config(
         cache.witness.clone(),
@@ -540,14 +539,14 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
         let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
 
-        let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, &all_nodes) {
+        let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, &all_nodes) {
             Ok(trie) => trie.inner,
             Err(_) => continue,
         };
 
         inner_store
             .storage_trie_nodes
-            .insert(H256::from_slice(&hashed_address), in_memory_trie);
+            .insert(H256::from_slice(&hashed_address), storage_trie);
     }
     drop(inner_store);
 
