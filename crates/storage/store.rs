@@ -32,6 +32,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
+    // FIXME: Use StorageBackend
     engine: Arc<StoreV2>,
     chain_config: Arc<RwLock<ChainConfig>>,
     latest_block_header: Arc<RwLock<BlockHeader>>,

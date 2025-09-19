@@ -22,8 +22,6 @@ pub trait StorageRoTx<'a> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Returns iterator over all key-value pairs where key starts with prefix
-    /// For RocksDB: iterates over composite keys like tx_hash+block_hash
-    /// For LibMDBX: if table supports dupsort, iterates over all values for the exact prefix key
     fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<PrefixIterator, StoreError>;
 }
 
