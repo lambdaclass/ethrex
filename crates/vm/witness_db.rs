@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
 pub struct GuestProgramStateWrapper {
-    pub inner: Arc<Mutex<GuestProgramState>>,
+    inner: Arc<Mutex<GuestProgramState>>,
 }
 
 impl GuestProgramStateWrapper {

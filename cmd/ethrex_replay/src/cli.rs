@@ -452,100 +452,98 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     witness.nodes.retain(|v| v != &[0x80]);
 
     let guest_program = GuestProgramState::try_from(witness.clone())?;
+
+    // This will contain all code hashes with the corresponding bytecode
+    // For the code hashes that we don't have we'll will it with <CodeHash, Bytes::new()>
     let mut all_codes_hashed = guest_program.codes_hashed.clone();
 
     let in_memory_store = InMemoryStore::new();
-    // Set up internal state of in-memory store
-    {
-        // Set up state trie nodes
-        let all_nodes = &guest_program.nodes_hashed;
-        let state_root_hash = guest_program.parent_block_header.state_root;
 
-        let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, &all_nodes)?.inner;
+    // - Set up state trie nodes
+    let all_nodes = &guest_program.nodes_hashed;
+    let state_root_hash = guest_program.parent_block_header.state_root;
 
-        {
-            let mut nodes = state_trie_nodes.lock().unwrap();
-            let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie.
-            let mut code_hashes: HashSet<H256> = HashSet::new(); // All code hashes found in account states.
-            for (_node_hash, node_rlp) in nodes.iter() {
-                let node = Node::decode(node_rlp).unwrap();
-                match node {
-                    Node::Branch(node) => {
-                        for choice in &node.choices {
-                            let NodeRef::Hash(hash) = *choice else {
-                                unreachable!()
-                            };
+    let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, &all_nodes)?.inner;
 
-                            if hash.is_valid() {
-                                referenced_node_hashes.insert(hash);
-                            }
-                        }
-                    }
-                    Node::Extension(node) => {
-                        let NodeRef::Hash(hash) = node.child else {
-                            unreachable!()
-                        };
+    // We now have the state trie built and we want 2 things:
+    //   1. Add arbitrary Leaf nodes to the trie so that every reference in branch nodes point to an actual node.
+    //   2. Get all code hashes that exist in the accounts that we have so that if we don't have the code we set it to empty bytes.
+    // We do these things because sometimes the witness may be incomplete and in those cases we don't want failures for missing data.
+    // This only applies when we use the InMemoryDatabase and not when we use the ExecutionWitness as database, that's because in the latter failures are dismissed and we fall back to default values.
+    let mut nodes = state_trie_nodes.lock().unwrap();
+    let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie (by Branch or Ext nodes).
 
-                        if hash.is_valid() {
-                            referenced_node_hashes.insert(hash);
-                        }
-                    }
-                    Node::Leaf(node) => {
-                        let value_rlp = node.value;
+    for (_node_hash, node_rlp) in nodes.iter() {
+        let node = Node::decode(node_rlp).unwrap();
+        match node {
+            Node::Branch(node) => {
+                for choice in &node.choices {
+                    let NodeRef::Hash(hash) = *choice else {
+                        unreachable!()
+                    };
 
-                        if let Ok(account_state) = AccountState::decode(&value_rlp) {
-                            code_hashes.insert(account_state.code_hash);
-                        }
-                    }
+                    referenced_node_hashes.insert(hash);
                 }
             }
+            Node::Extension(node) => {
+                let NodeRef::Hash(hash) = node.child else {
+                    unreachable!()
+                };
 
-            for hash in referenced_node_hashes {
-                let node: Node = LeafNode::default().into();
-                nodes.entry(hash).or_insert(node.encode_to_vec());
+                referenced_node_hashes.insert(hash);
             }
-            for code_hash in code_hashes {
-                all_codes_hashed.entry(code_hash).or_insert(vec![]);
+            Node::Leaf(node) => {
+                let info = AccountState::decode(&node.value)?;
+                all_codes_hashed.entry(info.code_hash).or_insert(vec![]);
             }
-        }
-
-        let mut inner_store = in_memory_store.inner()?;
-
-        inner_store.state_trie_nodes = state_trie_nodes;
-
-        // Set up storage trie nodes
-        let addresses: Vec<Address> = witness
-            .keys
-            .iter()
-            .filter(|k| k.len() == Address::len_bytes())
-            .map(|k| Address::from_slice(k))
-            .collect();
-
-        for address in &addresses {
-            let hashed_address = hash_address(address);
-
-            // Account state may not be in the state trie
-            let Some(account_state_rlp) = guest_program
-                .state_trie
-                .as_ref()
-                .unwrap()
-                .get(&hashed_address)?
-            else {
-                continue;
-            };
-
-            let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
-
-            let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, &all_nodes) {
-                std::result::Result::Ok(trie) => trie.inner,
-                Err(_) => continue,
-            };
-
-            inner_store
-                .storage_trie_nodes
-                .insert(H256::from_slice(&hashed_address), in_memory_trie);
         }
     }
+
+    // Insert arbitrary leaf nodes to state trie.
+    for hash in referenced_node_hashes {
+        let dummy_leaf: Node = LeafNode::default().into();
+        nodes.entry(hash).or_insert(dummy_leaf.encode_to_vec());
+    }
+
+    drop(nodes);
+
+    let mut inner_store = in_memory_store.inner()?;
+
+    inner_store.state_trie_nodes = state_trie_nodes;
+
+    // - Set up storage trie nodes
+    let addresses: Vec<Address> = witness
+        .keys
+        .iter()
+        .filter(|k| k.len() == Address::len_bytes())
+        .map(|k| Address::from_slice(k))
+        .collect();
+
+    for address in &addresses {
+        let hashed_address = hash_address(address);
+
+        // Account state may not be in the state trie
+        let Some(account_state_rlp) = guest_program
+            .state_trie
+            .as_ref()
+            .unwrap()
+            .get(&hashed_address)?
+        else {
+            continue;
+        };
+
+        let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
+
+        let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, &all_nodes) {
+            std::result::Result::Ok(trie) => trie.inner,
+            Err(_) => continue,
+        };
+
+        inner_store
+            .storage_trie_nodes
+            .insert(H256::from_slice(&hashed_address), in_memory_trie);
+    }
+    drop(inner_store);
 
     // Set up store with preloaded database and the right chain config.
     let store = Store {
