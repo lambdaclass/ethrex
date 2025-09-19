@@ -10,6 +10,7 @@ use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use keccak_hash::H256;
 use std::{
+    cell::OnceCell,
     collections::{BTreeMap, HashMap},
     fmt,
 };
@@ -209,6 +210,7 @@ pub struct CallFrame {
     pub pc: usize,
     /// Address of the account that sent the message
     pub msg_sender: Address,
+    pub msg_sender_u256: OnceCell<U256>,
     /// Address of the recipient of the message
     pub to: Address,
     /// Address of the code to execute. Usually the same as `to`, but can be different
@@ -307,6 +309,7 @@ impl CallFrame {
             gas_limit,
             gas_remaining: gas_limit,
             msg_sender,
+            msg_sender_u256: OnceCell::new(),
             to,
             code_address,
             bytecode: bytecode.clone(),
