@@ -520,7 +520,12 @@ fn get_initial_downloads(
             .filter_map(|acc_path| {
                 let rlp = trie
                     .get(&acc_path.to_fixed_bytes().to_vec())
-                    .expect("We should be able to open the store")
+                    .ok()
+                    .flatten()
+                    .or_else(|| {
+                        error!("Account {acc_path:x} not found in state root {state_root:x}");
+                        None
+                    })
                     .expect("This account should exist in the trie");
                 let account = AccountState::decode(&rlp).expect("We should have a valid account");
                 if account.storage_root == *EMPTY_TRIE_HASH {
