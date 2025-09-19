@@ -59,10 +59,10 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
-        let caller = current_call_frame.msg_sender;
-        current_call_frame
-            .stack
-            .push(&[u256_from_big_endian_const(caller.to_fixed_bytes())])?;
+        let caller = *current_call_frame.msg_sender_u256.get_or_init(|| {
+            u256_from_big_endian_const(current_call_frame.msg_sender.to_fixed_bytes())
+        });
+        current_call_frame.stack.push1(caller)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

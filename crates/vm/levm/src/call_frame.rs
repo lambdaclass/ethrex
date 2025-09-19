@@ -10,6 +10,7 @@ use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use keccak_hash::H256;
 use std::{
+    cell::OnceCell,
     collections::{BTreeMap, HashMap},
     fmt,
 };
@@ -209,6 +210,7 @@ pub struct CallFrame {
     pub pc: usize,
     /// Address of the account that sent the message
     pub msg_sender: Address,
+    pub msg_sender_u256: OnceCell<U256>,
     /// Address of the recipient of the message
     pub to: Address,
     /// Address of the code to execute. Usually the same as `to`, but can be different
@@ -303,10 +305,12 @@ impl CallFrame {
         memory: Memory,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
+
         Self {
             gas_limit,
             gas_remaining: gas_limit,
             msg_sender,
+            msg_sender_u256: OnceCell::new(),
             to,
             code_address,
             bytecode: bytecode.clone(),
@@ -330,13 +334,14 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        // 0 is the opcode stop.
-        self.bytecode.get(self.pc).copied().unwrap_or(0)
-    }
-
-    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.pc = self.pc.checked_add(count).ok_or(InternalError::Overflow)?;
-        Ok(())
+        if self.pc < self.bytecode.len() {
+            #[expect(unsafe_code, reason = "bounds checked above")]
+            unsafe {
+                *self.bytecode.get_unchecked(self.pc)
+            }
+        } else {
+            0
+        }
     }
 
     pub fn pc(&self) -> usize {
@@ -429,7 +434,18 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.increment_pc_by(count)
+    #[inline(always)]
+    pub fn set_pc(&mut self, new_pc: usize) {
+        self.current_call_frame.pc = new_pc;
+    }
+
+    #[inline(always)]
+    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
+        self.current_call_frame.pc = self
+            .current_call_frame
+            .pc
+            .checked_add(count)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
     }
 }
