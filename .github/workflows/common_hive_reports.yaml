@@ -161,6 +161,25 @@ jobs:
           done
           find hive/workspace/logs -mindepth 1 -type d -exec rm -rf {} +
 
+      - name: Print failed tests
+        if: always()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found_failures=false
+          for log in hive/workspace/logs/*.log; do
+            mapfile -t failures < <(rg --no-heading --color=never 'FAILED ' "$log" | sed -E 's/^.*FAILED ([^ ]+).*/\1/' || true)
+            if (( ${#failures[@]} )); then
+              found_failures=true
+              echo "Failures in $(basename "$log"):"
+              printf '  %s\n' "${failures[@]}"
+              echo
+            fi
+          done
+          if [ "$found_failures" = false ]; then
+            echo "No test failures found in logs."
+          fi
+
       - name: Generate the hive report
         run: cargo run -p hive_report > results.md
 
