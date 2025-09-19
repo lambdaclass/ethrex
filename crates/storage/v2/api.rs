@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use crate::error::StoreError;
 
-pub trait StorageBackend {
-    fn open(path: &str) -> Result<Arc<impl StorageBackend>, StoreError>;
+pub trait StorageBackend: Send + Sync {
+    fn open(path: &str) -> Result<Arc<impl StorageBackend>, StoreError>
+    where
+        Self: Sized;
     fn create_table(&self, name: &str, options: TableOptions) -> Result<(), StoreError>;
     fn begin_read<'a>(&'a self) -> Result<Box<dyn StorageRoTx<'a> + 'a>, StoreError>;
     fn begin_write<'a>(&'a self) -> Result<Box<dyn StorageRwTx<'a> + 'a>, StoreError>;
