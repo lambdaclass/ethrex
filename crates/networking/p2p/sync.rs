@@ -893,31 +893,20 @@ impl Syncer {
                     RLPDecode::decode(&snapshot_contents)
                         .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-                let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-                    account_states_snapshot.iter().cloned().unzip();
-
-                storage_accounts.accounts_with_storage_root.extend(
-                    account_hashes
-                        .iter()
-                        .zip(account_states.iter())
-                        .filter_map(|(hash, state)| {
-                            (state.storage_root != *EMPTY_TRIE_HASH)
-                                .then_some((*hash, state.storage_root))
-                        }),
-                );
+                // Stream over snapshot once to reduce peak memory (avoid unzip + extra vecs)
+                for (hash, state) in account_states_snapshot.iter() {
+                    if state.storage_root != *EMPTY_TRIE_HASH {
+                        storage_accounts
+                            .accounts_with_storage_root
+                            .insert(*hash, state.storage_root);
+                    }
+                    if state.code_hash != *EMPTY_KECCACK_HASH {
+                        code_hash_collector.extend(std::iter::once(state.code_hash));
+                    }
+                }
+                code_hash_collector.flush_if_needed().await?;
 
                 info!("Inserting accounts into the state trie");
-
-                // Collect valid code hashes from current account snapshot
-                let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
-                    .iter()
-                    .filter_map(|(_, state)| {
-                        (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
-                    })
-                    .collect();
-
-                code_hash_collector.extend(code_hashes_from_snapshot);
-                code_hash_collector.flush_if_needed().await?;
 
                 let store_clone = store.clone();
                 let current_state_root =
