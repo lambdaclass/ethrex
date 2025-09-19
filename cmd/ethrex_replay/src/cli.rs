@@ -453,8 +453,8 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     )?;
     let network = &cache.network.ok_or_eyre("Network should be set for L1")?;
 
-    // We don't want empty nodes (0x80)
-    witness.nodes.retain(|v| v != &[0x80]);
+    // // We don't want empty nodes (0x80)
+    // witness.nodes.retain(|v| v != &[0x80]);
 
     let guest_program = GuestProgramState::try_from(witness.clone())?;
 
