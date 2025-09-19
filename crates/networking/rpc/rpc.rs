@@ -449,7 +449,8 @@ mod tests {
     use super::*;
     use crate::utils::test_utils::default_context_with_storage;
     use ethrex_common::{
-        types::{ChainConfig, Genesis, WrappedEIP4844Transaction}, H160
+        H160,
+        types::{ChainConfig, Genesis, WrappedEIP4844Transaction},
     };
     use ethrex_rlp::decode::RLPDecode;
     use ethrex_storage::{EngineType, Store};

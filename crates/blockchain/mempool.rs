@@ -354,16 +354,37 @@ impl Mempool {
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
-        // If one tx is a blob tx and the other is not, keep both as they belong to different pools
-        if (matches!(tx.tx_type(), TxType::EIP4844) && !matches!(tx_in_pool.tx_type(), TxType::EIP4844))
-        || (!matches!(tx.tx_type(), TxType::EIP4844) && matches!(tx_in_pool.tx_type(), TxType::EIP4844)) {
-            return Ok(None);
-        }
+        let is_a_replacement_tx = {
+            // EIP-1559 values
+            let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
+            let old_tx_max_priority_fee_per_gas = tx_in_pool.max_priority_fee().unwrap_or_default();
+            let new_tx_max_fee_per_gas = tx.max_fee_per_gas().unwrap_or_default();
+            let new_tx_max_priority_fee_per_gas = tx.max_priority_fee().unwrap_or_default();
 
-        let is_a_replacement_tx = tx.gas_fee_cap() > tx_in_pool.gas_fee_cap() && tx.gas_tip_cap() > tx_in_pool.gas_tip_cap();
+            // Legacy tx values
+            let old_tx_gas_price = tx_in_pool.gas_price();
+            let new_tx_gas_price = tx.gas_price();
+
+            // EIP-4844 values
+            let old_tx_max_fee_per_blob = tx_in_pool.max_fee_per_blob_gas();
+            let new_tx_max_fee_per_blob = tx.max_fee_per_blob_gas();
+
+            let eip4844_higher_fees = if let (Some(old_blob_fee), Some(new_blob_fee)) =
+                (old_tx_max_fee_per_blob, new_tx_max_fee_per_blob)
+            {
+                new_blob_fee > old_blob_fee
+            } else {
+                true // We are marking it as always true if the tx is not eip-4844
+            };
+
+            let eip1559_higher_fees = new_tx_max_fee_per_gas > old_tx_max_fee_per_gas
+                && new_tx_max_priority_fee_per_gas > old_tx_max_priority_fee_per_gas;
+            let legacy_higher_fees = new_tx_gas_price > old_tx_gas_price;
+
+            eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees)
+        };
 
         if !is_a_replacement_tx {
-            warn!("Not a replacement tx");
             return Err(MempoolError::NonceTooLow);
         }
 

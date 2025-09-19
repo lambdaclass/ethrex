@@ -1,5 +1,7 @@
 use ethrex_common::{
-    serde_utils::{self}, types::{blobs_bundle::kzg_commitment_to_versioned_hash, Blob, Proof, CELLS_PER_EXT_BLOB}, H256
+    H256,
+    serde_utils::{self},
+    types::{Blob, CELLS_PER_EXT_BLOB, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -152,10 +154,11 @@ impl RpcHandler for BlobsV2Request {
             let proofs_in_bundle = blobs_bundle.proofs;
 
             // Go over all the commitments in each blobs bundle to calculate the blobs versioned hash.
-            for (commitment, (blob, proofs)) in commitments_in_bundle
-                .iter()
-                .zip(blobs_in_bundle.iter().zip(proofs_in_bundle.chunks(CELLS_PER_EXT_BLOB)))
-            {
+            for (commitment, (blob, proofs)) in commitments_in_bundle.iter().zip(
+                blobs_in_bundle
+                    .iter()
+                    .zip(proofs_in_bundle.chunks(CELLS_PER_EXT_BLOB)),
+            ) {
                 let current_versioned_hash = kzg_commitment_to_versioned_hash(commitment);
                 if let Some(index) = self
                     .blob_versioned_hashes
@@ -173,7 +176,6 @@ impl RpcHandler for BlobsV2Request {
         if res.iter().any(|blob| blob.is_none()) {
             return Ok(Value::Null);
         }
-        info!("Correctly supplied BlobsBundleV2");
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
