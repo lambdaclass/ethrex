@@ -1,59 +1,235 @@
 use crate::error::StoreError;
 use crate::v2::api::{PrefixIterator, StorageBackend, StorageRoTx, StorageRwTx, TableOptions};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
+
+type Table = BTreeMap<Vec<u8>, Vec<u8>>;
+type Database = BTreeMap<String, Table>;
 
 #[derive(Debug)]
-pub struct InMemoryBackend;
+pub struct InMemoryBackend {
+    inner: Arc<RwLock<Database>>,
+}
 
 impl StorageBackend for InMemoryBackend {
     fn open(_path: &str) -> Result<Arc<dyn StorageBackend>, StoreError>
     where
         Self: Sized,
     {
-        todo!()
+        Ok(Arc::new(Self {
+            inner: Arc::new(RwLock::new(Database::new())),
+        }))
     }
 
-    fn create_table(&self, _name: &str, _options: TableOptions) -> Result<(), StoreError> {
-        todo!()
+    fn create_table(&self, name: &str, _options: TableOptions) -> Result<(), StoreError> {
+        let mut db = self
+            .inner
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        db.entry(name.to_string()).or_insert_with(Table::new);
+        Ok(())
     }
 
-    fn clear_table(&self, _table: &str) -> Result<(), StoreError> {
-        todo!()
+    fn clear_table(&self, table: &str) -> Result<(), StoreError> {
+        let mut db = self
+            .inner
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        if let Some(table_ref) = db.get_mut(table) {
+            table_ref.clear();
+        }
+        Ok(())
     }
 
     fn begin_read<'a>(&'a self) -> Result<Box<dyn StorageRoTx<'a> + 'a>, StoreError> {
-        todo!()
+        Ok(Box::new(InMemoryRoTx {
+            backend: &self.inner,
+        }))
     }
 
     fn begin_write<'a>(&'a self) -> Result<Box<dyn StorageRwTx<'a> + 'a>, StoreError> {
-        todo!()
+        Ok(Box::new(InMemoryRwTx {
+            backend: &self.inner,
+        }))
     }
 }
 
-pub struct InMemoryRoTx;
+pub struct InMemoryRoTx<'a> {
+    backend: &'a RwLock<Database>,
+}
 
-impl StorageRoTx<'_> for InMemoryRoTx {
-    fn get(&self, _table: &str, _key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        todo!()
+impl<'a> StorageRoTx<'a> for InMemoryRoTx<'a> {
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let db = self
+            .backend
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
+
+        Ok(db
+            .get(table)
+            .and_then(|table_ref| table_ref.get(key))
+            .cloned())
     }
 
-    fn prefix_iterator(&self, _table: &str, _prefix: &[u8]) -> Result<PrefixIterator, StoreError> {
-        todo!()
+    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<PrefixIterator, StoreError> {
+        let db = self
+            .backend
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
+
+        let table_data = db.get(table).cloned().unwrap_or_default();
+        let prefix_vec = prefix.to_vec();
+
+        // Crear un iterador que filtra por prefix
+        let iter = table_data
+            .into_iter()
+            .filter(move |(key, _)| key.starts_with(&prefix_vec))
+            .map(|(k, v)| Ok((k, v)));
+
+        Ok(Box::new(iter))
     }
 }
 
-pub struct InMemoryRwTx;
+pub struct InMemoryRwTx<'a> {
+    backend: &'a RwLock<Database>,
+}
 
-impl StorageRwTx<'_> for InMemoryRwTx {
-    fn put(&mut self, _table: &str, _key: &[u8], _value: &[u8]) -> Result<(), StoreError> {
-        todo!()
+impl<'a> StorageRwTx<'a> for InMemoryRwTx<'a> {
+    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        let table_ref = db.entry(table.to_string()).or_insert_with(Table::new);
+
+        table_ref.insert(key.to_vec(), value.to_vec());
+        Ok(())
     }
 
-    fn delete(&mut self, _table: &str, _key: &[u8]) -> Result<(), StoreError> {
-        todo!()
+    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        if let Some(table_ref) = db.get_mut(table) {
+            table_ref.remove(key);
+        }
+        Ok(())
     }
 
     fn commit(self: Box<Self>) -> Result<(), StoreError> {
-        todo!()
+        // We don't need to commit for in-memory backend
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_operations() {
+        let backend = InMemoryBackend::open("").unwrap();
+        backend
+            .create_table("test", TableOptions { dupsort: false })
+            .unwrap();
+
+        // Test write transaction
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put("test", b"key1", b"value1").unwrap();
+            tx.put("test", b"key2", b"value2").unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Test read transaction
+        {
+            let tx = backend.begin_read().unwrap();
+            assert_eq!(tx.get("test", b"key1").unwrap(), Some(b"value1".to_vec()));
+            assert_eq!(tx.get("test", b"key2").unwrap(), Some(b"value2".to_vec()));
+            assert_eq!(tx.get("test", b"nonexistent").unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn test_prefix_iterator() {
+        let backend = InMemoryBackend::open("").unwrap();
+        backend
+            .create_table("test", TableOptions { dupsort: false })
+            .unwrap();
+
+        // Insert test data
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put("test", b"prefix_key1", b"value1").unwrap();
+            tx.put("test", b"prefix_key2", b"value2").unwrap();
+            tx.put("test", b"other_key", b"value3").unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Test prefix iterator
+        {
+            let tx = backend.begin_read().unwrap();
+            let iter = tx.prefix_iterator("test", b"prefix_").unwrap();
+            let results: Result<Vec<_>, _> = iter.collect();
+            let results = results.unwrap();
+
+            assert_eq!(results.len(), 2);
+            // BTreeMap mantiene orden lexicográfico
+            assert_eq!(results[0], (b"prefix_key1".to_vec(), b"value1".to_vec()));
+            assert_eq!(results[1], (b"prefix_key2".to_vec(), b"value2".to_vec()));
+        }
+    }
+
+    #[test]
+    fn test_immediate_writes() {
+        let backend = InMemoryBackend::open("").unwrap();
+        backend
+            .create_table("test", TableOptions { dupsort: false })
+            .unwrap();
+
+        // Writes are immediately visible (no transaction isolation)
+        {
+            let mut tx1 = backend.begin_write().unwrap();
+            tx1.put("test", b"key1", b"value1").unwrap();
+            tx1.commit().unwrap();
+        }
+
+        // Read should see the changes immediately
+        {
+            let tx2 = backend.begin_read().unwrap();
+            assert_eq!(tx2.get("test", b"key1").unwrap(), Some(b"value1".to_vec()));
+        }
+    }
+
+    #[test]
+    fn test_delete_operations() {
+        let backend = InMemoryBackend::open("").unwrap();
+        backend
+            .create_table("test", TableOptions { dupsort: false })
+            .unwrap();
+
+        // Insert and then delete
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put("test", b"key1", b"value1").unwrap();
+            tx.commit().unwrap();
+        }
+
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.delete("test", b"key1").unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Verify deletion
+        {
+            let tx = backend.begin_read().unwrap();
+            assert_eq!(tx.get("test", b"key1").unwrap(), None);
+        }
     }
 }
