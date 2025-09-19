@@ -134,6 +134,7 @@ impl PeerChannels {
 pub struct PeerTableHandle(GenServerHandle<PeerTable>);
 
 impl PeerTableHandle {
+    /// We have established a connection with the remote peer.
     pub async fn new_connected_peer(
         &mut self,
         node: Node,
@@ -151,13 +152,17 @@ impl PeerTableHandle {
         Ok(())
     }
 
-    pub async fn new_contact(
+    /// We received a list of Nodes to contact. No conection has been established yet.
+    pub async fn new_contacts(
         &mut self,
-        node_id: H256,
-        contact: Contact,
+        nodes: Vec<Node>,
+        local_node_id: H256,
     ) -> Result<(), PeerTableError> {
         self.0
-            .call(CallMessage::NewContact { node_id, contact })
+            .call(CallMessage::NewContacts {
+                nodes,
+                local_node_id,
+            })
             .await
             .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
         Ok(())
@@ -520,21 +525,6 @@ impl PeerTableHandle {
         }
     }
 
-    pub async fn new_contacts(
-        &mut self,
-        nodes: Vec<Node>,
-        local_node_id: H256,
-    ) -> Result<(), PeerTableError> {
-        self.0
-            .call(CallMessage::NewContacts {
-                nodes,
-                local_node_id,
-            })
-            .await
-            .map_err(|e| PeerTableError::InternalError(e.to_string()))?;
-        Ok(())
-    }
-
     pub async fn knows_us(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.0
             .call(CallMessage::KnowsUs { node_id: *node_id })
@@ -782,10 +772,6 @@ pub enum CallMessage {
         channels: PeerChannels,
         capabilities: Vec<Capability>,
     },
-    NewContact {
-        node_id: H256,
-        contact: Contact,
-    },
     PeerCount,
     RemovePeer {
         node_id: H256,
@@ -926,9 +912,6 @@ impl GenServer for PeerTable {
                 if let Some(contact) = self.contacts.get_mut(&node_id) {
                     contact.unwanted = true;
                 }
-            }
-            CallMessage::NewContact { node_id, contact } => {
-                self.contacts.insert(node_id, contact);
             }
             CallMessage::PeerCount => {
                 return CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()));

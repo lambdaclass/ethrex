@@ -104,7 +104,7 @@ impl DiscoveryServer {
                 .expect("Failed to create local node record"),
         ));
         let mut discovery_server = Self {
-            local_node,
+            local_node: local_node.clone(),
             local_node_record,
             signer,
             udp_socket,
@@ -116,10 +116,10 @@ impl DiscoveryServer {
 
         for bootnode in &bootnodes {
             discovery_server.send_ping(bootnode).await;
-            peer_table
-                .new_contact(bootnode.node_id(), bootnode.clone().into())
-                .await;
         }
+        peer_table
+            .new_contacts(bootnodes, local_node.node_id())
+            .await;
 
         discovery_server.start();
         Ok(())
