@@ -468,7 +468,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     let all_nodes = &guest_program.nodes_hashed;
     let state_root_hash = guest_program.parent_block_header.state_root;
 
-    let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, &all_nodes)?.inner;
+    let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, all_nodes)?.inner;
     {
         // We now have the state trie built and we want 2 things:
         //   1. Add arbitrary Leaf nodes to the trie so that every reference in branch nodes point to an actual node.
@@ -539,7 +539,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
             let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
 
-            let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, &all_nodes) {
+            let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
                 Ok(trie) => trie.inner,
                 Err(_) => continue,
             };
