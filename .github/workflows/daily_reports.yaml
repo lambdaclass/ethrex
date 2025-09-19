@@ -34,13 +34,13 @@ jobs:
       - name: Post Hive results to Slack
         env:
           SLACK_WEBHOOKS: >
-            ${{ github.event_name == 'workflow_dispatch'
-              && secrets.TEST_CHANNEL_SLACK
-              || format(
+            ${{ github.event_name == 'schedule'
+              && format(
                   '{0} {1}',
                   secrets.ETHREX_L1_SLACK_WEBHOOK,
                   secrets.ETHREX_L2_SLACK_WEBHOOK
                 )
+              || secrets.TEST_CHANNEL_SLACK
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
