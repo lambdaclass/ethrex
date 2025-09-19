@@ -1600,6 +1600,13 @@ impl PeerHandler {
                 .remove(&account_done);
         }
 
+        // Dropping the task sender so that the recv returns None
+        drop(task_sender);
+
+        while let Some(result) = task_receiver.recv().await {
+            self.peer_table.free_peer(result.peer_id).await;
+        }
+
         Ok(chunk_index + 1)
     }
 

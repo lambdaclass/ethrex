@@ -25,20 +25,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install RISC0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
-
-      - name: Create placeholder SP1 ELF
-        run: |
-          mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
-          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
-
       - name: Run cargo check
         run: cargo check --workspace
 
@@ -46,7 +32,6 @@ jobs:
         run: |
           cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
-          make lint
 
       - name: Run cargo fmt
         run: |
@@ -206,11 +191,10 @@ jobs:
           - name: "Sync full"
             simulation: ethereum/sync
             test_pattern: ""
-          # Flaky, reenable when fixed
-          # - name: "Sync snap"
-          #   simulation: ethereum/sync
-          #   test_pattern: ""
-          #   ethrex_flags: "--syncmode snap"
+          - name: "Sync snap"
+            simulation: ethereum/sync
+            test_pattern: ""
+            ethrex_flags: "--syncmode snap"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

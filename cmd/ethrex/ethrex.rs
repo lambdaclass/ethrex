@@ -13,6 +13,25 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+fn log_global_allocator() {
+    if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
+        tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
+    } else {
+        tracing::info!("Global allocator: system (std::alloc::System)");
+    }
+}
+
+// This could be also enabled via `MALLOC_CONF` env var, but for consistency with the previous jemalloc feature
+// usage, we keep it in the code and enable the profiling feature only with the `jemalloc_profiling` feature flag.
+#[cfg(all(feature = "jemalloc_profiling", not(target_env = "msvc")))]
+#[allow(non_upper_case_globals)]
+#[unsafe(export_name = "malloc_conf")]
+pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+
 async fn server_shutdown(
     datadir: &Path,
     cancel_token: &CancellationToken,
@@ -43,6 +62,8 @@ async fn main() -> eyre::Result<()> {
         init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
+
+    log_global_allocator();
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {

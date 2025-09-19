@@ -209,7 +209,7 @@ server-sync:
 
 	git pull
 
-	tmux kill-server || true
+	tmux kill-session -t sync || true
 
 	sleep 5
 

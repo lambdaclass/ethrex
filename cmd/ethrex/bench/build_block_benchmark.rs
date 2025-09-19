@@ -124,7 +124,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     }
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
-    let store = Store::new(storage_path, EngineType::Libmdbx).unwrap();
+    let store = Store::new(storage_path, EngineType::RocksDB).unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
