@@ -31,8 +31,8 @@ impl NodeConfigFile {
             .peers
             .lock()
             .await
-            .iter()
-            .map(|(_id, peer)| peer.node.clone())
+            .values()
+            .map(|peer| peer.node.clone())
             .collect::<Vec<_>>();
 
         NodeConfigFile {

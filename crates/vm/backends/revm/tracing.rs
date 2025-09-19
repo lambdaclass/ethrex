@@ -201,12 +201,10 @@ fn map_call(
         output: revm_call.trace.output.0.clone(),
         error: revm_call
             .status()
-            .is_error()
-            .then(|| revert_reason_or_error.clone()),
+            .and_then(|status| status.is_error().then(|| revert_reason_or_error.clone())),
         revert_reason: revm_call
             .status()
-            .is_revert()
-            .then(|| revert_reason_or_error.clone()),
+            .and_then(|status| status.is_revert().then(|| revert_reason_or_error.clone())),
         calls: subcalls,
         logs: revm_call
             .logs
@@ -225,7 +223,6 @@ fn map_call_type(revm_call_type: CallKind) -> CallType {
         CallKind::AuthCall => CallType::CALL, //TODO: check this
         CallKind::Create => CallType::CREATE,
         CallKind::Create2 => CallType::CREATE2,
-        CallKind::EOFCreate => CallType::CREATE, //TODO: check this
     }
 }
 

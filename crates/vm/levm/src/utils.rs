@@ -289,11 +289,8 @@ pub fn eip7702_recover_address(
     ]
     .concat();
 
-    let Ok(recovery_id) = RecoveryId::from_i32(
-        auth_tuple
-            .y_parity
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?,
+    let Ok(recovery_id) = RecoveryId::try_from(
+        TryInto::<i32>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
     ) else {
         return Ok(None);
     };
