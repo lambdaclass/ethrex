@@ -319,6 +319,12 @@ impl From<Fork> for &str {
     }
 }
 
+impl Fork {
+    fn next_fork(&self) -> Option<Fork> {
+        (*self as u64 + 1).try_into().ok()
+    }
+}
+
 impl ChainConfig {
     pub fn is_bpo1_activated(&self, block_timestamp: u64) -> bool {
         self.bpo1_time.is_some_and(|time| time <= block_timestamp)
@@ -430,6 +436,28 @@ impl ChainConfig {
             Some(self.blob_schedule.cancun)
         } else {
             None
+        }
+    }
+
+    pub fn get_current_fork_activation_timestamp(&self, block_timestamp: u64) -> u64 {
+        if self.is_bpo5_activated(block_timestamp) {
+            self.bpo5_time.unwrap()
+        } else if self.is_bpo4_activated(block_timestamp) {
+            self.bpo4_time.unwrap()
+        } else if self.is_bpo3_activated(block_timestamp) {
+            self.bpo3_time.unwrap()
+        } else if self.is_bpo2_activated(block_timestamp) {
+            self.bpo2_time.unwrap()
+        } else if self.is_bpo1_activated(block_timestamp) {
+            self.bpo1_time.unwrap()
+        } else if self.is_osaka_activated(block_timestamp) {
+            self.osaka_time.unwrap()
+        } else if self.is_prague_activated(block_timestamp) {
+            self.prague_time.unwrap()
+        } else if self.is_cancun_activated(block_timestamp) {
+            self.cancun_time.unwrap()
+        } else {
+            1
         }
     }
 

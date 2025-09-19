@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use ethrex_common::types::Fork;
+use ethrex_common::types::precompile::precompiles_for_fork;
 use ethrex_common::{H32, addresses::*};
 use ethrex_common::{H160, serde_utils, types::ForkBlobSchedule};
 use serde::{Deserialize, Serialize};
@@ -71,7 +72,7 @@ pub struct Config;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ConfigRpcResponse {
+struct EthConfigObject {
     activation_time: u64,
     blob_schedule: ForkBlobSchedule,
     #[serde(with = "serde_utils::u64::hex_str")]
@@ -79,6 +80,14 @@ struct ConfigRpcResponse {
     fork_id: H32,
     precompiles: BTreeMap<String, H160>,
     system_contracts: BTreeMap<String, H160>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EthConfigResponse {
+    current: EthConfigObject,
+    last: Option<EthConfigObject>,
+    next: Option<EthConfigObject>,
 }
 
 impl RpcHandler for Config {
@@ -113,38 +122,13 @@ impl RpcHandler for Config {
 
         let mut precompiles = BTreeMap::new();
 
-        precompiles.insert("ECREC".to_string(), ECRECOVER_ADDRESS);
-        precompiles.insert("SHA256".to_string(), SHA2_256_ADDRESS);
-        precompiles.insert("RIPEMD160".to_string(), RIPEMD_160_ADDRESS);
-        precompiles.insert("ID".to_string(), IDENTITY_ADDRESS);
-        precompiles.insert("MODEXP".to_string(), MODEXP_ADDRESS);
-        precompiles.insert("BN254_ADD".to_string(), ECADD_ADDRESS);
-        precompiles.insert("BN254_MUL".to_string(), ECMUL_ADDRESS);
-        precompiles.insert("BN254_PAIRING".to_string(), ECPAIRING_ADDRESS);
-        precompiles.insert("BLAKE2F".to_string(), BLAKE2F_ADDRESS);
-        precompiles.insert("KZG_POINT_EVALUATION".to_string(), POINT_EVALUATION_ADDRESS);
-
-        if chain_config.fork(latest_block_number) >= Fork::Cancun {
-            precompiles.insert("BLS12_G1ADD".to_string(), BLS12_G1ADD_ADDRESS);
-            precompiles.insert("BLS12_G1MSM".to_string(), BLS12_G1MSM_ADDRESS);
-            precompiles.insert("BLS12_G2ADD".to_string(), BLS12_G2ADD_ADDRESS);
-            precompiles.insert("BLS12_G2MSM".to_string(), BLS12_G2MSM_ADDRESS);
-            precompiles.insert(
-                "BLS12_PAIRING_CHECK".to_string(),
-                BLS12_PAIRING_CHECK_ADDRESS,
-            );
-            precompiles.insert("BLS12_MAP_FP_TO_G1".to_string(), BLS12_MAP_FP_TO_G1_ADDRESS);
-            precompiles.insert(
-                "BLS12_MAP_FP2_TO_G2".to_string(),
-                BLS12_MAP_FP2_TO_G2_ADDRESS,
-            );
+        for precompile in precompiles_for_fork(chain_config.get_fork(latest_block_number)) {
+            precompiles.insert(precompile.name.to_string(), precompile.address);
         }
 
-        if chain_config.fork(latest_block_number) >= Fork::Osaka {
-            precompiles.insert("P256_VERIFY".to_string(), P256_VERIFICATION_ADDRESS);
-        }
-        let config = ConfigRpcResponse {
-            activation_time: 0,
+        let current = EthConfigObject {
+            activation_time: chain_config
+                .get_current_fork_activation_timestamp(latest_block_number),
             blob_schedule: chain_config
                 .get_fork_blob_schedule(latest_block_number)
                 .unwrap_or_default(),
@@ -153,6 +137,13 @@ impl RpcHandler for Config {
             precompiles,
             system_contracts,
         };
-        serde_json::to_value(config).map_err(|error| RpcErr::Internal(error.to_string()))
+
+        let response = EthConfigResponse {
+            current,
+            last: None,
+            next: None,
+        };
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

@@ -6,9 +6,10 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
+use ethrex_common::types::precompile::*;
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, H256, U256, addresses::*, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
+    Address, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
 };
 use ethrex_crypto::blake2f::blake2b_f;
@@ -101,25 +102,10 @@ pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    // Cancun specs is the only one that allows point evaluation precompile
-    if *address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
-        return false;
-    }
-    // Prague or newers forks should only use these precompiles
-    // https://eips.ethereum.org/EIPS/eip-2537
-    if PRECOMPILES_POST_CANCUN.contains(address) && fork < Fork::Prague {
-        return false;
-    }
-
-    // P256 verify Precompile only existed on L2 before Osaka
-    if fork < Fork::Osaka && matches!(vm_type, VMType::L1) && address == &P256_VERIFICATION_ADDRESS
-    {
-        return false;
-    }
-
-    PRECOMPILES.contains(address)
-        || PRECOMPILES_POST_CANCUN.contains(address)
-        || address == &P256_VERIFICATION_ADDRESS
+    (matches!(vm_type, VMType::L2) && *address == P256_VERIFICATION.address)
+        || precompiles_for_fork(fork)
+            .iter()
+            .any(|precompile| precompile.address == *address)
 }
 
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
@@ -133,30 +119,30 @@ pub fn execute_precompile(
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
-        precompiles[ECRECOVER_ADDRESS.0[19] as usize] = Some(ecrecover as PrecompileFn);
-        precompiles[IDENTITY_ADDRESS.0[19] as usize] = Some(identity as PrecompileFn);
-        precompiles[SHA2_256_ADDRESS.0[19] as usize] = Some(sha2_256 as PrecompileFn);
-        precompiles[RIPEMD_160_ADDRESS.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
-        precompiles[MODEXP_ADDRESS.0[19] as usize] = Some(modexp as PrecompileFn);
-        precompiles[ECADD_ADDRESS.0[19] as usize] = Some(ecadd as PrecompileFn);
-        precompiles[ECMUL_ADDRESS.0[19] as usize] = Some(ecmul as PrecompileFn);
-        precompiles[ECPAIRING_ADDRESS.0[19] as usize] = Some(ecpairing as PrecompileFn);
-        precompiles[BLAKE2F_ADDRESS.0[19] as usize] = Some(blake2f as PrecompileFn);
-        precompiles[POINT_EVALUATION_ADDRESS.0[19] as usize] =
+        precompiles[ECRECOVER.address.0[19] as usize] = Some(ecrecover as PrecompileFn);
+        precompiles[IDENTITY.address.0[19] as usize] = Some(identity as PrecompileFn);
+        precompiles[SHA2_256.address.0[19] as usize] = Some(sha2_256 as PrecompileFn);
+        precompiles[RIPEMD_160.address.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
+        precompiles[MODEXP.address.0[19] as usize] = Some(modexp as PrecompileFn);
+        precompiles[ECADD.address.0[19] as usize] = Some(ecadd as PrecompileFn);
+        precompiles[ECMUL.address.0[19] as usize] = Some(ecmul as PrecompileFn);
+        precompiles[ECPAIRING.address.0[19] as usize] = Some(ecpairing as PrecompileFn);
+        precompiles[BLAKE2F.address.0[19] as usize] = Some(blake2f as PrecompileFn);
+        precompiles[POINT_EVALUATION.address.0[19] as usize] =
             Some(point_evaluation as PrecompileFn);
-        precompiles[BLS12_G1ADD_ADDRESS.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
-        precompiles[BLS12_G1MSM_ADDRESS.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
-        precompiles[BLS12_G2ADD_ADDRESS.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
-        precompiles[BLS12_G2MSM_ADDRESS.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
-        precompiles[BLS12_PAIRING_CHECK_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_G1ADD.address.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
+        precompiles[BLS12_G1MSM.address.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
+        precompiles[BLS12_G2ADD.address.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
+        precompiles[BLS12_G2MSM.address.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
+        precompiles[BLS12_PAIRING_CHECK.address.0[19] as usize] =
             Some(bls12_pairing_check as PrecompileFn);
-        precompiles[BLS12_MAP_FP_TO_G1_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_MAP_FP_TO_G1.address.0[19] as usize] =
             Some(bls12_map_fp_to_g1 as PrecompileFn);
-        precompiles[BLS12_MAP_FP2_TO_G2_ADDRESS.0[19] as usize] =
+        precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
             Some(bls12_map_fp2_tp_g2 as PrecompileFn);
         precompiles[u16::from_be_bytes([
-            P256_VERIFICATION_ADDRESS.0[18],
-            P256_VERIFICATION_ADDRESS.0[19],
+            P256_VERIFICATION.address.0[18],
+            P256_VERIFICATION.address.0[19],
         ]) as usize] = Some(p_256_verify as PrecompileFn);
         precompiles
     };
