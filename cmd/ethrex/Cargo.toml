@@ -65,7 +65,7 @@ default = ["libmdbx", "c-kzg", "rollup_storage_sql", "dev", "metrics"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [
   "ethrex-vm/c-kzg",
-  "ethrex-common/c-kzg",
+  "ethrex-common", # TODO! c-kzg
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
 ]
