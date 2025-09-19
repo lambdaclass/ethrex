@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758261751629,
+  "lastUpdate": 1758289222776,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15565,6 +15565,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91444886826,
             "range": "± 267700133",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "52646071+Peponks9@users.noreply.github.com",
+            "name": "josé v",
+            "username": "Peponks9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5a83b191fe7b05b22d23aa172c5f3d757ec8a2fd",
+          "message": "chore(l1): remove `#[allow(dead_code)]` attributes throughout codebase (#4530)\n\n- Removed `#[allow(dead_code)]` from various functions and structs where\nno longer needed.\n- Added explanatory comment for the remaining `#[allow(dead_code)]` on\nFeesDetails struct in tests.rs.\n\n\nResolves #3968",
+          "timestamp": "2025-09-19T12:56:00Z",
+          "tree_id": "0297954ac4f3d2b415cd21e273f1ea215afaeddf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5a83b191fe7b05b22d23aa172c5f3d757ec8a2fd"
+        },
+        "date": 1758289201695,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 92995623530,
+            "range": "± 811245515",
             "unit": "ns/iter"
           }
         ]
