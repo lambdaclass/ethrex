@@ -22,6 +22,7 @@ use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
 };
 use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRef, node::LeafNode};
+use eyre::OptionExt;
 use reqwest::Url;
 use std::{
     cmp::max,
@@ -441,12 +442,17 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     info!("Preparing Storage for execution without zkVM");
 
     let chain_config = cache.get_chain_config()?;
+    if cache.blocks.len() > 1 {
+        eyre::bail!("Cache for L1 witness should contain only one block.");
+    }
+    let block = cache.blocks[0].clone();
 
     let mut witness = execution_witness_from_rpc_chain_config(
         cache.witness.clone(),
         chain_config,
         cache.get_first_block_number()?,
     )?;
+    let network = &cache.network.ok_or_eyre("Network should be set for L1")?;
 
     // We don't want empty nodes (0x80)
     witness.nodes.retain(|v| v != &[0x80]);
@@ -535,7 +541,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
 
         let in_memory_trie = match InMemoryTrieDB::from_nodes(storage_root, &all_nodes) {
-            std::result::Result::Ok(trie) => trie.inner,
+            Ok(trie) => trie.inner,
             Err(_) => continue,
         };
 
@@ -566,13 +572,11 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
     info!("Storage preparation finished in {:.2?}", start.elapsed());
 
-    for block in cache.blocks {
-        info!("Starting to execute block {}", block.header.number);
-        let start_time = Instant::now();
-        blockchain.add_block(&block).await?;
-        let duration = start_time.elapsed();
-        info!("add_block execution time: {:.2?}", duration);
-    }
+    info!("Executing block {} on {}", block.header.number, network);
+    let start_time = Instant::now();
+    blockchain.add_block(&block).await?;
+    let duration = start_time.elapsed();
+    info!("add_block execution time: {:.2?}", duration);
 
     Ok(gas_used)
 }
