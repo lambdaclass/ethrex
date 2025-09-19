@@ -2,6 +2,7 @@ use crate::{
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     vm::VM,
 };
+use ethrex_common::types::Fork;
 use strum::EnumString;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString)]
@@ -368,14 +369,44 @@ impl<'a> OpCodeFn<'a> {
 }
 
 impl<'a> VM<'a> {
+    pub(crate) const FORK_VARIANT_COUNT: usize = 20;
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    pub(crate) const OPCODE_TABLE: [OpCodeFn<'a>; 256] = VM::build_opcode_table();
+    pub(crate) const OPCODE_TABLES: [[OpCodeFn<'a>; 256]; VM::FORK_VARIANT_COUNT] =
+        VM::build_opcode_tables();
+
+    pub(crate) const fn build_opcode_tables() -> [[OpCodeFn<'a>; 256]; VM::FORK_VARIANT_COUNT] {
+        use Fork::*;
+        [
+            Self::build_opcode_table(Frontier),
+            Self::build_opcode_table(FrontierThawing),
+            Self::build_opcode_table(Homestead),
+            Self::build_opcode_table(DaoFork),
+            Self::build_opcode_table(Tangerine),
+            Self::build_opcode_table(SpuriousDragon),
+            Self::build_opcode_table(Byzantium),
+            Self::build_opcode_table(Constantinople),
+            Self::build_opcode_table(Petersburg),
+            Self::build_opcode_table(Istanbul),
+            Self::build_opcode_table(MuirGlacier),
+            Self::build_opcode_table(Berlin),
+            Self::build_opcode_table(London),
+            Self::build_opcode_table(ArrowGlacier),
+            Self::build_opcode_table(GrayGlacier),
+            Self::build_opcode_table(Paris),
+            Self::build_opcode_table(Shanghai),
+            Self::build_opcode_table(Cancun),
+            Self::build_opcode_table(Prague),
+            Self::build_opcode_table(Osaka),
+        ]
+    }
 
     /// Setups the opcode lookup function pointer table.
     ///
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) const fn build_opcode_table() -> [OpCodeFn<'a>; 256] {
+    pub(crate) const fn build_opcode_table(fork: Fork) -> [OpCodeFn<'a>; 256] {
+        use Fork::*;
+
         let mut opcode_table: [OpCodeFn<'a>; 256] = [OpCodeFn(VM::on_invalid_opcode); 256];
 
         opcode_table[Opcode::STOP as usize] = OpCodeFn(VM::op_stop);
@@ -387,8 +418,13 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::SSTORE as usize] = OpCodeFn(VM::op_sstore);
         opcode_table[Opcode::MSIZE as usize] = OpCodeFn(VM::op_msize);
         opcode_table[Opcode::GAS as usize] = OpCodeFn(VM::op_gas);
-        opcode_table[Opcode::MCOPY as usize] = OpCodeFn(VM::op_mcopy);
-        opcode_table[Opcode::PUSH0 as usize] = OpCodeFn(VM::op_push0);
+        // [EIP-5656] - MCOPY is only available from CANCUN
+        if fork as u8 >= Cancun as u8 {
+            opcode_table[Opcode::MCOPY as usize] = OpCodeFn(VM::op_mcopy);
+        }
+        if fork as u8 >= Shanghai as u8 {
+            opcode_table[Opcode::PUSH0 as usize] = OpCodeFn(VM::op_push0);
+        }
         opcode_table[Opcode::PUSH1 as usize] = OpCodeFn(VM::op_push::<1>);
         opcode_table[Opcode::PUSH2 as usize] = OpCodeFn(VM::op_push::<2>);
         opcode_table[Opcode::PUSH3 as usize] = OpCodeFn(VM::op_push::<3>);
@@ -505,8 +541,12 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::GASLIMIT as usize] = OpCodeFn(VM::op_gaslimit);
         opcode_table[Opcode::CHAINID as usize] = OpCodeFn(VM::op_chainid);
         opcode_table[Opcode::BASEFEE as usize] = OpCodeFn(VM::op_basefee);
-        opcode_table[Opcode::BLOBHASH as usize] = OpCodeFn(VM::op_blobhash);
-        opcode_table[Opcode::BLOBBASEFEE as usize] = OpCodeFn(VM::op_blobbasefee);
+        if fork as u8 >= Cancun as u8 {
+            // [EIP-4844] - BLOBHASH is only available from CANCUN
+            opcode_table[Opcode::BLOBHASH as usize] = OpCodeFn(VM::op_blobhash);
+            // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
+            opcode_table[Opcode::BLOBBASEFEE as usize] = OpCodeFn(VM::op_blobbasefee);
+        }
         opcode_table[Opcode::AND as usize] = OpCodeFn(VM::op_and);
         opcode_table[Opcode::OR as usize] = OpCodeFn(VM::op_or);
         opcode_table[Opcode::XOR as usize] = OpCodeFn(VM::op_xor);
@@ -515,8 +555,12 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::SHL as usize] = OpCodeFn(VM::op_shl);
         opcode_table[Opcode::SHR as usize] = OpCodeFn(VM::op_shr);
         opcode_table[Opcode::SAR as usize] = OpCodeFn(VM::op_sar);
-        opcode_table[Opcode::TLOAD as usize] = OpCodeFn(VM::op_tload);
-        opcode_table[Opcode::TSTORE as usize] = OpCodeFn(VM::op_tstore);
+        // [EIP-1153] - TLOAD is only available from CANCUN
+        // [EIP-1153] - TLOAD is only available from CANCUN
+        if fork as u8 >= Cancun as u8 {
+            opcode_table[Opcode::TLOAD as usize] = OpCodeFn(VM::op_tload);
+            opcode_table[Opcode::TSTORE as usize] = OpCodeFn(VM::op_tstore);
+        }
         opcode_table[Opcode::SELFBALANCE as usize] = OpCodeFn(VM::op_selfbalance);
         opcode_table[Opcode::CODESIZE as usize] = OpCodeFn(VM::op_codesize);
         opcode_table[Opcode::GASPRICE as usize] = OpCodeFn(VM::op_gasprice);

@@ -5,7 +5,7 @@ use crate::{
     utils::*,
     vm::VM,
 };
-use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
+use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -138,10 +138,6 @@ impl<'a> VM<'a> {
     // BLOBHASH operation
     /// Currently not tested
     pub fn op_blobhash(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-4844] - BLOBHASH is only available from CANCUN
-        if self.env.config.fork < Fork::Cancun {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
         let index = self.current_call_frame.stack.pop1()?;
@@ -167,11 +163,6 @@ impl<'a> VM<'a> {
 
     // BLOBBASEFEE operation
     pub fn op_blobbasefee(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
-        if self.env.config.fork < Fork::Cancun {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 

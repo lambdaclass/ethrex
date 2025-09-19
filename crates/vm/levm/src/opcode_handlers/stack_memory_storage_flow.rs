@@ -10,7 +10,6 @@ use crate::{
 };
 use ethrex_common::{
     U256,
-    types::Fork,
     utils::{u256_to_big_endian, u256_to_h256},
 };
 
@@ -30,11 +29,6 @@ impl<'a> VM<'a> {
 
     // TLOAD operation
     pub fn op_tload(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.config.fork < Fork::Cancun {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-
         let key = self.current_call_frame.stack.pop1()?;
         let to = self.current_call_frame.to;
         let value = self.substate.get_transient(&to, &key);
@@ -49,10 +43,6 @@ impl<'a> VM<'a> {
 
     // TSTORE operation
     pub fn op_tstore(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.config.fork < Fork::Cancun {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
         let (key, value, to) = {
             let current_call_frame = &mut self.current_call_frame;
 
@@ -262,10 +252,6 @@ impl<'a> VM<'a> {
 
     // MCOPY operation
     pub fn op_mcopy(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-5656] - MCOPY is only available from CANCUN
-        if self.env.config.fork < Fork::Cancun {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
         let size: usize = u256_to_usize(size)?;
