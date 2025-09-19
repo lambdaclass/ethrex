@@ -2,10 +2,10 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-    BlockRLP, Rlp, TransactionHashRLP, TupleRLP,
+    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp,
+    TransactionHashRLP, TupleRLP,
 };
-use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store::STATE_TRIE_SEGMENTS;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::libmdbx_dupsort_locked::LibmdbxLockedDupsortTrieDB;
@@ -851,51 +851,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-
-            for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
-                txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            txn.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-            for (account_hash, (storage_keys, storage_values)) in account_hashes
-                .into_iter()
-                .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
-            {
-                for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
-                    txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
-            txn.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
     async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
@@ -945,25 +900,6 @@ impl StoreEngine for Store {
             .map(|ref h| <Vec<(H256, H256)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
-    }
-
-    async fn read_storage_snapshot(
-        &self,
-        account_hash: H256,
-        start: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StorageSnapShot>()
-            .map_err(StoreError::LibmdbxError)?;
-        let iter = cursor
-            .walk_key(account_hash.into(), Some(start.into()))
-            .map_while(|res| {
-                res.ok()
-                    .map(|(k, v)| (H256(k.0), U256::from_big_endian(&v.0)))
-            })
-            .take(MAX_SNAPSHOT_READS);
-        Ok(iter.collect::<Vec<_>>())
     }
 
     async fn get_latest_valid_ancestor(
@@ -1179,7 +1115,7 @@ table!(
 
 dupsort!(
     /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+    ( Receipts ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Receipt>
 );
 
 dupsort!(
@@ -1190,7 +1126,7 @@ dupsort!(
 
 dupsort!(
     /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+    ( TransactionLocations ) Rlp<H256> => Rlp<(BlockNumber, BlockHash, Index)>
 );
 
 table!(
@@ -1215,11 +1151,6 @@ table!(
 table!(
     /// Stores blocks that are pending validation.
     ( PendingBlocks ) BlockHashRLP => BlockRLP
-);
-
-dupsort!(
-    /// Storage Snapshot used by an ongoing sync process
-    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
 );
 
 table!(
@@ -1326,7 +1257,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(CanonicalBlockHashes),
         table_info!(PendingBlocks),
         table_info!(SnapState),
-        table_info!(StorageSnapShot),
         table_info!(InvalidAncestors),
     ]
     .into_iter()
@@ -1346,7 +1276,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rlp::TupleRLP;
     use bytes::Bytes;
     use ethrex_common::{
         Address, H256,
@@ -1544,7 +1473,7 @@ mod tests {
     fn mdbx_indexed_chunks_test() {
         dupsort!(
             /// Receipts table.
-            ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+            ( Receipts ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Receipt>
         );
 
         let tables = [table_info!(Receipts)].into_iter().collect();
@@ -1586,7 +1515,7 @@ mod tests {
         // now retrieve the values and assert they are the same
         let mut stored_receipts = vec![];
         let mut receipt_index = 0;
-        let mut key: TupleRLP<BlockHash, Index> = (block_hash, 0).into();
+        let mut key: Rlp<(BlockHash, Index)> = (block_hash, 0).into();
         let txn = db.begin_read().unwrap();
         let mut cursor = txn.cursor::<Receipts>().unwrap();
         while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key).unwrap() {

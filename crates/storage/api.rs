@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
+use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
@@ -299,22 +299,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Gets the state trie paths in need of healing
     async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError>;
 
-    /// Write a storage batch into the current storage snapshot
-    async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError>;
-
-    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
-    async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError>;
-
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     async fn set_state_trie_rebuild_checkpoint(
         &self,
@@ -336,13 +320,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
-
-    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
-    async fn read_storage_snapshot(
-        &self,
-        start: H256,
-        account_hash: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError>;
 
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.

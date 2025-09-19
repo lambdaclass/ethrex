@@ -1,5 +1,5 @@
 use crate::{
-    rlp::Rlp,
+    rlp::AccountCodeHashRLP,
     trie_db::{
         layering::{TrieWrapper, TrieWrapperInner},
         rocksdb_locked::RocksDBLockedTrieDB,
@@ -7,12 +7,11 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    H256, U256,
+    H256,
     types::{
         Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
         Transaction,
     },
-    utils::u256_to_big_endian,
 };
 use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
@@ -69,9 +68,9 @@ const CF_RECEIPTS: &str = "receipts";
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
-///     let mut composite_key = Vec::with_capacity(64);
-///     composite_key.extend_from_slice(transaction_hash.as_bytes());
-///     composite_key.extend_from_slice(block_hash.as_bytes());
+///     // let mut composite_key = Vec::with_capacity(64);
+///     // composite_key.extend_from_slice(transaction_hash.as_bytes());
+///     // composite_key.extend_from_slice(block_hash.as_bytes());
 ///    ```
 /// - [`Vec<u8>`] = `(block_number, block_hash, index).encode_to_vec()`
 const CF_TRANSACTION_LOCATIONS: &str = "transaction_locations";
@@ -95,16 +94,6 @@ const CF_TRIE_NODES: &str = "trie_nodes";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
 /// - [`Vec<u8>`] = `BlockRLP::from(block).bytes().clone()`
 const CF_PENDING_BLOCKS: &str = "pending_blocks";
-
-/// Storage snapshot column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
-///   ```rust,no_run
-///     let mut composite_key = Vec::with_capacity(64);
-///     composite_key.extend_from_slice(account_hash.as_bytes());
-///     composite_key.extend_from_slice(key.as_bytes());
-///   ```
-/// - [`Vec<u8>`] = `u256_to_big_endian(value).to_vec()`
-const CF_STORAGE_SNAPSHOT: &str = "storage_snapshot";
 
 /// Invalid ancestors column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(bad_block).bytes().clone()`
@@ -172,7 +161,6 @@ impl Store {
             CF_SNAP_STATE,
             CF_TRIE_NODES,
             CF_PENDING_BLOCKS,
-            CF_STORAGE_SNAPSHOT,
             CF_INVALID_ANCESTORS,
         ];
 
@@ -535,7 +523,7 @@ impl StoreEngine for Store {
                 let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
                 batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
 
-                let hash_key: Rlp<H256> = block_hash.into();
+                let hash_key: AccountCodeHashRLP = block_hash.into();
                 let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
                 batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
 
@@ -1366,78 +1354,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
-    async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError> {
-        if storage_keys.len() != storage_values.len() {
-            return Err(StoreError::Custom(
-                "Storage keys and values length mismatch".to_string(),
-            ));
-        }
-
-        let mut batch_ops = Vec::new();
-
-        for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
-            // Create composite key: account_hash + storage_key
-            let mut composite_key = Vec::with_capacity(64);
-            composite_key.extend_from_slice(account_hash.as_bytes());
-            composite_key.extend_from_slice(key.as_bytes());
-
-            // Convert U256 to bytes
-            let value_bytes = u256_to_big_endian(value).to_vec();
-
-            batch_ops.push((CF_STORAGE_SNAPSHOT.to_string(), composite_key, value_bytes));
-        }
-
-        self.write_batch_async(batch_ops).await
-    }
-
-    async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError> {
-        if account_hashes.len() != storage_keys.len()
-            || account_hashes.len() != storage_values.len()
-        {
-            return Err(StoreError::Custom(
-                "Account hashes, keys, and values length mismatch".to_string(),
-            ));
-        }
-
-        let mut batch_ops = Vec::new();
-
-        for ((account_hash, keys), values) in account_hashes
-            .into_iter()
-            .zip(storage_keys.into_iter())
-            .zip(storage_values.into_iter())
-        {
-            if keys.len() != values.len() {
-                return Err(StoreError::Custom(
-                    "Storage keys and values length mismatch for account".to_string(),
-                ));
-            }
-
-            for (key, value) in keys.into_iter().zip(values.into_iter()) {
-                // Create composite key: account_hash + storage_key
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(account_hash.as_bytes());
-                composite_key.extend_from_slice(key.as_bytes());
-
-                // Convert U256 to bytes
-                let value_bytes = u256_to_big_endian(value).to_vec();
-
-                batch_ops.push((CF_STORAGE_SNAPSHOT.to_string(), composite_key, value_bytes));
-            }
-        }
-
-        self.write_batch_async(batch_ops).await
-    }
-
     async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
@@ -1487,58 +1403,6 @@ impl StoreEngine for Store {
             .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
-    }
-
-    // TODO: REVIEW LOGIC AGAINST LIBMDBX
-    async fn read_storage_snapshot(
-        &self,
-        account_hash: H256,
-        start: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        let db = self.db.clone();
-        let max_reads = crate::store::MAX_SNAPSHOT_READS;
-
-        tokio::task::spawn_blocking(move || {
-            let cf = db
-                .cf_handle(CF_STORAGE_SNAPSHOT)
-                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
-
-            // Create start key: account_hash + start
-            let mut start_key = Vec::with_capacity(64);
-            start_key.extend_from_slice(account_hash.as_bytes());
-            start_key.extend_from_slice(start.as_bytes());
-
-            let mut results = Vec::new();
-            let mut iter = db.iterator_cf(
-                &cf,
-                rocksdb::IteratorMode::From(&start_key, rocksdb::Direction::Forward),
-            );
-            let mut count = 0;
-
-            while let Some(Ok((key, value))) = iter.next() {
-                if count >= max_reads {
-                    break;
-                }
-
-                // Check if key still belongs to the same account
-                if key.len() >= 32 && &key[0..32] == account_hash.as_bytes() {
-                    // Extract storage key (last 32 bytes)
-                    if key.len() >= 64 {
-                        let storage_key = H256::from_slice(&key[32..64]);
-                        let storage_value = U256::from_big_endian(&value);
-                        results.push((storage_key, storage_value));
-                        count += 1;
-                    }
-                } else {
-                    // We've moved to a different account, stop
-                    break;
-                }
-            }
-
-            Ok(results)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn set_latest_valid_ancestor(
