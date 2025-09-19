@@ -107,7 +107,19 @@ impl Hook for L2Hook {
         ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
-            return DefaultHook.finalize_execution(vm, ctx_result);
+            if !ctx_result.is_success() {
+                default_hook::undo_value_transfer(vm)?;
+            }
+
+            let gas_refunded: u64 = default_hook::compute_gas_refunded(vm, ctx_result)?;
+            let actual_gas_used =
+                default_hook::compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+            default_hook::refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
+
+            // Different from L1, the base fee is not burned
+            pay_coinbase_with_base_fee(vm, actual_gas_used)?;
+
+            default_hook::delete_self_destruct_accounts(vm)?;
         }
 
         if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
@@ -120,4 +132,17 @@ impl Hook for L2Hook {
 
         Ok(())
     }
+}
+
+pub fn pay_coinbase_with_base_fee(
+    vm: &mut VM<'_>,
+    gas_to_pay: u64,
+) -> Result<(), crate::errors::VMError> {
+    let coinbase_fee = U256::from(gas_to_pay)
+        .checked_mul(vm.env.gas_price)
+        .ok_or(InternalError::Overflow)?;
+
+    vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+
+    Ok(())
 }
