@@ -29,6 +29,12 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StoreError::Custom(format!("Failed to create table {}: {}", name, e)))
     }
 
+    fn clear_table(&self, table: &str) -> Result<(), StoreError> {
+        self.db
+            .drop_cf(table)
+            .map_err(|e| StoreError::Custom(format!("Failed to clear table {}: {}", table, e)))
+    }
+
     fn begin_read<'a>(&'a self) -> Result<Box<dyn StorageRoTx<'a> + 'a>, StoreError> {
         let tx = self.db.transaction();
         Ok(Box::new(RocksDBRoTx { tx, db: &self.db }))

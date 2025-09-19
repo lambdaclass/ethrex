@@ -525,7 +525,10 @@ impl StoreV2 {
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
         // FIXME: We need a way to iterate over a table or just delete the entire table
-        todo!()
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || db.clear_table(SNAP_STATE))
+            .await
+            .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     pub async fn get_transaction_by_hash(

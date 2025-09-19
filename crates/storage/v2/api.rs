@@ -7,6 +7,7 @@ pub trait StorageBackend: Send + Sync {
     where
         Self: Sized;
     fn create_table(&self, name: &str, options: TableOptions) -> Result<(), StoreError>;
+    fn clear_table(&self, table: &str) -> Result<(), StoreError>;
     fn begin_read<'a>(&'a self) -> Result<Box<dyn StorageRoTx<'a> + 'a>, StoreError>;
     fn begin_write<'a>(&'a self) -> Result<Box<dyn StorageRwTx<'a> + 'a>, StoreError>;
 }
