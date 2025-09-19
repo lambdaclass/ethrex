@@ -120,7 +120,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .map(|bytes| BlockHeader::decode(bytes.as_ref()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| {
-                GuestProgramStateError::Custom(format!("Failed to decode block headers: {}", e))
+                GuestProgramStateError::Custom(format!("Failed to decode block headers: {e}"))
             })?
             .into_iter()
             .map(|header| (header.number, header))

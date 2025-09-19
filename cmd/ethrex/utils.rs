@@ -31,8 +31,8 @@ impl NodeConfigFile {
             .peers
             .lock()
             .await
-            .iter()
-            .map(|(_id, peer)| peer.node.clone())
+            .values()
+            .map(|peer| peer.node.clone())
             .collect::<Vec<_>>();
 
         NodeConfigFile {
@@ -114,7 +114,7 @@ pub fn init_datadir(data_dir: &str) -> String {
     let datadir = PathBuf::from(data_dir);
     if datadir.exists() {
         if !datadir.is_dir() {
-            panic!("Datadir {:?} exists but is not a directory", datadir);
+            panic!("Datadir {datadir:?} exists but is not a directory");
         }
     } else {
         std::fs::create_dir_all(&datadir).expect("Failed to create data directory");

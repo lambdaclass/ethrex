@@ -278,7 +278,7 @@ impl Store {
             path,
             cf_descriptors,
         )
-        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {e}")))?;
 
         // Clean up obsolete column families
         for cf_name in &existing_cfs {

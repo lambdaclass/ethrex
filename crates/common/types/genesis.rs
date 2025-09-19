@@ -383,7 +383,7 @@ impl ChainConfig {
 
         let active_forks: Vec<_> = post_merge_forks
             .iter()
-            .filter_map(|(name, t)| t.map(|time| format!("- {}: @{:<10}", name, time)))
+            .filter_map(|(name, t)| t.map(|time| format!("- {name}: @{time:<10}")))
             .collect();
 
         if !active_forks.is_empty() {
