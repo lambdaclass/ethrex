@@ -4,6 +4,7 @@ use crate::utils::{dump_to_file, get_code_hashes_snapshot_file};
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use tokio::task::JoinSet;
 use tracing::error;
 
@@ -15,7 +16,7 @@ pub struct CodeHashCollector {
     // Buffer to store code hashes
     buffer: HashSet<H256>,
     // Directory to store code hashes
-    snapshots_dir: String,
+    snapshots_dir: PathBuf,
     // Index of the current code hash file
     file_index: u64,
     // JoinSet to manage async disk writes
@@ -24,7 +25,7 @@ pub struct CodeHashCollector {
 
 impl CodeHashCollector {
     /// Creates a new code collector
-    pub fn new(snapshots_dir: String) -> Self {
+    pub fn new(snapshots_dir: PathBuf) -> Self {
         Self {
             buffer: HashSet::new(),
             snapshots_dir,
@@ -80,10 +81,10 @@ impl CodeHashCollector {
 
     /// Flushes the given buffer to a file
     fn flush_buffer(&mut self, buffer: HashSet<H256>) {
-        let file_name = get_code_hashes_snapshot_file(self.snapshots_dir.clone(), self.file_index);
+        let file_name = get_code_hashes_snapshot_file(&self.snapshots_dir, self.file_index);
         let encoded = buffer.into_iter().collect::<Vec<_>>().encode_to_vec();
         self.disk_tasks
-            .spawn(async move { dump_to_file(file_name, encoded) });
+            .spawn(async move { dump_to_file(&file_name, encoded) });
         self.file_index += 1;
     }
 

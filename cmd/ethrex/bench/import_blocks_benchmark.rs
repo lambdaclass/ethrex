@@ -8,8 +8,9 @@ use ethrex_config::networks::Network;
 
 #[inline]
 fn block_import() {
-    let data_dir = init_datadir(&default_datadir());
-    remove_db(&data_dir, true);
+    let datadir = default_datadir();
+    init_datadir(&datadir);
+    remove_db(&datadir, true);
 
     let blockchain_type = BlockchainType::default(); // TODO: Should we support L2?
 
@@ -20,7 +21,7 @@ fn block_import() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
         "../../fixtures/blockchain/l2-1k-erc20.rlp",
-        &data_dir,
+        &datadir,
         genesis,
         blockchain_type,
     ))

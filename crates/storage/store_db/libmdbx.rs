@@ -38,7 +38,7 @@ pub struct Store {
     db: Arc<Database>,
 }
 impl Store {
-    pub fn new(path: &str) -> Result<Self, StoreError> {
+    pub fn new(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
         })

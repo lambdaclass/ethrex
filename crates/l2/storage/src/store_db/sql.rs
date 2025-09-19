@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{RollupStoreError, api::StoreEngineRollup};
@@ -47,7 +47,7 @@ const DB_SCHEMA: [&str; 15] = [
 ];
 
 impl SQLStore {
-    pub fn new(path: &str) -> Result<Self, RollupStoreError> {
+    pub fn new(path: impl AsRef<Path>) -> Result<Self, RollupStoreError> {
         futures::executor::block_on(async {
             let db = Builder::new_local(path).build().await?;
             let write_conn = db.connect()?;

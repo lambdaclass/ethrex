@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::Path,
     process::{Command, ExitStatus},
 };
 
@@ -23,7 +23,7 @@ pub fn git_clone(
 ) -> Result<ExitStatus, GitError> {
     info!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning or updating git repository");
 
-    if PathBuf::from(outdir).join(".git").exists() {
+    if Path::new(outdir).join(".git").exists() {
         info!(outdir = %outdir, "Found existing git repository, updating...");
 
         let branch_name = if let Some(b) = branch {
