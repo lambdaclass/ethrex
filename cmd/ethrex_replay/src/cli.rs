@@ -446,15 +446,12 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     let block = cache.blocks[0].clone();
     let gas_used = block.header.gas_used as f64;
 
-    let mut witness = execution_witness_from_rpc_chain_config(
+    let witness = execution_witness_from_rpc_chain_config(
         cache.witness.clone(),
         chain_config,
         cache.get_first_block_number()?,
     )?;
     let network = &cache.network.ok_or_eyre("Network should be set for L1")?;
-
-    // // We don't want empty nodes (0x80)
-    // witness.nodes.retain(|v| v != &[0x80]);
 
     let guest_program = GuestProgramState::try_from(witness.clone())?;
 
