@@ -5,7 +5,7 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
     v2::{
         api::{StorageBackend, TableOptions},
-        backend_trie::BackendTrieDB,
+        backend_trie::{BackendTrieDB, BackendTrieDBLocked},
     },
 };
 use bytes::Bytes;
@@ -64,7 +64,7 @@ impl StoreV2 {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
-            let mut txn = db.begin_write()?;
+            let txn = db.begin_write()?;
 
             for (node_hash, node_data) in update_batch.account_updates {
                 txn.put(STATE_TRIE_NODES, node_hash.as_ref(), node_data.as_slice())?;
@@ -133,7 +133,7 @@ impl StoreV2 {
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let mut txn = db.begin_write()?;
+            let txn = db.begin_write()?;
 
             // TODO: Same logic in apply_updates
             for block in blocks {
@@ -177,7 +177,7 @@ impl StoreV2 {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
         txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
         txn.commit()
@@ -188,7 +188,7 @@ impl StoreV2 {
         &self,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         for block_header in block_headers {
             let block_hash = block_header.hash();
             let block_number = block_header.number;
@@ -226,7 +226,7 @@ impl StoreV2 {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         let body_value = BlockBodyRLP::from(block_body).bytes().clone();
         txn.put(BODIES, block_hash.as_bytes(), body_value.as_slice())?;
         txn.commit()
@@ -250,7 +250,7 @@ impl StoreV2 {
             return Ok(());
         };
 
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.delete(
             CANONICAL_BLOCK_HASHES,
             block_number.to_le_bytes().as_slice(),
@@ -338,7 +338,7 @@ impl StoreV2 {
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let block_value = BlockRLP::from(block.clone()).bytes().clone();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(
             PENDING_BLOCKS,
             block.hash().as_bytes(),
@@ -365,7 +365,7 @@ impl StoreV2 {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let number_value = block_number.to_le_bytes();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(BLOCK_NUMBERS, block_hash.as_bytes(), &number_value)?;
         txn.commit()
     }
@@ -401,7 +401,7 @@ impl StoreV2 {
         composite_key[32..].copy_from_slice(block_hash.as_bytes());
         let location_value = (block_number, block_hash, index).encode_to_vec();
 
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(
             TRANSACTION_LOCATIONS,
             composite_key.as_slice(),
@@ -415,7 +415,7 @@ impl StoreV2 {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         let key_values: Vec<([u8; 64], Vec<u8>)> = locations
             .iter()
             .map(|(tx_hash, block_number, block_hash, index)| {
@@ -492,7 +492,7 @@ impl StoreV2 {
         // FIXME: Use dupsort table
         let key = (block_hash, index).encode_to_vec();
         let value = receipt.encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(RECEIPTS, key.as_slice(), value.as_slice())?;
         txn.commit()
     }
@@ -503,7 +503,7 @@ impl StoreV2 {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         for (index, receipt) in receipts.into_iter().enumerate() {
             let key = (block_hash, index as u64).encode_to_vec();
             let value = receipt.encode_to_vec();
@@ -539,7 +539,7 @@ impl StoreV2 {
     /// Add account code
     pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         let code_value = AccountCodeRLP::from(code).bytes().clone();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(ACCOUNT_CODES, code_hash.as_bytes(), code_value.as_slice())?;
         txn.commit()
     }
@@ -626,7 +626,7 @@ impl StoreV2 {
         let value = serde_json::to_string(chain_config)
             .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
             .into_bytes();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(CHAIN_DATA, &key, &value)?;
         txn.commit()
     }
@@ -638,7 +638,7 @@ impl StoreV2 {
     ) -> Result<(), StoreError> {
         let key = [ChainDataIndex::EarliestBlockNumber as u8];
         let value = block_number.to_le_bytes();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(CHAIN_DATA, &key, &value)?;
         txn.commit()
     }
@@ -710,7 +710,7 @@ impl StoreV2 {
     ) -> Result<(), StoreError> {
         let key = [ChainDataIndex::PendingBlockNumber as u8];
         let value = block_number.to_le_bytes();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(CHAIN_DATA, &key, &value)?;
         txn.commit()
     }
@@ -762,18 +762,8 @@ impl StoreV2 {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        // FIXME: Use BackendTrieDBLocked
-        // let txn = self.backend.begin_read()?;
-        // let trie_db = BackendTrieDBLocked::new(
-        //     txn,
-        //     STATE_TRIE_NODES,
-        //     None, // No prefix for state trie
-        // );
-        let trie_db = BackendTrieDB::new(
-            self.backend.clone(),
-            STATE_TRIE_NODES,
-            None, // No prefix for state trie
-        );
+        let trie_db =
+            BackendTrieDBLocked::new(self.backend.begin_locked(STATE_TRIE_NODES, None)?, None);
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -812,7 +802,7 @@ impl StoreV2 {
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let mut tx = db.begin_write()?;
+            let tx = db.begin_write()?;
 
             if let Some(canonical_blocks) = new_canonical_blocks {
                 for (block_number, block_hash) in canonical_blocks {
@@ -895,7 +885,7 @@ impl StoreV2 {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::HeaderDownloadCheckpoint as u8];
         let value = block_hash.encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &value)?;
         txn.commit()
     }
@@ -918,7 +908,7 @@ impl StoreV2 {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateTrieKeyCheckpoint as u8];
         let value = last_keys.to_vec().encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &value)?;
         txn.commit()
     }
@@ -951,7 +941,7 @@ impl StoreV2 {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateHealPaths as u8];
         let value = paths.encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &value)?;
         txn.commit()
     }
@@ -975,7 +965,7 @@ impl StoreV2 {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateTrieRebuildCheckpoint as u8];
         let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &value)?;
         txn.commit()
     }
@@ -1008,7 +998,7 @@ impl StoreV2 {
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StorageTrieRebuildPending as u8];
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &pending.encode_to_vec())?;
         txn.commit()
     }
@@ -1035,7 +1025,7 @@ impl StoreV2 {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         let value = BlockHashRLP::from(latest_valid).bytes().clone();
         txn.put(INVALID_CHAINS, bad_block.as_bytes(), value.as_slice())?;
         txn.commit()
@@ -1089,7 +1079,7 @@ impl StoreV2 {
         &self,
         storage_trie_nodes: Vec<AccountStorage>,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         for (address_hash, nodes) in storage_trie_nodes {
             for (node_hash, node_data) in nodes {
                 // Key: address_hash + node_hash
@@ -1106,7 +1096,7 @@ impl StoreV2 {
         &self,
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let txn = self.backend.begin_write()?;
         for (code_hash, code) in account_codes {
             let value = AccountCodeRLP::from(code).bytes().clone();
             txn.put(ACCOUNT_CODES, code_hash.as_bytes(), value.as_slice())?;

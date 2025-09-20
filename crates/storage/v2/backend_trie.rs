@@ -1,4 +1,4 @@
-use crate::v2::api::{StorageBackend, StorageLocked, StorageRoTx};
+use crate::v2::api::{StorageBackend, StorageLocked};
 use ethrex_common::H256;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
 use std::sync::Arc;
@@ -73,6 +73,71 @@ impl TrieDB for BackendTrieDB {
 
         txn.commit()
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
+    }
+}
+
+/// Read-only version with persistent locked transaction/snapshot for batch reads
+pub struct BackendTrieDBLocked {
+    lock: &'static dyn StorageLocked,
+    address_prefix: Option<H256>,
+}
+
+impl BackendTrieDBLocked {
+    pub fn new(lock: Box<dyn StorageLocked>, address_prefix: Option<H256>) -> Self {
+        // Leak the Box to get 'static lifetime
+        let lock = Box::leak(lock);
+        Self {
+            lock,
+            address_prefix,
+        }
+    }
+
+    fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
+        match &self.address_prefix {
+            Some(address) => {
+                // For storage tries, prefix with address
+                let mut key = address.as_bytes().to_vec();
+                key.extend_from_slice(node_hash.as_ref());
+                key
+            }
+            None => {
+                // For state tries, use node hash directly
+                node_hash.as_ref().to_vec()
+            }
+        }
+    }
+}
+
+impl Drop for BackendTrieDBLocked {
+    fn drop(&mut self) {
+        unsafe {
+            drop(Box::from_raw(
+                self.lock as *const dyn StorageLocked as *mut dyn StorageLocked,
+            ));
+        }
+    }
+}
+
+impl TrieDB for BackendTrieDBLocked {
+    fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        let key = self.make_key(node_hash);
+        self.lock
+            .get(&key)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+    }
+
+    fn put(&self, _node_hash: NodeHash, _value: Vec<u8>) -> Result<(), TrieError> {
+        // Read-only locked storage, should not be used for puts
+        Err(TrieError::DbError(anyhow::anyhow!(
+            "Cannot put in read-only locked storage"
+        )))
+    }
+
+    fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+        // Read-only locked storage, should not be used for puts
+        Err(TrieError::DbError(anyhow::anyhow!(
+            "Cannot put_batch in read-only locked storage"
+        )))
     }
 }
 

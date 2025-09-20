@@ -49,38 +49,27 @@ impl StorageBackend for RocksDBBackend {
         Ok(Box::new(RocksDBRwTx { tx, db: &self.db }))
     }
 
-    fn begin_locked<'a>(
-        &'a self,
+    fn begin_locked(
+        &self,
         table_name: &str,
         address_prefix: Option<H256>,
-    ) -> Result<Box<dyn StorageLocked<'a> + 'a>, StoreError> {
-        let cf = self
-            .db
+    ) -> Result<Box<dyn StorageLocked>, StoreError> {
+        // Leak the database reference to get 'static lifetime
+        let db_static = Box::leak(Box::new(self.db.clone()));
+
+        // Create snapshot from the leaked database
+        let lock = db_static.snapshot();
+
+        let cf_static = db_static
             .cf_handle(table_name)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
-        let lock = self.db.snapshot();
-        Ok(Box::new(BackendTrieDBLocked {
+
+        Ok(Box::new(RocksDBLocked {
             lock,
-            cf,
+            cf: cf_static,
             address_prefix,
+            db: db_static,
         }))
-    }
-}
-
-pub struct BackendTrieDBLocked<'a> {
-    /// Snapshot/locked transaction
-    lock: SnapshotWithThreadMode<'a, OptimisticTransactionDB<MultiThreaded>>,
-    /// Column family handle
-    cf: std::sync::Arc<rocksdb::BoundColumnFamily<'a>>,
-    /// Storage trie address prefix (for storage tries)
-    address_prefix: Option<H256>,
-}
-
-impl StorageLocked<'_> for BackendTrieDBLocked<'_> {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        self.lock
-            .get_cf(&self.cf, key)
-            .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 }
 
@@ -155,6 +144,37 @@ impl StorageRwTx<'_> for RocksDBRwTx<'_> {
         self.tx
             .commit()
             .map_err(|e| StoreError::Custom(format!("Failed to commit transaction: {}", e)))
+    }
+}
+
+pub struct RocksDBLocked {
+    /// Snapshot/locked transaction
+    lock: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
+    /// Column family handle
+    cf: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
+    /// Storage trie address prefix (for storage tries)
+    address_prefix: Option<H256>,
+    /// Leaked database reference for 'static lifetime
+    db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
+}
+
+impl Drop for RocksDBLocked {
+    fn drop(&mut self) {
+        // Restore the leaked database reference
+        unsafe {
+            drop(Box::from_raw(
+                self.db as *const Arc<OptimisticTransactionDB<MultiThreaded>>
+                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
+            ));
+        }
+    }
+}
+
+impl StorageLocked for RocksDBLocked {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        self.lock
+            .get_cf(&self.cf, key)
+            .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))
     }
 }
 

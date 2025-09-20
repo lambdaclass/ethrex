@@ -1,5 +1,9 @@
+use ethrex_common::H256;
+
 use crate::error::StoreError;
-use crate::v2::api::{PrefixIterator, StorageBackend, StorageRoTx, StorageRwTx, TableOptions};
+use crate::v2::api::{
+    PrefixIterator, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
+};
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
@@ -53,6 +57,35 @@ impl StorageBackend for InMemoryBackend {
         Ok(Box::new(InMemoryRwTx {
             backend: &self.inner,
         }))
+    }
+
+    fn begin_locked(
+        &self,
+        table_name: &str,
+        _address_prefix: Option<H256>,
+    ) -> Result<Box<dyn StorageLocked>, StoreError> {
+        Ok(Box::new(InMemoryLocked {
+            backend: self.inner.clone(),
+            table_name: table_name.to_string(),
+        }))
+    }
+}
+
+struct InMemoryLocked {
+    backend: Arc<RwLock<Database>>,
+    table_name: String,
+}
+
+impl StorageLocked for InMemoryLocked {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let db = self
+            .backend
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
+        Ok(db
+            .get(&self.table_name)
+            .and_then(|table_ref| table_ref.get(key))
+            .cloned())
     }
 }
 
