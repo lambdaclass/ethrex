@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758354059536,
+  "lastUpdate": 1758355958739,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -32101,6 +32101,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015340595630050882,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "56888fb00a7392b0afe6a52274c8b85c451eeb96",
+          "message": "feat(l2): implement rip-7740 in l2 genesis (#4567)\n\n**Motivation**\n\nImplement RIP-7740 improving compatibility with existing projects that\nrely on these factories\n\n**Description**\n\n- Hardcode the bytecode for the \"Deterministic Deployment Proxy\"\n- For create2deployer we clone the repo and compile the contract\n- Finally we add to the genesis accounts:\n- 0x4e59b44847b379578588920cA78FbF26c0B4956C ->\nDETERMINISTIC_DEPLOYMENT_CODE\n- 0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7 ->\nDETERMINISTIC_DEPLOYMENT_CODE\n   - 0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2 -> CREATE2DEPLOYER_CODE\n- Because of possible licensing issues with `createx` it was not added\nin this PR, I created issue #4571 to track it\n\ncloses #4552",
+          "timestamp": "2025-09-19T17:49:01Z",
+          "tree_id": "386e7a493404d07350656f08417e17b2b1793137",
+          "url": "https://github.com/lambdaclass/ethrex/commit/56888fb00a7392b0afe6a52274c8b85c451eeb96"
+        },
+        "date": 1758355958006,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004418356034482759,
             "unit": "Mgas/s"
           }
         ]
