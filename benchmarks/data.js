@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758348227338,
+  "lastUpdate": 1758350135257,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -32043,6 +32043,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015276581222056632,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "09c4597cf3a5d3f9bf12577d1fe74d22204c647b",
+          "message": "ci(l1): update daily Hive job to use execution-spec-tests@v5.0.0 (#4380)\n\n**Motivation**\nAdds Fusaka tests\n\n**Description**\n- Updates to\nhttps://github.com/ethereum/execution-spec-tests/releases/tag/v5.0.0\n- Include Osaka tests\n- Unrelated: remove risc0 and SP1 dependency",
+          "timestamp": "2025-09-19T16:03:26Z",
+          "tree_id": "05dce60f626a2a9f9798a2f1ef47ca3d6460f578",
+          "url": "https://github.com/lambdaclass/ethrex/commit/09c4597cf3a5d3f9bf12577d1fe74d22204c647b"
+        },
+        "date": 1758350134511,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004418356034482759,
             "unit": "Mgas/s"
           }
         ]
