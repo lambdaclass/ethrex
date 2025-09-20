@@ -3,7 +3,7 @@ mod api;
 #[cfg(any(feature = "libmdbx", feature = "rocksdb"))]
 mod rlp;
 mod store;
-mod store_db;
+pub mod store_db;
 mod trie_db;
 mod utils;
 
