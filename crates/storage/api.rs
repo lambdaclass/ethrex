@@ -2,34 +2,38 @@ use std::{fmt::Debug, path::Path, sync::Arc};
 
 use crate::error::StoreError;
 
-pub type PrefixIterator<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + 'a>;
+pub trait StorageBackend: Debug + Send + Sync + 'static {
+    type ReadTx: StorageRoTx;
+    type WriteTx: StorageRwTx;
+    type Locked: StorageLocked;
 
-pub trait StorageBackend: Debug + Send + Sync {
-    fn open(path: impl AsRef<Path>) -> Result<Arc<dyn StorageBackend>, StoreError>
+    fn open(path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
     where
         Self: Sized;
     fn create_table(&self, name: &str, options: TableOptions) -> Result<(), StoreError>;
     fn clear_table(&self, table: &str) -> Result<(), StoreError>;
-    fn begin_read<'a>(&'a self) -> Result<Box<dyn StorageRoTx<'a> + 'a>, StoreError>;
-    fn begin_write<'a>(&'a self) -> Result<Box<dyn StorageRwTx<'a> + 'a>, StoreError>;
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError>;
+    fn begin_read(&self) -> Result<Self::ReadTx, StoreError>;
+    fn begin_write(&self) -> Result<Self::WriteTx, StoreError>;
+    fn begin_locked(&self, table_name: &str) -> Result<Self::Locked, StoreError>;
 }
 
 pub struct TableOptions {
     pub dupsort: bool,
 }
 
-pub trait StorageRoTx<'a> {
+pub trait StorageRoTx {
+    type PrefixIter: Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>>;
+
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Returns iterator over all key-value pairs where key starts with prefix
-    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<PrefixIterator, StoreError>;
+    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError>;
 }
 
-pub trait StorageRwTx<'a> {
+pub trait StorageRwTx: StorageRoTx {
     fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
     fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError>;
-    fn commit(self: Box<Self>) -> Result<(), StoreError>;
+    fn commit(self) -> Result<(), StoreError>;
 }
 
 pub trait StorageLocked: Send + Sync {
