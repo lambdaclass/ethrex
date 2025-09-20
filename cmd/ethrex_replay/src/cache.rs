@@ -57,17 +57,17 @@ impl Cache {
 
     pub fn get_chain_config(&self) -> eyre::Result<ChainConfig> {
         if let Some(config) = self.chain_config {
-            return Ok(config);
-        }
-        if let Some(network) = &self.network {
-            return network
+            Ok(config)
+        } else if let Some(network) = &self.network {
+            network
                 .get_genesis()
                 .map(|genesis| genesis.config)
-                .map_err(|e| eyre::eyre!("Failed to get genesis config: {}", e));
+                .map_err(|e| eyre::eyre!("Failed to get genesis config: {}", e))
+        } else {
+            Err(eyre::eyre!(
+                "Cache doesn't have network nor config, this shouldn't happen"
+            ))
         }
-        Err(eyre::eyre!(
-            "Cache doesn't have network nor config, this shouldn't happen"
-        ))
     }
 
     pub fn new(blocks: Vec<Block>, witness: RpcExecutionWitness, network: Option<Network>) -> Self {
