@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758333783117,
+  "lastUpdate": 1758342331394,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -31956,6 +31956,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015276581222056632,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1d9fdf41e0e549db862112eb8e618eff85220f2a",
+          "message": "feat(l1): update EEST to version 5.0 (#4484)\n\n**Motivation**\n\nKeeping up to date with the latest EF tests for Osaka.\n\n**Description**\n\nThis PR updates the fixture URL for the blockchain and state test\nrunners. It also adds some necessary code for some of the tests to pass,\nand skips those which are poorly contructed.",
+          "timestamp": "2025-09-19T14:29:52Z",
+          "tree_id": "aab6f5dfb139ef6fafc0db203c3571b2efbf863f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1d9fdf41e0e549db862112eb8e618eff85220f2a"
+        },
+        "date": 1758342329951,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015290253579952268,
             "unit": "Mgas/s"
           }
         ]
