@@ -1,13 +1,13 @@
-use crate::api::{StorageBackend, StorageLocked};
+use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx};
 use ethrex_common::H256;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
 use std::sync::Arc;
 
 /// StorageBackend implementation for the TrieDB trait
 /// Works with any database that implements StorageBackend
-pub struct BackendTrieDB {
+pub struct BackendTrieDB<B: StorageBackend> {
     /// Storage backend
-    backend: Arc<dyn StorageBackend>,
+    backend: Arc<B>,
     /// Table name for storing trie nodes
     table_name: String,
     /// Storage trie address prefix (for storage tries)
@@ -15,12 +15,8 @@ pub struct BackendTrieDB {
     address_prefix: Option<H256>,
 }
 
-impl BackendTrieDB {
-    pub fn new(
-        backend: Arc<dyn StorageBackend>,
-        table_name: &str,
-        address_prefix: Option<H256>,
-    ) -> Self {
+impl<B: StorageBackend> BackendTrieDB<B> {
+    pub fn new(backend: Arc<B>, table_name: &str, address_prefix: Option<H256>) -> Self {
         Self {
             backend,
             table_name: table_name.to_string(),
@@ -44,7 +40,7 @@ impl BackendTrieDB {
     }
 }
 
-impl TrieDB for BackendTrieDB {
+impl<B: StorageBackend> TrieDB for BackendTrieDB<B> {
     fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let key = self.make_key(node_hash);
         let txn = self.backend.begin_read().map_err(|e| {
@@ -77,15 +73,13 @@ impl TrieDB for BackendTrieDB {
 }
 
 /// Read-only version with persistent locked transaction/snapshot for batch reads
-pub struct BackendTrieDBLocked {
-    lock: &'static dyn StorageLocked,
+pub struct BackendTrieDBLocked<'a, B: StorageBackend> {
+    lock: B::Locked<'a>,
     address_prefix: Option<H256>,
 }
 
-impl BackendTrieDBLocked {
-    pub fn new(lock: Box<dyn StorageLocked>, address_prefix: Option<H256>) -> Self {
-        // Leak the Box to get 'static lifetime
-        let lock = Box::leak(lock);
+impl<'a, B: StorageBackend> BackendTrieDBLocked<'a, B> {
+    pub fn new(lock: B::Locked<'a>, address_prefix: Option<H256>) -> Self {
         Self {
             lock,
             address_prefix,
@@ -108,17 +102,7 @@ impl BackendTrieDBLocked {
     }
 }
 
-impl Drop for BackendTrieDBLocked {
-    fn drop(&mut self) {
-        unsafe {
-            drop(Box::from_raw(
-                self.lock as *const dyn StorageLocked as *mut dyn StorageLocked,
-            ));
-        }
-    }
-}
-
-impl TrieDB for BackendTrieDBLocked {
+impl<'a, B: StorageBackend> TrieDB for BackendTrieDBLocked<'a, B> {
     fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let key = self.make_key(node_hash);
         self.lock
