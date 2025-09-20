@@ -1,6 +1,9 @@
 use crate::error::StoreError;
-use crate::v2::api::{StorageBackend, StorageRoTx, StorageRwTx, TableOptions};
-use rocksdb::{MultiThreaded, OptimisticTransactionDB, Options, Transaction};
+use crate::v2::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions};
+use ethrex_common::H256;
+use rocksdb::{
+    MultiThreaded, OptimisticTransactionDB, Options, SnapshotWithThreadMode, Transaction,
+};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -44,6 +47,40 @@ impl StorageBackend for RocksDBBackend {
     fn begin_write<'a>(&'a self) -> Result<Box<dyn StorageRwTx<'a> + 'a>, StoreError> {
         let tx = self.db.transaction();
         Ok(Box::new(RocksDBRwTx { tx, db: &self.db }))
+    }
+
+    fn begin_locked<'a>(
+        &'a self,
+        table_name: &str,
+        address_prefix: Option<H256>,
+    ) -> Result<Box<dyn StorageLocked<'a> + 'a>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table_name)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
+        let lock = self.db.snapshot();
+        Ok(Box::new(BackendTrieDBLocked {
+            lock,
+            cf,
+            address_prefix,
+        }))
+    }
+}
+
+pub struct BackendTrieDBLocked<'a> {
+    /// Snapshot/locked transaction
+    lock: SnapshotWithThreadMode<'a, OptimisticTransactionDB<MultiThreaded>>,
+    /// Column family handle
+    cf: std::sync::Arc<rocksdb::BoundColumnFamily<'a>>,
+    /// Storage trie address prefix (for storage tries)
+    address_prefix: Option<H256>,
+}
+
+impl StorageLocked<'_> for BackendTrieDBLocked<'_> {
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        self.lock
+            .get_cf(&self.cf, key)
+            .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 }
 

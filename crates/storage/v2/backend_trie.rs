@@ -1,4 +1,4 @@
-use crate::v2::api::StorageBackend;
+use crate::v2::api::{StorageBackend, StorageLocked, StorageRoTx};
 use ethrex_common::H256;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
 use std::sync::Arc;
@@ -60,7 +60,7 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let mut txn = self.backend.begin_write().map_err(|e| {
+        let txn = self.backend.begin_write().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;
 
@@ -75,80 +75,6 @@ impl TrieDB for BackendTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
     }
 }
-
-// /// Version that accepts external transactions for batch operations
-// pub struct BackendTrieDBTx<'a> {
-//     /// Read-only transaction
-//     read_txn: &'a dyn StorageRoTx<'a>,
-//     /// Write transaction
-//     write_txn: &'a mut dyn StorageRwTx<'a>,
-//     /// Table name for storing trie nodes
-//     table_name: String,
-//     /// Storage trie address prefix (for storage tries)
-//     address_prefix: Option<H256>,
-// }
-
-// /// Read-only version with persistent transaction for batch reads
-// pub struct BackendTrieDBLocked<'a> {
-//     /// Read-only transaction
-//     txn: Box<dyn StorageRoTx<'a> + 'a>,
-//     /// Table name for storing trie nodes
-//     table_name: String,
-//     /// Storage trie address prefix (for storage tries)
-//     address_prefix: Option<H256>,
-// }
-
-// impl<'a> BackendTrieDBLocked<'a> {
-//     pub fn new(
-//         txn: Box<dyn StorageRoTx<'a> + 'a>,
-//         table_name: &str,
-//         address_prefix: Option<H256>,
-//     ) -> Self {
-//         Self {
-//             txn,
-//             table_name: table_name.to_string(),
-//             address_prefix,
-//         }
-//     }
-
-//     fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
-//         match &self.address_prefix {
-//             Some(address) => {
-//                 // For storage tries, prefix with address
-//                 let mut key = address.as_bytes().to_vec();
-//                 key.extend_from_slice(node_hash.as_ref());
-//                 key
-//             }
-//             None => {
-//                 // For state tries, use node hash directly
-//                 node_hash.as_ref().to_vec()
-//             }
-//         }
-//     }
-// }
-
-// impl<'a> TrieDB for BackendTrieDBLocked<'a> {
-//     fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-//         let key = self.make_key(node_hash);
-//         self.txn
-//             .get(&self.table_name, &key)
-//             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
-//     }
-
-//     fn put(&self, _node_hash: NodeHash, _value: Vec<u8>) -> Result<(), TrieError> {
-//         // Read-only transaction, should not be used for puts
-//         Err(TrieError::DbError(anyhow::anyhow!(
-//             "Cannot put in read-only transaction"
-//         )))
-//     }
-
-//     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-//         // Read-only transaction, should not be used for puts
-//         Err(TrieError::DbError(anyhow::anyhow!(
-//             "Cannot put_batch in read-only transaction"
-//         )))
-//     }
-// }
 
 // #[cfg(test)]
 // mod tests {
