@@ -1,6 +1,5 @@
 use crate::error::StoreError;
 use crate::v2::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions};
-use ethrex_common::H256;
 use rocksdb::{
     MultiThreaded, OptimisticTransactionDB, Options, SnapshotWithThreadMode, Transaction,
 };
@@ -49,11 +48,7 @@ impl StorageBackend for RocksDBBackend {
         Ok(Box::new(RocksDBRwTx { tx, db: &self.db }))
     }
 
-    fn begin_locked(
-        &self,
-        table_name: &str,
-        address_prefix: Option<H256>,
-    ) -> Result<Box<dyn StorageLocked>, StoreError> {
+    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
         // Leak the database reference to get 'static lifetime
         let db_static = Box::leak(Box::new(self.db.clone()));
 
@@ -67,7 +62,6 @@ impl StorageBackend for RocksDBBackend {
         Ok(Box::new(RocksDBLocked {
             lock,
             cf: cf_static,
-            address_prefix,
             db: db_static,
         }))
     }
@@ -152,8 +146,6 @@ pub struct RocksDBLocked {
     lock: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
     /// Column family handle
     cf: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
-    /// Storage trie address prefix (for storage tries)
-    address_prefix: Option<H256>,
     /// Leaked database reference for 'static lifetime
     db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
 }

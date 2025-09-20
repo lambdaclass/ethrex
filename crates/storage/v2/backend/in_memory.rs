@@ -1,5 +1,3 @@
-use ethrex_common::H256;
-
 use crate::error::StoreError;
 use crate::v2::api::{
     PrefixIterator, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
@@ -59,11 +57,7 @@ impl StorageBackend for InMemoryBackend {
         }))
     }
 
-    fn begin_locked(
-        &self,
-        table_name: &str,
-        _address_prefix: Option<H256>,
-    ) -> Result<Box<dyn StorageLocked>, StoreError> {
+    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
         Ok(Box::new(InMemoryLocked {
             backend: self.inner.clone(),
             table_name: table_name.to_string(),
@@ -173,7 +167,7 @@ mod tests {
 
         // Test write transaction
         {
-            let mut tx = backend.begin_write().unwrap();
+            let tx = backend.begin_write().unwrap();
             tx.put("test", b"key1", b"value1").unwrap();
             tx.put("test", b"key2", b"value2").unwrap();
             tx.commit().unwrap();
@@ -197,7 +191,7 @@ mod tests {
 
         // Insert test data
         {
-            let mut tx = backend.begin_write().unwrap();
+            let tx = backend.begin_write().unwrap();
             tx.put("test", b"prefix_key1", b"value1").unwrap();
             tx.put("test", b"prefix_key2", b"value2").unwrap();
             tx.put("test", b"other_key", b"value3").unwrap();

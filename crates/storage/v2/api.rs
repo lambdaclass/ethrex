@@ -1,7 +1,5 @@
 use std::{fmt::Debug, sync::Arc};
 
-use ethrex_common::H256;
-
 use crate::error::StoreError;
 
 pub type PrefixIterator<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + 'a>;
@@ -17,7 +15,6 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn begin_locked(
         &self,
         table_name: &str,
-        address_prefix: Option<H256>,
     ) -> Result<Box<dyn StorageLocked>, StoreError>;
 }
 

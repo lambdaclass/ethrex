@@ -762,8 +762,10 @@ impl StoreV2 {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db =
-            BackendTrieDBLocked::new(self.backend.begin_locked(STATE_TRIE_NODES, None)?, None);
+        let trie_db = BackendTrieDBLocked::new(
+            self.backend.begin_locked(STATE_TRIE_NODES)?,
+            None, // No address prefix for state trie
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -775,16 +777,8 @@ impl StoreV2 {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        // FIXME: Use BackendTrieDBLocked
-        // let txn = self.backend.begin_read()?;
-        // let trie_db = BackendTrieDBLocked::new(
-        //     txn,
-        //     STORAGE_TRIE_NODES,
-        //     Some(hashed_address), // Use address as prefix for storage trie
-        // );
-        let trie_db = BackendTrieDB::new(
-            self.backend.clone(),
-            STORAGE_TRIE_NODES,
+        let trie_db = BackendTrieDBLocked::new(
+            self.backend.begin_locked(STORAGE_TRIE_NODES)?,
             Some(hashed_address), // Use address as prefix for storage trie
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
