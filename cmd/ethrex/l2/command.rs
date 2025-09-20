@@ -392,7 +392,7 @@ impl Command {
 
                 // Init stores
                 let store = Store::new_from_genesis(
-                    store_path.to_str().expect("Invalid store path"),
+                    &store_path,
                     store_type,
                     genesis.to_str().expect("Invalid genesis path"),
                 )

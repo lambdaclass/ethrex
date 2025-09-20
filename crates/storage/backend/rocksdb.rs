@@ -1,8 +1,9 @@
+use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions};
 use crate::error::StoreError;
-use crate::v2::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions};
 use rocksdb::{
     MultiThreaded, OptimisticTransactionDB, Options, SnapshotWithThreadMode, Transaction,
 };
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -11,7 +12,7 @@ pub struct RocksDBBackend {
 }
 
 impl StorageBackend for RocksDBBackend {
-    fn open(path: &str) -> Result<Arc<dyn StorageBackend>, StoreError>
+    fn open(path: impl AsRef<Path>) -> Result<Arc<dyn StorageBackend>, StoreError>
     where
         Self: Sized,
     {

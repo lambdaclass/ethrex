@@ -1,4 +1,4 @@
-use crate::v2::api::{StorageBackend, StorageLocked};
+use crate::api::{StorageBackend, StorageLocked};
 use ethrex_common::H256;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
 use std::sync::Arc;

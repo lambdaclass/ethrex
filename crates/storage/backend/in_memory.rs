@@ -1,8 +1,9 @@
-use crate::error::StoreError;
-use crate::v2::api::{
+use crate::api::{
     PrefixIterator, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
 };
+use crate::error::StoreError;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 type Table = BTreeMap<Vec<u8>, Vec<u8>>;
@@ -14,7 +15,7 @@ pub struct InMemoryBackend {
 }
 
 impl StorageBackend for InMemoryBackend {
-    fn open(_path: &str) -> Result<Arc<dyn StorageBackend>, StoreError>
+    fn open(_path: impl AsRef<Path>) -> Result<Arc<dyn StorageBackend>, StoreError>
     where
         Self: Sized,
     {
