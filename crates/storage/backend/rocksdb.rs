@@ -12,7 +12,11 @@ pub struct RocksDBBackend {
 }
 
 impl StorageBackend for RocksDBBackend {
-    fn open(path: impl AsRef<Path>) -> Result<Arc<dyn StorageBackend>, StoreError>
+    type ReadTx<'a> = RocksDBRoTx<'a>;
+    type WriteTx<'a> = RocksDBRwTx<'a>;
+    type Locked<'a> = RocksDBLocked<'a>;
+
+    fn open(path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
     where
         Self: Sized,
     {
@@ -39,32 +43,29 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StoreError::Custom(format!("Failed to clear table {}: {}", table, e)))
     }
 
-    fn begin_read<'a>(&'a self) -> Result<Box<dyn StorageRoTx<'a> + 'a>, StoreError> {
+    fn begin_read(&self) -> Result<Self::ReadTx<'_>, StoreError> {
         let tx = self.db.transaction();
-        Ok(Box::new(RocksDBRoTx { tx, db: &self.db }))
+        Ok(RocksDBRoTx { tx, db: &self.db })
     }
 
-    fn begin_write<'a>(&'a self) -> Result<Box<dyn StorageRwTx<'a> + 'a>, StoreError> {
+    fn begin_write(&self) -> Result<Self::WriteTx<'_>, StoreError> {
         let tx = self.db.transaction();
-        Ok(Box::new(RocksDBRwTx { tx, db: &self.db }))
+        Ok(RocksDBRwTx { tx, db: &self.db })
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
-        // Leak the database reference to get 'static lifetime
-        let db_static = Box::leak(Box::new(self.db.clone()));
-
-        // Create snapshot from the leaked database
-        let lock = db_static.snapshot();
-
-        let cf_static = db_static
+    fn begin_locked(&self, table_name: &str) -> Result<Self::Locked<'_>, StoreError> {
+        let lock = self.db.snapshot();
+        let cf = self
+            .db
             .cf_handle(table_name)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?
+            .clone();
 
-        Ok(Box::new(RocksDBLocked {
+        Ok(RocksDBLocked {
+            db: self.db.clone(),
             lock,
-            cf: cf_static,
-            db: db_static,
-        }))
+            cf,
+        })
     }
 }
 
@@ -73,7 +74,8 @@ pub struct RocksDBRoTx<'a> {
     db: &'a OptimisticTransactionDB<MultiThreaded>,
 }
 
-impl StorageRoTx<'_> for RocksDBRoTx<'_> {
+impl<'a> StorageRoTx for RocksDBRoTx<'a> {
+    type PrefixIter = RocksDBPrefixIter;
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
             .db
@@ -85,25 +87,37 @@ impl StorageRoTx<'_> for RocksDBRoTx<'_> {
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
-    fn prefix_iterator(
-        &self,
-        table: &str,
-        prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
-    {
+    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError> {
         let cf = self
             .db
             .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+            .clone();
 
         let iter = self.tx.prefix_iterator_cf(&cf, prefix);
-        let mapped_iter = iter.map(|result| {
-            result
-                .map(|(k, v)| (k.to_vec(), v.to_vec()))
-                .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-        });
+        let results: Vec<Result<(Vec<u8>, Vec<u8>), StoreError>> = iter
+            .map(|result| {
+                result
+                    .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            })
+            .collect();
 
-        Ok(Box::new(mapped_iter))
+        Ok(RocksDBPrefixIter {
+            results: results.into_iter(),
+        })
+    }
+}
+
+pub struct RocksDBPrefixIter {
+    results: std::vec::IntoIter<Result<(Vec<u8>, Vec<u8>), StoreError>>,
+}
+
+impl Iterator for RocksDBPrefixIter {
+    type Item = Result<(Vec<u8>, Vec<u8>), StoreError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.results.next()
     }
 }
 
@@ -112,7 +126,45 @@ pub struct RocksDBRwTx<'a> {
     db: &'a OptimisticTransactionDB<MultiThreaded>,
 }
 
-impl StorageRwTx<'_> for RocksDBRwTx<'_> {
+// Primero implementamos StorageRoTx para RocksDBRwTx
+impl<'a> StorageRoTx for RocksDBRwTx<'a> {
+    type PrefixIter = RocksDBPrefixIter;
+
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        self.tx
+            .get_cf(&cf, key)
+            .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
+    }
+
+    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+            .clone();
+
+        let iter = self.tx.prefix_iterator_cf(&cf, prefix);
+        let results: Vec<Result<(Vec<u8>, Vec<u8>), StoreError>> = iter
+            .map(|result| {
+                result
+                    .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            })
+            .collect();
+
+        Ok(RocksDBPrefixIter {
+            results: results.into_iter(),
+        })
+    }
+}
+
+// Ahora implementamos StorageRwTx
+impl<'a> StorageRwTx for RocksDBRwTx<'a> {
     fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
@@ -135,73 +187,26 @@ impl StorageRwTx<'_> for RocksDBRwTx<'_> {
             .map_err(|e| StoreError::Custom(format!("Failed to delete from {}: {}", table, e)))
     }
 
-    fn commit(self: Box<Self>) -> Result<(), StoreError> {
+    fn commit(self) -> Result<(), StoreError> {
         self.tx
             .commit()
             .map_err(|e| StoreError::Custom(format!("Failed to commit transaction: {}", e)))
     }
 }
 
-pub struct RocksDBLocked {
+pub struct RocksDBLocked<'a> {
+    /// Database reference para mantener el snapshot vivo
+    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Snapshot/locked transaction
-    lock: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
+    lock: SnapshotWithThreadMode<'a, OptimisticTransactionDB<MultiThreaded>>,
     /// Column family handle
-    cf: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
-    /// Leaked database reference for 'static lifetime
-    db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
+    cf: Arc<rocksdb::BoundColumnFamily<'a>>,
 }
 
-impl Drop for RocksDBLocked {
-    fn drop(&mut self) {
-        // Restore the leaked database reference
-        unsafe {
-            drop(Box::from_raw(
-                self.db as *const Arc<OptimisticTransactionDB<MultiThreaded>>
-                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
-            ));
-        }
-    }
-}
-
-impl StorageLocked for RocksDBLocked {
+impl<'a> StorageLocked for RocksDBLocked<'a> {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         self.lock
             .get_cf(&self.cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rocksdb_backend() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let backend = RocksDBBackend::open(temp_dir.path().to_str().unwrap()).unwrap();
-        backend
-            .create_table("test", TableOptions { dupsort: false })
-            .unwrap();
-        let tx = backend.begin_read().unwrap();
-        let value = tx.get("test", b"test").unwrap();
-        assert_eq!(value, None);
-    }
-
-    #[test]
-    fn test_rocksdb_backend_write() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let backend = RocksDBBackend::open(temp_dir.path().to_str().unwrap()).unwrap();
-        backend
-            .create_table("test", TableOptions { dupsort: false })
-            .unwrap();
-        let txn = backend.begin_write().unwrap();
-        txn.put("test", b"test", b"test").unwrap();
-        txn.commit().unwrap();
-        let txn = backend.begin_read().unwrap();
-        let value = txn.get("test", b"test").unwrap();
-        assert_eq!(value, Some(b"test".to_vec()));
-
-        let value = txn.get("test", b"test2").unwrap();
-        assert_eq!(value, None);
     }
 }

@@ -1,6 +1,4 @@
-use crate::api::{
-    PrefixIterator, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
-};
+use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions};
 use crate::error::StoreError;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,7 +13,11 @@ pub struct InMemoryBackend {
 }
 
 impl StorageBackend for InMemoryBackend {
-    fn open(_path: impl AsRef<Path>) -> Result<Arc<dyn StorageBackend>, StoreError>
+    type ReadTx<'a> = InMemoryRoTx<'a>;
+    type WriteTx<'a> = InMemoryRwTx<'a>;
+    type Locked<'a> = InMemoryLocked;
+
+    fn open(_path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
     where
         Self: Sized,
     {
@@ -46,29 +48,41 @@ impl StorageBackend for InMemoryBackend {
         Ok(())
     }
 
-    fn begin_read<'a>(&'a self) -> Result<Box<dyn StorageRoTx<'a> + 'a>, StoreError> {
-        Ok(Box::new(InMemoryRoTx {
+    fn begin_read(&self) -> Result<Self::ReadTx<'_>, StoreError> {
+        Ok(InMemoryRoTx {
             backend: &self.inner,
-        }))
+        })
     }
 
-    fn begin_write<'a>(&'a self) -> Result<Box<dyn StorageRwTx<'a> + 'a>, StoreError> {
-        Ok(Box::new(InMemoryRwTx {
+    fn begin_write(&self) -> Result<Self::WriteTx<'_>, StoreError> {
+        Ok(InMemoryRwTx {
             backend: &self.inner,
-        }))
+        })
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
-        Ok(Box::new(InMemoryLocked {
+    fn begin_locked(&self, table_name: &str) -> Result<Self::Locked<'_>, StoreError> {
+        Ok(InMemoryLocked {
             backend: self.inner.clone(),
             table_name: table_name.to_string(),
-        }))
+        })
     }
 }
 
-struct InMemoryLocked {
+pub struct InMemoryLocked {
     backend: Arc<RwLock<Database>>,
     table_name: String,
+}
+
+pub struct InMemoryPrefixIter {
+    results: std::vec::IntoIter<Result<(Vec<u8>, Vec<u8>), StoreError>>,
+}
+
+impl Iterator for InMemoryPrefixIter {
+    type Item = Result<(Vec<u8>, Vec<u8>), StoreError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.results.next()
+    }
 }
 
 impl StorageLocked for InMemoryLocked {
@@ -88,7 +102,9 @@ pub struct InMemoryRoTx<'a> {
     backend: &'a RwLock<Database>,
 }
 
-impl<'a> StorageRoTx<'a> for InMemoryRoTx<'a> {
+impl<'a> StorageRoTx for InMemoryRoTx<'a> {
+    type PrefixIter = InMemoryPrefixIter;
+
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .backend
@@ -101,7 +117,7 @@ impl<'a> StorageRoTx<'a> for InMemoryRoTx<'a> {
             .cloned())
     }
 
-    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<PrefixIterator, StoreError> {
+    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError> {
         let db = self
             .backend
             .read()
@@ -110,13 +126,16 @@ impl<'a> StorageRoTx<'a> for InMemoryRoTx<'a> {
         let table_data = db.get(table).cloned().unwrap_or_default();
         let prefix_vec = prefix.to_vec();
 
-        // Crear un iterador que filtra por prefix
-        let iter = table_data
+        // Colectar resultados inmediatamente
+        let results: Vec<Result<(Vec<u8>, Vec<u8>), StoreError>> = table_data
             .into_iter()
-            .filter(move |(key, _)| key.starts_with(&prefix_vec))
-            .map(|(k, v)| Ok((k, v)));
+            .filter(|(key, _)| key.starts_with(&prefix_vec))
+            .map(|(k, v)| Ok((k, v)))
+            .collect();
 
-        Ok(Box::new(iter))
+        Ok(InMemoryPrefixIter {
+            results: results.into_iter(),
+        })
     }
 }
 
@@ -124,7 +143,43 @@ pub struct InMemoryRwTx<'a> {
     backend: &'a RwLock<Database>,
 }
 
-impl<'a> StorageRwTx<'a> for InMemoryRwTx<'a> {
+impl<'a> StorageRoTx for InMemoryRwTx<'a> {
+    type PrefixIter = InMemoryPrefixIter;
+
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let db = self
+            .backend
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
+
+        Ok(db
+            .get(table)
+            .and_then(|table_ref| table_ref.get(key))
+            .cloned())
+    }
+
+    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError> {
+        let db = self
+            .backend
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
+
+        let table_data = db.get(table).cloned().unwrap_or_default();
+        let prefix_vec = prefix.to_vec();
+
+        let results: Vec<Result<(Vec<u8>, Vec<u8>), StoreError>> = table_data
+            .into_iter()
+            .filter(|(key, _)| key.starts_with(&prefix_vec))
+            .map(|(k, v)| Ok((k, v)))
+            .collect();
+
+        Ok(InMemoryPrefixIter {
+            results: results.into_iter(),
+        })
+    }
+}
+
+impl<'a> StorageRwTx for InMemoryRwTx<'a> {
     fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let mut db = self
             .backend
@@ -149,7 +204,7 @@ impl<'a> StorageRwTx<'a> for InMemoryRwTx<'a> {
         Ok(())
     }
 
-    fn commit(self: Box<Self>) -> Result<(), StoreError> {
+    fn commit(self) -> Result<(), StoreError> {
         // We don't need to commit for in-memory backend
         Ok(())
     }
