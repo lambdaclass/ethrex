@@ -92,7 +92,7 @@ pub struct RocksDBRwTx<'a> {
 }
 
 impl StorageRwTx<'_> for RocksDBRwTx<'_> {
-    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+    fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
             .cf_handle(table)
@@ -103,7 +103,7 @@ impl StorageRwTx<'_> for RocksDBRwTx<'_> {
             .map_err(|e| StoreError::Custom(format!("Failed to put to {}: {}", table, e)))
     }
 
-    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
+    fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
             .cf_handle(table)
@@ -144,7 +144,7 @@ mod tests {
         backend
             .create_table("test", TableOptions { dupsort: false })
             .unwrap();
-        let mut txn = backend.begin_write().unwrap();
+        let txn = backend.begin_write().unwrap();
         txn.put("test", b"test", b"test").unwrap();
         txn.commit().unwrap();
         let txn = backend.begin_read().unwrap();

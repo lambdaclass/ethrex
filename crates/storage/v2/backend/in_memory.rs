@@ -97,7 +97,7 @@ pub struct InMemoryRwTx<'a> {
 }
 
 impl<'a> StorageRwTx<'a> for InMemoryRwTx<'a> {
-    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+    fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let mut db = self
             .backend
             .write()
@@ -109,7 +109,7 @@ impl<'a> StorageRwTx<'a> for InMemoryRwTx<'a> {
         Ok(())
     }
 
-    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
+    fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let mut db = self
             .backend
             .write()
@@ -194,7 +194,7 @@ mod tests {
 
         // Writes are immediately visible (no transaction isolation)
         {
-            let mut tx1 = backend.begin_write().unwrap();
+            let tx1 = backend.begin_write().unwrap();
             tx1.put("test", b"key1", b"value1").unwrap();
             tx1.commit().unwrap();
         }
@@ -215,13 +215,13 @@ mod tests {
 
         // Insert and then delete
         {
-            let mut tx = backend.begin_write().unwrap();
+            let tx = backend.begin_write().unwrap();
             tx.put("test", b"key1", b"value1").unwrap();
             tx.commit().unwrap();
         }
 
         {
-            let mut tx = backend.begin_write().unwrap();
+            let tx = backend.begin_write().unwrap();
             tx.delete("test", b"key1").unwrap();
             tx.commit().unwrap();
         }

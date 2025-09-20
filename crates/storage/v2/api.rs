@@ -26,7 +26,7 @@ pub trait StorageRoTx<'a> {
 }
 
 pub trait StorageRwTx<'a> {
-    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
-    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError>;
+    fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
+    fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError>;
     fn commit(self: Box<Self>) -> Result<(), StoreError>;
 }
