@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758325418555,
+  "lastUpdate": 1758333783117,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -31927,6 +31927,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00445677652173913,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "884247e87cd4127ad1a6b444b99de67494481da0",
+          "message": "fix(l1): fetch transactions from mempool on `GetTransactionByHash` & `GetRawTransaction` rpc endpoints (#4533)\n\n**Motivation**\n`GetTransactionByHash` & `GetRawTransaction` should fetch pooled\ntransactions from the mempool if they are not yet finalized.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* When handling `GetTransactionByHash` & `GetRawTransaction` we should\nfetch transactions from the mempool if they are not in the store\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None, needed for #3844",
+          "timestamp": "2025-09-19T14:11:17Z",
+          "tree_id": "e37c06fa5537a93d83cb8ffaf6a62a05d2103d52",
+          "url": "https://github.com/lambdaclass/ethrex/commit/884247e87cd4127ad1a6b444b99de67494481da0"
+        },
+        "date": 1758333781988,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015276581222056632,
             "unit": "Mgas/s"
           }
         ]
