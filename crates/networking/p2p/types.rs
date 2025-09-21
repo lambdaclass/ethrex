@@ -140,7 +140,9 @@ impl FromStr for Node {
         match s {
             s if s.starts_with("enode://") => Self::from_enode_url(s),
             s if s.starts_with("enr:") => Self::from_enr_url(s),
-            _ => Err(NodeError::InvalidFormat("Invalid network address format".into())),
+            _ => Err(NodeError::InvalidFormat(
+                "Invalid network address format".into(),
+            )),
         }
     }
 }
@@ -158,8 +160,8 @@ impl Node {
     }
 
     pub fn from_enode_url(enode: &str) -> Result<Self, NodeError> {
-        let public_key =
-            H512::from_str(&enode[8..136]).map_err(|_| NodeError::ParseError("Could not parse public_key".into()))?;
+        let public_key = H512::from_str(&enode[8..136])
+            .map_err(|_| NodeError::ParseError("Could not parse public_key".into()))?;
 
         let address_start = 137;
         let address_part = &enode[address_start..];
@@ -188,17 +190,23 @@ impl Node {
 
     pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
         let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
-        let record = NodeRecord::decode(&base64_decoded)
-            .map_err(NodeError::from)?;
+        let record = NodeRecord::decode(&base64_decoded).map_err(NodeError::from)?;
         let pairs = record.decode_pairs();
-        let public_key = pairs.secp256k1.ok_or(NodeError::MissingField("public key not found in record".into()))?;
-        let verifying_key = PublicKey::from_slice(public_key.as_bytes())
-            .map_err(|_| NodeError::ParseError("public key could not be built from msg pub key bytes".into()))?;
+        let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
+            "public key not found in record".into(),
+        ))?;
+        let verifying_key = PublicKey::from_slice(public_key.as_bytes()).map_err(|_| {
+            NodeError::ParseError("public key could not be built from msg pub key bytes".into())
+        })?;
         let encoded = verifying_key.serialize_uncompressed();
         let public_key = H512::from_slice(&encoded[1..]);
 
         let ip: IpAddr = match (pairs.ip, pairs.ip6) {
-            (None, None) => return Err(NodeError::MissingField("Ip not found in record, can't construct node".into())),
+            (None, None) => {
+                return Err(NodeError::MissingField(
+                    "Ip not found in record, can't construct node".into(),
+                ));
+            }
             (None, Some(ipv6)) => IpAddr::from(ipv6),
             (Some(ipv4), None) => IpAddr::from(ipv4),
             (Some(ipv4), Some(_ipv6)) => IpAddr::from(ipv4),
@@ -331,8 +339,8 @@ impl NodeRecord {
         let rlp_encoded = self.encode_to_vec();
         let base64_encoded = ethrex_common::base64::encode(&rlp_encoded);
         let mut result: String = "enr:".into();
-        let base64_encoded =
-            String::from_utf8(base64_encoded).map_err(|_| NodeError::ParseError("Could not base 64 encode enr record".into()))?;
+        let base64_encoded = String::from_utf8(base64_encoded)
+            .map_err(|_| NodeError::ParseError("Could not base 64 encode enr record".into()))?;
         result.push_str(&base64_encoded);
         Ok(result)
     }
