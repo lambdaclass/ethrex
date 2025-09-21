@@ -300,6 +300,29 @@ impl Mempool {
         Ok(blobs_bundle_pool.values().cloned().collect())
     }
 
+    // Gets all transactions in the pool sorted by sender address and nonce
+    pub fn content_by_sender_nonce(&self) -> Result<Vec<(H160, u64, Transaction)>, MempoolError> {
+        let pooled_transactions = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let by_sender_nonce = self
+            .txs_by_sender_nonce
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(by_sender_nonce
+            .iter()
+            .map(|((sender, nonce), tx_hash)| {
+                (
+                    *sender,
+                    *nonce,
+                    #[expect(clippy::indexing_slicing, reason = "mempool invariant")]
+                    pooled_transactions[tx_hash].transaction().clone(),
+                )
+            })
+            .collect())
+    }
+
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
     pub fn status(&self) -> Result<u64, MempoolError> {

@@ -25,15 +25,12 @@ struct MempoolStatus {
 
 /// Handling of rpc endpoint `mempool_content`
 pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
-    let transactions = context.blockchain.mempool.content()?;
+    let transactions = context.blockchain.mempool.content_by_sender_nonce()?;
     // Group transactions by sender and nonce and map them to rpc transactions
     let mut mempool_content = MempoolContentEntry::new();
-    for tx in transactions {
-        let sender_entry = mempool_content.entry(tx.sender()?).or_default();
-        sender_entry.insert(
-            tx.nonce(),
-            RpcTransaction::build(tx, None, H256::zero(), None)?,
-        );
+    for (sender, nonce, tx) in transactions {
+        let sender_entry = mempool_content.entry(sender).or_default();
+        sender_entry.insert(nonce, RpcTransaction::build(tx, None, H256::zero(), None)?);
     }
     let response = MempoolContent {
         pending: mempool_content,
