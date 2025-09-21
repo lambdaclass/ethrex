@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 /// StorageBackend implementation for the TrieDB trait
 /// Works with any database that implements StorageBackend
-pub struct BackendTrieDB<B: StorageBackend> {
+pub struct BackendTrieDB {
     /// Storage backend
-    backend: Arc<B>,
+    backend: Arc<dyn StorageBackend>,
     /// Table name for storing trie nodes
     table_name: String,
     /// Storage trie address prefix (for storage tries)
@@ -15,8 +15,8 @@ pub struct BackendTrieDB<B: StorageBackend> {
     address_prefix: Option<H256>,
 }
 
-impl<B: StorageBackend> BackendTrieDB<B> {
-    pub fn new(backend: Arc<B>, table_name: &str, address_prefix: Option<H256>) -> Self {
+impl BackendTrieDB {
+    pub fn new(backend: Arc<dyn StorageBackend>, table_name: &str, address_prefix: Option<H256>) -> Self {
         Self {
             backend,
             table_name: table_name.to_string(),
@@ -40,7 +40,7 @@ impl<B: StorageBackend> BackendTrieDB<B> {
     }
 }
 
-impl<B: StorageBackend> TrieDB for BackendTrieDB<B> {
+impl TrieDB for BackendTrieDB {
     fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let key = self.make_key(node_hash);
         let txn = self.backend.begin_read().map_err(|e| {
@@ -73,13 +73,13 @@ impl<B: StorageBackend> TrieDB for BackendTrieDB<B> {
 }
 
 /// Read-only version with persistent locked transaction/snapshot for batch reads
-pub struct BackendTrieDBLocked<'a, B: StorageBackend> {
-    lock: B::Locked<'a>,
+pub struct BackendTrieDBLocked<'a> {
+    lock: Box<dyn StorageLocked + 'a>,
     address_prefix: Option<H256>,
 }
 
-impl<'a, B: StorageBackend> BackendTrieDBLocked<'a, B> {
-    pub fn new(lock: B::Locked<'a>, address_prefix: Option<H256>) -> Self {
+impl<'a> BackendTrieDBLocked<'a> {
+    pub fn new(lock: Box<dyn StorageLocked + 'a>, address_prefix: Option<H256>) -> Self {
         Self {
             lock,
             address_prefix,
@@ -102,7 +102,7 @@ impl<'a, B: StorageBackend> BackendTrieDBLocked<'a, B> {
     }
 }
 
-impl<'a, B: StorageBackend> TrieDB for BackendTrieDBLocked<'a, B> {
+impl<'a> TrieDB for BackendTrieDBLocked<'a> {
     fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let key = self.make_key(node_hash);
         self.lock

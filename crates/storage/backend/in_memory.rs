@@ -13,10 +13,6 @@ pub struct InMemoryBackend {
 }
 
 impl StorageBackend for InMemoryBackend {
-    type ReadTx<'a> = InMemoryRoTx<'a>;
-    type WriteTx<'a> = InMemoryRwTx<'a>;
-    type Locked<'a> = InMemoryLocked;
-
     fn open(_path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
     where
         Self: Sized,
@@ -48,23 +44,23 @@ impl StorageBackend for InMemoryBackend {
         Ok(())
     }
 
-    fn begin_read(&self) -> Result<Self::ReadTx<'_>, StoreError> {
-        Ok(InMemoryRoTx {
+    fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
+        Ok(Box::new(InMemoryRoTx {
             backend: &self.inner,
-        })
+        }))
     }
 
-    fn begin_write(&self) -> Result<Self::WriteTx<'_>, StoreError> {
-        Ok(InMemoryRwTx {
+    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError> {
+        Ok(Box::new(InMemoryRwTx {
             backend: &self.inner,
-        })
+        }))
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Self::Locked<'_>, StoreError> {
-        Ok(InMemoryLocked {
+    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked + '_>, StoreError> {
+        Ok(Box::new(InMemoryLocked {
             backend: self.inner.clone(),
             table_name: table_name.to_string(),
-        })
+        }))
     }
 }
 
@@ -103,8 +99,6 @@ pub struct InMemoryRoTx<'a> {
 }
 
 impl<'a> StorageRoTx for InMemoryRoTx<'a> {
-    type PrefixIter = InMemoryPrefixIter;
-
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .backend
@@ -117,7 +111,12 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
             .cloned())
     }
 
-    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError> {
+    fn prefix_iterator(
+        &self,
+        table: &str,
+        prefix: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
+    {
         let db = self
             .backend
             .read()
@@ -133,9 +132,10 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
             .map(|(k, v)| Ok((k, v)))
             .collect();
 
-        Ok(InMemoryPrefixIter {
+        let iter = InMemoryPrefixIter {
             results: results.into_iter(),
-        })
+        };
+        Ok(Box::new(iter))
     }
 }
 
@@ -144,8 +144,6 @@ pub struct InMemoryRwTx<'a> {
 }
 
 impl<'a> StorageRoTx for InMemoryRwTx<'a> {
-    type PrefixIter = InMemoryPrefixIter;
-
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .backend
@@ -158,7 +156,12 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
             .cloned())
     }
 
-    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError> {
+    fn prefix_iterator(
+        &self,
+        table: &str,
+        prefix: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
+    {
         let db = self
             .backend
             .read()
@@ -173,9 +176,10 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
             .map(|(k, v)| Ok((k, v)))
             .collect();
 
-        Ok(InMemoryPrefixIter {
+        let iter = InMemoryPrefixIter {
             results: results.into_iter(),
-        })
+        };
+        Ok(Box::new(iter))
     }
 }
 
@@ -204,7 +208,7 @@ impl<'a> StorageRwTx for InMemoryRwTx<'a> {
         Ok(())
     }
 
-    fn commit(self) -> Result<(), StoreError> {
+    fn commit(self: Box<Self>) -> Result<(), StoreError> {
         // We don't need to commit for in-memory backend
         Ok(())
     }

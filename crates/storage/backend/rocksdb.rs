@@ -1,21 +1,20 @@
-use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions};
+use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions};
 use crate::error::StoreError;
+use rocksdb::ColumnFamilyDescriptor;
 use rocksdb::{
     MultiThreaded, OptimisticTransactionDB, Options, SnapshotWithThreadMode, Transaction,
 };
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-#[derive(Debug)]
 pub struct RocksDBBackend {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
 }
 
-impl StorageBackend for RocksDBBackend {
-    type ReadTx<'a> = RocksDBRoTx<'a>;
-    type WriteTx<'a> = RocksDBRwTx<'a>;
-    type Locked<'a> = RocksDBLocked<'a>;
+impl RocksDBBackend {}
 
+impl StorageBackend for RocksDBBackend {
     fn open(path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
     where
         Self: Sized,
@@ -24,8 +23,18 @@ impl StorageBackend for RocksDBBackend {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        let db = OptimisticTransactionDB::open(&opts, path)
-            .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+        // Abrimos/creamos todos los CFs conocidos al inicio para evitar lookups fallidos
+        let cf_descriptors: Vec<_> = TABLES
+            .iter()
+            .map(|&name| ColumnFamilyDescriptor::new(name, Options::default()))
+            .collect();
+
+        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+            &opts,
+            path.as_ref(),
+            cf_descriptors,
+        )
+        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
         Ok(Arc::new(Self { db: Arc::new(db) }))
     }
@@ -43,17 +52,35 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StoreError::Custom(format!("Failed to clear table {}: {}", table, e)))
     }
 
-    fn begin_read(&self) -> Result<Self::ReadTx<'_>, StoreError> {
+    fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
         let tx = self.db.transaction();
-        Ok(RocksDBRoTx { tx, db: &self.db })
+        let mut cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'_>>> =
+            HashMap::with_capacity(TABLES.len());
+        for &table in TABLES.iter() {
+            let cf = self
+                .db
+                .cf_handle(table)
+                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            cfs.insert(table.to_string(), cf);
+        }
+        Ok(Box::new(RocksDBRoTx { tx, cfs }))
     }
 
-    fn begin_write(&self) -> Result<Self::WriteTx<'_>, StoreError> {
+    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError> {
         let tx = self.db.transaction();
-        Ok(RocksDBRwTx { tx, db: &self.db })
+        let mut cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'_>>> =
+            HashMap::with_capacity(TABLES.len());
+        for &table in TABLES.iter() {
+            let cf = self
+                .db
+                .cf_handle(table)
+                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            cfs.insert(table.to_string(), cf);
+        }
+        Ok(Box::new(RocksDBRwTx { tx, cfs }))
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Self::Locked<'_>, StoreError> {
+    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked + '_>, StoreError> {
         let lock = self.db.snapshot();
         let cf = self
             .db
@@ -61,36 +88,37 @@ impl StorageBackend for RocksDBBackend {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?
             .clone();
 
-        Ok(RocksDBLocked {
-            db: self.db.clone(),
-            lock,
-            cf,
-        })
+        Ok(Box::new(RocksDBLocked { lock, cf }))
     }
 }
 
 pub struct RocksDBRoTx<'a> {
     tx: Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
-    db: &'a OptimisticTransactionDB<MultiThreaded>,
+    cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
 impl<'a> StorageRoTx for RocksDBRoTx<'a> {
-    type PrefixIter = RocksDBPrefixIter;
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            .cfs
+            .get(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+            .clone();
 
         self.tx
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
-    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError> {
+    fn prefix_iterator(
+        &self,
+        table: &str,
+        prefix: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
+    {
         let cf = self
-            .db
-            .cf_handle(table)
+            .cfs
+            .get(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
@@ -103,9 +131,10 @@ impl<'a> StorageRoTx for RocksDBRoTx<'a> {
             })
             .collect();
 
-        Ok(RocksDBPrefixIter {
+        let rocks_iter = RocksDBPrefixIter {
             results: results.into_iter(),
-        })
+        };
+        Ok(Box::new(rocks_iter))
     }
 }
 
@@ -123,28 +152,32 @@ impl Iterator for RocksDBPrefixIter {
 
 pub struct RocksDBRwTx<'a> {
     tx: Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
-    db: &'a OptimisticTransactionDB<MultiThreaded>,
+    cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
 // Primero implementamos StorageRoTx para RocksDBRwTx
 impl<'a> StorageRoTx for RocksDBRwTx<'a> {
-    type PrefixIter = RocksDBPrefixIter;
-
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            .cfs
+            .get(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+            .clone();
 
         self.tx
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
-    fn prefix_iterator(&self, table: &str, prefix: &[u8]) -> Result<Self::PrefixIter, StoreError> {
+    fn prefix_iterator(
+        &self,
+        table: &str,
+        prefix: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
+    {
         let cf = self
-            .db
-            .cf_handle(table)
+            .cfs
+            .get(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
@@ -157,9 +190,10 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
             })
             .collect();
 
-        Ok(RocksDBPrefixIter {
+        let rocks_iter = RocksDBPrefixIter {
             results: results.into_iter(),
-        })
+        };
+        Ok(Box::new(rocks_iter))
     }
 }
 
@@ -167,9 +201,10 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
 impl<'a> StorageRwTx for RocksDBRwTx<'a> {
     fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            .cfs
+            .get(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+            .clone();
 
         self.tx
             .put_cf(&cf, key, value)
@@ -178,16 +213,17 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
 
     fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            .cfs
+            .get(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+            .clone();
 
         self.tx
             .delete_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to delete from {}: {}", table, e)))
     }
 
-    fn commit(self) -> Result<(), StoreError> {
+    fn commit(self: Box<Self>) -> Result<(), StoreError> {
         self.tx
             .commit()
             .map_err(|e| StoreError::Custom(format!("Failed to commit transaction: {}", e)))
@@ -195,8 +231,6 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
 }
 
 pub struct RocksDBLocked<'a> {
-    /// Database reference para mantener el snapshot vivo
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Snapshot/locked transaction
     lock: SnapshotWithThreadMode<'a, OptimisticTransactionDB<MultiThreaded>>,
     /// Column family handle
