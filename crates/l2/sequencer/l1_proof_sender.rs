@@ -85,8 +85,6 @@ pub struct L1ProofSenderHealth {
     network: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     fee_estimate: Option<FeeEstimationType>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    aligned_sp1_elf_path: Option<String>,
 }
 
 impl L1ProofSender {
@@ -397,15 +395,12 @@ impl L1ProofSender {
         let rpc_healthcheck = self.eth_client.test_urls().await;
         let signer_status = self.signer.health().await;
 
-        let (fee_estimate, aligned_sp1_elf_path) =
-            if self.needed_proof_types.contains(&ProverType::Aligned) {
-                (
-                    Some(self.fee_estimate.clone()),
-                    Some(self.aligned_sp1_elf_path.clone()),
-                )
-            } else {
-                (None, None)
-            };
+        let fee_estimate = if self.aligned_mode {
+            Some(self.fee_estimate.clone())
+        } else {
+            None
+        };
+
         CallResponse::Reply(OutMessage::Health(Box::new(L1ProofSenderHealth {
             rpc_healthcheck,
             signer_status,
@@ -420,7 +415,6 @@ impl L1ProofSender {
             l1_chain_id: self.l1_chain_id,
             network: format!("{:?}", self.network),
             fee_estimate,
-            aligned_sp1_elf_path,
         })))
     }
 }
