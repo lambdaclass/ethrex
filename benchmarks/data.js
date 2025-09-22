@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758561086088,
+  "lastUpdate": 1758561457947,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15895,6 +15895,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 88686744473,
             "range": "± 791058200",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "241f79d9e993a221c5a9a9ab48c28d9c17c90835",
+          "message": "perf(levm): refactor `bls12_g1add` to use lambdaworks (#4500)\n\n**Motivation**\n\nBLS12 computation is slow.\n\n**Description**\n\nReplace the BLS12 library with `lambdaworks`.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-22T16:29:52Z",
+          "tree_id": "afd67720fc9ba20dbe8902806fa2a36a8aa725b4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/241f79d9e993a221c5a9a9ab48c28d9c17c90835"
+        },
+        "date": 1758561437208,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89495250672,
+            "range": "± 910555262",
             "unit": "ns/iter"
           }
         ]
