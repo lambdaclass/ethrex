@@ -451,7 +451,7 @@ impl<'a> VM<'a> {
                 } else {
                     0
                 }
-            }
+            };
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
