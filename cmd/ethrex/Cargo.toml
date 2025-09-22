@@ -60,10 +60,15 @@ name = "ethrex"
 path = "./lib.rs"
 
 [features]
-default = ["libmdbx", "c-kzg", "rollup_storage_sql", "dev", "metrics"]
 debug = ["ethrex-vm/debug"]
+default = ["libmdbx", "c-kzg", "rollup_storage_sql", "dev", "metrics"]
 dev = ["dep:ethrex-dev"]
-c-kzg = [ "ethrex-common/c-kzg" ]
+c-kzg = [
+  "ethrex-vm/c-kzg",
+  "ethrex-common/c-kzg",
+  "ethrex-blockchain/c-kzg",
+  "ethrex-p2p/c-kzg",
+]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
 rocksdb = ["ethrex-storage/rocksdb"]
