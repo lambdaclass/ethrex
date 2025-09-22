@@ -443,11 +443,12 @@ impl<'a> VM<'a> {
             );
         }
 
-        let opcode = 0;
+        let mut opcode = 0;
         loop {
-            opcode = unsafe {
-                if self.current_call_frame.pc < self.current_call_frame.bytecode.len() {
-                    *self.current_call_frame.bytecode.as_ptr().add(self.pc)
+            #[allow(unsafe_code, reason = "The bounds are checked before accessing the pointer.")]
+            unsafe {
+                opcode = if self.current_call_frame.pc < self.current_call_frame.bytecode.len() {
+                    *self.current_call_frame.bytecode.as_ptr().add(self.current_call_frame.pc)
                 } else {
                     0
                 }
