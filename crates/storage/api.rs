@@ -2,6 +2,8 @@ use std::{fmt::Debug, path::Path, sync::Arc};
 
 use crate::error::StoreError;
 
+pub type PrefixResult = Result<(Vec<u8>, Vec<u8>), StoreError>;
+
 pub const TABLES: [&str; 13] = [
     "chain_data",
     "account_codes",
@@ -39,7 +41,7 @@ pub trait StorageRoTx {
         &self,
         table: &str,
         prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>;
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
 }
 
 pub trait StorageRwTx: StorageRoTx {

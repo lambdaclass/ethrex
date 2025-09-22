@@ -1,7 +1,9 @@
-use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions};
+use crate::api::{
+    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions,
+};
 use crate::error::StoreError;
 use rocksdb::OptimisticTransactionDB;
-use rocksdb::{MultiThreaded, Options, SnapshotWithThreadMode, Transaction, TransactionDB};
+use rocksdb::{MultiThreaded, Options, SnapshotWithThreadMode, Transaction};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -109,7 +111,7 @@ impl<'a> StorageRoTx for RocksDBRoTx<'a> {
             .clone();
 
         let iter = self.tx.prefix_iterator_cf(&cf, prefix);
-        let results: Vec<Result<(Vec<u8>, Vec<u8>), StoreError>> = iter
+        let results: Vec<PrefixResult> = iter
             .map(|result| {
                 result
                     .map(|(k, v)| (k.to_vec(), v.to_vec()))
@@ -125,7 +127,7 @@ impl<'a> StorageRoTx for RocksDBRoTx<'a> {
 }
 
 pub struct RocksDBPrefixIter {
-    results: std::vec::IntoIter<Result<(Vec<u8>, Vec<u8>), StoreError>>,
+    results: std::vec::IntoIter<PrefixResult>,
 }
 
 impl Iterator for RocksDBPrefixIter {
@@ -167,7 +169,7 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
             .clone();
 
         let iter = self.tx.prefix_iterator_cf(&cf, prefix);
-        let results: Vec<Result<(Vec<u8>, Vec<u8>), StoreError>> = iter
+        let results: Vec<PrefixResult> = iter
             .map(|result| {
                 result
                     .map(|(k, v)| (k.to_vec(), v.to_vec()))

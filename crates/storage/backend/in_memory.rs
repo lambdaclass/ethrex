@@ -1,4 +1,6 @@
-use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions};
+use crate::api::{
+    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
+};
 use crate::error::StoreError;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -70,11 +72,11 @@ pub struct InMemoryLocked {
 }
 
 pub struct InMemoryPrefixIter {
-    results: std::vec::IntoIter<Result<(Vec<u8>, Vec<u8>), StoreError>>,
+    results: std::vec::IntoIter<PrefixResult>,
 }
 
 impl Iterator for InMemoryPrefixIter {
-    type Item = Result<(Vec<u8>, Vec<u8>), StoreError>;
+    type Item = PrefixResult;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.results.next()
@@ -126,7 +128,7 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
         let prefix_vec = prefix.to_vec();
 
         // Colectar resultados inmediatamente
-        let results: Vec<Result<(Vec<u8>, Vec<u8>), StoreError>> = table_data
+        let results: Vec<PrefixResult> = table_data
             .into_iter()
             .filter(|(key, _)| key.starts_with(&prefix_vec))
             .map(|(k, v)| Ok((k, v)))
@@ -170,7 +172,7 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
         let table_data = db.get(table).cloned().unwrap_or_default();
         let prefix_vec = prefix.to_vec();
 
-        let results: Vec<Result<(Vec<u8>, Vec<u8>), StoreError>> = table_data
+        let results: Vec<PrefixResult> = table_data
             .into_iter()
             .filter(|(key, _)| key.starts_with(&prefix_vec))
             .map(|(k, v)| Ok((k, v)))
