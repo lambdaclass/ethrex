@@ -81,7 +81,7 @@ pub enum RLPxError {
     #[error("Received invalid block range update")]
     InvalidBlockRangeUpdate,
     #[error(transparent)]
-    KademliaError(#[from] PeerTableError),
+    PeerTableError(#[from] PeerTableError),
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly
