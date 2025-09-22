@@ -269,7 +269,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "verifier.risc0-vk",
         value_name = "PATH",
-        env = "ETHREX_RISC0_VERIFICATION_KEY",
+        env = "ETHREX_DEPLOYER_RISC0_VERIFICATION_KEY",
         conflicts_with = "risc0_vk_path",
         help_heading = "Verifiers options"
     )]
@@ -278,7 +278,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "verifier.risc0-vk-path",
         value_name = "PATH",
-        env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
+        env = "ETHREX_DEPLOYER_RISC0_VERIFICATION_KEY_PATH",
         conflicts_with = "risc0_vk",
         help_heading = "Verifiers options"
     )]
@@ -296,7 +296,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "verifier.sp1-vk",
         value_name = "PATH",
-        env = "ETHREX_SP1_VERIFICATION_KEY",
+        env = "ETHREX_DEPLOYER_SP1_VERIFICATION_KEY",
         conflicts_with = "sp1_vk_path",
         help_heading = "Verifiers options"
     )]
@@ -305,7 +305,7 @@ pub struct DeployerOptions {
     #[arg(
         long = "verifier.sp1-vk-path",
         value_name = "PATH",
-        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
+        env = "ETHREX_DEPLOYER_SP1_VERIFICATION_KEY_PATH",
         conflicts_with = "sp1_vk",
         help_heading = "Verifiers options"
     )]
@@ -450,7 +450,9 @@ pub async fn deploy_l1_contracts(
 
     #[cfg(not(feature = "sp1"))]
     if (opts.deploy_sp1_verifier || opts.sp1_verifier_address.is_some())
-        && (opts.sp1_vk.is_none() && opts.sp1_vk_path.is_none())
+        && opts.sp1_vk.is_none()
+        && opts.sp1_vk_path.is_none()
+        && SP1_VERIFICATION_KEY.is_none()
     {
         return Err(DeployerError::ConfigValueNotSet(
             "--verifier.sp1-vk and --verifier.sp1-vk-path".to_string(),
@@ -459,7 +461,9 @@ pub async fn deploy_l1_contracts(
 
     #[cfg(not(feature = "risc0"))]
     if opts.risc0_verifier_address.is_some()
-        && (opts.risc0_vk.is_none() && opts.risc0_vk_path.is_none())
+        && opts.risc0_vk.is_none()
+        && opts.risc0_vk_path.is_none()
+        && RISC0_VERIFICATION_KEY.is_none()
     {
         return Err(DeployerError::ConfigValueNotSet(
             "--verifier.risc0-vk and --verifier.risc0-vk-path".to_string(),

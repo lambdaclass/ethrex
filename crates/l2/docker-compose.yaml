@@ -19,8 +19,6 @@ services:
       - ../../.env:${DOCKER_ETHREX_WORKDIR}/.env
       - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
-      - ./prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
-      - ./prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk:${DOCKER_ETHREX_WORKDIR}/riscv32im-risc0-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
@@ -34,10 +32,10 @@ services:
       - ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER_ADDRESS
       - ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER=${ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER:-false}
       - ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS
-      - ETHREX_SP1_VERIFICATION_KEY_PATH
-      - ETHREX_RISC0_VERIFICATION_KEY_PATH
       - ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER_ADDRESS
       - ETHREX_DEPLOYER_DEPLOY_TDX_VERIFIER=${ETHREX_DEPLOYER_DEPLOY_TDX_VERIFIER:-false}
+      - ETHREX_DEPLOYER_SP1_VERIFICATION_KEY
+      - ETHREX_DEPLOYER_RISC0_VERIFICATION_KEY
       - ETHREX_DEPLOYER_ON_CHAIN_PROPOSER_OWNER_ADDRESS
       - ETHREX_DEPLOYER_BRIDGE_OWNER_ADDRESS
       - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER_ADDRESS

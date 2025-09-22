@@ -51,7 +51,7 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          make build-prover
+          make build-prover PROVER=sp1
 
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -65,6 +65,7 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER=true \
+          ETHREX_DEPLOYER_SP1_VERIFICATION_KEY=$(cat prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk)
           docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work
@@ -78,7 +79,7 @@ jobs:
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_COMMITTER_COMMIT_TIME=30000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          docker compose up --build --detach --no-deps ethrex_l2
+          docker compose up --detach --no-deps ethrex_l2
 
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
