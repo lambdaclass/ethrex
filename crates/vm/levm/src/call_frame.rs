@@ -435,11 +435,6 @@ impl<'a> VM<'a> {
     }
 
     #[inline(always)]
-    pub fn set_pc(&mut self, new_pc: usize) {
-        self.current_call_frame.pc = new_pc;
-    }
-
-    #[inline(always)]
     pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
         self.current_call_frame.pc = self
             .current_call_frame

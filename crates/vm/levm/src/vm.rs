@@ -457,7 +457,7 @@ impl<'a> VM<'a> {
                     continue;
                 }
                 Ok(OpcodeResult::SetPc { new_pc }) => {
-                    self.set_pc(new_pc);
+                    self.current_call_frame.pc = new_pc;
                     continue;
                 }
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
