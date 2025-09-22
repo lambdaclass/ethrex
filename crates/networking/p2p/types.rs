@@ -17,36 +17,22 @@ use std::{
     str::FromStr,
     sync::OnceLock,
 };
+use thiserror::Error;
 
 use crate::utils::node_id;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum NodeError {
+    #[error("Invalid format: {0}")]
     InvalidFormat(String),
+    #[error("Parse error: {0}")]
     ParseError(String),
-    RLPDecodeError(RLPDecodeError),
+    #[error("RLP decode error: {0}")]
+    RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Missing field: {0}")]
     MissingField(String),
+    #[error("Signature error: {0}")]
     SignatureError(String),
-}
-
-impl std::error::Error for NodeError {}
-
-impl Display for NodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NodeError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
-            NodeError::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            NodeError::RLPDecodeError(err) => write!(f, "RLP decode error: {}", err),
-            NodeError::MissingField(field) => write!(f, "Missing field: {}", field),
-            NodeError::SignatureError(msg) => write!(f, "Signature error: {}", msg),
-        }
-    }
-}
-
-impl From<RLPDecodeError> for NodeError {
-    fn from(err: RLPDecodeError) -> Self {
-        NodeError::RLPDecodeError(err)
-    }
 }
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
