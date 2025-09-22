@@ -3,7 +3,11 @@ use std::{
     time::Duration,
 };
 
-use ethrex_common::{H256, tracing::CallTrace, types::{Block, BlockHash}};
+use ethrex_common::{
+    H256,
+    tracing::CallTrace,
+    types::{Block, BlockHash},
+};
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
 

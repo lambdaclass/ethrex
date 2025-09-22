@@ -331,9 +331,8 @@ impl Command {
                             .ok_or_eyre("Unknown parent beacon root")?;
 
                         // Get block slot from parent beacon block
-                        let parent_beacon_block = beacon_client
-                            .get_block_by_hash(parent_beacon_hash)
-                            .await?;
+                        let parent_beacon_block =
+                            beacon_client.get_block_by_hash(parent_beacon_hash).await?;
                         let target_slot = parent_beacon_block.message.slot + 1;
 
                         // Get versioned hashes from transactions

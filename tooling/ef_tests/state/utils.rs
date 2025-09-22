@@ -5,7 +5,10 @@ use crate::{
     types::{EFTest, EFTestTransaction},
 };
 use ethrex_blockchain::vm::StoreVmDatabase;
-use ethrex_common::{U256, types::{BlockHash, Genesis}};
+use ethrex_common::{
+    U256,
+    types::{BlockHash, Genesis},
+};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{

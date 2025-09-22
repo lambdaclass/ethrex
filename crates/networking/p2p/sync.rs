@@ -170,7 +170,11 @@ impl Syncer {
     }
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
-    async fn sync_cycle_snap(&mut self, sync_head: BlockHash, store: Store) -> Result<(), SyncError> {
+    async fn sync_cycle_snap(
+        &mut self,
+        sync_head: BlockHash,
+        store: Store,
+    ) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         let mut sync_mode = SyncMode::Snap;
         // Request all block headers between the current head and the sync head
@@ -321,7 +325,11 @@ impl Syncer {
     /// # Returns
     ///
     /// Returns an error if the sync fails at any given step and aborts all active processes
-    async fn sync_cycle_full(&mut self, sync_head: BlockHash, store: Store) -> Result<(), SyncError> {
+    async fn sync_cycle_full(
+        &mut self,
+        sync_head: BlockHash,
+        store: Store,
+    ) -> Result<(), SyncError> {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized

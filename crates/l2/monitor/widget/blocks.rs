@@ -1,6 +1,9 @@
 use std::cmp::min;
 
-use ethrex_common::{Address, types::{Block, BlockHash}};
+use ethrex_common::{
+    Address,
+    types::{Block, BlockHash},
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ratatui::{

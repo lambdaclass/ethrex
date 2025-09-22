@@ -655,13 +655,16 @@ impl PeerHandler {
     /// Returns the lists of receipts or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_receipts(&self, block_hashes: Vec<BlockHash>) -> Option<Vec<Vec<Receipt>>> {
+    pub async fn request_receipts(
+        &self,
+        block_hashes: Vec<BlockHash>,
+    ) -> Option<Vec<Vec<Receipt>>> {
         let block_hashes_len = block_hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
-        let request = RLPxMessage::GetReceipts(GetReceipts {
-            id: request_id,
-            block_hashes: block_hashes.clone(),
+            let request = RLPxMessage::GetReceipts(GetReceipts {
+                id: request_id,
+                block_hashes: block_hashes.clone(),
             });
             let (_, mut peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
