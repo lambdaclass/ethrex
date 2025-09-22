@@ -236,7 +236,6 @@ mod tests {
     #[cfg(feature = "c-kzg")]
     use crate::types::BYTES_PER_BLOB;
 
-    //use super::*;
     mod shared {
         #[cfg(feature = "c-kzg")]
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
