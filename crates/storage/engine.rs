@@ -1082,29 +1082,29 @@ impl StoreEngine {
         &self,
         storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
-        let txn = self.backend.begin_write()?;
+        let mut key_values: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         for (address_hash, nodes) in storage_trie_nodes {
             for (node_hash, node_data) in nodes {
                 // Key: address_hash + node_hash
                 let mut key = Vec::with_capacity(64);
                 key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
-                txn.put(STORAGE_TRIE_NODES, key.as_slice(), node_data.as_slice())?;
+                key_values.push((key, node_data));
             }
         }
-        txn.commit()
+        self.backend.write_batch(STORAGE_TRIE_NODES, key_values)
     }
 
     pub async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError> {
-        let txn = self.backend.begin_write()?;
+        let mut key_values: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         for (code_hash, code) in account_codes {
             let value = AccountCodeRLP::from(code).bytes().clone();
-            txn.put(ACCOUNT_CODES, code_hash.as_bytes(), value.as_slice())?;
+            key_values.push((code_hash.as_bytes().to_vec(), value));
         }
 
-        txn.commit()
+        self.backend.write_batch(ACCOUNT_CODES, key_values)
     }
 }

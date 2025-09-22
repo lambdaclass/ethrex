@@ -68,18 +68,7 @@ pub trait StorageBackend: Debug + Send + Sync + 'static {
     fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError>;
 
     /// Writes multiple key-value pairs to a table in a single atomic operation.
-    ///
-    /// This method bypasses transactions for maximum performance in bulk operations.
-    /// Ideal for scenarios like snapsync where many writes need to be performed efficiently.
-    ///
-    /// # Arguments
-    ///
-    /// * `table` - Name of the table to write to
-    /// * `batch` - Vector of (key, value) pairs to write
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the batch write operation fails.
+    /// FIXME: This shouldn't be here, it's a write operation.
     fn write_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError>;
 }
 
