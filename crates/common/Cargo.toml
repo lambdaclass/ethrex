@@ -8,6 +8,7 @@ edition = "2024"
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
+ethrex-crypto = { workspace = true, features = ["c-kzg"] }
 
 tracing.workspace = true
 tinyvec = "1.6.0"
@@ -30,6 +31,10 @@ rkyv.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+
+[features]
+default = []
+c-kzg = []
 
 [lib]
 path = "./common.rs"
