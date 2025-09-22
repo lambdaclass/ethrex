@@ -22,6 +22,20 @@ impl StorageBackend for RocksDBBackend {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
+        // Basic optimizations
+        opts.set_max_open_files(-1);
+        opts.set_max_background_jobs(8);
+
+        // Write optimizations
+        opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+        opts.set_max_write_buffer_number(4);
+        opts.set_min_write_buffer_number_to_merge(2);
+
+        // WAL optimizations
+        opts.set_use_fsync(false); // Use fdatasync instead of fsync
+        opts.set_enable_pipelined_write(true);
+        opts.set_allow_concurrent_memtable_write(true);
+
         let db = OptimisticTransactionDB::<MultiThreaded>::open(&opts, path.as_ref())
             .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
