@@ -65,7 +65,7 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_SP1_VERIFIER=true \
-          ETHREX_DEPLOYER_SP1_VERIFICATION_KEY=$(cat prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk)
+          ETHREX_DEPLOYER_SP1_VERIFICATION_KEY=$(cat prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk) \
           docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work
