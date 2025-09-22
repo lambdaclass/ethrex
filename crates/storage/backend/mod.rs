@@ -3,7 +3,6 @@
 
 /// In memory backend - most useful for testing
 pub mod in_memory;
-
 /// RocksDB backend
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;

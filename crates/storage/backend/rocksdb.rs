@@ -2,7 +2,9 @@ use crate::api::{
     PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions,
 };
 use crate::error::StoreError;
-use rocksdb::{MultiThreaded, Options, SnapshotWithThreadMode, Transaction};
+use rocksdb::{
+    ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode, Transaction,
+};
 use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
 use std::collections::HashMap;
 use std::path::Path;
@@ -36,13 +38,40 @@ impl StorageBackend for RocksDBBackend {
         opts.set_enable_pipelined_write(true);
         opts.set_allow_concurrent_memtable_write(true);
 
-        let db = OptimisticTransactionDB::<MultiThreaded>::open(&opts, path.as_ref())
-            .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+        // Get existing CFs, or default if new DB
+        let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
+            .unwrap_or_else(|_| vec!["default".to_string()]);
+
+        let mut all_cfs: std::collections::HashSet<String> = existing_cfs.into_iter().collect();
+        for &table in TABLES.iter() {
+            all_cfs.insert(table.to_string());
+        }
+
+        let cf_descriptors: Vec<ColumnFamilyDescriptor> = all_cfs
+            .into_iter()
+            .map(|cf_name| {
+                let cf_opts = Options::default();
+                ColumnFamilyDescriptor::new(cf_name, cf_opts)
+            })
+            .collect();
+
+        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+            &opts,
+            path.as_ref(),
+            cf_descriptors,
+        )
+        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
         Ok(Arc::new(Self { db: Arc::new(db) }))
     }
 
     fn create_table(&self, name: &str, _options: TableOptions) -> Result<(), StoreError> {
+        // Check if column family already exists
+        if self.db.cf_handle(name).is_some() {
+            return Ok(());
+        }
+
+        // Create column family if it doesn't exist
         let opts = Options::default();
         self.db
             .create_cf(name, &opts)
