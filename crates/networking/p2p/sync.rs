@@ -53,7 +53,10 @@ const SECONDS_PER_BLOCK: u64 = 12;
 /// Bytecodes to downloader per batch
 const BYTECODE_CHUNK_SIZE: usize = 50_000;
 
-const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
+/// We assume this amount of slots are missing a block to adjust our timestamp
+/// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
+/// that are unlikely to be re-orged.
+const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
