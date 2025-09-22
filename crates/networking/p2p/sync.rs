@@ -27,7 +27,7 @@ use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{NodeHash, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{
     array,
@@ -1432,7 +1432,7 @@ pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 async fn insert_accounts_into_db(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
-    account_state_snapshots_dir: &str,
+    account_state_snapshots_dir: &Path,
 ) -> Result<H256, SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
     for entry in std::fs::read_dir(account_state_snapshots_dir)
@@ -1478,7 +1478,7 @@ async fn insert_accounts_into_db(
 
 async fn insert_storages_into_db(
     store: Store,
-    account_storages_snapshots_dir: &str,
+    account_storages_snapshots_dir: &Path,
     maybe_big_account_storage_state_roots: &Arc<Mutex<HashMap<H256, H256>>>,
     pivot_header: &BlockHeader,
 ) -> Result<(), SyncError> {
@@ -1537,8 +1537,8 @@ async fn insert_storages_into_db(
 async fn insert_accounts_into_rocksdb(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
-    account_state_snapshots_dir: &str,
-    temp_db_dir: &str,
+    account_state_snapshots_dir: &Path,
+    temp_db_dir: &Path,
 ) -> Result<H256, SyncError> {
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
@@ -1581,8 +1581,8 @@ async fn insert_accounts_into_rocksdb(
 async fn insert_storage_into_rocksdb(
     store: Store,
     accounts_with_storage: BTreeSet<H256>,
-    account_state_snapshots_dir: &str,
-    temp_db_dir: &str,
+    account_state_snapshots_dir: &Path,
+    temp_db_dir: &Path,
 ) -> Result<(), SyncError> {
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
     use rayon::iter::IntoParallelRefIterator;

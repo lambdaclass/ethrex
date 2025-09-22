@@ -798,7 +798,7 @@ impl PeerHandler {
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result = dump_accounts_to_file(path, account_state_chunk);
+                    let result = dump_accounts_to_file(&path, account_state_chunk);
                     dump_account_result_sender_cloned
                         .send(result)
                         .await
@@ -941,7 +941,7 @@ impl PeerHandler {
             }
 
             let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
-            dump_accounts_to_file(path, account_state_chunk)
+            dump_accounts_to_file(&path, account_state_chunk)
                 .inspect_err(|err| {
                     error!(
                         "We had an error dumping the last accounts to disk {}",
@@ -1368,7 +1368,7 @@ impl PeerHandler {
                         &account_storages_snapshots_dir_cloned,
                         chunk_index,
                     );
-                    dump_storages_to_file(path, snapshot)
+                    dump_storages_to_file(&path, snapshot)
                 });
 
                 chunk_index += 1;
@@ -1582,7 +1582,7 @@ impl PeerHandler {
             }
             let path =
                 get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
-            dump_storages_to_file(path, snapshot)
+            dump_storages_to_file(&path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
         disk_joinset

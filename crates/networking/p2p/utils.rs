@@ -66,16 +66,14 @@ pub fn get_account_state_snapshots_dir(datadir: &Path) -> PathBuf {
     datadir.join("account_state_snapshots")
 }
 
-pub fn get_rocksdb_temp_accounts_dir(datadir: &String) -> String {
-    format!("{datadir}/temp_acc_dir")
+pub fn get_rocksdb_temp_accounts_dir(datadir: &Path) -> PathBuf {
+    datadir.join("temp_acc_dir")
 }
 
-pub fn get_rocksdb_temp_storage_dir(datadir: &String) -> String {
-    format!("{datadir}/temp_storage_dir")
+pub fn get_rocksdb_temp_storage_dir(datadir: &Path) -> PathBuf {
+    datadir.join("temp_storage_dir")
 }
 
-pub fn get_account_state_snapshot_file(directory: String, chunk_index: u64) -> String {
-    format!("{directory}/account_state_chunk.rlp.{chunk_index}")
 pub fn get_account_state_snapshot_file(directory: &Path, chunk_index: u64) -> PathBuf {
     directory.join(format!("account_state_chunk.rlp.{chunk_index}"))
 }
@@ -86,7 +84,7 @@ pub fn get_account_storages_snapshot_file(directory: &Path, chunk_index: u64) ->
 
 #[cfg(feature = "rocksdb")]
 pub fn dump_to_rocks_db(
-    path: String,
+    path: &Path,
     mut contents: Vec<(Vec<u8>, Vec<u8>)>,
 ) -> Result<(), rocksdb::Error> {
     contents.sort();
@@ -104,11 +102,6 @@ pub fn dump_to_rocks_db(
     writer.finish()
 }
 
-pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
-    std::fs::write(&path, &contents)
-        .inspect_err(|err| {
-            tracing::error!("Failed to write snapshot to path {}. Error: {}", &path, err)
-        })
 pub fn get_code_hashes_snapshots_dir(datadir: &Path) -> PathBuf {
     datadir.join("bytecode_hashes_snapshots")
 }
@@ -128,7 +121,7 @@ pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
 }
 
 pub fn dump_accounts_to_file(
-    path: String,
+    path: &Path,
     accounts: Vec<(H256, AccountState)>,
 ) -> Result<(), DumpError> {
     cfg_if::cfg_if! {
@@ -142,7 +135,7 @@ pub fn dump_accounts_to_file(
             )
                 .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
                 .map_err(|_| DumpError {
-                    path,
+                    path: path.to_path_buf(),
                     contents: Vec::new(),
                     error: std::io::ErrorKind::Other,
                 })
@@ -153,13 +146,13 @@ pub fn dump_accounts_to_file(
 }
 
 pub fn dump_storages_to_file(
-    path: String,
+    path: &Path,
     storages: Vec<(H256, Vec<(H256, U256)>)>,
 ) -> Result<(), DumpError> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rocksdb")] {
             dump_to_rocks_db(
-                path.clone(),
+                &path,
                 storages
                     .into_iter()
                     .flat_map(|(hash, slots)| {
@@ -171,7 +164,7 @@ pub fn dump_storages_to_file(
             )
                 .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
                 .map_err(|_| DumpError {
-                    path,
+                    path: path.to_path_buf(),
                     contents: Vec::new(),
                     error: std::io::ErrorKind::Other,
                 })
