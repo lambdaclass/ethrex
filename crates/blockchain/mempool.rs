@@ -150,7 +150,7 @@ impl Mempool {
     fn remove_transaction_with_lock(
         &self,
         hash: &H256,
-        tx_pool: &mut std::sync::RwLockWriteGuard<'_, HashMap<H256, MempoolTransaction>>,
+        tx_pool: &mut HashMap<H256, MempoolTransaction>,
     ) -> Result<(), StoreError> {
         let mut broadcast_pool = self
             .broadcast_pool
