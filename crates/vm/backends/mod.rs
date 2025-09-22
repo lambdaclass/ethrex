@@ -22,7 +22,6 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
-use revm_primitives::hardfork::SpecId;
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -203,12 +202,12 @@ impl Evm {
         #[cfg(feature = "revm")]
         {
             let chain_config = self.state.chain_config()?;
-            let spec_id = spec_id(&chain_config, block_header.timestamp);
-            if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+            let fork = chain_config.fork(block_header.timestamp);
+            if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                 REVM::beacon_root_contract_call(block_header, &mut self.state)?;
             }
 
-            if spec_id >= SpecId::PRAGUE {
+            if fork >= Fork::Prague {
                 REVM::process_block_hash_history(block_header, &mut self.state)?;
             }
 
