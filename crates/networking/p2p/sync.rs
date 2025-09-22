@@ -337,7 +337,7 @@ impl Syncer {
         loop {
             debug!("Sync Log 1: In Full Sync");
             debug!(
-                "Sync Log 3: State current headears len {}",
+                "Sync Log 3: State current headers len {}",
                 block_sync_state.current_headers.len()
             );
             debug!(

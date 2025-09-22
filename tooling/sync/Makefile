@@ -14,9 +14,9 @@ CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 OS = $(shell uname)
 ifeq ($(OS), Darwin)
-	DATA_PATH = ~/Library/Application\ Support
-else 
-	DATA_PATH = ~/.local/share
+	DATA_PATH = $(HOME)/Library/Application\ Support
+else
+	DATA_PATH = $(HOME)/.local/share
 endif
 
 # Set checkpoint sync url based on network
