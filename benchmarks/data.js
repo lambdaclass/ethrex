@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758575915840,
+  "lastUpdate": 1758578310713,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15925,6 +15925,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89495250672,
             "range": "± 910555262",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c9bb4cf648872fd131f85f1b79cfba44e1b029d",
+          "message": "chore(l1): prune mempool (#4588)\n\n**Motivation**\nMempool grows indefinitely\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nNow the mempool has a maximum size, and after it is reached, the oldest\ntransaction is removed.\nFor this a vector with the hashes is added, which acts as a queue when\nremoving the oldest, but also allows removing any tx, since there are\nother mechanisms for removing txs from the mempool.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4238\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-22T21:11:32Z",
+          "tree_id": "a3b380ade1307fd137d47fb3d27e14ee0bd3437d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3c9bb4cf648872fd131f85f1b79cfba44e1b029d"
+        },
+        "date": 1758578289547,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 92049336920,
+            "range": "± 222010178",
             "unit": "ns/iter"
           }
         ]
