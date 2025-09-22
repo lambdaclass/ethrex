@@ -160,7 +160,7 @@ impl BlockRunReport {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}{maybe_gpu}{maybe_cpu}{maybe_ram}\n*Time Taken:* {time_taken}",
+                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}{maybe_gpu}{maybe_cpu}{maybe_ram}\n*Time Taken:* {time_taken}\n*Branch:* `{branch}`",
                             network = self.network,
                             number = self.number,
                             gas = self.gas,
@@ -175,6 +175,8 @@ impl BlockRunReport {
                             maybe_cpu = hardware_info_slack_message("CPU"),
                             maybe_ram = hardware_info_slack_message("RAM"),
                             time_taken = format_duration(self.time_taken),
+                            branch =
+                                get_current_git_branch().unwrap_or_else(|| "unknown".to_string(),)
                         ),
                     }),
                 },
@@ -204,7 +206,7 @@ impl Display for BlockRunReport {
         if let Network::PublicNetwork(_) = self.network {
             write!(
                 f,
-                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken} | {block_url}",
+                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken}, Branch: {branch} | {block_url}",
                 network = self.network,
                 number = self.number,
                 gas = self.gas,
@@ -220,11 +222,12 @@ impl Display for BlockRunReport {
                         self.network, self.number
                     )
                 },
+                branch = get_current_git_branch().unwrap_or_else(|| "unknown".to_string()),
             )
         } else {
             write!(
                 f,
-                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken}",
+                "[{network}] Block #{number}, Gas Used: {gas}, Tx Count: {txs}, {replayer_mode} Result: {execution_result}, Time Taken: {time_taken}, Branch: {branch}",
                 network = self.network,
                 number = self.number,
                 gas = self.gas,
@@ -232,6 +235,7 @@ impl Display for BlockRunReport {
                 replayer_mode = self.replayer_mode,
                 execution_result = execution_result,
                 time_taken = format_duration(self.time_taken),
+                branch = get_current_git_branch().unwrap_or_else(|| "unknown".to_string()),
             )
         }
     }
@@ -345,5 +349,23 @@ fn ram_info() -> Option<String> {
             Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }
         _ => None,
+    }
+}
+
+fn get_current_git_branch() -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+        if !branch.is_empty() {
+            Some(branch)
+        } else {
+            None
+        }
+    } else {
+        None
     }
 }
