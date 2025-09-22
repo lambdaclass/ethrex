@@ -443,10 +443,11 @@ impl<'a> VM<'a> {
             );
         }
 
+        let opcode = 0;
         loop {
-            unsafe {
-                if self.pc < self.bytecode.len() {
-                    *self.bytecode.as_ptr().add(self.pc)
+            opcode = unsafe {
+                if self.current_call_frame.pc < self.current_call_frame.bytecode.len() {
+                    *self.current_call_frame.bytecode.as_ptr().add(self.pc)
                 } else {
                     0
                 }
