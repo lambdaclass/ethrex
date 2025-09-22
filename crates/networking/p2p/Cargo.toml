@@ -53,9 +53,10 @@ hex-literal = "0.4.1"
 path = "./p2p.rs"
 
 [features]
-default = [] # "c-kzg"
+default = [ "c-kzg" ]
+c-kzg = [ "ethrex-blockchain/c-kzg" ]
 #c-kzg = [
-#    "ethrex-blockchain", # TODO! c-kzg
+#    "ethrex-blockchain/c-kzg",
 #    "ethrex-common", # TODO! c-kzg
 #]
 sync-test = []
