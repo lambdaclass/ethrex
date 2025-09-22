@@ -36,7 +36,7 @@ default = []
 risc0 = ["dep:risc0-build", "dep:risc0-zkvm"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
 l2 = []
-#c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 
 [lib]
 path = "./src/lib.rs"
