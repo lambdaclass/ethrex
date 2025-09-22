@@ -354,6 +354,7 @@ impl<'a> VM<'a> {
     }
 
     // JUMPDEST operation
+    #[inline(always)]
     pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::JUMPDEST)?;
