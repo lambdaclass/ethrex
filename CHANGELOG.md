@@ -9,6 +9,9 @@
 ### 2025-09-15
 
 - Fix caching mechanism of the latest block's hash [#4479](https://github.com/lambdaclass/ethrex/pull/4479)
+- Add `jemalloc` as an optional global allocator used by default [#4301](https://github.com/lambdaclass/ethrex/pull/4301)
+
+- Improve time when downloading bytecodes from peers [#4487](https://github.com/lambdaclass/ethrex/pull/4487)
 
 ### 2025-09-11
 
