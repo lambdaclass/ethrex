@@ -1087,60 +1087,58 @@ pub fn p_256_verify(
     }
 }
 
-#[expect(clippy::indexing_slicing, reason = "slicing bounds checked at start")]
 pub fn bls12_g1add(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    // Two inputs of 128 bytes are required
-    if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
+    // TODO: Use `as_chunks` after upgrading to Rust 1.88.0.
+    let (x_data, calldata) = calldata
+        .split_first_chunk::<128>()
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let (y_data, calldata) = calldata
+        .split_first_chunk::<128>()
+        .ok_or(PrecompileError::ParsingInputError)?;
+    if !calldata.is_empty() {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    // GAS
+    // Apply precompile gas cost.
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    if calldata[0..16] != [0; 16]
-        || calldata[64..80] != [0; 16]
-        || calldata[128..144] != [0; 16]
-        || calldata[192..208] != [0; 16]
-    {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
+    type FElem = BLS12381FieldElement;
+    type U384 = UnsignedInteger<6>;
+    fn parse_g1_point(data: &[u8; 128]) -> Result<Option<(FElem, FElem)>, PrecompileError> {
+        if data[0..16] != [0; 16] || data[64..80] != [0; 16] {
+            return Err(PrecompileError::ParsingInputError);
+        }
 
-    fn parse_g1_point(
-        x_data: &[u8],
-        y_data: &[u8],
-    ) -> Result<Option<(BLS12381FieldElement, BLS12381FieldElement)>, PrecompileError> {
-        let x = UnsignedInteger::<6>::from_bytes_be(x_data)
-            .map_err(|_| PrecompileError::ParsingInputError)?;
-        let y = UnsignedInteger::<6>::from_bytes_be(y_data)
-            .map_err(|_| PrecompileError::ParsingInputError)?;
+        let x = U384::from_bytes_be(&data[16..64]).unwrap_or_default();
+        let y = U384::from_bytes_be(&data[80..128]).unwrap_or_default();
         if x >= BLS12381FieldModulus::MODULUS || y >= BLS12381FieldModulus::MODULUS {
             return Err(PrecompileError::ParsingInputError);
         }
 
-        if x == UnsignedInteger::from_u64(0) && y == UnsignedInteger::from_u64(0) {
+        if x == U384::from_u64(0) && y == U384::from_u64(0) {
             return Ok(None);
         }
 
-        let x = BLS12381FieldElement::new(x);
-        let y = BLS12381FieldElement::new(y);
-        if BLS12381Curve::defining_equation(&x, &y) != BLS12381FieldElement::zero() {
+        let x = FElem::new(x);
+        let y = FElem::new(y);
+        if BLS12381Curve::defining_equation(&x, &y) != FElem::zero() {
             return Err(PrecompileError::BLS12381G1PointNotInCurve);
         }
 
         Ok(Some((x, y)))
     }
 
-    let p0 = parse_g1_point(&calldata[16..64], &calldata[80..128])?;
-    let p1 = parse_g1_point(&calldata[144..192], &calldata[208..256])?;
+    let p0 = parse_g1_point(x_data)?;
+    let p1 = parse_g1_point(y_data)?;
 
     #[expect(clippy::arithmetic_side_effects, reason = "modular arithmetic")]
     let p2 = match (p0, p1) {
-        (None, None) => (BLS12381FieldElement::zero(), BLS12381FieldElement::zero()),
+        (None, None) => (FElem::zero(), FElem::zero()),
         (None, Some(p1)) => p1,
         (Some(p0), None) => p0,
         (Some(p0), Some(p1)) => 'block: {
@@ -1156,8 +1154,8 @@ pub fn bls12_g1add(
                     let x = s.square() - p0.0.double();
                     let y = s * (p0.0 - &x) - p0.1;
                     break 'block (x, y);
-                } else if &p0.1 + &p1.1 == BLS12381FieldElement::zero() {
-                    break 'block (BLS12381FieldElement::zero(), BLS12381FieldElement::zero());
+                } else if &p0.1 + &p1.1 == FElem::zero() {
+                    break 'block (FElem::zero(), FElem::zero());
                 }
             }
 
@@ -1172,11 +1170,11 @@ pub fn bls12_g1add(
         }
     };
 
-    let [x0, x1, x2, x3, x4, x5] = p2.0.representative().limbs.map(|x| x.to_be_bytes());
-    let [y0, y1, y2, y3, y4, y5] = p2.1.representative().limbs.map(|x| x.to_be_bytes());
+    let x = p2.0.representative().limbs.map(|x| x.to_be_bytes());
+    let y = p2.1.representative().limbs.map(|x| x.to_be_bytes());
     let buffer: [[u8; 8]; 16] = [
-        [0; 8], [0; 8], x0, x1, x2, x3, x4, x5, // Padded x coordinate.
-        [0; 8], [0; 8], y0, y1, y2, y3, y4, y5, // Padded y coordinate.
+        [0; 8], [0; 8], x[0], x[1], x[2], x[3], x[4], x[5], // Padded x coordinate.
+        [0; 8], [0; 8], y[0], y[1], y[2], y[3], y[4], y[5], // Padded y coordinate.
     ];
     Ok(Bytes::copy_from_slice(buffer.as_flattened()))
 }
