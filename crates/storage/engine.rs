@@ -57,63 +57,6 @@ impl StoreEngine {
         Ok(Self { backend })
     }
 
-    async fn write<K, V>(&self, table: &str, key: K, value: V) -> Result<(), StoreError>
-    where
-        K: AsRef<[u8]> + Send + 'static,
-        V: AsRef<[u8]> + Send + 'static,
-    {
-        let backend = self.backend.clone();
-        let table = table.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let txn = backend.begin_write()?;
-            txn.put(&table, key.as_ref(), value.as_ref())?;
-            txn.commit()
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    async fn write_batch<K, V>(
-        &self,
-        table: &str,
-        key_values: Vec<(K, V)>,
-    ) -> Result<(), StoreError>
-    where
-        K: AsRef<[u8]> + Send + 'static,
-        V: AsRef<[u8]> + Send + 'static,
-    {
-        let backend = self.backend.clone();
-        let table = table.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let txn = backend.begin_write()?;
-            let byte_pairs: Vec<(Vec<u8>, Vec<u8>)> = key_values
-                .into_iter()
-                .map(|(k, v)| (k.as_ref().to_vec(), v.as_ref().to_vec()))
-                .collect();
-            txn.put_batch(&table, byte_pairs)?;
-            txn.commit()
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    async fn read_async<K>(&self, table: &str, key: K) -> Result<Option<Vec<u8>>, StoreError>
-    where
-        K: AsRef<[u8]> + Send + 'static,
-    {
-        let backend = self.backend.clone();
-        let table = table.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let txn = backend.begin_read()?;
-            txn.get(&table, key.as_ref())
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
     /// Store changes in a batch from a vec of blocks
     pub async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.backend.clone();
@@ -232,8 +175,10 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
+        let txn = self.backend.begin_write()?;
         let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
-        self.write(HEADERS, block_hash, header_value).await
+        txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
+        txn.commit()
     }
 
     /// Add a batch of block headers
@@ -241,24 +186,19 @@ impl StoreEngine {
         &self,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        let hashes_and_headers = block_headers
-            .iter()
-            .map(|header| {
-                (
-                    header.hash(),
-                    BlockHeaderRLP::from(header.clone()).bytes().clone(),
-                )
-            })
-            .collect();
-        self.write_batch(HEADERS, hashes_and_headers).await?;
-        let hashes_and_numbers = block_headers
-            .iter()
-            .map(|header| {
-                let block_number = header.number;
-                (header.hash(), block_number.to_le_bytes())
-            })
-            .collect();
-        self.write_batch(BLOCK_NUMBERS, hashes_and_numbers).await
+        let txn = self.backend.begin_write()?;
+        for block_header in block_headers {
+            let block_hash = block_header.hash();
+            let block_number = block_header.number;
+            let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
+            txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
+            txn.put(
+                BLOCK_NUMBERS,
+                block_hash.as_bytes(),
+                &block_number.to_le_bytes(),
+            )?;
+        }
+        txn.commit()
     }
 
     /// Obtain canonical block header
@@ -284,8 +224,10 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
+        let txn = self.backend.begin_write()?;
         let body_value = BlockBodyRLP::from(block_body).bytes().clone();
-        self.write(BODIES, block_hash, body_value).await
+        txn.put(BODIES, block_hash.as_bytes(), body_value.as_slice())?;
+        txn.commit()
     }
 
     /// Obtain canonical block body
@@ -373,8 +315,8 @@ impl StoreEngine {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        self.read_async(BODIES, block_hash)
-            .await?
+        let txn = self.backend.begin_read()?;
+        txn.get(BODIES, block_hash.as_bytes())?
             .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
             .transpose()
             .map_err(StoreError::from)
@@ -394,14 +336,21 @@ impl StoreEngine {
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let block_value = BlockRLP::from(block.clone()).bytes().clone();
-        self.write(PENDING_BLOCKS, block.hash(), block_value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(
+            PENDING_BLOCKS,
+            block.hash().as_bytes(),
+            block_value.as_slice(),
+        )?;
+        txn.commit()
     }
     pub async fn get_pending_block(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<Block>, StoreError> {
-        self.read_async(PENDING_BLOCKS, block_hash)
-            .await?
+        let txn = self.backend.begin_read()?;
+        let block_value = txn.get(PENDING_BLOCKS, block_hash.as_bytes())?;
+        block_value
             .map(|bytes| BlockRLP::from_bytes(bytes).to())
             .transpose()
             .map_err(StoreError::from)
@@ -414,7 +363,9 @@ impl StoreEngine {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let number_value = block_number.to_le_bytes();
-        self.write(BLOCK_NUMBERS, block_hash, number_value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(BLOCK_NUMBERS, block_hash.as_bytes(), &number_value)?;
+        txn.commit()
     }
 
     /// Obtain block number for a given hash
@@ -422,8 +373,9 @@ impl StoreEngine {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        self.read_async(BLOCK_NUMBERS, block_hash)
-            .await?
+        self.backend
+            .begin_read()?
+            .get(BLOCK_NUMBERS, block_hash.as_bytes())?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
@@ -447,8 +399,13 @@ impl StoreEngine {
         composite_key[32..].copy_from_slice(block_hash.as_bytes());
         let location_value = (block_number, block_hash, index).encode_to_vec();
 
-        self.write(TRANSACTION_LOCATIONS, composite_key, location_value)
-            .await
+        let txn = self.backend.begin_write()?;
+        txn.put(
+            TRANSACTION_LOCATIONS,
+            composite_key.as_slice(),
+            location_value.as_slice(),
+        )?;
+        txn.commit()
     }
 
     /// Store transaction locations in batch (one db transaction for all)
@@ -456,6 +413,7 @@ impl StoreEngine {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
+        let txn = self.backend.begin_write()?;
         let key_values: Vec<([u8; 64], Vec<u8>)> = locations
             .iter()
             .map(|(tx_hash, block_number, block_hash, index)| {
@@ -467,7 +425,11 @@ impl StoreEngine {
             })
             .collect();
 
-        self.write_batch(TRANSACTION_LOCATIONS, key_values).await
+        // TODO: Batch write?
+        for (key, value) in key_values {
+            txn.put(TRANSACTION_LOCATIONS, key.as_slice(), value.as_slice())?;
+        }
+        txn.commit()
     }
 
     // FIXME: Check libmdbx implementation to see if we can replicate it
@@ -528,7 +490,9 @@ impl StoreEngine {
         // FIXME: Use dupsort table
         let key = (block_hash, index).encode_to_vec();
         let value = receipt.encode_to_vec();
-        self.write(RECEIPTS, key, value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(RECEIPTS, key.as_slice(), value.as_slice())?;
+        txn.commit()
     }
 
     /// Add receipts
@@ -537,13 +501,13 @@ impl StoreEngine {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let mut key_values: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let txn = self.backend.begin_write()?;
         for (index, receipt) in receipts.into_iter().enumerate() {
             let key = (block_hash, index as u64).encode_to_vec();
             let value = receipt.encode_to_vec();
-            key_values.push((key, value));
+            txn.put(RECEIPTS, key.as_slice(), value.as_slice())?;
         }
-        self.write_batch(RECEIPTS, key_values).await
+        txn.commit()
     }
 
     /// Obtain receipt by block hash and index
@@ -553,8 +517,8 @@ impl StoreEngine {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         let key = (block_hash, index).encode_to_vec();
-        self.read_async(RECEIPTS, key)
-            .await?
+        let txn = self.backend.begin_read()?;
+        txn.get(RECEIPTS, key.as_slice())?
             .map(|bytes| Receipt::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
@@ -573,11 +537,14 @@ impl StoreEngine {
     /// Add account code
     pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         let code_value = AccountCodeRLP::from(code).bytes().clone();
-        self.write(ACCOUNT_CODES, code_hash, code_value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(ACCOUNT_CODES, code_hash.as_bytes(), code_value.as_slice())?;
+        txn.commit()
     }
 
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
+        // FIXME: We need a way to iterate over a table or just delete the entire table
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || db.clear_table(SNAP_STATE))
             .await
@@ -639,8 +606,12 @@ impl StoreEngine {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.read_async(CANONICAL_BLOCK_HASHES, block_number.to_le_bytes())
-            .await?
+        self.backend
+            .begin_read()?
+            .get(
+                CANONICAL_BLOCK_HASHES,
+                block_number.to_le_bytes().as_slice(),
+            )?
             .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
             .transpose()
             .map_err(StoreError::from)
@@ -653,7 +624,9 @@ impl StoreEngine {
         let value = serde_json::to_string(chain_config)
             .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
             .into_bytes();
-        self.write(CHAIN_DATA, key, value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(CHAIN_DATA, &key, &value)?;
+        txn.commit()
     }
 
     /// Update earliest block number
@@ -663,13 +636,16 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [ChainDataIndex::EarliestBlockNumber as u8];
         let value = block_number.to_le_bytes();
-        self.write(CHAIN_DATA, key, value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(CHAIN_DATA, &key, &value)?;
+        txn.commit()
     }
 
     /// Obtain earliest block number
     pub async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = [ChainDataIndex::EarliestBlockNumber as u8];
-        let value = self.read_async(CHAIN_DATA, key).await?;
+        let txn = self.backend.begin_read()?;
+        let value = txn.get(CHAIN_DATA, &key)?;
         value
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
@@ -683,7 +659,8 @@ impl StoreEngine {
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = [ChainDataIndex::FinalizedBlockNumber as u8];
-        let value = self.read_async(CHAIN_DATA, key).await?;
+        let txn = self.backend.begin_read()?;
+        let value = txn.get(CHAIN_DATA, &key)?;
         value
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
@@ -697,7 +674,8 @@ impl StoreEngine {
     /// Obtain safe block number
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = [ChainDataIndex::SafeBlockNumber as u8];
-        let value = self.read_async(CHAIN_DATA, key).await?;
+        let txn = self.backend.begin_read()?;
+        let value = txn.get(CHAIN_DATA, &key)?;
         value
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
@@ -711,7 +689,8 @@ impl StoreEngine {
     /// Obtain latest block number
     pub async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = [ChainDataIndex::LatestBlockNumber as u8];
-        let value = self.read_async(CHAIN_DATA, key).await?;
+        let txn = self.backend.begin_read()?;
+        let value = txn.get(CHAIN_DATA, &key)?;
         value
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
@@ -729,13 +708,16 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [ChainDataIndex::PendingBlockNumber as u8];
         let value = block_number.to_le_bytes();
-        self.write(CHAIN_DATA, key, value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(CHAIN_DATA, &key, &value)?;
+        txn.commit()
     }
 
     /// Obtain pending block number
     pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = [ChainDataIndex::PendingBlockNumber as u8];
-        let value = self.read_async(CHAIN_DATA, key).await?;
+        let txn = self.backend.begin_read()?;
+        let value = txn.get(CHAIN_DATA, &key)?;
         value
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
@@ -906,14 +888,17 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::HeaderDownloadCheckpoint as u8];
         let value = block_hash.encode_to_vec();
-        self.write(SNAP_STATE, key, value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(SNAP_STATE, &key, &value)?;
+        txn.commit()
     }
 
     /// Gets the hash of the last header downloaded during a snap sync
     pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         let key = [SnapStateIndex::HeaderDownloadCheckpoint as u8];
-        self.read_async(SNAP_STATE, key)
-            .await?
+        self.backend
+            .begin_read()?
+            .get(SNAP_STATE, &key)?
             .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
             .transpose()
             .map_err(StoreError::from)
@@ -926,7 +911,9 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateTrieKeyCheckpoint as u8];
         let value = last_keys.to_vec().encode_to_vec();
-        self.write(SNAP_STATE, key, value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(SNAP_STATE, &key, &value)?;
+        txn.commit()
     }
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
@@ -934,7 +921,8 @@ impl StoreEngine {
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
         let key = [SnapStateIndex::StateTrieKeyCheckpoint as u8];
-        match self.read_async(SNAP_STATE, key).await? {
+        let txn = self.backend.begin_read()?;
+        match txn.get(SNAP_STATE, &key)? {
             Some(keys_bytes) => {
                 let keys_vec: Vec<H256> = Vec::<H256>::decode(keys_bytes.as_slice())?;
                 if keys_vec.len() == STATE_TRIE_SEGMENTS {
@@ -956,15 +944,18 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateHealPaths as u8];
         let value = paths.encode_to_vec();
-        self.write(SNAP_STATE, key, value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(SNAP_STATE, &key, &value)?;
+        txn.commit()
     }
 
     /// Gets the state trie paths in need of healing
     pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         let key = [SnapStateIndex::StateHealPaths as u8];
 
-        self.read_async(SNAP_STATE, key)
-            .await?
+        self.backend
+            .begin_read()?
+            .get(SNAP_STATE, &key)?
             .map(|bytes| Vec::<(Nibbles, H256)>::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
@@ -977,7 +968,9 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateTrieRebuildCheckpoint as u8];
         let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
-        self.write(SNAP_STATE, key, value).await
+        let txn = self.backend.begin_write()?;
+        txn.put(SNAP_STATE, &key, &value)?;
+        txn.commit()
     }
 
     /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
@@ -985,7 +978,8 @@ impl StoreEngine {
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         let key = [SnapStateIndex::StateTrieRebuildCheckpoint as u8];
-        match self.read_async(SNAP_STATE, key).await? {
+        let txn = self.backend.begin_read()?;
+        match txn.get(SNAP_STATE, &key)? {
             Some(bytes) => {
                 let (root, keys_vec): (H256, Vec<H256>) =
                     <(H256, Vec<H256>)>::decode(bytes.as_slice())?;
@@ -1007,7 +1001,9 @@ impl StoreEngine {
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StorageTrieRebuildPending as u8];
-        self.write(SNAP_STATE, key, pending.encode_to_vec()).await
+        let txn = self.backend.begin_write()?;
+        txn.put(SNAP_STATE, &key, &pending.encode_to_vec())?;
+        txn.commit()
     }
 
     /// Get the accont hashes and roots of the storage tries awaiting rebuild
@@ -1015,8 +1011,8 @@ impl StoreEngine {
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         let key = [SnapStateIndex::StorageTrieRebuildPending as u8];
-        self.read_async(SNAP_STATE, key)
-            .await?
+        let txn = self.backend.begin_read()?;
+        txn.get(SNAP_STATE, &key)?
             .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
@@ -1032,8 +1028,10 @@ impl StoreEngine {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
+        let txn = self.backend.begin_write()?;
         let value = BlockHashRLP::from(latest_valid).bytes().clone();
-        self.write(INVALID_CHAINS, bad_block, value).await
+        txn.put(INVALID_CHAINS, bad_block.as_bytes(), value.as_slice())?;
+        txn.commit()
     }
 
     /// Returns the latest valid ancestor hash for a given invalid block hash.
@@ -1042,8 +1040,8 @@ impl StoreEngine {
         &self,
         block: BlockHash,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.read_async(INVALID_CHAINS, block)
-            .await?
+        let txn = self.backend.begin_read()?;
+        txn.get(INVALID_CHAINS, block.as_bytes())?
             .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
             .transpose()
             .map_err(StoreError::from)
@@ -1084,29 +1082,29 @@ impl StoreEngine {
         &self,
         storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
-        let mut key_values: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let txn = self.backend.begin_write()?;
         for (address_hash, nodes) in storage_trie_nodes {
             for (node_hash, node_data) in nodes {
                 // Key: address_hash + node_hash
                 let mut key = Vec::with_capacity(64);
                 key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
-                key_values.push((key, node_data));
+                txn.put(STORAGE_TRIE_NODES, key.as_slice(), node_data.as_slice())?;
             }
         }
-        self.write_batch(STORAGE_TRIE_NODES, key_values).await
+        txn.commit()
     }
 
     pub async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError> {
-        let mut key_values: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let txn = self.backend.begin_write()?;
         for (code_hash, code) in account_codes {
             let value = AccountCodeRLP::from(code).bytes().clone();
-            key_values.push((code_hash.as_bytes().to_vec(), value));
+            txn.put(ACCOUNT_CODES, code_hash.as_bytes(), value.as_slice())?;
         }
 
-        self.write_batch(ACCOUNT_CODES, key_values).await
+        txn.commit()
     }
 }
