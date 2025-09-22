@@ -126,6 +126,31 @@ impl Stack {
         Ok(())
     }
 
+    #[inline]
+    pub fn push_zero(&mut self) -> Result<(), ExceptionalHalt> {
+        // Since the stack grows downwards, when an offset underflow is detected the stack is
+        // overflowing.
+        let next_offset = self
+            .offset
+            .checked_sub(1)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        // The following index cannot fail because `next_offset` has already been checked and
+        // `self.offset` is known to be within `STACK_LIMIT`.
+        #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
+        unsafe {
+            *self
+                .values
+                .get_unchecked_mut(next_offset)
+                .0
+                .as_mut_ptr()
+                .cast() = [0u64; 4];
+        }
+        self.offset = next_offset;
+
+        Ok(())
+    }
+
     pub fn len(&self) -> usize {
         // The following operation cannot underflow because `self.offset` is known to be less than
         // or equal to `self.values.len()` (aka. `STACK_LIMIT`).

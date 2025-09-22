@@ -91,7 +91,7 @@ impl<'a> VM<'a> {
         // If the offset is larger than the actual calldata, then you
         // have no data to return.
         if offset > calldata_size {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
         let offset: usize = offset
@@ -419,7 +419,7 @@ impl<'a> VM<'a> {
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 

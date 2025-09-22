@@ -10,6 +10,7 @@ use crate::{
         hook::{Hook, get_hooks},
     },
     memory::Memory,
+    opcodes::OpCodeFn,
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
@@ -322,6 +323,9 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
+    /// Build dynamically according to the given fork config.
+    pub(crate) opcode_table: [OpCodeFn<'a>; 256],
 }
 
 impl<'a> VM<'a> {
@@ -337,6 +341,8 @@ impl<'a> VM<'a> {
         let mut substate = Substate::initialize(&env, tx)?;
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
+
+        let fork = env.config.fork;
 
         let mut vm = Self {
             call_frames: Vec::new(),
@@ -368,6 +374,7 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
+            opcode_table: VM::build_opcode_table(fork),
         };
 
         let call_type = if is_create {
@@ -449,7 +456,7 @@ impl<'a> VM<'a> {
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = VM::OPCODE_TABLE[opcode as usize].call(self);
+            let op_result = self.opcode_table[opcode as usize].call(self);
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
