@@ -50,10 +50,7 @@ pub type BlockNumber = u64;
     Archive,
 )]
 #[serde(transparent)]
-pub struct BlockHash(
-    #[rkyv(with = crate::rkyv_utils::H256Wrapper)]
-    H256,
-);
+pub struct BlockHash(#[rkyv(with = crate::rkyv_utils::H256Wrapper)] H256);
 
 impl BlockHash {
     pub const fn new(inner: H256) -> Self {
@@ -740,7 +737,7 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
-    if BlockHash::from(header.parent_hash) != parent_header.hash() {
+    if header.parent_hash != parent_header.hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);
     }
 

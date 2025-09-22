@@ -17,8 +17,8 @@ pub mod test_utils {
         Address, Bloom, H256, U256,
         constants::DEFAULT_REQUESTS_HASH,
         types::{
-            Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
-            Transaction, TxKind,
+            Block, BlockBody, BlockHash, BlockHeader, EIP1559Transaction, Genesis,
+            LegacyTransaction, Transaction, TxKind,
         },
     };
     use ethrex_storage::{EngineType, Store};

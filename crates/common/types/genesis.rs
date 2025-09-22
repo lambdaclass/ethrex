@@ -704,7 +704,7 @@ mod tests {
         let genesis_block = genesis.get_block();
         let header = genesis_block.header;
         let body = genesis_block.body;
-        assert_eq!(header.parent_hash, H256::from([0; 32]));
+        assert_eq!(header.parent_hash, BlockHash::from([0; 32]));
         assert_eq!(header.ommers_hash, *DEFAULT_OMMERS_HASH);
         assert_eq!(header.coinbase, Address::default());
         assert_eq!(
@@ -746,8 +746,10 @@ mod tests {
         let genesis_block_hash = genesis.get_block().hash();
         assert_eq!(
             genesis_block_hash,
-            H256::from_str("0xcb5306dd861d0f2c1f9952fbfbc75a46d0b6ce4f37bea370c3471fe8410bf40b")
-                .unwrap()
+            BlockHash::from_str(
+                "0xcb5306dd861d0f2c1f9952fbfbc75a46d0b6ce4f37bea370c3471fe8410bf40b"
+            )
+            .unwrap()
         )
     }
 
@@ -768,9 +770,10 @@ mod tests {
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let computed_block_hash = genesis.get_block().hash();
-        let genesis_block_hash =
-            H256::from_str("0x30f516e34fc173bb5fc4daddcc7532c4aca10b702c7228f3c806b4df2646fb7e")
-                .unwrap();
+        let genesis_block_hash = BlockHash::from_str(
+            "0x30f516e34fc173bb5fc4daddcc7532c4aca10b702c7228f3c806b4df2646fb7e",
+        )
+        .unwrap();
         assert_eq!(genesis_block_hash, computed_block_hash)
     }
 

@@ -1594,7 +1594,7 @@ mod tests {
     }
 
     async fn test_store_block_number(store: Store) {
-        let block_hash = H256::random();
+        let block_hash = BlockHash::random();
         let block_number = 6;
 
         store
@@ -1609,7 +1609,7 @@ mod tests {
 
     async fn test_store_transaction_location(store: Store) {
         let transaction_hash = H256::random();
-        let block_hash = H256::random();
+        let block_hash = BlockHash::random();
         let block_number = 6;
         let index = 3;
 
@@ -1640,7 +1640,7 @@ mod tests {
     async fn test_store_transaction_location_not_canonical(store: Store) {
         let transaction_hash = H256::random();
         let block_header = BlockHeader::default();
-        let random_hash = H256::random();
+        let random_hash = BlockHash::random();
         let block_number = 6;
         let index = 3;
 

@@ -92,13 +92,13 @@ mod blockchain_integration_test {
         let block_1 = new_block(&store, &genesis_header).await;
         let hash_1 = block_1.hash();
         blockchain.add_block(&block_1).await.unwrap();
-        apply_fork_choice(&store, hash_1, H256::zero(), H256::zero())
+        apply_fork_choice(&store, hash_1, BlockHash::zero(), BlockHash::zero())
             .await
             .unwrap();
 
         // Build a child, then change its parent, making it effectively a pending block.
         let mut block_2 = new_block(&store, &block_1.header).await;
-        block_2.header.parent_hash = H256::random();
+        block_2.header.parent_hash = BlockHash::random();
         let hash_2 = block_2.hash();
         let result = blockchain.add_block(&block_2).await;
         assert!(matches!(result, Err(ChainError::ParentNotFound)));
@@ -106,7 +106,8 @@ mod blockchain_integration_test {
         // block 2 should now be pending.
         assert!(store.get_pending_block(hash_2).await.unwrap().is_some());
 
-        let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero()).await;
+        let fc_result =
+            apply_fork_choice(&store, hash_2, BlockHash::zero(), BlockHash::zero()).await;
         assert!(matches!(fc_result, Err(InvalidForkChoice::Syncing)));
 
         // block 2 should still be pending.

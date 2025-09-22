@@ -142,6 +142,7 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use ethrex_common::types::BlockHash;
     use keccak_hash::H256;
 
     use super::*;
@@ -150,7 +151,10 @@ mod tests {
         let genesis = Network::PublicNetwork(network).get_genesis().unwrap();
         let genesis_hash = genesis.get_block().hash();
         let expected_hash = hex::decode(expected_hash).unwrap();
-        assert_eq!(genesis_hash, H256::from_slice(&expected_hash));
+        assert_eq!(
+            genesis_hash,
+            BlockHash::new(H256::from_slice(&expected_hash))
+        );
     }
 
     #[test]
