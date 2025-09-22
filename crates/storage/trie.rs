@@ -1,4 +1,4 @@
-use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx};
+use crate::api::{StorageBackend, StorageLocked};
 use ethrex_common::H256;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
 use std::sync::Arc;
@@ -16,7 +16,11 @@ pub struct BackendTrieDB {
 }
 
 impl BackendTrieDB {
-    pub fn new(backend: Arc<dyn StorageBackend>, table_name: &str, address_prefix: Option<H256>) -> Self {
+    pub fn new(
+        backend: Arc<dyn StorageBackend>,
+        table_name: &str,
+        address_prefix: Option<H256>,
+    ) -> Self {
         Self {
             backend,
             table_name: table_name.to_string(),

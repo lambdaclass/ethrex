@@ -1,18 +1,15 @@
 use crate::api::{StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions};
 use crate::error::StoreError;
-use rocksdb::ColumnFamilyDescriptor;
-use rocksdb::{
-    MultiThreaded, OptimisticTransactionDB, Options, SnapshotWithThreadMode, Transaction,
-};
+use rocksdb::OptimisticTransactionDB;
+use rocksdb::{MultiThreaded, Options, SnapshotWithThreadMode, Transaction, TransactionDB};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct RocksDBBackend {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
 }
-
-impl RocksDBBackend {}
 
 impl StorageBackend for RocksDBBackend {
     fn open(path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
@@ -23,18 +20,8 @@ impl StorageBackend for RocksDBBackend {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        // Abrimos/creamos todos los CFs conocidos al inicio para evitar lookups fallidos
-        let cf_descriptors: Vec<_> = TABLES
-            .iter()
-            .map(|&name| ColumnFamilyDescriptor::new(name, Options::default()))
-            .collect();
-
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
-            &opts,
-            path.as_ref(),
-            cf_descriptors,
-        )
-        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+        let db = OptimisticTransactionDB::<MultiThreaded>::open(&opts, path.as_ref())
+            .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
         Ok(Arc::new(Self { db: Arc::new(db) }))
     }
@@ -81,14 +68,14 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked + '_>, StoreError> {
-        let lock = self.db.snapshot();
+        let db = Box::leak(Box::new(self.db.clone()));
+        let lock = db.snapshot();
         let cf = self
             .db
             .cf_handle(table_name)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?
-            .clone();
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
 
-        Ok(Box::new(RocksDBLocked { lock, cf }))
+        Ok(Box::new(RocksDBLocked { db, lock, cf }))
     }
 }
 
@@ -155,7 +142,6 @@ pub struct RocksDBRwTx<'a> {
     cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
-// Primero implementamos StorageRoTx para RocksDBRwTx
 impl<'a> StorageRoTx for RocksDBRwTx<'a> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
@@ -197,7 +183,6 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
     }
 }
 
-// Ahora implementamos StorageRwTx
 impl<'a> StorageRwTx for RocksDBRwTx<'a> {
     fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let cf = self
@@ -230,17 +215,29 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
     }
 }
 
-pub struct RocksDBLocked<'a> {
+pub struct RocksDBLocked {
+    db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Snapshot/locked transaction
-    lock: SnapshotWithThreadMode<'a, OptimisticTransactionDB<MultiThreaded>>,
+    lock: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
     /// Column family handle
-    cf: Arc<rocksdb::BoundColumnFamily<'a>>,
+    cf: Arc<rocksdb::BoundColumnFamily<'static>>,
 }
 
-impl<'a> StorageLocked for RocksDBLocked<'a> {
+impl StorageLocked for RocksDBLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         self.lock
             .get_cf(&self.cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))
+    }
+}
+
+impl Drop for RocksDBLocked {
+    fn drop(&mut self) {
+        unsafe {
+            drop(Box::from_raw(
+                self.db as *const Arc<OptimisticTransactionDB<MultiThreaded>>
+                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
+            ));
+        }
     }
 }

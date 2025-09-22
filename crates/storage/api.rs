@@ -18,7 +18,7 @@ pub const TABLES: [&str; 13] = [
     "storage_trie_nodes",
 ];
 
-pub trait StorageBackend: Send + Sync + 'static {
+pub trait StorageBackend: Debug + Send + Sync + 'static {
     fn open(path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
     where
         Self: Sized;

@@ -806,10 +806,14 @@ impl StoreEngine {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = BackendTrieDB::new(
-            self.backend.clone(),
-            STATE_TRIE_NODES,
-            None, // No address prefix for state trie
+        // let trie_db = BackendTrieDB::new(
+        //     self.backend.clone(),
+        //     STATE_TRIE_NODES,
+        //     None, // No address prefix for state trie
+        // );
+        let lock = self.backend.begin_locked(STATE_TRIE_NODES)?;
+        let trie_db = BackendTrieDBLocked::new(
+            lock, None, // No address prefix for state trie
         );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
