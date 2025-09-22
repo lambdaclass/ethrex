@@ -1,8 +1,8 @@
 use std::ops::AddAssign;
 
 use crate::serde_utils;
-use crate::{Bytes, H256};
 use crate::types::constants::VERSIONED_HASH_VERSION_KZG;
+use crate::{Bytes, H256};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -229,13 +229,13 @@ pub enum BlobsBundleError {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "c-kzg")]
-    use crate::types::{BlobsBundleError, BlobsBundle};
-    #[cfg(feature = "c-kzg")]
-    use crate::{H256};
-    #[cfg(feature = "c-kzg")]
     use super::MAX_BLOB_COUNT_ELECTRA;
     #[cfg(feature = "c-kzg")]
+    use crate::H256;
+    #[cfg(feature = "c-kzg")]
     use crate::types::BYTES_PER_BLOB;
+    #[cfg(feature = "c-kzg")]
+    use crate::types::{BlobsBundle, BlobsBundleError};
 
     mod shared {
         #[cfg(feature = "c-kzg")]
