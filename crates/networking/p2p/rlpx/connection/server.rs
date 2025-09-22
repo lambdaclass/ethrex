@@ -399,8 +399,6 @@ async fn initialize_connection<S>(
 where
     S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
 {
-    post_handshake_checks(state.table.clone()).await?;
-
     exchange_hello_messages(state, &mut stream).await?;
 
     // Update eth capability version to the negotiated version for further message decoding
@@ -589,10 +587,6 @@ where
             }
         }
     }
-    Ok(())
-}
-
-async fn post_handshake_checks(_table: Kademlia) -> Result<(), RLPxError> {
     Ok(())
 }
 
