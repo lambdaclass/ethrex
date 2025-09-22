@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758558040356,
+  "lastUpdate": 1758561086088,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15865,6 +15865,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90219255051,
             "range": "± 535993275",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "51405295da402be18ddf73c1292646cd47aac1bc",
+          "message": "chore(l1): increased MISSING_SLOTS_PERCENTAGE to avoid reorgs (#4601)\n\n**Motivation**\n\nCurrently, when testing snapsync, we aren't prepared to handle a reorg.\nTo try to avoid snasyncing to blocks that can be reorged, we lowered the\namount of blocks we advanced in `update_pivot`.\n\n**Description**\n\n- Lowered `MISSING_SLOTS_PERCENTAGE` to 0.8 from 0.9\n- Added comment explaining `MISSING_SLOTS_PERCENTAGE`",
+          "timestamp": "2025-09-22T16:23:41Z",
+          "tree_id": "af4336c5efcde1ba44ea23ff4991427d797c123f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/51405295da402be18ddf73c1292646cd47aac1bc"
+        },
+        "date": 1758561065671,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 88686744473,
+            "range": "± 791058200",
             "unit": "ns/iter"
           }
         ]
