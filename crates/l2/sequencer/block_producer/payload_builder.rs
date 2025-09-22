@@ -40,12 +40,14 @@ pub async fn build_payload(
     store: &Store,
     last_privileged_nonce: &mut Option<u64>,
     block_gas_limit: u64,
+    fee_vault: Address,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(payload, store, blockchain.r#type.clone())?;
+    let mut context =
+        PayloadBuildContext::new(payload, store, blockchain.r#type.clone(), Some(fee_vault))?;
 
     fill_transactions(
         blockchain.clone(),

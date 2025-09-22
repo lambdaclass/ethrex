@@ -34,11 +34,13 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
+        let fee_vault = self.fee_vault;
         // Run the block until the transaction we want to trace
-        vm.rerun_block(&block, Some(tx_index))?;
+        vm.rerun_block(&block, Some(tx_index), fee_vault)?;
+
         // Trace the transaction
         timeout_trace_operation(timeout, move || {
-            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
+            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log, fee_vault)
         })
         .await
     }
@@ -59,8 +61,9 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
+        let fee_vault = self.fee_vault;
         // Run anything necessary before executing the block's transactions (system calls, etc)
-        vm.rerun_block(&block, Some(0))?;
+        vm.rerun_block(&block, Some(0), fee_vault)?;
         // Trace each transaction
         // We need to do this in order to pass ownership of block & evm to a blocking process without cloning
         let vm = Arc::new(Mutex::new(vm));
@@ -74,7 +77,7 @@ impl Blockchain {
             let call_trace = timeout_trace_operation(timeout, move || {
                 vm.lock()
                     .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
-                    .trace_tx_calls(block.as_ref(), index, only_top_call, with_log)
+                    .trace_tx_calls(block.as_ref(), index, only_top_call, with_log, fee_vault)
             })
             .await?;
             call_traces.push((tx_hash, call_trace));
@@ -110,7 +113,7 @@ impl Blockchain {
         let mut vm = self.new_evm(vm_db)?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
-            vm.rerun_block(block, None)?;
+            vm.rerun_block(block, None, self.fee_vault)?;
         }
         Ok(vm)
     }

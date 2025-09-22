@@ -1,5 +1,5 @@
-use ethrex_common::tracing::CallTrace;
 use ethrex_common::types::Block;
+use ethrex_common::{Address, tracing::CallTrace};
 
 #[cfg(not(feature = "revm"))]
 use crate::backends::levm::LEVM;
@@ -19,6 +19,7 @@ impl Evm {
         tx_index: usize,
         only_top_call: bool,
         with_log: bool,
+        fee_vault: Option<Address>,
     ) -> Result<CallTrace, EvmError> {
         let tx = block
             .body
@@ -30,7 +31,14 @@ impl Evm {
 
         #[cfg(feature = "revm")]
         {
-            REVM::trace_tx_calls(&block.header, tx, &mut self.state, only_top_call, with_log)
+            REVM::trace_tx_calls(
+                &block.header,
+                tx,
+                &mut self.state,
+                only_top_call,
+                with_log,
+                fee_vault,
+            )
         }
 
         #[cfg(not(feature = "revm"))]
@@ -42,6 +50,7 @@ impl Evm {
                 only_top_call,
                 with_log,
                 self.vm_type,
+                fee_vault,
             )
         }
     }
@@ -54,15 +63,16 @@ impl Evm {
         &mut self,
         block: &Block,
         stop_index: Option<usize>,
+        fee_vault: Option<Address>,
     ) -> Result<(), EvmError> {
         #[cfg(feature = "revm")]
         {
-            REVM::rerun_block(block, &mut self.state, stop_index)
+            REVM::rerun_block(block, &mut self.state, stop_index, fee_vault)
         }
 
         #[cfg(not(feature = "revm"))]
         {
-            LEVM::rerun_block(&mut self.db, block, stop_index, self.vm_type)
+            LEVM::rerun_block(&mut self.db, block, stop_index, self.vm_type, fee_vault)
         }
     }
 }

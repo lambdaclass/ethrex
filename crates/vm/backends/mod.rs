@@ -118,15 +118,19 @@ impl Evm {
     }
 
     #[instrument(level = "trace", name = "Block execution", skip_all)]
-    pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
+    pub fn execute_block(
+        &mut self,
+        block: &Block,
+        fee_vault: Option<Address>,
+    ) -> Result<BlockExecutionResult, EvmError> {
         #[cfg(feature = "revm")]
         {
-            REVM::execute_block(block, &mut self.state)
+            REVM::execute_block(block, &mut self.state, fee_vault)
         }
 
         #[cfg(not(feature = "revm"))]
         {
-            LEVM::execute_block(block, &mut self.db, self.vm_type)
+            LEVM::execute_block(block, &mut self.db, self.vm_type, fee_vault)
         }
     }
 
@@ -139,6 +143,7 @@ impl Evm {
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
         sender: Address,
+        fee_vault: Option<Address>,
     ) -> Result<(Receipt, u64), EvmError> {
         #[cfg(feature = "revm")]
         {
@@ -149,6 +154,7 @@ impl Evm {
                 &mut self.state,
                 spec_id(&chain_config, block_header.timestamp),
                 sender,
+                fee_vault,
             )?;
 
             *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
@@ -165,8 +171,14 @@ impl Evm {
 
         #[cfg(not(feature = "revm"))]
         {
-            let execution_report =
-                LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
+            let execution_report = LEVM::execute_tx(
+                tx,
+                sender,
+                block_header,
+                &mut self.db,
+                self.vm_type,
+                fee_vault,
+            )?;
 
             *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
@@ -288,16 +300,23 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
         _fork: Fork,
+        fee_vault: Option<Address>,
     ) -> Result<ExecutionResult, EvmError> {
         #[cfg(feature = "revm")]
         {
             let spec_id = fork_to_spec_id(_fork);
-            self::revm::helpers::simulate_tx_from_generic(tx, header, &mut self.state, spec_id)
+            self::revm::helpers::simulate_tx_from_generic(
+                tx,
+                header,
+                &mut self.state,
+                spec_id,
+                fee_vault,
+            )
         }
 
         #[cfg(not(feature = "revm"))]
         {
-            LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type)
+            LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, fee_vault)
         }
     }
 
@@ -306,15 +325,24 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
         _fork: Fork,
+        fee_vault: Option<Address>,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
         #[cfg(feature = "revm")]
         let result = {
             let spec_id = fork_to_spec_id(_fork);
-            self::revm::helpers::create_access_list(tx, header, &mut self.state, spec_id)?
+            self::revm::helpers::create_access_list(
+                tx,
+                header,
+                &mut self.state,
+                spec_id,
+                fee_vault,
+            )?
         };
 
         #[cfg(not(feature = "revm"))]
-        let result = { LEVM::create_access_list(tx.clone(), header, &mut self.db, self.vm_type)? };
+        let result = {
+            LEVM::create_access_list(tx.clone(), header, &mut self.db, self.vm_type, fee_vault)?
+        };
 
         match result {
             (

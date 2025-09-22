@@ -42,6 +42,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
@@ -51,7 +52,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, fee_vault)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -84,6 +85,7 @@ impl LEVM {
         tx_sender: Address,
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
+        fee_vault: Option<Address>,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = tx
@@ -100,6 +102,7 @@ impl LEVM {
             config,
             block_number: block_header.number.into(),
             coinbase: block_header.coinbase,
+            fee_vault,
             timestamp: block_header.timestamp.into(),
             prev_randao: Some(block_header.prev_randao),
             chain_id: chain_config.chain_id.into(),
@@ -129,8 +132,9 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db, fee_vault)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -148,8 +152,9 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<ExecutionResult, EvmError> {
-        let mut env = env_from_generic(tx, block_header, db)?;
+        let mut env = env_from_generic(tx, block_header, db, fee_vault)?;
 
         env.block_gas_limit = u64::MAX; // disable block gas limit
 
@@ -298,8 +303,9 @@ impl LEVM {
         header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
-        let mut env = env_from_generic(&tx, header, db)?;
+        let mut env = env_from_generic(&tx, header, db, fee_vault)?;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -482,6 +488,7 @@ fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
+    fee_vault: Option<Address>,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
     let gas_price = calculate_gas_price(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
@@ -492,6 +499,7 @@ fn env_from_generic(
         config,
         block_number: header.number.into(),
         coinbase: header.coinbase,
+        fee_vault,
         timestamp: header.timestamp.into(),
         prev_randao: Some(header.prev_randao),
         chain_id: chain_config.chain_id.into(),

@@ -73,6 +73,8 @@ pub struct Blockchain {
     /// Mapping from a payload id to either a complete payload or a payload build task
     /// We need to keep completed payloads around in case consensus requests them twice
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Address that receives the base fees in L2
+    pub fee_vault: Option<Address>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +96,12 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_type: BlockchainType, perf_logs_enabled: bool) -> Self {
+    pub fn new(
+        store: Store,
+        blockchain_type: BlockchainType,
+        perf_logs_enabled: bool,
+        fee_vault: Option<Address>,
+    ) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(),
@@ -102,6 +109,7 @@ impl Blockchain {
             r#type: blockchain_type,
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             perf_logs_enabled,
+            fee_vault,
         }
     }
 
@@ -113,6 +121,7 @@ impl Blockchain {
             r#type: BlockchainType::default(),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             perf_logs_enabled: false,
+            fee_vault: None,
         }
     }
 
@@ -120,6 +129,7 @@ impl Blockchain {
     async fn execute_block(
         &self,
         block: &Block,
+        fee_vault: Option<Address>,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -136,7 +146,7 @@ impl Blockchain {
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
 
-        let execution_result = vm.execute_block(block)?;
+        let execution_result = vm.execute_block(block, fee_vault)?;
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
@@ -157,7 +167,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        let execution_result = vm.execute_block(block)?;
+        let execution_result = vm.execute_block(block, None)?;
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -210,7 +220,7 @@ impl Blockchain {
             };
 
             // Re-execute block with logger
-            vm.execute_block(block)?;
+            vm.execute_block(block, self.fee_vault)?;
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
@@ -408,7 +418,7 @@ impl Blockchain {
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(block).await?;
+        let (res, updates) = self.execute_block(block, self.fee_vault).await?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root

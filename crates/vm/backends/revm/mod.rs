@@ -53,6 +53,7 @@ impl REVM {
     pub fn execute_block(
         block: &Block,
         state: &mut EvmState,
+        fee_vault: Option<Address>,
     ) -> Result<BlockExecutionResult, EvmError> {
         let block_header = &block.header;
         let spec_id: SpecId = spec_id(
@@ -75,7 +76,7 @@ impl REVM {
         for (tx, sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
+            let result = Self::execute_tx(tx, block_header, state, spec_id, sender, fee_vault)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -102,6 +103,7 @@ impl REVM {
         state: &mut EvmState,
         spec_id: SpecId,
         sender: Address,
+        _fee_vault: Option<Address>,
     ) -> Result<ExecutionResult, EvmError> {
         let block_env = block_env(header, spec_id);
         let tx_env = tx_env(tx, sender);

@@ -23,7 +23,7 @@ pub struct Environment {
     pub block_number: U256,
     /// Coinbase is the block's beneficiary - the address that receives the block rewards (priority fees).
     pub coinbase: Address,
-    /// Fee vault is the address that receives the base fee in L2.
+    /// Fee vault is the address that receives the base fees in L2.
     pub fee_vault: Option<Address>,
     pub timestamp: U256,
     pub prev_randao: Option<H256>,

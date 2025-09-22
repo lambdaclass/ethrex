@@ -216,6 +216,7 @@ pub fn prepare_vm_for_tx<'a>(
             config,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
+            fee_vault: None,
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
             difficulty: test.env.current_difficulty,

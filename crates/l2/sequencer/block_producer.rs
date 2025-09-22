@@ -56,6 +56,7 @@ pub struct BlockProducer {
     sequencer_state: SequencerState,
     block_time_ms: u64,
     coinbase_address: Address,
+    fee_vault_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     // Needed to ensure privileged tx nonces are sequential
@@ -82,6 +83,7 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
         } = config;
@@ -91,6 +93,7 @@ impl BlockProducer {
             sequencer_state,
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
+            fee_vault_address: *fee_vault_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
@@ -159,6 +162,7 @@ impl BlockProducer {
             &self.store,
             &mut self.last_privileged_nonce,
             self.block_gas_limit,
+            self.fee_vault_address,
         )
         .await?;
         info!(
