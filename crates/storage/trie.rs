@@ -60,16 +60,20 @@ impl TrieDB for BackendTrieDB {
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        // Convert to the format expected by write_batch
         let batch: Vec<(Vec<u8>, Vec<u8>)> = key_values
             .into_iter()
             .map(|(node_hash, value)| (self.make_key(node_hash), value))
             .collect();
 
-        // Use the high-performance write_batch method
-        self.backend
-            .write_batch(&self.table_name, batch)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
+        let tx = self.backend.begin_write().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
+        })?;
+
+        tx.put_batch(&self.table_name, batch)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to put batch: {}", e)))?;
+
+        tx.commit()
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
     }
 }
 

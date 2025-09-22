@@ -113,6 +113,9 @@ pub trait StorageRwTx: StorageRoTx {
     /// Stores a key-value pair in the specified table.
     fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
 
+    /// Stores multiple key-value pairs in the specified table within the transaction.
+    fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError>;
+
     /// Removes a key-value pair from the specified table.
     fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError>;
 

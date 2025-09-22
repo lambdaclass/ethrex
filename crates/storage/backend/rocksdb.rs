@@ -227,6 +227,20 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
             .map_err(|e| StoreError::Custom(format!("Failed to put to {}: {}", table, e)))
     }
 
+    fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+        let cf = self
+            .cfs
+            .get(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+            .clone();
+
+        for (key, value) in batch {
+            self.tx.put_cf(&cf, key, value)?;
+        }
+
+        Ok(())
+    }
+
     fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .cfs
