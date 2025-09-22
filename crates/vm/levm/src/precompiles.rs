@@ -1074,8 +1074,7 @@ pub fn bls12_g1add(
 
             // The division may panic only when `t` has no inverse. This can only happen if
             // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
-            // `p0.1` and `p1.1`, which are 2 and -2. It is impossible to have any combination of
-            // those at this point.
+            // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
             let l = (&p0.1 - p1.1) / (&p0.0 - &p1.0);
 
             let x = l.square() - &p0.0 - p1.0;
