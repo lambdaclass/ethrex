@@ -5,7 +5,7 @@ use crate::{
     utils::*,
     vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian_const};
+use ethrex_common::utils::u256_from_big_endian_const;
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
