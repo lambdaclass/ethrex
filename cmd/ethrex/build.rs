@@ -17,6 +17,14 @@ use vergen_git2::{Emitter, Git2Builder, RustcBuilder};
 
 const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 
+const DETERMINISTIC_DEPLOYMENT_CODE: [u8; 69] = [
+    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xe0, 0x36, 0x01, 0x60, 0x00, 0x81, 0x60, 0x20, 0x82, 0x37, 0x80, 0x35, 0x82, 0x82, 0x34, 0xf5,
+    0x80, 0x15, 0x15, 0x60, 0x39, 0x57, 0x81, 0x82, 0xfd, 0x5b, 0x80, 0x82, 0x52, 0x50, 0x50, 0x50,
+    0x60, 0x14, 0x60, 0x0c, 0xf3,
+];
+
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=COMPILE_CONTRACTS");
@@ -41,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // If COMPILE_CONTRACTS is not set, skip
     if env::var_os("COMPILE_CONTRACTS").is_some() {
         let out_dir = env::var_os("OUT_DIR").unwrap();
-        update_genesis_file(&PathBuf::from(L2_GENESIS_PATH), Path::new(&out_dir))?;
+        update_genesis_file(L2_GENESIS_PATH.as_ref(), Path::new(&out_dir))?;
     }
 
     Ok(())
@@ -83,6 +91,20 @@ fn download_script() {
         false,
         None,
         &[&output_contracts_path],
+    );
+
+    let remappings = [(
+        "@openzeppelin/contracts",
+        output_contracts_path.join("lib/openzeppelin-contracts/contracts"),
+    )];
+
+    compile_contract_to_bytecode(
+        &output_contracts_path,
+        &output_contracts_path.join("lib/create2deployer/contracts/Create2Deployer.sol"),
+        "Create2Deployer",
+        true,
+        Some(&remappings),
+        &[contracts_path],
     );
 
     // Get the openzeppelin contracts remappings
@@ -193,7 +215,7 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
     }
 }
 
-/// Clones OpenZeppelin and SP1 contracts into the specified path.
+/// Clones OpenZeppelin, SP1 contracts and create2deployer into the specified path.
 fn download_contract_deps(contracts_path: &Path) {
     fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib dir");
 
@@ -207,6 +229,17 @@ fn download_contract_deps(contracts_path: &Path) {
     )
     .expect("Failed to clone openzeppelin-contracts-upgradeable");
 
+    // Using version 4.9 for create2deployer
+    ethrex_l2_sdk::git_clone(
+        "https://github.com/OpenZeppelin/openzeppelin-contracts.git",
+        &contracts_path
+            .join("lib/openzeppelin-contracts")
+            .to_string_lossy(),
+        Some("release-v4.9"),
+        true,
+    )
+    .expect("Failed to clone openzeppelin-contracts");
+
     ethrex_l2_sdk::git_clone(
         "https://github.com/succinctlabs/sp1-contracts.git",
         &contracts_path.join("lib/sp1-contracts").to_string_lossy(),
@@ -214,6 +247,14 @@ fn download_contract_deps(contracts_path: &Path) {
         false,
     )
     .expect("Failed to clone sp1-contracts");
+
+    ethrex_l2_sdk::git_clone(
+        "https://github.com/pcaversaccio/create2deployer",
+        &contracts_path.join("lib/create2deployer").to_string_lossy(),
+        None,
+        true,
+    )
+    .expect("Failed to clone create2deployer");
 }
 
 fn compile_contract_to_bytecode(
@@ -267,7 +308,8 @@ use bytes::Bytes;
 use ethrex_common::types::{Genesis, GenesisAccount};
 use ethrex_common::{Address, H160, U256};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, address_to_word, get_erc1967_slot,
+    COMMON_BRIDGE_L2_ADDRESS, CREATE2DEPLOYER_ADDRESS, DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
+    L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
 };
 use genesis_tool::genesis::write_genesis_as_json;
 
@@ -298,6 +340,11 @@ fn common_bridge_l2_runtime(out_dir: &Path) -> Vec<u8> {
 fn l2_to_l1_messenger_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/L2ToL1Messenger.bytecode");
     fs::read(path).expect("Failed to read bytecode file")
+}
+/// Bytecode of the Create2Deployer contract.
+fn create2deployer_runtime(out_dir: &Path) -> Vec<u8> {
+    let path = out_dir.join("contracts/solc_out/Create2Deployer.bytecode");
+    fs::read(path).expect("Failedto read bytecode file")
 }
 
 /// Bytecode of the L2Upgradeable contract.
@@ -364,7 +411,7 @@ fn add_with_proxy(
 }
 
 pub fn update_genesis_file(
-    l2_genesis_path: &PathBuf,
+    l2_genesis_path: &Path,
     out_dir: &Path,
 ) -> Result<(), SystemContractsUpdaterError> {
     let mut genesis = read_genesis_file(l2_genesis_path.to_str().ok_or(
@@ -387,9 +434,43 @@ pub fn update_genesis_file(
         out_dir,
     )?;
 
+    add_deterministic_deployers(&mut genesis, out_dir);
+
     write_genesis_as_json(genesis, Path::new(l2_genesis_path)).map_err(std::io::Error::other)?;
 
     Ok(())
+}
+
+fn add_deterministic_deployers(genesis: &mut Genesis, out_dir: &Path) {
+    genesis.alloc.insert(
+        DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
+        GenesisAccount {
+            code: Bytes::from_static(&DETERMINISTIC_DEPLOYMENT_CODE),
+            storage: HashMap::new(),
+            balance: U256::zero(),
+            nonce: 1,
+        },
+    );
+
+    genesis.alloc.insert(
+        SAFE_SINGLETON_FACTORY_ADDRESS,
+        GenesisAccount {
+            code: Bytes::from_static(&DETERMINISTIC_DEPLOYMENT_CODE),
+            storage: HashMap::new(),
+            balance: U256::zero(),
+            nonce: 1,
+        },
+    );
+
+    genesis.alloc.insert(
+        CREATE2DEPLOYER_ADDRESS,
+        GenesisAccount {
+            code: Bytes::from(create2deployer_runtime(out_dir)),
+            storage: HashMap::new(),
+            balance: U256::zero(),
+            nonce: 1,
+        },
+    );
 }
 
 // From cmd/ethrex
