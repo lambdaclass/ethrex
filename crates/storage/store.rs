@@ -20,12 +20,12 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::fmt::Debug;
 use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
+use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -42,7 +42,6 @@ pub struct Store {
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
@@ -79,8 +78,9 @@ impl Store {
         self.engine.apply_updates(update_batch).await
     }
 
-    pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
-        info!(engine = ?engine_type, path = %path, "Opening storage engine");
+    pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
+        let path = path.as_ref();
+        info!(engine = ?engine_type, ?path, "Opening storage engine");
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
@@ -105,7 +105,7 @@ impl Store {
     }
 
     pub async fn new_from_genesis(
-        store_path: &str,
+        store_path: &Path,
         engine_type: EngineType,
         genesis_path: &str,
     ) -> Result<Self, StoreError> {

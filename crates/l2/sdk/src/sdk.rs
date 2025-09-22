@@ -350,11 +350,25 @@ where
     let hex = H256::from_slice(&secret_key.secret_bytes());
     hex.serialize(serializer)
 }
-
+// https://github.com/Arachnid/deterministic-deployment-proxy
 // 0x4e59b44847b379578588920cA78FbF26c0B4956C
-const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
+pub const DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS: Address = H160([
     0x4e, 0x59, 0xb4, 0x48, 0x47, 0xb3, 0x79, 0x57, 0x85, 0x88, 0x92, 0x0c, 0xa7, 0x8f, 0xbf, 0x26,
     0xc0, 0xb4, 0x95, 0x6c,
+]);
+
+// https://github.com/safe-global/safe-singleton-factory
+// 0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7
+pub const SAFE_SINGLETON_FACTORY_ADDRESS: Address = H160([
+    0x91, 0x4d, 0x7F, 0xec, 0x6a, 0xac, 0x8c, 0xd5, 0x42, 0xe7, 0x2b, 0xca, 0x78, 0xb3, 0x06, 0x50,
+    0xd4, 0x56, 0x43, 0xd7,
+]);
+
+// https://github.com/pcaversaccio/create2deployer
+// 0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2
+pub const CREATE2DEPLOYER_ADDRESS: Address = H160([
+    0x13, 0xb0, 0xd8, 0x5c, 0xcb, 0x8b, 0xf8, 0x60, 0xb6, 0xb7, 0x9a, 0xf3, 0x02, 0x9f, 0xca, 0x08,
+    0x1a, 0xe9, 0xbe, 0xf2,
 ]);
 
 #[derive(Default)]
@@ -429,12 +443,12 @@ pub async fn create2_deploy(
     let init_code = [bytecode, constructor_args].concat();
     let calldata = [salt, &init_code].concat();
 
-    overrides.to = Some(TxKind::Call(DETERMINISTIC_CREATE2_ADDRESS));
+    overrides.to = Some(TxKind::Call(DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS));
 
     let deploy_tx = build_generic_tx(
         client,
         TxType::EIP1559,
-        DETERMINISTIC_CREATE2_ADDRESS,
+        DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
         deployer.address(),
         calldata.into(),
         overrides,
@@ -551,7 +565,7 @@ fn create2_address(salt: &[u8], init_code_hash: H256) -> Address {
         &keccak(
             [
                 &[0xff],
-                DETERMINISTIC_CREATE2_ADDRESS.as_bytes(),
+                DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS.as_bytes(),
                 salt,
                 init_code_hash.as_bytes(),
             ]
