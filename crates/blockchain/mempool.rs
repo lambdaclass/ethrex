@@ -18,16 +18,42 @@ use ethrex_common::{
 use ethrex_storage::error::StoreError;
 use std::collections::HashSet;
 
+// Max number of transactions in the mempool
+const MEMPOOL_MAX_SIZE: usize = 10000; //TODO: Define
+
 #[derive(Debug, Default)]
 pub struct Mempool {
     broadcast_pool: RwLock<HashSet<H256>>,
     transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
     blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
     txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
+    txs_order: RwLock<Vec<H256>>,
 }
 impl Mempool {
     pub fn new() -> Self {
-        Self::default()
+        Mempool {
+            txs_order: RwLock::new(Vec::with_capacity(MEMPOOL_MAX_SIZE)),
+            ..Default::default()
+        }
+    }
+
+    /// Remove the oldest transaction in the pool
+    pub fn remove_oldest_transaction(
+        &self,
+        tx_pool: &mut std::sync::RwLockWriteGuard<'_, HashMap<H256, MempoolTransaction>>,
+    ) -> Result<(), StoreError> {
+        let oldest_entry = self
+            .txs_order
+            .read()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+            .first()
+            .cloned();
+
+        if let Some(oldest_hash) = oldest_entry {
+            self.remove_transaction_with_lock(&oldest_hash, tx_pool)?;
+        }
+
+        Ok(())
     }
 
     /// Add transaction to the pool without doing validity checks
@@ -36,14 +62,22 @@ impl Mempool {
         hash: H256,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
+        let mut transaction_pool = self
+            .transaction_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        if transaction_pool.len() >= MEMPOOL_MAX_SIZE {
+            self.remove_oldest_transaction(&mut transaction_pool)?;
+        }
+        self.txs_order
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+            .push(hash);
         self.txs_by_sender_nonce
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
             .insert((transaction.sender(), transaction.nonce()), hash);
-        self.transaction_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .insert(hash, transaction);
+        transaction_pool.insert(hash, transaction);
         self.broadcast_pool
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
@@ -108,8 +142,22 @@ impl Mempool {
             .transaction_pool
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        self.remove_transaction_with_lock(hash, &mut tx_pool)?;
+        Ok(())
+    }
+
+    /// Remove a transaction from the pool with the transaction pool lock already taken
+    fn remove_transaction_with_lock(
+        &self,
+        hash: &H256,
+        tx_pool: &mut HashMap<H256, MempoolTransaction>,
+    ) -> Result<(), StoreError> {
         let mut broadcast_pool = self
             .broadcast_pool
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        let mut txs_order = self
+            .txs_order
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if let Some(tx) = tx_pool.get(hash) {
@@ -126,6 +174,7 @@ impl Mempool {
                 .remove(&(tx.sender(), tx.nonce()));
             tx_pool.remove(hash);
             broadcast_pool.remove(hash);
+            txs_order.retain(|h| h != hash);
         };
 
         Ok(())
