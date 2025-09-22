@@ -494,11 +494,6 @@ impl StoreEngine for Store {
             trie.put_batch(
                 parent_state_root,
                 last_state_root,
-                update_batch.account_updates,
-            );
-            trie.put_batch(
-                parent_state_root,
-                last_state_root,
                 update_batch
                     .storage_updates
                     .into_iter()
@@ -507,6 +502,7 @@ impl StoreEngine for Store {
                             .into_iter()
                             .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
                     })
+                    .chain(update_batch.account_updates)
                     .collect(),
             );
 

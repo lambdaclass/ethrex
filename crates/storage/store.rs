@@ -1,10 +1,10 @@
-use crate::{api::StoreEngine, trie_db::layering::apply_prefix};
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
+use crate::{api::StoreEngine, trie_db::layering::apply_prefix};
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -575,12 +575,9 @@ impl Store {
             nodes
                 .into_iter()
                 .flat_map(|(account_hash, nodes)| {
-                    nodes.into_iter().map(move |(path, node)| {
-                        (
-                            apply_prefix(Some(account_hash), path),
-                            node,
-                        )
-                    })
+                    nodes
+                        .into_iter()
+                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
                 })
                 .chain(state_nodes)
                 .collect(),

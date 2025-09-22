@@ -2,7 +2,7 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp
+    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp,
 };
 use crate::store::STATE_TRIE_SEGMENTS;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;

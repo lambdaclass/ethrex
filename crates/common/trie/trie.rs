@@ -125,6 +125,7 @@ impl Trie {
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
+        self.pending_removal.remove(&path);
 
         self.root = if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -200,9 +201,6 @@ impl Trie {
             let mut acc = Vec::new();
             self.root.commit(Nibbles::default(), &mut acc);
             acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
-            // println!("{:?}", acc.iter().map(|(nib, node)| {
-            //     (nib, Node::decode(node))
-            // }).collect::<Vec<_>>());
             self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
