@@ -93,7 +93,10 @@ impl GetBlockHeaders {
             reverse,
         }
     }
+
     pub async fn fetch_headers(&self, storage: &Store) -> Vec<BlockHeader> {
+        // According to the spec, we don't need to service non-canonical headers,
+        // but geth does, and it helps in reorg scenarios, so we handle that case.
         let start_block = match self.startblock {
             // Try to fetch the block number from the hash
             // Otherwise keep the hash
@@ -142,7 +145,7 @@ impl GetBlockHeaders {
 
             // Update to next block to fetch
             match current_block {
-                // We don't support fetching headers by hash, unless the hash is
+                // We don't support fetching multiple headers by hash, unless it's
                 // part of the canonical chain, so we break here.
                 // TODO: we could support fetching by hash in descending order,
                 // by fetching the parent of each block.
