@@ -444,7 +444,13 @@ impl<'a> VM<'a> {
         }
 
         loop {
-            let opcode = self.current_call_frame.next_opcode();
+            unsafe {
+                if self.pc < self.bytecode.len() {
+                    *self.bytecode.as_ptr().add(self.pc)
+                } else {
+                    0
+                }
+            }
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
