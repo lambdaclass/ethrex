@@ -83,7 +83,7 @@ impl RpcHandler for NewPayloadV2Request {
 pub struct NewPayloadV3Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
-    pub parent_beacon_block_root: H256,
+    pub parent_beacon_block_root: BlockHash,
 }
 
 impl From<NewPayloadV3Request> for RpcRequest {
@@ -146,7 +146,7 @@ impl RpcHandler for NewPayloadV3Request {
 pub struct NewPayloadV4Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
-    pub parent_beacon_block_root: H256,
+    pub parent_beacon_block_root: BlockHash,
     pub execution_requests: Vec<EncodedRequests>,
 }
 
@@ -598,7 +598,7 @@ fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result
 
 fn get_block_from_payload(
     payload: &ExecutionPayload,
-    parent_beacon_block_root: Option<H256>,
+    parent_beacon_block_root: Option<BlockHash>,
     requests_hash: Option<H256>,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
@@ -623,7 +623,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
 async fn try_execute_payload(
     block: &Block,
     context: &RpcApiContext,
-    latest_valid_hash: H256,
+    latest_valid_hash: BlockHash,
 ) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let storage = &context.storage;

@@ -130,9 +130,9 @@ impl Default for StateDiff {
 
 pub fn encode_block_header(block_header: &BlockHeader) -> Vec<u8> {
     let mut encoded = Vec::new();
-    encoded.extend(block_header.transactions_root.0);
-    encoded.extend(block_header.receipts_root.0);
-    encoded.extend(block_header.parent_hash.0);
+    encoded.extend(block_header.transactions_root.to_fixed_bytes());
+    encoded.extend(block_header.receipts_root.to_fixed_bytes());
+    encoded.extend(block_header.parent_hash.to_fixed_bytes());
     encoded.extend(block_header.gas_limit.to_be_bytes());
     encoded.extend(block_header.gas_used.to_be_bytes());
     encoded.extend(block_header.timestamp.to_be_bytes());
@@ -195,7 +195,7 @@ impl StateDiff {
         let last_header = BlockHeader {
             transactions_root: decoder.get_h256()?,
             receipts_root: decoder.get_h256()?,
-            parent_hash: decoder.get_h256()?,
+            parent_hash: decoder.get_h256()?.into(),
             gas_limit: decoder.get_u64()?,
             gas_used: decoder.get_u64()?,
             timestamp: decoder.get_u64()?,

@@ -1,6 +1,6 @@
 use std::cmp::min;
 
-use ethrex_common::{Address, H256, types::Block};
+use ethrex_common::{Address, types::{Block, BlockHash}};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ratatui::{
@@ -102,7 +102,7 @@ impl BlocksTable {
 
     async fn process_blocks(
         new_blocks: Vec<Block>,
-    ) -> Vec<(u64, usize, H256, Address, u64, Option<u64>, usize)> {
+    ) -> Vec<(u64, usize, BlockHash, Address, u64, Option<u64>, usize)> {
         let mut new_blocks_processed = new_blocks
             .iter()
             .map(|block| {

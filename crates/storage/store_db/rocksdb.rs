@@ -487,7 +487,7 @@ impl StoreEngine for Store {
                 let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
                 batch.put_cf(&cf_headers, hash_key_rlp.bytes(), header_value_rlp.bytes());
 
-                let hash_key: AccountCodeHashRLP = block_hash.into();
+                let hash_key: AccountCodeHashRLP = H256::from(block_hash).into();
                 let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
                 batch.put_cf(&cf_bodies, hash_key.bytes(), body_value.bytes());
 

@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use ethrex_common::{H256, tracing::CallTrace, types::Block};
+use ethrex_common::{H256, tracing::CallTrace, types::{Block, BlockHash}};
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
 
@@ -86,7 +86,7 @@ impl Blockchain {
     /// Will re-execute all ancestor block's which's state is not stored up to a maximum given by `reexec`
     async fn rebuild_parent_state(
         &self,
-        parent_hash: H256,
+        parent_hash: BlockHash,
         reexec: u32,
     ) -> Result<Evm, ChainError> {
         // Check if we need to re-execute parent blocks
@@ -121,7 +121,7 @@ impl Blockchain {
 /// We might be missing this state due to using batch execute or other methods while syncing the chain
 /// If we are not able to find a parent block with state after going through the amount of blocks given by `reexec` an error will be returned
 async fn get_missing_state_parents(
-    mut parent_hash: H256,
+    mut parent_hash: BlockHash,
     store: &Store,
     reexec: u32,
 ) -> Result<Vec<Block>, ChainError> {

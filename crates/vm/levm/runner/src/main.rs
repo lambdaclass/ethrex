@@ -3,8 +3,8 @@ use clap::Parser;
 use env_logger::Env;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
-    Address, H160, H256, U256,
-    types::{Account, LegacyTransaction, Transaction},
+    Address, H160, U256,
+    types::{Account, BlockHash, LegacyTransaction, Transaction},
 };
 use ethrex_levm::{
     EVMConfig, Environment,
@@ -141,7 +141,7 @@ fn main() {
     // DB
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, BlockHash::zero()));
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 
     // Initialize VM

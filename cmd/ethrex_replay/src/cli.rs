@@ -724,7 +724,7 @@ pub async fn produce_l1_block(
         fee_recipient: Address::zero(),
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
-        beacon_root: Some(H256::zero()),
+        beacon_root: Some(BlockHash::zero()),
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
@@ -882,7 +882,7 @@ pub async fn produce_custom_l2_block(
         fee_recipient: Address::zero(),
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
-        beacon_root: Some(H256::zero()),
+        beacon_root: Some(BlockHash::zero()),
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };

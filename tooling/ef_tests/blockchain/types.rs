@@ -5,7 +5,7 @@ use ethrex_common::types::{
     Transaction as ethrexTransaction, TxKind, code_hash,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
-use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
+use ethrex_common::{Address, Bloom, H64, H256, U256, types::{BlockHash, BlockHeader}};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -251,7 +251,7 @@ pub struct Header {
     pub mix_hash: H256,
     pub nonce: H64,
     pub number: U256,
-    pub parent_hash: H256,
+    pub parent_hash: BlockHash,
     pub receipt_trie: H256,
     pub state_root: H256,
     pub timestamp: U256,
@@ -261,7 +261,7 @@ pub struct Header {
     pub withdrawals_root: Option<H256>,
     pub blob_gas_used: Option<U256>,
     pub excess_blob_gas: Option<U256>,
-    pub parent_beacon_block_root: Option<H256>,
+    pub parent_beacon_block_root: Option<BlockHash>,
     pub requests_hash: Option<H256>,
 }
 

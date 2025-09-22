@@ -274,7 +274,7 @@ async fn should_process_new_block(
 
     let block_hash = msg.block.hash();
 
-    let recovered_lead_sequencer = recover_address(msg.signature, block_hash).map_err(|e| {
+    let recovered_lead_sequencer = recover_address(msg.signature, block_hash.into()).map_err(|e| {
         log_peer_error(
             &established.node,
             &format!("Failed to recover lead sequencer: {e}"),

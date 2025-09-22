@@ -488,7 +488,7 @@ impl Blockchain {
         blocks: Vec<Block>,
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-        let mut last_valid_hash = H256::default();
+        let mut last_valid_hash = BlockHash::default();
 
         let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
             return Err((ChainError::Custom("First block not found".into()), None));

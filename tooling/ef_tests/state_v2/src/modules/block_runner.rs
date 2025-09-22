@@ -3,7 +3,7 @@ use ethrex_blockchain::get_total_blob_gas;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::constants::DEFAULT_REQUESTS_HASH;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, Fork, Receipt, Transaction, compute_receipts_root,
+    Block, BlockBody, BlockHash, BlockHeader, Fork, Receipt, Transaction, compute_receipts_root,
     compute_transactions_root,
 };
 use ethrex_common::{H256, U256};
@@ -94,7 +94,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
                     .unwrap_or_default()
                     .as_u64(),
             );
-            let parent_beacon_block_root = Some(H256::zero());
+            let parent_beacon_block_root = Some(BlockHash::zero());
             let requests_hash = if fork == Fork::Prague {
                 Some(*DEFAULT_REQUESTS_HASH)
             } else {

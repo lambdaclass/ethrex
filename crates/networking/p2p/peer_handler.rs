@@ -9,7 +9,7 @@ use std::{
 use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
-    types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
+    types::{AccountState, BlockBody, BlockHash, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
@@ -97,7 +97,7 @@ struct StorageTask {
 async fn ask_peer_head_number(
     peer_id: H256,
     peer_channel: &mut PeerChannels,
-    sync_head: H256,
+    sync_head: BlockHash,
     retries: i32,
 ) -> Result<u64, PeerHandlerError> {
     // TODO: Better error handling
@@ -177,7 +177,7 @@ impl PeerHandler {
     pub async fn request_block_headers(
         &self,
         start: u64,
-        sync_head: H256,
+        sync_head: BlockHash,
     ) -> Option<Vec<BlockHeader>> {
         let start_time = SystemTime::now();
         *METRICS.current_step.lock().await = "Downloading Headers".to_string();
@@ -429,7 +429,7 @@ impl PeerHandler {
     ///   Since request_block_headers brought problems in cases of reorg seen in this pr https://github.com/lambdaclass/ethrex/pull/4028, we have this other function to request block headers only for full sync.
     pub async fn request_block_headers_from_hash(
         &self,
-        start: H256,
+        start: BlockHash,
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
@@ -544,7 +544,7 @@ impl PeerHandler {
     /// - The requested peer did not return a valid response in the given time limit
     async fn request_block_bodies_inner(
         &mut self,
-        block_hashes: Vec<H256>,
+        block_hashes: Vec<BlockHash>,
     ) -> Option<(Vec<BlockBody>, H256)> {
         let block_hashes_len = block_hashes.len();
         let request_id = rand::random();
@@ -601,7 +601,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_bodies(
         &mut self,
-        block_hashes: Vec<H256>,
+        block_hashes: Vec<BlockHash>,
     ) -> Option<Vec<BlockBody>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             if let Some((block_bodies, _)) =
@@ -622,7 +622,7 @@ impl PeerHandler {
         &mut self,
         block_headers: &[BlockHeader],
     ) -> Option<Vec<BlockBody>> {
-        let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
+        let block_hashes: Vec<BlockHash> = block_headers.iter().map(|h| h.hash()).collect();
 
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let Some((block_bodies, peer_id)) =
@@ -655,13 +655,13 @@ impl PeerHandler {
     /// Returns the lists of receipts or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
+    pub async fn request_receipts(&self, block_hashes: Vec<BlockHash>) -> Option<Vec<Vec<Receipt>>> {
         let block_hashes_len = block_hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
-            let request = RLPxMessage::GetReceipts(GetReceipts {
-                id: request_id,
-                block_hashes: block_hashes.clone(),
+        let request = RLPxMessage::GetReceipts(GetReceipts {
+            id: request_id,
+            block_hashes: block_hashes.clone(),
             });
             let (_, mut peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)

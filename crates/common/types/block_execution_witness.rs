@@ -344,7 +344,7 @@ impl GuestProgramState {
                 return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
             }
 
-            if next_header.parent_hash != header.hash() {
+            if BlockHash::from(next_header.parent_hash) != header.hash() {
                 return Ok(Some(*number));
             }
         }

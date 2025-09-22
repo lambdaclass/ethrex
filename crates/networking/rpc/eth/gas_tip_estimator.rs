@@ -1,4 +1,4 @@
-use ethrex_common::{H256, types::MIN_GAS_TIP};
+use ethrex_common::types::{BlockHash, MIN_GAS_TIP};
 use ethrex_storage::Store;
 use tracing::error;
 
@@ -14,7 +14,7 @@ const BLOCK_RANGE_LOWER_BOUND_DEC: u64 = 20;
 /// Struct in charge of performing gas tip estimations & saving latest results for following estimations
 pub struct GasTipEstimator {
     // The latest block hash for which the gas tip estimation was performed
-    pub last_hash: H256,
+    pub last_hash: BlockHash,
     // The latest estimated gas tip
     pub last_tip: u64,
 }
@@ -23,7 +23,7 @@ impl GasTipEstimator {
     // Creates a new GasTipEstimator with default tip
     pub fn new() -> GasTipEstimator {
         Self {
-            last_hash: H256::default(),
+            last_hash: BlockHash::default(),
             last_tip: MIN_GAS_TIP,
         }
     }

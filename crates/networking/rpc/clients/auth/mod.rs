@@ -15,7 +15,7 @@ use errors::{
     EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdatedError, GetPayloadError,
     NewPayloadError,
 };
-use ethrex_common::H256;
+use ethrex_common::{H256, types::BlockHash};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
@@ -129,7 +129,7 @@ impl EngineClient {
         &self,
         execution_payload: ExecutionPayload,
         expected_blob_versioned_hashes: Vec<H256>,
-        parent_beacon_block_root: H256,
+        parent_beacon_block_root: BlockHash,
     ) -> Result<PayloadStatus, EngineClientError> {
         let request = NewPayloadV4Request {
             payload: execution_payload,

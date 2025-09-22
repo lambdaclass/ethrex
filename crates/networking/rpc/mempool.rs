@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::{Address, H256};
+use ethrex_common::{Address, types::BlockHash};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,7 +32,7 @@ pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
         let sender_entry = mempool_content.entry(tx.sender()?).or_default();
         sender_entry.insert(
             tx.nonce(),
-            RpcTransaction::build(tx, None, H256::zero(), None)?,
+            RpcTransaction::build(tx, None, BlockHash::zero(), None)?,
         );
     }
     let response = MempoolContent {

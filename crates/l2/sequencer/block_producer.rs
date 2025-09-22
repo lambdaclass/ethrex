@@ -11,7 +11,7 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
     validate_block,
 };
-use ethrex_common::Address;
+use ethrex_common::{Address, types::BlockHash};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -130,7 +130,7 @@ impl BlockProducer {
                 .ok_or(BlockProducerError::StorageDataIsNone)?
         };
         let head_hash = head_header.hash();
-        let head_beacon_block_root = H256::zero();
+        let head_beacon_block_root = BlockHash::zero();
 
         // The proposer leverages the execution payload framework used for the engine API,
         // but avoids calling the API methods and unnecesary re-execution.

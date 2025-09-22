@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use ethrex_common::H256;
+use ethrex_common::types::BlockHash;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
 
@@ -56,7 +56,7 @@ pub struct Metrics {
     /* Snap Sync */
     // Common
     pub sync_head_block: AtomicU64,
-    pub sync_head_hash: Arc<Mutex<H256>>,
+    pub sync_head_hash: Arc<Mutex<BlockHash>>,
     pub current_step: Arc<Mutex<String>>,
 
     // Headers
@@ -552,7 +552,7 @@ impl Default for Metrics {
             /* Snap Sync */
             // Common
             sync_head_block: AtomicU64::new(0),
-            sync_head_hash: Arc::new(Mutex::new(H256::default())),
+            sync_head_hash: Arc::new(Mutex::new(BlockHash::default())),
             current_step: Arc::new(Mutex::new("".to_string())),
 
             // Headers

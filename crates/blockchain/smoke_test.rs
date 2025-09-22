@@ -12,7 +12,7 @@ mod blockchain_integration_test {
 
     use ethrex_common::{
         H160, H256,
-        types::{Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
+        types::{Block, BlockHash, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
     };
     use ethrex_storage::{EngineType, Store};
 
@@ -302,7 +302,7 @@ mod blockchain_integration_test {
             fee_recipient: H160::random(),
             random: H256::random(),
             withdrawals: Some(Vec::new()),
-            beacon_root: Some(H256::random()),
+            beacon_root: Some(BlockHash::random()),
             version: 1,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,

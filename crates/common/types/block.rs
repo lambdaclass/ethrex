@@ -24,10 +24,151 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
-use std::cmp::{Ordering, max};
+use std::{
+    cmp::{Ordering, max},
+    fmt,
+    str::FromStr,
+};
 
 pub type BlockNumber = u64;
-pub type BlockHash = H256;
+
+#[repr(transparent)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    Serialize,
+    RSerialize,
+    RDeserialize,
+    Archive,
+)]
+#[serde(transparent)]
+pub struct BlockHash(
+    #[rkyv(with = crate::rkyv_utils::H256Wrapper)]
+    H256,
+);
+
+impl BlockHash {
+    pub const fn new(inner: H256) -> Self {
+        Self(inner)
+    }
+
+    pub const fn as_inner(&self) -> &H256 {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> H256 {
+        self.0
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    pub fn to_fixed_bytes(self) -> [u8; 32] {
+        self.0.to_fixed_bytes()
+    }
+
+    pub fn zero() -> Self {
+        Self(H256::zero())
+    }
+
+    pub fn random() -> Self {
+        Self(H256::random())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+}
+
+impl From<H256> for BlockHash {
+    fn from(value: H256) -> Self {
+        Self(value)
+    }
+}
+
+impl From<BlockHash> for H256 {
+    fn from(value: BlockHash) -> Self {
+        value.0
+    }
+}
+
+impl From<BlockHash> for [u8; 32] {
+    fn from(value: BlockHash) -> Self {
+        value.0.into()
+    }
+}
+
+impl From<[u8; 32]> for BlockHash {
+    fn from(value: [u8; 32]) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<&[u8; 32]> for BlockHash {
+    fn from(value: &[u8; 32]) -> Self {
+        Self((*value).into())
+    }
+}
+
+impl AsRef<[u8]> for BlockHash {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<H256> for BlockHash {
+    fn as_ref(&self) -> &H256 {
+        &self.0
+    }
+}
+
+impl fmt::LowerHex for BlockHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl fmt::UpperHex for BlockHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::UpperHex::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Display for BlockHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl FromStr for BlockHash {
+    type Err = <H256 as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        H256::from_str(s).map(Self)
+    }
+}
+
+impl RLPEncode for BlockHash {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        self.0.encode(buf)
+    }
+}
+
+impl RLPDecode for BlockHash {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (value, rest) = H256::decode_unfinished(rlp)?;
+        Ok((Self(value), rest))
+    }
+}
 
 use once_cell::sync::OnceCell;
 
@@ -87,8 +228,7 @@ pub struct BlockHeader {
     #[serde(skip)]
     #[rkyv(with=rkyv::with::Skip)]
     pub hash: OnceCell<BlockHash>,
-    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
-    pub parent_hash: H256,
+    pub parent_hash: BlockHash,
     #[serde(rename = "sha3Uncles")]
     #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub ommers_hash: H256, // ommer = uncle
@@ -138,8 +278,7 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub excess_blob_gas: Option<u64>,
-    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
-    pub parent_beacon_block_root: Option<H256>,
+    pub parent_beacon_block_root: Option<BlockHash>,
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub requests_hash: Option<H256>,
@@ -320,7 +459,7 @@ impl BlockHeader {
     fn compute_block_hash(&self) -> BlockHash {
         let mut buf = vec![];
         self.encode(&mut buf);
-        keccak(buf)
+        keccak(buf).into()
     }
 
     pub fn hash(&self) -> BlockHash {
@@ -601,7 +740,7 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
-    if header.parent_hash != parent_header.hash() {
+    if BlockHash::from(header.parent_hash) != parent_header.hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);
     }
 
@@ -799,7 +938,8 @@ mod test {
             parent_hash: H256::from_str(
                 "0x0000000000000000000000000000000000000000000000000000000000000000",
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
             ommers_hash: H256::from_str(
                 "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
             )
@@ -835,7 +975,7 @@ mod test {
             ),
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
-            parent_beacon_block_root: Some(H256::zero()),
+            parent_beacon_block_root: Some(BlockHash::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };
@@ -843,7 +983,8 @@ mod test {
             parent_hash: H256::from_str(
                 "0x48e29e7357408113a4166e04e9f1aeff0680daa2b97ba93df6512a73ddf7a154",
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
             ommers_hash: H256::from_str(
                 "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
             )
@@ -879,7 +1020,7 @@ mod test {
             ),
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
-            parent_beacon_block_root: Some(H256::zero()),
+            parent_beacon_block_root: Some(BlockHash::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };

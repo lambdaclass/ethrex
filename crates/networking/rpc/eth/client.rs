@@ -55,6 +55,7 @@ impl RpcHandler for Syncing {
                     .syncer
                     .get_last_fcu_head()
                     .map_err(|error| RpcErr::Internal(error.to_string()))?
+                    .into_inner()
                     .to_low_u64_be(),
             };
             serde_json::to_value(syncing_status)

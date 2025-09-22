@@ -1,9 +1,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
-use ethrex_common::H256;
 use ethrex_common::{
     Address, U256,
-    types::{Account, EIP1559Transaction, Transaction, TxKind},
+    types::{Account, BlockHash, EIP1559Transaction, Transaction, TxKind},
 };
 use ethrex_levm::errors::VMError;
 use ethrex_levm::{
@@ -53,7 +52,7 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
 fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     // The store type for this bench shouldn't matter as all operations use the LEVM cache
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, BlockHash::zero()));
 
     let cache = BTreeMap::from([
         (

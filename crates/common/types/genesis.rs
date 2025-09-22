@@ -13,7 +13,7 @@ use std::{
 use tracing::warn;
 
 use super::{
-    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
 use crate::{
@@ -531,7 +531,7 @@ impl Genesis {
         let parent_beacon_block_root = self
             .config
             .is_cancun_activated(self.timestamp)
-            .then_some(H256::zero());
+            .then_some(BlockHash::zero());
 
         let requests_hash = self
             .config
@@ -539,7 +539,7 @@ impl Genesis {
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
         BlockHeader {
-            parent_hash: H256::zero(),
+            parent_hash: BlockHash::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.coinbase,
             state_root: self.compute_state_root(),
@@ -729,7 +729,7 @@ mod tests {
         assert_eq!(header.withdrawals_root, Some(compute_withdrawals_root(&[])));
         assert_eq!(header.blob_gas_used, Some(0));
         assert_eq!(header.excess_blob_gas, Some(0));
-        assert_eq!(header.parent_beacon_block_root, Some(H256::zero()));
+        assert_eq!(header.parent_beacon_block_root, Some(BlockHash::zero()));
         assert!(body.transactions.is_empty());
         assert!(body.ommers.is_empty());
         assert!(body.withdrawals.is_some_and(|w| w.is_empty()));
