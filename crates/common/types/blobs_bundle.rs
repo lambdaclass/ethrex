@@ -1,7 +1,8 @@
 use std::ops::AddAssign;
 
 use crate::serde_utils;
-use crate::{Bytes, H256, types::constants::VERSIONED_HASH_VERSION_KZG};
+use crate::{Bytes, H256};
+use crate::types::constants::VERSIONED_HASH_VERSION_KZG;
 
 use ethrex_rlp::{
     decode::RLPDecode,
