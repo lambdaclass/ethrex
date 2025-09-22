@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758556434805,
+  "lastUpdate": 1758556741389,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15805,6 +15805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90659061499,
             "range": "± 627699476",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ab855bc63c3043254474c6cb5d97fb4c6edbe435",
+          "message": "fix(l1): wrong home path in sync tool makefile (#4593)\n\nThe Makefile was creating a '~' directory by trying to use the shell\nidiom for HOME. Replace it by the proper environent variable.",
+          "timestamp": "2025-09-22T14:54:29Z",
+          "tree_id": "e1a04b61d9f2734805f575935fe076a0dfb2bc62",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ab855bc63c3043254474c6cb5d97fb4c6edbe435"
+        },
+        "date": 1758556719036,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89605569067,
+            "range": "± 214059444",
             "unit": "ns/iter"
           }
         ]
