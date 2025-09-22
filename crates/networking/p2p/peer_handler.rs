@@ -1,6 +1,7 @@
 use std::{
     collections::{HashSet, VecDeque},
     io::ErrorKind,
+    path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
@@ -727,7 +728,7 @@ impl PeerHandler {
         &mut self,
         start: H256,
         limit: H256,
-        account_state_snapshots_dir: String,
+        account_state_snapshots_dir: &Path,
         pivot_header: &mut BlockHeader,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), PeerHandlerError> {
@@ -788,22 +789,22 @@ impl PeerHandler {
                     .collect::<Vec<(H256, AccountState)>>()
                     .encode_to_vec();
 
-                if !std::fs::exists(&account_state_snapshots_dir)
+                if !std::fs::exists(account_state_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
                 {
-                    std::fs::create_dir_all(&account_state_snapshots_dir)
+                    std::fs::create_dir_all(account_state_snapshots_dir)
                         .map_err(|_| PeerHandlerError::CreateStateSnapshotsDir)?;
                 }
 
-                let account_state_snapshots_dir_cloned = account_state_snapshots_dir.clone();
+                let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
                 let dump_account_result_sender_cloned = dump_account_result_sender.clone();
                 tokio::task::spawn(async move {
                     let path = get_account_state_snapshot_file(
-                        account_state_snapshots_dir_cloned,
+                        &account_state_snapshots_dir_cloned,
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result = dump_to_file(path, account_state_chunk);
+                    let result = dump_to_file(&path, account_state_chunk);
                     dump_account_result_sender_cloned
                         .send(result)
                         .await
@@ -873,7 +874,7 @@ impl PeerHandler {
                 tokio::task::spawn(async move {
                     let DumpError { path, contents, .. } = dump_account_data;
                     // Dump the account data
-                    let result = dump_to_file(path, contents);
+                    let result = dump_to_file(&path, contents);
                     // Send the result through the channel
                     dump_account_result_sender_cloned
                         .send(result)
@@ -940,10 +941,10 @@ impl PeerHandler {
                 .collect::<Vec<(H256, AccountState)>>()
                 .encode_to_vec();
 
-            if !std::fs::exists(&account_state_snapshots_dir)
+            if !std::fs::exists(account_state_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
             {
-                std::fs::create_dir_all(&account_state_snapshots_dir)
+                std::fs::create_dir_all(account_state_snapshots_dir)
                     .map_err(|_| PeerHandlerError::CreateStateSnapshotsDir)?;
             }
 
@@ -1283,7 +1284,7 @@ impl PeerHandler {
     pub async fn request_storage_ranges(
         &mut self,
         account_storage_roots: &mut AccountStorageRoots,
-        account_storages_snapshots_dir: String,
+        account_storages_snapshots_dir: &Path,
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
     ) -> Result<u64, PeerHandlerError> {
@@ -1347,13 +1348,14 @@ impl PeerHandler {
                     .collect::<Vec<_>>()
                     .encode_to_vec();
 
-                if !std::fs::exists(&account_storages_snapshots_dir)
+                if !std::fs::exists(account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
                 {
-                    std::fs::create_dir_all(&account_storages_snapshots_dir)
+                    std::fs::create_dir_all(account_storages_snapshots_dir)
                         .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
                 }
-                let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
+                let account_storages_snapshots_dir_cloned =
+                    account_storages_snapshots_dir.to_path_buf();
                 if !disk_joinset.is_empty() {
                     debug!("Writing to disk");
                     disk_joinset
@@ -1368,10 +1370,10 @@ impl PeerHandler {
                 }
                 disk_joinset.spawn(async move {
                     let path = get_account_storages_snapshot_file(
-                        account_storages_snapshots_dir_cloned,
+                        &account_storages_snapshots_dir_cloned,
                         chunk_index,
                     );
-                    dump_to_file(path, snapshot)
+                    dump_to_file(&path, snapshot)
                 });
 
                 chunk_index += 1;
@@ -1582,17 +1584,14 @@ impl PeerHandler {
                 .collect::<Vec<_>>()
                 .encode_to_vec();
 
-            if !std::fs::exists(&account_storages_snapshots_dir)
+            if !std::fs::exists(account_storages_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
             {
-                std::fs::create_dir_all(&account_storages_snapshots_dir)
+                std::fs::create_dir_all(account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
             }
-            let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
-            let path = get_account_storages_snapshot_file(
-                account_storages_snapshots_dir_cloned,
-                chunk_index,
-            );
+            let path =
+                get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
             std::fs::write(path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
@@ -1943,7 +1942,7 @@ fn format_duration(duration: Duration) -> String {
 }
 
 pub struct DumpError {
-    pub path: String,
+    pub path: PathBuf,
     pub contents: Vec<u8>,
     pub error: ErrorKind,
 }

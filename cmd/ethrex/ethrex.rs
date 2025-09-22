@@ -5,7 +5,7 @@ use ethrex::{
     utils::{NodeConfigFile, store_node_config_file},
 };
 use ethrex_p2p::{discv4::peer_table::PeerTableHandle, types::NodeRecord};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
     sync::Mutex,
@@ -33,13 +33,13 @@ fn log_global_allocator() {
 pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 async fn server_shutdown(
-    data_dir: String,
+    datadir: &Path,
     cancel_token: &CancellationToken,
     peer_table: PeerTableHandle,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");
-    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    let node_config_path = datadir.join("node_config.json");
     info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
@@ -58,7 +58,7 @@ async fn main() -> eyre::Result<()> {
 
     let log_filter_handler = init_tracing(&opts);
 
-    let (data_dir, cancel_token, peer_table, local_node_record) =
+    let (datadir, cancel_token, peer_table, local_node_record) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
@@ -67,10 +67,10 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
     }
 
