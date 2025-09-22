@@ -99,8 +99,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
-        # TODO: Change repo back to https://github.com/ethereum/hive when
-        # https://github.com/ethereum/hive/pull/1325 is merged
         run: |
           git clone --single-branch --branch master https://github.com/lambdaclass/hive
           cd hive
