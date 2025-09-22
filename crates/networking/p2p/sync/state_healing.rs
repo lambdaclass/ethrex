@@ -163,7 +163,7 @@ async fn heal_state_trie(
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
             // Mark the peer as available
-            peers.peer_table.free_peer(&peer_id).await;
+            peers.peer_table.free_peer(&peer_id).await?;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -196,7 +196,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    peers.peer_table.record_success(&peer_id).await;
+                    peers.peer_table.record_success(&peer_id).await?;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -205,7 +205,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    peers.peer_table.record_failure(&peer_id).await;
+                    peers.peer_table.record_failure(&peer_id).await?;
                 }
             }
         }

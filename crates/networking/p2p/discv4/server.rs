@@ -5,7 +5,7 @@ use crate::{
             ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
             PacketDecodeErr, PingMessage, PongMessage,
         },
-        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTableHandle},
+        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTableError, PeerTableHandle},
     },
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
@@ -60,6 +60,8 @@ pub enum DiscoveryServerError {
     PartialMessageSent,
     #[error("Unknown or invalid contact")]
     InvalidContact,
+    #[error(transparent)]
+    PeerTable(#[from] PeerTableError),
 }
 
 #[derive(Debug, Clone)]
@@ -115,11 +117,11 @@ impl DiscoveryServer {
         info!(count = bootnodes.len(), "Adding bootnodes");
 
         for bootnode in &bootnodes {
-            discovery_server.send_ping(bootnode).await;
+            discovery_server.send_ping(bootnode).await?;
         }
         peer_table
             .new_contacts(bootnodes, local_node.node_id())
-            .await;
+            .await?;
 
         discovery_server.start();
         Ok(())
@@ -133,10 +135,10 @@ impl DiscoveryServer {
             hash,
             sender_public_key,
         }: Discv4Message,
-    ) {
+    ) -> Result<(), DiscoveryServerError> {
         // Ignore packets sent by ourselves
         if node_id(&sender_public_key) == self.local_node.node_id() {
-            return;
+            return Ok(());
         }
         match message {
             Message::Ping(ping_message) => {
@@ -144,7 +146,7 @@ impl DiscoveryServer {
 
                 if is_msg_expired(ping_message.expiration) {
                     trace!("Ping expired, skipped");
-                    return;
+                    return Ok(());
                 }
 
                 let node = Node::new(
@@ -163,37 +165,38 @@ impl DiscoveryServer {
 
                 let node_id = node_id(&sender_public_key);
 
-                self.handle_pong(pong_message, node_id).await;
+                self.handle_pong(pong_message, node_id).await?;
             }
             Message::FindNode(find_node_message) => {
                 trace!(received = "FindNode", msg = ?find_node_message, from = %format!("{:#x}", sender_public_key));
 
                 if is_msg_expired(find_node_message.expiration) {
                     trace!("FindNode expired, skipped");
-                    return;
+                    return Ok(());
                 }
 
-                self.handle_find_node(sender_public_key, from).await;
+                self.handle_find_node(sender_public_key, from).await?;
             }
             Message::Neighbors(neighbors_message) => {
                 trace!(received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
 
                 if is_msg_expired(neighbors_message.expiration) {
                     trace!("Neighbors expired, skipping");
-                    return;
+                    return Ok(());
                 }
 
-                self.handle_neighbors(neighbors_message).await;
+                self.handle_neighbors(neighbors_message).await?;
             }
             Message::ENRRequest(enrrequest_message) => {
                 trace!(received = "ENRRequest", msg = ?enrrequest_message, from = %format!("{sender_public_key:#x}"));
 
                 if is_msg_expired(enrrequest_message.expiration) {
                     trace!("ENRRequest expired, skipping");
-                    return;
+                    return Ok(());
                 }
 
-                self.handle_enr_request(sender_public_key, from, hash).await;
+                self.handle_enr_request(sender_public_key, from, hash)
+                    .await?;
             }
             Message::ENRResponse(enrresponse_message) => {
                 /*
@@ -208,49 +211,40 @@ impl DiscoveryServer {
                 trace!(received = "ENRResponse", msg = ?enrresponse_message, from = %format!("{sender_public_key:#x}"));
             }
         }
+        Ok(())
     }
 
-    async fn revalidate(&mut self) {
+    async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
         for contact in self
             .peer_table
             .get_contacts_to_revalidate(REVALIDATION_INTERVAL)
-            .await
-            // TODO proper error handling
-            .unwrap_or(Vec::new())
+            .await?
         {
-            self.send_ping(&contact.node).await;
+            self.send_ping(&contact.node).await?;
         }
+        Ok(())
     }
 
-    async fn lookup(&mut self) {
-        for contact in self
-            .peer_table
-            .get_contacts_for_lookup(20)
-            .await
-            // TODO proper error handling
-            .unwrap_or(Vec::new())
-        {
+    async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
+        for contact in self.peer_table.get_contacts_for_lookup(20).await? {
             if let Err(err) = self.send_find_node(&contact.node).await {
                 error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err, "Error sending message");
                 self.peer_table
                     .set_disposable(&contact.node.node_id())
-                    .await;
-                //contact.disposable = true;
+                    .await?;
                 METRICS.record_new_discarded_node().await;
             }
 
             self.peer_table
                 .increment_find_node_sent(&contact.node.node_id())
-                .await;
-            //contact.n_find_node_sent += 1;
+                .await?;
         }
+        Ok(())
     }
 
-    async fn prune(&mut self) {
-        self.peer_table
-            .prune()
-            .await
-            .inspect_err(|e| error!(err= ?e, "Failed to prune peer table"));
+    async fn prune(&mut self) -> Result<(), DiscoveryServerError> {
+        self.peer_table.prune().await?;
+        Ok(())
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
@@ -267,20 +261,21 @@ impl DiscoveryServer {
         }
     }
 
-    async fn send_ping(&mut self, node: &Node) {
+    async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
         match self.send_ping_internal(node).await {
             Ok(ping_hash) => {
                 METRICS.record_ping_sent().await;
                 self.peer_table
                     .record_ping_sent(&node.node_id(), ping_hash)
-                    .await;
+                    .await?;
             }
             Err(err) => {
                 error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?err, "Error sending message");
-                self.peer_table.set_disposable(&node.node_id()).await;
+                self.peer_table.set_disposable(&node.node_id()).await?;
                 METRICS.record_new_discarded_node().await;
             }
         }
+        Ok(())
     }
 
     async fn send_ping_internal(&self, node: &Node) -> Result<H256, DiscoveryServerError> {
@@ -381,30 +376,33 @@ impl DiscoveryServer {
         self.send_pong(hash, &node).await?;
 
         if self.peer_table.insert_if_new(&node).await.unwrap_or(false) {
-            self.send_ping(&node).await;
+            self.send_ping(&node).await?;
         }
-
         Ok(())
     }
 
-    async fn handle_pong(&mut self, message: PongMessage, node_id: H256) {
+    async fn handle_pong(
+        &mut self,
+        message: PongMessage,
+        node_id: H256,
+    ) -> Result<(), DiscoveryServerError> {
         self.peer_table
             .record_pong_received(&node_id, message.ping_hash)
-            .await;
+            .await?;
+        Ok(())
     }
 
-    async fn handle_find_node(&mut self, sender_public_key: H512, from: SocketAddr) {
+    async fn handle_find_node(
+        &mut self,
+        sender_public_key: H512,
+        from: SocketAddr,
+    ) -> Result<(), DiscoveryServerError> {
         let node_id = node_id(&sender_public_key);
         if let Ok(contact) = self
             .validate_contact(sender_public_key, node_id, from, "FindNode")
             .await
         {
-            let neighbors = self
-                .peer_table
-                .get_closest_nodes(&node_id)
-                .await
-                // TODO: Proper error handling
-                .unwrap_or(Vec::new());
+            let neighbors = self.peer_table.get_closest_nodes(&node_id).await?;
 
             // A single node encodes to at most 89B, so 8 of them are at most 712B plus
             // recursive length and expiration time, well within bound of 1280B per packet.
@@ -419,16 +417,26 @@ impl DiscoveryServer {
                     });
             }
         }
+        Ok(())
     }
 
-    async fn handle_neighbors(&mut self, neighbors_message: NeighborsMessage) {
+    async fn handle_neighbors(
+        &mut self,
+        neighbors_message: NeighborsMessage,
+    ) -> Result<(), DiscoveryServerError> {
         // TODO(#3746): check that we requested neighbors from the node
         self.peer_table
             .new_contacts(neighbors_message.nodes, self.local_node.node_id())
-            .await;
+            .await?;
+        Ok(())
     }
 
-    async fn handle_enr_request(&mut self, sender_public_key: H512, from: SocketAddr, hash: H256) {
+    async fn handle_enr_request(
+        &mut self,
+        sender_public_key: H512,
+        from: SocketAddr,
+        hash: H256,
+    ) -> Result<(), DiscoveryServerError> {
         let node_id = node_id(&sender_public_key);
 
         if self
@@ -436,15 +444,16 @@ impl DiscoveryServer {
             .await
             .is_err()
         {
-            return;
+            return Ok(());
         }
 
         if let Err(err) = self.send_enr_response(hash, from).await {
             error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err, "Error sending message");
-            return;
+            return Ok(());
         }
 
-        self.peer_table.knows_us(&node_id).await;
+        self.peer_table.knows_us(&node_id).await?;
+        Ok(())
     }
 
     async fn validate_contact(
@@ -457,9 +466,7 @@ impl DiscoveryServer {
         match self
             .peer_table
             .validate_contact(&node_id, from.ip())
-            .await
-            // TODO proper error handling
-            .unwrap_or(PeerTableOutMessage::UnknownContact)
+            .await?
         {
             PeerTableOutMessage::UnknownContact => {
                 debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
@@ -544,26 +551,38 @@ impl GenServer for DiscoveryServer {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
+        handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
             Self::CastMsg::Message(message) => {
-                self.handle_message(*message).await;
+                let _ = self
+                    .handle_message(*message)
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error Handling Discovery message"));
             }
             Self::CastMsg::Revalidate => {
                 trace!(received = "Revalidate");
-                self.revalidate().await;
+                let _ = self
+                    .revalidate()
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error revalidating discovered peers"));
             }
             Self::CastMsg::Lookup => {
                 trace!(received = "Lookup");
-                self.lookup().await;
+                let _ = self
+                    .lookup()
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
 
                 let interval = self.get_lookup_interval().await;
                 send_after(interval, handle.clone(), Self::CastMsg::Lookup);
             }
             Self::CastMsg::Prune => {
                 trace!(received = "Prune");
-                self.prune().await;
+                let _ = self
+                    .prune()
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
             }
         }
         CastResponse::NoReply

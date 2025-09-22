@@ -5,9 +5,9 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, send_after},
 };
 
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
-use crate::{metrics::METRICS, network::P2PContext};
+use crate::{discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext};
 
 use crate::rlpx::connection::server::RLPxConnection;
 
@@ -19,6 +19,8 @@ pub enum RLPxInitiatorError {
     // MessageSendFailure(std::io::Error),
     // #[error("Only partial message was sent")]
     // PartialMessageSent,
+    #[error(transparent)]
+    PeerTableError(#[from] PeerTableError),
 }
 
 #[derive(Debug, Clone)]
@@ -59,21 +61,20 @@ impl RLPxInitiator {
         Ok(())
     }
 
-    async fn look_for_peers(&mut self) {
+    async fn look_for_peers(&mut self) -> Result<(), RLPxInitiatorError> {
         info!("Looking for peers");
 
         let contacts = self
             .context
             .table
             .get_contacts_to_initiate(self.new_connections_per_lookup)
-            .await
-            // TODO proper error handling
-            .unwrap_or(Vec::new());
+            .await?;
 
         for contact in contacts {
             RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
             METRICS.record_new_rlpx_conn_attempt().await;
         }
+        Ok(())
     }
 
     async fn get_lookup_interval(&mut self) -> Duration {
@@ -113,7 +114,10 @@ impl GenServer for RLPxInitiator {
             Self::CastMsg::LookForPeers => {
                 debug!(received = "Look for peers");
 
-                self.look_for_peers().await;
+                let _ = self
+                    .look_for_peers()
+                    .await
+                    .inspect_err(|e| error!(err=?e, "Error looking for peers"));
 
                 send_after(
                     self.get_lookup_interval().await,

@@ -220,7 +220,7 @@ impl GenServer for RLPxConnection {
                             established_state
                                 .peer_table
                                 .set_unwanted(&established_state.node.node_id())
-                                .await;
+                                .await?;
                         }
                         _ => {}
                     }
@@ -371,7 +371,7 @@ impl GenServer for RLPxConnection {
                 established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
-                    .await;
+                    .await?;
                 established_state.teardown().await;
             }
             _ => {
@@ -761,7 +761,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 )
                 .await;
 
-            state.peer_table.remove_peer(state.node.node_id()).await;
+            state.peer_table.remove_peer(state.node.node_id()).await?;
 
             // TODO handle the disconnection request
 

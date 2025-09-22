@@ -13,7 +13,11 @@ pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcEr
 }
 
 pub async fn peer_count(_req: &RpcRequest, mut context: RpcApiContext) -> Result<Value, RpcErr> {
-    let total_peers = context.peer_handler.count_total_peers().await;
+    let total_peers = context
+        .peer_handler
+        .count_total_peers()
+        .await
+        .map_err(|e| RpcErr::Internal(format!("Could not retrieve peer count: {e}")))?;
 
     Ok(json!(format!("{:#x}", total_peers)))
 }

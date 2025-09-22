@@ -481,7 +481,7 @@ impl PeerTableHandle {
                 sender_ip,
             })
             .await
-            .map_err(|e| PeerTableError::InternalError(e))
+            .map_err(PeerTableError::InternalError)
     }
 
     /// Get closest nodes according to kademlia's distance
@@ -844,87 +844,73 @@ impl GenServer for PeerTable {
     ) -> CallResponse<Self> {
         match message {
             CallMessage::PeerCount => {
-                return CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()));
+                CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()))
             }
             CallMessage::PeerCountByCapabilities { capabilities: _ } => {
-                return CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()));
+                CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()))
             }
-            CallMessage::FreePeers => {
-                return CallResponse::Reply(Self::OutMsg::PeerCount(
-                    self.peers
-                        .iter_mut()
-                        .filter_map(|(_, peer_data)| {
-                            if peer_data.in_use {
-                                peer_data.in_use = false;
-                                Some(peer_data)
-                            } else {
-                                None
-                            }
-                        })
-                        .count(),
-                ));
-            }
+            CallMessage::FreePeers => CallResponse::Reply(Self::OutMsg::PeerCount(
+                self.peers
+                    .iter_mut()
+                    .filter_map(|(_, peer_data)| {
+                        if peer_data.in_use {
+                            peer_data.in_use = false;
+                            Some(peer_data)
+                        } else {
+                            None
+                        }
+                    })
+                    .count(),
+            )),
             CallMessage::TargetReached {
                 target_contacts,
                 target_peers,
-            } => {
-                return CallResponse::Reply(Self::OutMsg::TargetReached(
-                    self.contacts.len() < target_contacts && self.peers.len() < target_peers,
-                ));
-            }
-            CallMessage::GetContactsToInitiate(amount) => {
-                return CallResponse::Reply(Self::OutMsg::Contacts(
-                    self.get_contacts_to_initiate(amount),
-                ));
-            }
+            } => CallResponse::Reply(Self::OutMsg::TargetReached(
+                self.contacts.len() < target_contacts && self.peers.len() < target_peers,
+            )),
+            CallMessage::GetContactsToInitiate(amount) => CallResponse::Reply(
+                Self::OutMsg::Contacts(self.get_contacts_to_initiate(amount)),
+            ),
             CallMessage::GetContactsForLookup(amount) => {
-                return CallResponse::Reply(Self::OutMsg::Contacts(
-                    self.get_contacts_for_lookup(amount),
-                ));
+                CallResponse::Reply(Self::OutMsg::Contacts(self.get_contacts_for_lookup(amount)))
             }
-            CallMessage::GetContactsToRevalidate(revalidation_interval) => {
-                return CallResponse::Reply(Self::OutMsg::Contacts(
-                    self.get_contacts_to_revalidate(revalidation_interval),
-                ));
-            }
+            CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
+                Self::OutMsg::Contacts(self.get_contacts_to_revalidate(revalidation_interval)),
+            ),
             CallMessage::GetBestPeer { capabilities } => {
                 let channels = self.get_best_peer(&capabilities).await;
-                return CallResponse::Reply(channels.map_or(
+                CallResponse::Reply(channels.map_or(
                     Self::OutMsg::NotFound,
                     |(node_id, peer_channels)| Self::OutMsg::FoundPeer {
                         node_id,
                         peer_channels,
                     },
-                ));
+                ))
             }
             CallMessage::UseBestPeer { capabilities } => {
                 let channels = self.use_best_peer(&capabilities).await;
-                return CallResponse::Reply(channels.map_or(
+                CallResponse::Reply(channels.map_or(
                     Self::OutMsg::NotFound,
                     |(node_id, peer_channels)| Self::OutMsg::FoundPeer {
                         node_id,
                         peer_channels,
                     },
-                ));
+                ))
             }
-            CallMessage::GetScore { node_id } => {
-                return CallResponse::Reply(Self::OutMsg::PeerScore(
-                    self.peers
-                        .get(&node_id)
-                        .map(|peer_data| peer_data.score)
-                        .unwrap_or(0),
-                ));
-            }
-            CallMessage::GetConnectedNodes => {
-                return CallResponse::Reply(Self::OutMsg::Nodes(
-                    self.peers
-                        .values()
-                        .map(|peer_data| peer_data.node.clone())
-                        .collect(),
-                ));
-            }
+            CallMessage::GetScore { node_id } => CallResponse::Reply(Self::OutMsg::PeerScore(
+                self.peers
+                    .get(&node_id)
+                    .map(|peer_data| peer_data.score)
+                    .unwrap_or_default(),
+            )),
+            CallMessage::GetConnectedNodes => CallResponse::Reply(Self::OutMsg::Nodes(
+                self.peers
+                    .values()
+                    .map(|peer_data| peer_data.node.clone())
+                    .collect(),
+            )),
             CallMessage::GetPeersWithCapabilities => {
-                return CallResponse::Reply(Self::OutMsg::PeersWithCapabilities(
+                CallResponse::Reply(Self::OutMsg::PeersWithCapabilities(
                     self.peers
                         .iter()
                         .filter_map(|(peer_id, peer_data)| {
@@ -937,43 +923,37 @@ impl GenServer for PeerTable {
                             })
                         })
                         .collect(),
-                ));
+                ))
             }
-            CallMessage::GetPeerChannels => {
-                return CallResponse::Reply(Self::OutMsg::PeerChannels(
-                    self.peers
-                        .iter()
-                        .filter_map(|(peer_id, peer_data)| {
-                            peer_data
-                                .channels
-                                .clone()
-                                .map(|peer_channels| (*peer_id, peer_channels))
-                        })
-                        .collect(),
-                ));
-            }
-            CallMessage::InsertIfNew { node } => {
-                return CallResponse::Reply(Self::OutMsg::IsNew(
-                    match self.contacts.entry(node.node_id()) {
-                        Entry::Occupied(_) => false,
-                        Entry::Vacant(entry) => {
-                            entry.insert(Contact::from(node));
-                            true
-                        }
-                    },
-                ));
-            }
+            CallMessage::GetPeerChannels => CallResponse::Reply(Self::OutMsg::PeerChannels(
+                self.peers
+                    .iter()
+                    .filter_map(|(peer_id, peer_data)| {
+                        peer_data
+                            .channels
+                            .clone()
+                            .map(|peer_channels| (*peer_id, peer_channels))
+                    })
+                    .collect(),
+            )),
+            CallMessage::InsertIfNew { node } => CallResponse::Reply(Self::OutMsg::IsNew(
+                match self.contacts.entry(node.node_id()) {
+                    Entry::Occupied(_) => false,
+                    Entry::Vacant(entry) => {
+                        entry.insert(Contact::from(node));
+                        true
+                    }
+                },
+            )),
             CallMessage::ValidateContact { node_id, sender_ip } => {
-                return CallResponse::Reply(self.validate_contact(node_id, sender_ip));
+                CallResponse::Reply(self.validate_contact(node_id, sender_ip))
             }
             CallMessage::GetClosestNodes { node_id } => {
-                return CallResponse::Reply(Self::OutMsg::Nodes(self.get_closest_nodes(node_id)));
+                CallResponse::Reply(Self::OutMsg::Nodes(self.get_closest_nodes(node_id)))
             }
-            CallMessage::GetPeersData => {
-                return CallResponse::Reply(OutMessage::PeersData(
-                    self.peers.values().cloned().collect(),
-                ));
-            }
+            CallMessage::GetPeersData => CallResponse::Reply(OutMessage::PeersData(
+                self.peers.values().cloned().collect(),
+            )),
             CallMessage::GetRandomPeer => {
                 let mut peers: Vec<(H256, PeerChannels)> = self
                     .peers
@@ -987,12 +967,12 @@ impl GenServer for PeerTable {
                     .collect();
                 peers.shuffle(&mut rand::rngs::OsRng);
                 if let Some((node_id, peer_channels)) = peers.first() {
-                    return CallResponse::Reply(OutMessage::FoundPeer {
+                    CallResponse::Reply(OutMessage::FoundPeer {
                         node_id: *node_id,
                         peer_channels: peer_channels.clone(),
-                    });
+                    })
                 } else {
-                    return CallResponse::Reply(OutMessage::NotFound);
+                    CallResponse::Reply(OutMessage::NotFound)
                 }
             }
         }

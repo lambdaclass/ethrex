@@ -6,7 +6,7 @@ use crate::{
         snap::{GetTrieNodes, TrieNodes},
     },
     sync::{
-        AccountStorageRoots,
+        AccountStorageRoots, SyncError,
         state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
     },
     utils::current_unix_time,
@@ -125,7 +125,7 @@ pub async fn heal_storage_trie(
     membatch: Membatch,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
-) -> bool {
+) -> Result<bool, SyncError> {
     *METRICS.current_step.lock().await = "Healing Storage".to_string();
     let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
     info!(
@@ -218,13 +218,13 @@ pub async fn heal_storage_trie(
 
         if is_done {
             db_joinset.join_all().await;
-            return true;
+            return Ok(true);
         }
 
         if is_stale {
             db_joinset.join_all().await;
             state.membatch = HashMap::new();
-            return false;
+            return Ok(false);
         }
 
         ask_peers_for_nodes(
@@ -261,7 +261,7 @@ pub async fn heal_storage_trie(
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
                 )
-                .await
+                .await?
                 else {
                     continue;
                 };
@@ -285,12 +285,14 @@ pub async fn heal_storage_trie(
                 state
                     .download_queue
                     .extend(inflight_request.requests.clone());
-                // TODO Handle errors
-                let _ = peers
+                peers
                     .peer_table
                     .record_failure(&inflight_request.peer_id)
-                    .await;
-                peers.peer_table.free_peer(&inflight_request.peer_id).await;
+                    .await?;
+                peers
+                    .peer_table
+                    .free_peer(&inflight_request.peer_id)
+                    .await?;
             }
         }
     }
@@ -395,16 +397,16 @@ async fn zip_requeue_node_responses_score_peer(
     trie_nodes: TrieNodes,
     succesful_downloads: &mut usize,
     failed_downloads: &mut usize,
-) -> Option<Vec<NodeResponse>> {
+) -> Result<Option<Vec<NodeResponse>>, SyncError> {
     trace!(
         "We are processing the nodes, we received {} nodes from our peer",
         trie_nodes.nodes.len()
     );
     let Some(request) = requests.remove(&trie_nodes.id) else {
         info!("We received a response where we had a missing requests {trie_nodes:?}");
-        return None;
+        return Ok(None);
     };
-    peer_handler.peer_table.free_peer(&request.peer_id).await;
+    peer_handler.peer_table.free_peer(&request.peer_id).await?;
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
@@ -412,10 +414,10 @@ async fn zip_requeue_node_responses_score_peer(
         peer_handler
             .peer_table
             .record_failure(&request.peer_id)
-            .await;
+            .await?;
 
         download_queue.extend(request.requests);
-        return None;
+        return Ok(None);
     }
 
     if request.requests.len() < nodes_size {
@@ -447,13 +449,13 @@ async fn zip_requeue_node_responses_score_peer(
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
         *succesful_downloads += 1;
-        peer_handler.peer_table.record_success(&request.peer_id).await;
-        Some(nodes)
+        peer_handler.peer_table.record_success(&request.peer_id).await?;
+        Ok(Some(nodes))
     } else {
         *failed_downloads += 1;
-        peer_handler.peer_table.record_failure(&request.peer_id).await;
+        peer_handler.peer_table.record_failure(&request.peer_id).await?;
         download_queue.extend(request.requests);
-        None
+        Ok(None)
     }
 }
 

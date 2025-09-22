@@ -16,7 +16,7 @@ use spawned_concurrency::{
 use tracing::{debug, error, info};
 
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerTableHandle},
+    discv4::peer_table::{PeerChannels, PeerTableError, PeerTableHandle},
     rlpx::{
         Message,
         connection::server::CastMessage,
@@ -105,12 +105,7 @@ impl TxBroadcaster {
             debug!("No transactions to broadcast");
             return Ok(());
         }
-        let peers = self
-            .peer_table
-            .get_peers_with_capabilities()
-            .await
-            // TODO proper error
-            .map_err(|_| TxBroadcasterError::Broadcast)?;
+        let peers = self.peer_table.get_peers_with_capabilities().await?;
         let peer_sqrt = (peers.len() as f64).sqrt();
 
         let full_txs = txs_to_broadcast
@@ -270,4 +265,6 @@ pub enum TxBroadcasterError {
     Broadcast,
     #[error(transparent)]
     StoreError(#[from] StoreError),
+    #[error(transparent)]
+    PeerTableError(#[from] PeerTableError),
 }
