@@ -518,15 +518,12 @@ fn get_initial_downloads(
             .healed_accounts
             .par_iter()
             .filter_map(|acc_path| {
+                // Accounts can be deleted from the trie after the healing process happens
+                // This is an edge case where an account with value got deleted by
+                // a self destruct contract creation step
                 let rlp = trie
                     .get(&acc_path.to_fixed_bytes().to_vec())
-                    .ok()
-                    .flatten()
-                    .or_else(|| {
-                        error!("Account {acc_path:x} not found in state root {state_root:x}");
-                        None
-                    })
-                    .expect("This account should exist in the trie");
+                    .expect("The trie shouldn't have holes")?;
                 let account = AccountState::decode(&rlp).expect("We should have a valid account");
                 if account.storage_root == *EMPTY_TRIE_HASH {
                     return None;
