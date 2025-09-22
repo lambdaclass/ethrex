@@ -1,4 +1,12 @@
-use crate::types::{Blob, Commitment, Proof};
+// TODO: change this to the inclusion of types crate independently of common
+// once we split it (#4596)
+pub const BYTES_PER_FIELD_ELEMENT: usize = 32;
+pub const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
+pub const BYTES_PER_BLOB: usize = BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB;
+type Bytes48 = [u8; 48];
+type Blob = [u8; BYTES_PER_BLOB];
+type Commitment = Bytes48;
+type Proof = Bytes48;
 
 #[derive(thiserror::Error, Debug)]
 pub enum KzgError {

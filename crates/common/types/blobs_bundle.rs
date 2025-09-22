@@ -1,6 +1,5 @@
 use std::ops::AddAssign;
 
-use crate::kzg::KzgError;
 use crate::serde_utils;
 use crate::{
     Bytes, H256,
@@ -221,8 +220,9 @@ pub enum BlobsBundleError {
     BlobToCommitmentAndProofError,
     #[error("Max blobs per block exceeded")]
     MaxBlobsExceeded,
+    #[cfg(feature = "c-kzg")]
     #[error("KZG related error: {0}")]
-    Kzg(#[from] KzgError),
+    Kzg(#[from] crate::kzg::KzgError),
 }
 
 #[cfg(test)]

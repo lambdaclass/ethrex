@@ -30,5 +30,5 @@ hex = "0.4.3"
 
 [features]
 default = ["c-kzg"]
-c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+c-kzg = [] # TODO: "ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"
 block = []

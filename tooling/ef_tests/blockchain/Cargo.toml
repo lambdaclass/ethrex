@@ -25,8 +25,7 @@ regex = "1.11.1"
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg"]
-c-kzg = ["ethrex-blockchain/c-kzg"]
+default = []
 revm = ["ethrex-vm/revm"]
 sp1 = ["guest_program/sp1", "ethrex-prover/sp1"]
 stateless = []
