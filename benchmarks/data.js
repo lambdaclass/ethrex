@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758547771883,
+  "lastUpdate": 1758556434805,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15775,6 +15775,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 88991240567,
             "range": "± 761483836",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "676689750a877811611f5cf826e0efc7dfb4a3a3",
+          "message": "chore(l1): improve engine API logs (#4578)\n\n**Motivation**\n\n`engine_newPayload` logs don't include the block number, which is an\nimportant part of a block's context.\n\n**Description**\n\nThis PR changes `engine_newPayload`-related logs to include both the\nhash and number, as log attributes instead of being embedded, which is\nmore idiomatic.",
+          "timestamp": "2025-09-22T14:51:29Z",
+          "tree_id": "5989edc6408188938b2f7527fc39bf66cbf24516",
+          "url": "https://github.com/lambdaclass/ethrex/commit/676689750a877811611f5cf826e0efc7dfb4a3a3"
+        },
+        "date": 1758556414127,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90659061499,
+            "range": "± 627699476",
             "unit": "ns/iter"
           }
         ]
