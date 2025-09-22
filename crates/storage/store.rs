@@ -1320,7 +1320,7 @@ impl Iterator for AncestorIterator {
         match self.store.get_block_header_by_hash(next_hash) {
             Ok(Some(header)) => {
                 let ret_hash = self.next_hash;
-                self.next_hash = BlockHash::from(header.parent_hash);
+                self.next_hash = header.parent_hash;
                 Some(Ok((ret_hash, header)))
             }
             Ok(None) => None,
