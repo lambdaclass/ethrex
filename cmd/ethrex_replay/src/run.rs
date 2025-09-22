@@ -10,7 +10,7 @@ use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::debug::execution_witness::execution_witness_from_rpc_chain_config;
 use ethrex_vm::{DynVmDatabase, Evm, GuestProgramStateWrapper, backends::levm::LEVM};
-use eyre::{Context, Ok};
+use eyre::Context;
 use guest_program::input::ProgramInput;
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
@@ -23,9 +23,26 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
     #[cfg(not(feature = "l2"))]
     let input = get_l1_input(cache)?;
 
-    ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+    // Use catch_unwind to capture panics
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        ethrex_prover_lib::execute(backend, input)
+    }));
 
-    Ok(())
+    match result {
+        Ok(exec_result) => {
+            exec_result.map_err(|e| eyre::Error::msg(format!("Execution failed: {}", e)))?;
+            Ok(())
+        }
+        Err(panic_info) => {
+            // Try to extract meaningful error message from panic info
+            let panic_msg = extract_panic_message(&panic_info);
+
+            Err(eyre::Error::msg(format!(
+                "Execution panicked: {}",
+                panic_msg
+            )))
+        }
+    }
 }
 
 pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
@@ -34,20 +51,26 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
     #[cfg(not(feature = "l2"))]
     let input = get_l1_input(cache)?;
 
-    catch_unwind(AssertUnwindSafe(|| {
+    // Use catch_unwind to capture panics
+    let result = catch_unwind(AssertUnwindSafe(|| {
         ethrex_prover_lib::prove(backend, input, ProofFormat::Groth16)
-            .map_err(|e| eyre::Error::msg(e.to_string()))
-    }))
-    .map_err(|_e| eyre::Error::msg("SP1 panicked while proving"))??;
+    }));
 
-    Ok(())
+    match result {
+        Ok(prove_result) => {
+            prove_result.map_err(|e| eyre::Error::msg(format!("Proving failed: {}", e)))?;
+            Ok(())
+        }
+        Err(panic_info) => {
+            // Try to extract meaningful error message from panic info
+            let panic_msg = extract_panic_message(&panic_info);
+
+            Err(eyre::Error::msg(format!("Proving panicked: {}", panic_msg)))
+        }
+    }
 }
 
-pub async fn run_tx(
-    cache: Cache,
-    tx_hash: H256,
-    l2: bool,
-) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
+pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
     let block = cache
         .blocks
         .first()
@@ -76,7 +99,10 @@ pub async fn run_tx(
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
-    let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
+    #[cfg(feature = "l2")]
+    let vm_type = VMType::L2;
+    #[cfg(not(feature = "l2"))]
+    let vm_type = VMType::L1;
 
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(wrapped_db.clone()));
@@ -84,15 +110,13 @@ pub async fn run_tx(
         LEVM::prepare_block(block, &mut db, vm_type)?;
         LEVM::get_state_transitions(&mut db)?
     };
-
     wrapped_db.apply_account_updates(&changes)?;
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
-        let mut vm = if l2 {
-            Evm::new_for_l2(wrapped_db.clone())?
-        } else {
-            Evm::new_for_l1(wrapped_db.clone())
-        };
+        #[cfg(feature = "l2")]
+        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        #[cfg(not(feature = "l2"))]
+        let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
         wrapped_db.apply_account_updates(&account_updates)?;
@@ -100,6 +124,7 @@ pub async fn run_tx(
             return Ok((receipt, account_updates));
         }
     }
+
     Err(eyre::Error::msg("transaction not found inside block"))
 }
 
@@ -135,7 +160,7 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     Ok(ProgramInput {
         blocks,
-        db: execution_witness,
+        execution_witness,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         // The L2 specific fields (blob_commitment, blob_proof)
         // will be filled by Default::default() if the 'l2' feature of
@@ -147,6 +172,17 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
         // inclusion of this crate in the workspace.
         ..Default::default()
     })
+}
+
+/// Extract a meaningful error message from panic information.
+fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = panic_info.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+        s.to_string()
+    } else {
+        "Unknown panic occurred".to_string()
+    }
 }
 
 #[cfg(feature = "l2")]
@@ -175,7 +211,7 @@ fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     Ok(ProgramInput {
         blocks,
-        db: execution_witness,
+        execution_witness,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         blob_commitment: l2_fields.blob_commitment,
         blob_proof: l2_fields.blob_proof,

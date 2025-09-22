@@ -1,5 +1,6 @@
 use crate::based::block_fetcher::BlockFetcherError;
 use crate::based::state_updater::StateUpdaterError;
+use crate::sequencer::admin_server::AdminError;
 use crate::utils::error::UtilsError;
 use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;
@@ -49,6 +50,10 @@ pub enum SequencerError {
     AlignedNetworkError(String),
     #[error("Failed to start EthrexMonitor: {0}")]
     MonitorError(#[from] MonitorError),
+    #[error("Failed to start admin api: {0}")]
+    Admin(#[from] AdminError),
+    #[error("Block gas limit cannot be greater than batch gas limit")]
+    GasLimitError,
 }
 
 #[derive(Debug, thiserror::Error)]

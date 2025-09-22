@@ -7,7 +7,6 @@ on:
     paths:
       - ".github/workflows/main_prover_l1.yaml"
   workflow_dispatch:
-  
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

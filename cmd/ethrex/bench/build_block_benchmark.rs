@@ -16,7 +16,10 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address, H160,
-    types::{Block, EIP1559Transaction, Genesis, GenesisAccount, Transaction, TxKind},
+    types::{
+        Block, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, Genesis, GenesisAccount, Transaction,
+        TxKind,
+    },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
@@ -121,11 +124,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     }
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
-    let store = Store::new(
-        &storage_path.path().display().to_string(),
-        EngineType::Libmdbx,
-    )
-    .unwrap();
+    let store = Store::new(storage_path, EngineType::RocksDB).unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
@@ -149,6 +148,7 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
         beacon_root: genesis_block.header.parent_beacon_block_root,
         version: 3,
         elasticity_multiplier: 1,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
     let id = payload_args.id();
     let block = create_payload(&payload_args, store).unwrap();

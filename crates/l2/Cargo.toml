@@ -56,12 +56,16 @@ tui-scrollview = "0.5.1"
 tui-logger.workspace = true
 tabwriter = "1.4.1"
 color-eyre = "0.6.5"
+axum.workspace = true
 
 guest_program = { path = "./prover/src/guest_program/" }
 
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
+
+[dev-dependencies]
+anyhow = "1.0.86"
 
 [lib]
 path = "./l2.rs"

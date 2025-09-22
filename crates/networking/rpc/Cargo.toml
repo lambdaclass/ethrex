@@ -7,7 +7,7 @@ edition = "2024"
 
 [dependencies]
 axum.workspace = true
-tower-http = { version = "0.6.2", features = ["cors"] }
+tower-http.workspace = true
 serde.workspace = true
 serde_json = "1.0.117"
 tokio = { workspace = true, features = ["full"] }
@@ -32,6 +32,7 @@ tokio-util = { workspace = true, features = ["codec"] }
 reqwest.workspace = true
 sha3 = "0.10.8"
 sha2.workspace = true
+jemalloc_pprof = { version = "0.8.0", optional = true, features = ["flamegraph", "symbolize"] }
 
 # Clients
 envy = "0.4.2"
@@ -50,3 +51,6 @@ path = "./lib.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
+
+[features]
+jemalloc_profiling = ["dep:jemalloc_pprof"]

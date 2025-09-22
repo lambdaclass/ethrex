@@ -49,6 +49,7 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -68,6 +69,80 @@ use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+use axum::response::IntoResponse;
+// only works on linux
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
+    let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "jemalloc profiling is not available".into(),
+        ));
+    };
+    let mut prof_ctl = mutex.lock().await;
+    require_profiling_activated(&prof_ctl)?;
+    let pprof = prof_ctl
+        .dump_pprof()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(pprof)
+}
+
+/// Checks whether jemalloc profiling is activated an returns an error response if not.
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+fn require_profiling_activated(
+    prof_ctl: &jemalloc_pprof::JemallocProfCtl,
+) -> Result<(), (StatusCode, String)> {
+    if prof_ctl.activated() {
+        Ok(())
+    } else {
+        Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "heap profiling not activated".into(),
+        ))
+    }
+}
+
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCode, String)> {
+    use axum::body::Body;
+    use axum::http::header::CONTENT_TYPE;
+    use axum::response::Response;
+
+    let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "jemalloc profiling is not available".into(),
+        ));
+    };
+    let mut prof_ctl = mutex.lock().await;
+    require_profiling_activated(&prof_ctl)?;
+    let svg = prof_ctl
+        .dump_flamegraph()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Response::builder()
+        .header(CONTENT_TYPE, "image/svg+xml")
+        .body(Body::from(svg))
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+// Feature-disabled stubs (no dependency on jemalloc_pprof)
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
+pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
+    ))
+}
+
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
+pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
+    ))
+}
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestWrapper {
@@ -85,6 +160,7 @@ pub struct RpcApiContext {
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    pub gas_ceil: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +204,7 @@ pub async fn start_api(
     peer_handler: PeerHandler,
     client_version: String,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -146,6 +223,7 @@ pub async fn start_api(
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
+        gas_ceil: gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -167,6 +245,11 @@ pub async fn start_api(
     let cors = CorsLayer::permissive();
 
     let http_router = Router::new()
+        .route("/debug/pprof/allocs", axum::routing::get(handle_get_heap))
+        .route(
+            "/debug/pprof/allocs/flamegraph",
+            axum::routing::get(handle_get_heap_flamegraph),
+        )
         .route("/", post(handle_http_request))
         .layer(cors)
         .with_state(service_context.clone());

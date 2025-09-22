@@ -12,8 +12,26 @@ use sp1_sdk::{
 use std::time::Instant;
 use tracing::info;
 
+#[cfg(not(clippy))]
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf");
+
+// If we're running clippy, the file isn't generated.
+// To avoid compilation errors, we override it with an empty slice.
+#[cfg(clippy)]
+static PROGRAM_ELF: &[u8] = &[];
+
+struct ProverSetup {
+    client: EnvProver,
+    pk: SP1ProvingKey,
+    vk: SP1VerifyingKey,
+}
+
+static PROVER_SETUP: LazyLock<ProverSetup> = LazyLock::new(|| {
+    let client = ProverClient::from_env();
+    let (pk, vk) = client.setup(PROGRAM_ELF);
+    ProverSetup { client, pk, vk }
+});
 
 pub struct ProveOutput {
     pub proof: SP1ProofWithPublicValues,
