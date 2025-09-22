@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest, Keccak256};
+use std::fmt::Debug;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
@@ -89,7 +90,6 @@ impl Store {
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
         let path = path.as_ref();
-
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
