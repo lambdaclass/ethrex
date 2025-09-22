@@ -56,7 +56,7 @@ impl StorageBackend for InMemoryBackend {
         }))
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked + '_>, StoreError> {
+    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
         Ok(Box::new(InMemoryLocked {
             backend: self.inner.clone(),
             table_name: table_name.to_string(),

@@ -67,13 +67,12 @@ impl StorageBackend for RocksDBBackend {
         Ok(Box::new(RocksDBRwTx { tx, cfs }))
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked + '_>, StoreError> {
+    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
         let db = Box::leak(Box::new(self.db.clone()));
         let lock = db.snapshot();
-        let cf = self
-            .db
+        let cf = db
             .cf_handle(table_name)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
+            .ok_or_else(|| StoreError::Custom(format!("Tabla {} no encontrada", table_name)))?;
 
         Ok(Box::new(RocksDBLocked { db, lock, cf }))
     }

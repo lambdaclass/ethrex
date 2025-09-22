@@ -77,13 +77,13 @@ impl TrieDB for BackendTrieDB {
 }
 
 /// Read-only version with persistent locked transaction/snapshot for batch reads
-pub struct BackendTrieDBLocked<'a> {
-    lock: Box<dyn StorageLocked + 'a>,
+pub struct BackendTrieDBLocked {
+    lock: Box<dyn StorageLocked>,
     address_prefix: Option<H256>,
 }
 
-impl<'a> BackendTrieDBLocked<'a> {
-    pub fn new(lock: Box<dyn StorageLocked + 'a>, address_prefix: Option<H256>) -> Self {
+impl BackendTrieDBLocked {
+    pub fn new(lock: Box<dyn StorageLocked>, address_prefix: Option<H256>) -> Self {
         Self {
             lock,
             address_prefix,
@@ -93,20 +93,20 @@ impl<'a> BackendTrieDBLocked<'a> {
     fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
-                // For storage tries, prefix with address
+                // Para storage tries, prefijar con la dirección
                 let mut key = address.as_bytes().to_vec();
                 key.extend_from_slice(node_hash.as_ref());
                 key
             }
             None => {
-                // For state tries, use node hash directly
+                // Para state trie, usar el hash del nodo directamente
                 node_hash.as_ref().to_vec()
             }
         }
     }
 }
 
-impl<'a> TrieDB for BackendTrieDBLocked<'a> {
+impl TrieDB for BackendTrieDBLocked {
     fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let key = self.make_key(node_hash);
         self.lock

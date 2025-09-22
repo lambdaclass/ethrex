@@ -826,9 +826,14 @@ impl StoreEngine {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = BackendTrieDB::new(
-            self.backend.clone(),
-            STORAGE_TRIE_NODES,
+        // let trie_db = BackendTrieDB::new(
+        //     self.backend.clone(),
+        //     STORAGE_TRIE_NODES,
+        //     Some(hashed_address), // Use address as prefix for storage trie
+        // );
+        let lock = self.backend.begin_locked(STORAGE_TRIE_NODES)?;
+        let trie_db = BackendTrieDBLocked::new(
+            lock,
             Some(hashed_address), // Use address as prefix for storage trie
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))

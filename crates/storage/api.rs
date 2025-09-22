@@ -26,7 +26,7 @@ pub trait StorageBackend: Debug + Send + Sync + 'static {
     fn clear_table(&self, table: &str) -> Result<(), StoreError>;
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError>;
     fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError>;
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked + '_>, StoreError>;
+    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError>;
 }
 
 pub struct TableOptions {
@@ -48,6 +48,6 @@ pub trait StorageRwTx: StorageRoTx {
     fn commit(self: Box<Self>) -> Result<(), StoreError>;
 }
 
-pub trait StorageLocked: Send + Sync {
+pub trait StorageLocked: Send + Sync + 'static {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 }
