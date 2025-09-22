@@ -6,7 +6,7 @@ use std::{
 };
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{MempoolTransaction, Receipt, Transaction};
+use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -841,21 +841,10 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                let cloned_storage = state.storage.clone();
-                let receipts =
-                    tokio::task::spawn_blocking(move || -> Result<Vec<Vec<Receipt>>, RLPxError> {
-                        let mut receipts = Vec::new();
-                        for hash in block_hashes.iter() {
-                            receipts.push(cloned_storage.get_receipts_for_block(hash)?);
-                        }
-                        Ok(receipts)
-                    })
-                    .await
-                    .map_err(|_| {
-                        RLPxError::InternalError(
-                            "Receipt retrieval task was cancelled or panicked".to_string(),
-                        )
-                    })??;
+                let mut receipts = Vec::new();
+                for hash in block_hashes.iter() {
+                    receipts.push(state.storage.get_receipts_for_block(hash).await?);
+                }
                 let response = match eth.version {
                     68 => Message::Receipts68(Receipts68::new(id, receipts)),
                     69 => Message::Receipts69(Receipts69::new(id, receipts)),
