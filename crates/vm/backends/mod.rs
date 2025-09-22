@@ -22,6 +22,7 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
+use revm_primitives::hardfork::SpecId;
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -201,8 +202,6 @@ impl Evm {
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         #[cfg(feature = "revm")]
         {
-            use revm_primitives::SpecId;
-
             let chain_config = self.state.chain_config()?;
             let spec_id = spec_id(&chain_config, block_header.timestamp);
             if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
