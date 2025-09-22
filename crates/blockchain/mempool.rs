@@ -42,15 +42,15 @@ impl Mempool {
         &self,
         tx_pool: &mut std::sync::RwLockWriteGuard<'_, HashMap<H256, MempoolTransaction>>,
     ) -> Result<(), StoreError> {
-        let oldest_entry = self
+        let mut txs_order = self
             .txs_order
-            .read()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .first()
-            .cloned();
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+        let oldest_entry = txs_order.first().cloned();
 
         if let Some(oldest_hash) = oldest_entry {
             self.remove_transaction_with_lock(&oldest_hash, tx_pool)?;
+            txs_order.remove(0);
         }
 
         Ok(())
@@ -143,6 +143,13 @@ impl Mempool {
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         self.remove_transaction_with_lock(hash, &mut tx_pool)?;
+        if tx_pool.get(hash).is_some() {
+            let mut txs_order = self
+                .txs_order
+                .write()
+                .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+            txs_order.retain(|h| h != hash);
+        }
         Ok(())
     }
 
@@ -154,10 +161,6 @@ impl Mempool {
     ) -> Result<(), StoreError> {
         let mut broadcast_pool = self
             .broadcast_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        let mut txs_order = self
-            .txs_order
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if let Some(tx) = tx_pool.get(hash) {
@@ -174,7 +177,6 @@ impl Mempool {
                 .remove(&(tx.sender(), tx.nonce()));
             tx_pool.remove(hash);
             broadcast_pool.remove(hash);
-            txs_order.retain(|h| h != hash);
         };
 
         Ok(())
