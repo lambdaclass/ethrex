@@ -855,6 +855,8 @@ impl<'a> VM<'a> {
     }
 
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
+    ///
+    /// Returns the pc increment.
     pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<usize, VMError> {
         self.handle_state_backup(ctx_result)?;
         let executed_call_frame = self.pop_call_frame()?;
@@ -866,7 +868,6 @@ impl<'a> VM<'a> {
             self.handle_return_call(executed_call_frame, ctx_result)?;
         }
 
-        // Parent callframe should advance past the CALL/CREATE opcode now that the child completed.
         Ok(1)
     }
 
