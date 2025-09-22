@@ -8,7 +8,9 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address, H256,
-    types::{AccountUpdate, Block, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Receipt},
+    types::{
+        AccountUpdate, Block, BlockHash, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Receipt,
+    },
 };
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
@@ -686,7 +688,7 @@ pub async fn replay_custom_l1_blocks(
 pub async fn produce_l1_blocks(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
-    head_block_hash: H256,
+    head_block_hash: BlockHash,
     initial_timestamp: u64,
     n_blocks: u64,
 ) -> eyre::Result<Vec<Block>> {
@@ -713,7 +715,7 @@ pub async fn produce_l1_blocks(
 pub async fn produce_l1_block(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
-    head_block_hash: H256,
+    head_block_hash: BlockHash,
     timestamp: u64,
 ) -> eyre::Result<Block> {
     let build_payload_args = BuildPayloadArgs {
@@ -841,7 +843,7 @@ pub async fn produce_custom_l2_blocks(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
     rollup_store: &StoreRollup,
-    head_block_hash: H256,
+    head_block_hash: BlockHash,
     initial_timestamp: u64,
     n_blocks: u64,
 ) -> eyre::Result<Vec<Block>> {
@@ -871,7 +873,7 @@ pub async fn produce_custom_l2_block(
     blockchain: Arc<Blockchain>,
     store: &mut Store,
     rollup_store: &StoreRollup,
-    head_block_hash: H256,
+    head_block_hash: BlockHash,
     timestamp: u64,
 ) -> eyre::Result<Block> {
     let build_payload_args = BuildPayloadArgs {

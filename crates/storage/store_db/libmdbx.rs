@@ -640,7 +640,7 @@ impl StoreEngine for Store {
 
     async fn get_transaction_by_location(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Transaction>, StoreError> {
         let block_body = match self.get_block_body_by_hash(block_hash).await? {

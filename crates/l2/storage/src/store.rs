@@ -7,7 +7,7 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlobsBundle, BlockHash, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use tracing::info;
@@ -244,7 +244,7 @@ impl Store {
     /// If we want to gossip or broadcast the message, we need to store the signature for later use
     pub async fn store_signature_by_block(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
         signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         self.engine
@@ -257,7 +257,7 @@ impl Store {
     /// So they can also validate the message
     pub async fn get_signature_by_block(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         self.engine.get_signature_by_block(block_hash).await
     }

@@ -3,7 +3,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountInfo, AccountUpdate, Block, BlockHeader, ChainConfig,
+        AccountInfo, AccountUpdate, Block, BlockHash, BlockHeader, ChainConfig,
         block_execution_witness::{GuestProgramState, GuestProgramStateError},
     },
 };
@@ -74,7 +74,7 @@ impl VmDatabase for GuestProgramStateWrapper {
             .map_err(|_| EvmError::DB("Failed to get account info".to_string()))
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+    fn get_block_hash(&self, block_number: u64) -> Result<BlockHash, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
             .get_block_hash(block_number)

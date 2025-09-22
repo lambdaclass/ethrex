@@ -690,7 +690,10 @@ impl Store {
             .await
     }
 
-    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<Option<Block>, StoreError> {
+    pub async fn get_block_by_hash(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<Block>, StoreError> {
         self.engine.get_block_by_hash(block_hash).await
     }
 

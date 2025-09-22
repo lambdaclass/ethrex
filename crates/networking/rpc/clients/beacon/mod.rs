@@ -1,5 +1,5 @@
 use errors::BeaconClientError;
-use ethrex_common::{H256, U256};
+use ethrex_common::{U256, types::BlockHash};
 use reqwest::{Client, Url};
 use serde::Deserialize;
 use serde_json::Value;
@@ -67,7 +67,7 @@ impl BeaconClient {
 
     pub async fn get_block_by_hash(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
     ) -> Result<GetBlockResponseData, BeaconClientError> {
         self.send_request(&format!("/eth/v2/beacon/blocks/{block_hash:#x}"))
             .await

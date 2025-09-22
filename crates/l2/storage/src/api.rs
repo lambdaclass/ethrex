@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockHash, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -88,14 +88,14 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     /// Stores the sequencer signature for a given block hash.
     async fn store_signature_by_block(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
         signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError>;
 
     /// Retrieves the sequencer signature for a given block hash.
     async fn get_signature_by_block(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
 
     /// Stores the sequencer signature for a given batch number.

@@ -33,7 +33,7 @@ pub struct ExecutionPayload {
     extra_data: Bytes,
     #[serde(with = "serde_utils::u64::hex_str")]
     base_fee_per_gas: u64,
-    pub block_hash: H256,
+    pub block_hash: BlockHash,
     transactions: Vec<EncodedTransaction>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub withdrawals: Option<Vec<Withdrawal>>,

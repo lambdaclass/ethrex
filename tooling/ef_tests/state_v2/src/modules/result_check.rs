@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ethrex_common::{
     Address, U256,
-    types::{AccountUpdate, Fork, Genesis, code_hash},
+    types::{AccountUpdate, BlockHash, Fork, Genesis, code_hash},
 };
 use ethrex_levm::{
     account::LevmAccount,
@@ -58,7 +58,7 @@ pub struct AccountMismatch {
 /// exception. If no exception was expected verify the result root.
 pub async fn check_test_case_results(
     vm: &mut VM<'_>,
-    initial_block_hash: H256,
+    initial_block_hash: BlockHash,
     store: Store,
     test_case: &TestCase,
     execution_result: Result<ExecutionReport, VMError>,
@@ -98,7 +98,7 @@ pub async fn check_test_case_results(
 /// (the one that appears in the `.json` file).
 pub async fn check_root(
     vm: &mut VM<'_>,
-    initial_block_hash: H256,
+    initial_block_hash: BlockHash,
     store: Store,
     test_case: &TestCase,
     check_result: &mut PostCheckResult,
@@ -117,7 +117,7 @@ pub async fn check_root(
 /// result of running the transaction to the storage.
 pub async fn post_state_root(
     account_updates: &[AccountUpdate],
-    initial_block_hash: H256,
+    initial_block_hash: BlockHash,
     store: Store,
 ) -> H256 {
     let ret_account_updates_batch = store

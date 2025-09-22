@@ -7,7 +7,7 @@ use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::types::{ChainConfig, code_hash};
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountInfo, Block, TxKind},
+    types::{AccountInfo, Block, BlockHash, TxKind},
 };
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -50,7 +50,7 @@ pub struct RpcDB {
     /// Accounts in the actual block being executed, i.e. the post-state.
     pub child_cache: Arc<Mutex<HashMap<Address, Account>>>,
     /// Cache of already fetched block hashes.
-    pub block_hashes: Arc<Mutex<HashMap<u64, H256>>>,
+    pub block_hashes: Arc<Mutex<HashMap<u64, BlockHash>>>,
     /// Cache of already fetched contract codes.
     pub codes: Arc<Mutex<HashMap<H256, Bytes>>>,
     /// Chain config of the blockchain.
@@ -540,7 +540,7 @@ impl LevmDatabase for RpcDB {
         }
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
+    fn get_block_hash(&self, block_number: u64) -> Result<BlockHash, DatabaseError> {
         if let Some(hash) = self.block_hashes.lock().unwrap().get(&block_number) {
             return Ok(*hash);
         }

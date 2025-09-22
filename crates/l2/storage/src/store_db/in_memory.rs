@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockHash, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -35,7 +35,7 @@ struct StoreInner {
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
     /// Map of signatures from the sequencer by block hashes
-    signatures_by_block: HashMap<H256, ethereum_types::Signature>,
+    signatures_by_block: HashMap<BlockHash, ethereum_types::Signature>,
     /// Map of signatures from the sequencer by batch numbers
     signatures_by_batch: HashMap<u64, ethereum_types::Signature>,
     /// Map of block number to account updates
@@ -175,7 +175,7 @@ impl StoreEngineRollup for Store {
 
     async fn store_signature_by_block(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
         signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         self.inner()?
@@ -186,7 +186,7 @@ impl StoreEngineRollup for Store {
 
     async fn get_signature_by_block(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         Ok(self.inner()?.signatures_by_block.get(&block_hash).cloned())
     }

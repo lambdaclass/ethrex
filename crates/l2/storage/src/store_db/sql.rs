@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlockHash, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -676,7 +676,7 @@ impl StoreEngineRollup for SQLStore {
 
     async fn store_signature_by_block(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
         signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(
@@ -701,7 +701,7 @@ impl StoreEngineRollup for SQLStore {
 
     async fn get_signature_by_block(
         &self,
-        block_hash: H256,
+        block_hash: BlockHash,
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         let mut rows = self
             .query(

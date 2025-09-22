@@ -317,13 +317,13 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    fn compute_block_hash(&self) -> H256 {
+    fn compute_block_hash(&self) -> BlockHash {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
     }
 
-    pub fn hash(&self) -> H256 {
+    pub fn hash(&self) -> BlockHash {
         *self.hash.get_or_init(|| self.compute_block_hash())
     }
 }

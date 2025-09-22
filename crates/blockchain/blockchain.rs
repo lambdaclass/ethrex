@@ -77,8 +77,8 @@ pub struct Blockchain {
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
-    pub last_valid_hash: H256,
-    pub failed_block_hash: H256,
+    pub last_valid_hash: BlockHash,
+    pub failed_block_hash: BlockHash,
 }
 
 fn log_batch_progress(batch_size: u32, current_block: u32) {
@@ -958,7 +958,7 @@ pub fn validate_receipts_root(
 }
 
 // Returns the hash of the head of the canonical chain (the latest valid hash).
-pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
+pub async fn latest_canonical_block_hash(storage: &Store) -> Result<BlockHash, ChainError> {
     let latest_block_number = storage.get_latest_block_number().await?;
     if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
         let latest_valid_hash = latest_valid_header.hash();

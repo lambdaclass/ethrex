@@ -1,4 +1,4 @@
-use ethrex_common::{H256, U256};
+use ethrex_common::{H256, U256, types::BlockHash};
 use serde::{Deserialize, Serialize};
 
 /// Public output variables exposed by the zkVM execution program. Some of these are part of
@@ -19,7 +19,7 @@ pub struct ProgramOutput {
     /// blob commitment versioned hash
     pub blob_versioned_hash: H256,
     /// hash of the last block in a batch
-    pub last_block_hash: H256,
+    pub last_block_hash: BlockHash,
     /// chain_id of the network
     pub chain_id: U256,
     /// amount of non-privileged transactions

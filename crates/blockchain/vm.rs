@@ -57,7 +57,7 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     #[instrument(level = "trace", name = "Block hash read", skip_all)]
-    fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+    fn get_block_hash(&self, block_number: u64) -> Result<BlockHash, EvmError> {
         // Check if we have it cached
         if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
             return Ok(*block_hash);

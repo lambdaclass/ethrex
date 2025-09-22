@@ -1,14 +1,17 @@
 use super::payload::PayloadStatus;
-use ethrex_common::{Address, H256, serde_utils, types::Withdrawal};
+use ethrex_common::{
+    Address, H256, serde_utils,
+    types::{BlockHash, Withdrawal},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForkChoiceState {
     #[allow(unused)]
-    pub head_block_hash: H256,
-    pub safe_block_hash: H256,
-    pub finalized_block_hash: H256,
+    pub head_block_hash: BlockHash,
+    pub safe_block_hash: BlockHash,
+    pub finalized_block_hash: BlockHash,
 }
 
 #[derive(Debug, Deserialize, Default, Serialize)]

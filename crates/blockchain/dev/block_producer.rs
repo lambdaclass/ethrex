@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
+use ethrex_common::types::BlockHash;
 use ethrex_rpc::clients::{EngineClient, EngineClientError};
 use ethrex_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
 use sha2::{Digest, Sha256};
@@ -8,14 +9,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub async fn start_block_producer(
     execution_client_auth_url: String,
     jwt_secret: Bytes,
-    head_block_hash: H256,
+    head_block_hash: BlockHash,
     max_tries: u32,
     block_production_interval_ms: u64,
     coinbase_address: Address,
 ) -> Result<(), EngineClientError> {
     let engine_client = EngineClient::new(&execution_client_auth_url, jwt_secret);
 
-    let mut head_block_hash: H256 = head_block_hash;
+    let mut head_block_hash = head_block_hash;
     let parent_beacon_block_root = H256::zero();
     let mut tries = 0;
     while tries < max_tries {
