@@ -343,12 +343,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let Some(recid) = RecoveryId::from_byte(recid_byte) else {
         return Ok(Bytes::new());
     };
-    
+
     // Recover the verifying key from the prehash (32-byte digest).
     let Ok(vk) = VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
         return Ok(Bytes::new());
     };
-    
+
     // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
     let uncompressed = vk.to_encoded_point(false);
     let mut uncompressed = uncompressed.to_bytes();
