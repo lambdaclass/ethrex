@@ -20,7 +20,7 @@ pub struct ProgramInput {
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     /// Address where collected fees are sent. If None, fees are burned.
-    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    #[rkyv(with=ethrex_common::rkyv_utils::OptionH160Wrapper)]
     pub fee_vault: Option<Address>,
     #[cfg(feature = "l2")]
     /// KZG commitment to the blob data

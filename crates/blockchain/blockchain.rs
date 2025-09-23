@@ -73,8 +73,6 @@ pub struct Blockchain {
     /// Mapping from a payload id to either a complete payload or a payload build task
     /// We need to keep completed payloads around in case consensus requests them twice
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
-    /// Address that receives the base fees in L2
-    pub fee_vault: Option<Address>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,12 +94,7 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(
-        store: Store,
-        blockchain_type: BlockchainType,
-        perf_logs_enabled: bool,
-        fee_vault: Option<Address>,
-    ) -> Self {
+    pub fn new(store: Store, blockchain_type: BlockchainType, perf_logs_enabled: bool) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(),
@@ -109,7 +102,6 @@ impl Blockchain {
             r#type: blockchain_type,
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             perf_logs_enabled,
-            fee_vault,
         }
     }
 
@@ -121,7 +113,6 @@ impl Blockchain {
             r#type: BlockchainType::default(),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             perf_logs_enabled: false,
-            fee_vault: None,
         }
     }
 
@@ -179,6 +170,7 @@ impl Blockchain {
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
+        fee_vault: Option<Address>,
     ) -> Result<ExecutionWitness, ChainError> {
         let first_block_header = blocks
             .first()
@@ -220,7 +212,7 @@ impl Blockchain {
             };
 
             // Re-execute block with logger
-            vm.execute_block(block, self.fee_vault)?;
+            vm.execute_block(block, fee_vault)?;
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
@@ -418,7 +410,7 @@ impl Blockchain {
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(block, self.fee_vault).await?;
+        let (res, updates) = self.execute_block(block, None).await?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root

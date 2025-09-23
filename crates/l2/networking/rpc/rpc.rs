@@ -79,6 +79,7 @@ pub async fn start_api(
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
+    fee_vault: Option<Address>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -99,6 +100,7 @@ pub async fn start_api(
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler,
             gas_ceil,
+            fee_vault,
         },
         valid_delegation_addresses,
         sponsor_pk,

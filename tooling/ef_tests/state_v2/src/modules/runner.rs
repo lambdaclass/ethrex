@@ -134,6 +134,7 @@ pub fn get_vm_env_for_test(
         config,
         block_number: test_env.current_number,
         coinbase: test_env.current_coinbase,
+        fee_vault: None,
         timestamp: test_env.current_timestamp,
         prev_randao: test_env.current_random,
         difficulty: test_env.current_difficulty,

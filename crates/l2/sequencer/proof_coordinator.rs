@@ -49,6 +49,7 @@ pub struct ProverInputData {
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
+    pub fee_vault: Option<Address>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -183,6 +184,7 @@ pub struct ProofCoordinator {
     commit_hash: String,
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
+    fee_vault: Option<Address>,
 }
 
 impl ProofCoordinator {
@@ -232,6 +234,7 @@ impl ProofCoordinator {
             commit_hash: get_commit_hash(),
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
+            fee_vault: proposer_config.fee_vault_address,
         })
     }
 
@@ -467,7 +470,7 @@ impl ProofCoordinator {
 
         let witness = self
             .blockchain
-            .generate_witness_for_blocks(&blocks)
+            .generate_witness_for_blocks(&blocks, self.fee_vault)
             .await
             .map_err(ProofCoordinatorError::from)?;
 
@@ -501,6 +504,7 @@ impl ProofCoordinator {
             blob_commitment,
             #[cfg(feature = "l2")]
             blob_proof,
+            fee_vault: self.fee_vault,
         })
     }
 

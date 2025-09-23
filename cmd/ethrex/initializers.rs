@@ -164,6 +164,7 @@ pub async fn init_rpc_api(
         get_client_version(),
         log_filter_handler,
         gas_ceil,
+        None,
     );
 
     tracker.spawn(rpc_api);

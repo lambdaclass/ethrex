@@ -49,6 +49,7 @@ async fn init_rpc_api(
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
+    fee_vault: Option<Address>,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -79,6 +80,7 @@ async fn init_rpc_api(
         rollup_store,
         log_filter_handler,
         gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
+        fee_vault,
     );
 
     tracker.spawn(rpc_api);
@@ -200,6 +202,7 @@ pub async fn init_l2(
         rollup_store.clone(),
         log_filter_handler,
         Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
+        opts.sequencer_opts.block_producer_opts.fee_vault_address,
     )
     .await;
 

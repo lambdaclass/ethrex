@@ -56,7 +56,7 @@ pub struct BlockProducer {
     sequencer_state: SequencerState,
     block_time_ms: u64,
     coinbase_address: Address,
-    fee_vault_address: Address,
+    fee_vault_address: Option<Address>,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     // Needed to ensure privileged tx nonces are sequential
