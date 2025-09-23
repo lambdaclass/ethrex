@@ -230,7 +230,7 @@ contract CommonBridge is
     }
 
     receive() external payable whenNotPaused {
-        _deposit(msg.sender);
+        revert("CommonBridge: use deposit() for native token deposits");
     }
 
     function depositERC20(
