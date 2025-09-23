@@ -39,15 +39,21 @@ pub enum RpcResponse {
 }
 
 #[derive(Debug, Clone)]
-pub struct EthClient {
-    client: Client,
-    pub urls: Vec<Url>,
+pub struct EthConfig {
     pub max_number_of_retries: u64,
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
     pub maximum_allowed_max_fee_per_gas: Option<u64>,
     pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
+    pub safe_block_delay: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EthClient {
+    client: Client,
+    pub urls: Vec<Url>,
+    pub config: EthConfig,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -77,55 +83,33 @@ pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
 impl EthClient {
     pub fn new(url: &str) -> Result<EthClient, EthClientError> {
-        Self::new_with_config(
-            vec![url],
-            MAX_NUMBER_OF_RETRIES,
-            BACKOFF_FACTOR,
-            MIN_RETRY_DELAY,
-            MAX_RETRY_DELAY,
-            None,
-            None,
-        )
+        Self::new_with_multiple_urls(vec![url.to_string()])
     }
 
-    pub fn new_with_config(
-        urls: Vec<&str>,
-        max_number_of_retries: u64,
-        backoff_factor: u64,
-        min_retry_delay: u64,
-        max_retry_delay: u64,
-        maximum_allowed_max_fee_per_gas: Option<u64>,
-        maximum_allowed_max_fee_per_blob_gas: Option<u64>,
-    ) -> Result<Self, EthClientError> {
+    pub fn new_with_config(urls: Vec<String>, config: EthConfig) -> Result<Self, EthClientError> {
         let urls = urls
             .iter()
-            .map(|url| {
-                Url::parse(url)
-                    .map_err(|_| EthClientError::ParseUrlError("Failed to parse urls".to_string()))
-            })
+            .map(|url| Url::parse(url).map_err(|_| EthClientError::ParseUrlError(url.clone())))
             .collect::<Result<Vec<_>, _>>()?;
-
         Ok(Self {
             client: Client::new(),
             urls,
-            max_number_of_retries,
-            backoff_factor,
-            min_retry_delay,
-            max_retry_delay,
-            maximum_allowed_max_fee_per_gas,
-            maximum_allowed_max_fee_per_blob_gas,
+            config,
         })
     }
 
     pub fn new_with_multiple_urls(urls: Vec<String>) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
-            urls.iter().map(AsRef::as_ref).collect(),
-            MAX_NUMBER_OF_RETRIES,
-            BACKOFF_FACTOR,
-            MIN_RETRY_DELAY,
-            MAX_RETRY_DELAY,
-            None,
-            None,
+            urls,
+            EthConfig {
+                max_number_of_retries: MAX_NUMBER_OF_RETRIES,
+                backoff_factor: BACKOFF_FACTOR,
+                min_retry_delay: MIN_RETRY_DELAY,
+                max_retry_delay: MAX_RETRY_DELAY,
+                maximum_allowed_max_fee_per_gas: None,
+                maximum_allowed_max_fee_per_blob_gas: None,
+                safe_block_delay: 0,
+            },
         )
     }
 

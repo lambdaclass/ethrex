@@ -121,7 +121,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	l2 \
-	--watcher.block-delay 0 \
+	--eth.safe-block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \

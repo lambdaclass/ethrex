@@ -693,8 +693,8 @@ pub async fn send_tx_bump_gas_exponential_backoff(
 ) -> Result<H256, EthClientError> {
     let mut number_of_retries = 0;
 
-    'outer: while number_of_retries < client.max_number_of_retries {
-        if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
+    'outer: while number_of_retries < client.config.max_number_of_retries {
+        if let Some(max_fee_per_gas) = client.config.maximum_allowed_max_fee_per_gas {
             let (Some(tx_max_fee), Some(tx_max_priority_fee)) =
                 (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
             else {
@@ -720,7 +720,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
 
         // Check blob gas fees only for EIP4844 transactions
         if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-            if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
+            if let Some(max_fee_per_blob_gas) = client.config.maximum_allowed_max_fee_per_blob_gas {
                 if *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
                     *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
                     warn!(
@@ -734,7 +734,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             .inspect_err(|e| {
                 error!(
                     "Error sending generic transaction {e} attempts [{number_of_retries}/{}]",
-                    client.max_number_of_retries
+                    client.config.max_number_of_retries
                 );
             })
         else {
@@ -746,7 +746,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
         if number_of_retries > 0 {
             warn!(
                 "Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}",
-                client.max_number_of_retries
+                client.config.max_number_of_retries
             );
         }
 
@@ -756,9 +756,10 @@ pub async fn send_tx_bump_gas_exponential_backoff(
 
         #[allow(clippy::as_conversions)]
         let attempts_to_wait_in_seconds = client
+            .config
             .backoff_factor
             .pow(number_of_retries as u32)
-            .clamp(client.min_retry_delay, client.max_retry_delay);
+            .clamp(client.config.min_retry_delay, client.config.max_retry_delay);
         while receipt.is_none() {
             if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                 // We waited long enough for the receipt but did not find it, bump gas

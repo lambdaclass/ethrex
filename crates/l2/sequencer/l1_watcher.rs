@@ -52,7 +52,6 @@ pub struct L1Watcher {
     pub max_block_step: U256,
     pub last_block_fetched: U256,
     pub check_interval: u64,
-    pub l1_block_delay: u64,
     pub sequencer_state: SequencerState,
 }
 
@@ -63,7 +62,6 @@ pub struct L1WatcherHealth {
     pub max_block_step: String,
     pub last_block_fetched: String,
     pub check_interval: u64,
-    pub l1_block_delay: u64,
     pub sequencer_state: String,
     pub bridge_address: Address,
 }
@@ -88,7 +86,6 @@ impl L1Watcher {
             max_block_step: watcher_config.max_block_step,
             last_block_fetched,
             check_interval: watcher_config.check_interval_ms,
-            l1_block_delay: watcher_config.watcher_block_delay,
             sequencer_state,
         })
     }
@@ -138,7 +135,7 @@ impl L1Watcher {
             .eth_client
             .get_block_number()
             .await?
-            .checked_sub(self.l1_block_delay.into())
+            .checked_sub(self.eth_client.config.safe_block_delay.into())
         else {
             warn!("Too close to genesis to request privileged transactions");
             return Ok(vec![]);
@@ -146,7 +143,7 @@ impl L1Watcher {
 
         debug!(
             "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
-            self.l1_block_delay,
+            self.eth_client.config.safe_block_delay,
         );
 
         // last_block_fetched could be greater than latest_block_to_check:
@@ -290,7 +287,6 @@ impl L1Watcher {
             max_block_step: self.max_block_step.to_string(),
             last_block_fetched: self.last_block_fetched.to_string(),
             check_interval: self.check_interval,
-            l1_block_delay: self.l1_block_delay,
             sequencer_state: format!("{:?}", self.sequencer_state.status().await),
             bridge_address: self.address,
         }))

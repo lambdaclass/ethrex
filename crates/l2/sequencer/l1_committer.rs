@@ -133,13 +133,18 @@ impl L1Committer {
         sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
         let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
-            eth_config.max_number_of_retries,
-            eth_config.backoff_factor,
-            eth_config.min_retry_delay,
-            eth_config.max_retry_delay,
-            Some(eth_config.maximum_allowed_max_fee_per_gas),
-            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
+            eth_config.rpc_url.clone(),
+            ethrex_rpc::clients::eth::EthConfig {
+                max_number_of_retries: eth_config.max_number_of_retries,
+                backoff_factor: eth_config.backoff_factor,
+                min_retry_delay: eth_config.min_retry_delay,
+                max_retry_delay: eth_config.max_retry_delay,
+                maximum_allowed_max_fee_per_gas: Some(eth_config.maximum_allowed_max_fee_per_gas),
+                maximum_allowed_max_fee_per_blob_gas: Some(
+                    eth_config.maximum_allowed_max_fee_per_blob_gas,
+                ),
+                safe_block_delay: eth_config.safe_block_delay,
+            },
         )?;
         let last_committed_batch =
             get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)

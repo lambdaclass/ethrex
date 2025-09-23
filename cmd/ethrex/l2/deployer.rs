@@ -510,13 +510,16 @@ pub async fn deploy_l1_contracts(
     let signer: Signer = LocalSigner::new(opts.private_key).into();
 
     let eth_client = EthClient::new_with_config(
-        vec![&opts.rpc_url],
-        opts.max_number_of_retries,
-        opts.backoff_factor,
-        opts.min_retry_delay,
-        opts.max_retry_delay,
-        Some(opts.maximum_allowed_max_fee_per_gas),
-        Some(opts.maximum_allowed_max_fee_per_blob_gas),
+        vec![opts.rpc_url.clone()],
+        ethrex_rpc::clients::eth::EthConfig {
+            max_number_of_retries: opts.max_number_of_retries,
+            backoff_factor: opts.backoff_factor,
+            min_retry_delay: opts.min_retry_delay,
+            max_retry_delay: opts.max_retry_delay,
+            maximum_allowed_max_fee_per_gas: Some(opts.maximum_allowed_max_fee_per_gas),
+            maximum_allowed_max_fee_per_blob_gas: Some(opts.maximum_allowed_max_fee_per_blob_gas),
+            safe_block_delay: 0,
+        },
     )?;
 
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;

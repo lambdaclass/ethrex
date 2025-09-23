@@ -55,7 +55,7 @@ pub enum EthClientError {
     TimeoutError,
     #[error("Internal Error. This is most likely a bug: {0}")]
     InternalError(String),
-    #[error("Parse Url Error. {0}")]
+    #[error("Failed to parse URL: {0}")]
     ParseUrlError(String),
     #[error("Failed to sign payload: {0}")]
     FailedToSignPayload(String),

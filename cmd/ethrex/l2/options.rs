@@ -185,6 +185,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 maximum_allowed_max_fee_per_blob_gas: opts
                     .eth_opts
                     .maximum_allowed_max_fee_per_blob_gas,
+                safe_block_delay: opts.eth_opts.safe_block_delay,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts
@@ -193,7 +194,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .ok_or(SequencerOptionsError::NoBridgeAddress)?,
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
-                watcher_block_delay: opts.watcher_opts.watcher_block_delay,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -302,6 +302,15 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub max_retry_delay: u64,
+    #[arg(
+        long = "eth.safe-block-delay",
+        default_value = "10",
+        value_name = "BLOCKS",
+        env = "ETHREX_SAFE_BLOCK_DELAY",
+        help_heading = "Eth options",
+        help = "Number of blocks to wait before considering an L1 block safe."
+    )]
+    pub safe_block_delay: u64,
 }
 
 impl Default for EthOptions {
@@ -314,6 +323,7 @@ impl Default for EthOptions {
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
             max_retry_delay: MAX_RETRY_DELAY,
+            safe_block_delay: 0,
         }
     }
 }
@@ -345,15 +355,6 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub max_block_step: u64,
-    #[arg(
-        long = "watcher.block-delay",
-        default_value_t = 10, // Reasonably safe value to account for reorgs
-        value_name = "UINT64",
-        env = "ETHREX_WATCHER_BLOCK_DELAY",
-        help = "Number of blocks the L1 watcher waits before trusting an L1 block.",
-        help_heading = "L1 Watcher options"
-    )]
-    pub watcher_block_delay: u64,
 }
 
 impl Default for WatcherOptions {
@@ -362,7 +363,6 @@ impl Default for WatcherOptions {
             bridge_address: None,
             watch_interval_ms: 1000,
             max_block_step: 5000,
-            watcher_block_delay: 0,
         }
     }
 }
