@@ -101,6 +101,9 @@ cargo r -r -p ethrex-replay --features risc0 -- <COMMAND> [ARGS]
 ## RISC0 backend + GPU
 cargo r -r -p ethrex-replay --features risc0,gpu -- <COMMAND> [ARGS]
 
+## REVM as EVM Backend
+cargo r -r -p ethrex-replay --features revm -- <COMMAND> [ARGS]
+
 # L2 replay
 
 ## Vanilla execution (no prover backend)
@@ -131,7 +134,7 @@ The following table lists the available features for `ethrex-replay`. To enable 
 | `l2`        | Enables L2 batch execution and proving (can be combined with SP1 or RISC0 and GPU features, e.g. `sp1,l2,gpu`, `risc0,l2,gpu`, `sp1,l2`, `risc0,l2`) |
 | `jemalloc`  | Use jemalloc as the global allocator. This is useful to combine with tools like Bytehound and Heaptrack for memory profiling                         |
 | `profiling` | Useful to run with tools like Samply.                                                                                                                |
-| `revm`      | For running with REVM as backend instead of LEVM.                                                                                                    |
+| `revm`      | For running with REVM as backend instead of LEVM. Note that it will only work for L1 and without SP1 or RISC0                                        |
 
 ---
 
