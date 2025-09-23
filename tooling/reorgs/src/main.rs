@@ -5,7 +5,7 @@ use ethrex::{
     initializers::{get_network, init_tracing},
 };
 use ethrex_common::{
-    Bytes, H160, H256,
+    Bytes, H160, H256, U256,
     types::{
         Block, EIP1559Transaction, Genesis, Transaction, TxKind, requests::compute_requests_hash,
     },
@@ -60,6 +60,9 @@ async fn run_test(simulator: Arc<Mutex<Simulator>>) {
             .unwrap(),
     )
     .into();
+    // Some random address
+    let recipient = "941e103320615d394a55708be13e45994c7d93b0".parse().unwrap();
+    let transfer_amount = 1000000;
 
     let node0 = simulator.start_node().await;
     let node1 = simulator.start_node().await;
@@ -79,6 +82,8 @@ async fn run_test(simulator: Arc<Mutex<Simulator>>) {
         base_chain = extended_base_chain;
     }
 
+    let initial_balance = node0.get_balance(recipient).await;
+
     // Fork the chain
     let side_chain = base_chain.fork();
 
@@ -91,20 +96,33 @@ async fn run_test(simulator: Arc<Mutex<Simulator>>) {
     let extended_base_chain = node0.build_payload(base_chain).await;
 
     // In parallel, mine a block in the side chain, with an ETH transfer
-    let recipient = "941e103320615d394a55708be13e45994c7d93b0".parse().unwrap();
-    node1.send_eth_transfer(&signer, recipient, 1000000).await;
+    node1
+        .send_eth_transfer(&signer, recipient, transfer_amount)
+        .await;
 
     let side_chain = node1.build_payload(side_chain).await;
     node1.notify_new_payload(&side_chain).await;
     node1.update_forkchoice(&side_chain).await;
 
+    // Sanity check: balance hasn't changed
+    let same_balance = node0.get_balance(recipient).await;
+    assert_eq!(same_balance, initial_balance);
+
     // Notify the first node of the side chain block, it should reorg
     node0.notify_new_payload(&side_chain).await;
     node0.update_forkchoice(&side_chain).await;
 
+    // Check the transfer has been processed
+    let new_balance = node0.get_balance(recipient).await;
+    assert_eq!(new_balance, initial_balance + transfer_amount);
+
     // Finally, move to the extended base chain, it should reorg back
     node0.notify_new_payload(&extended_base_chain).await;
     node0.update_forkchoice(&extended_base_chain).await;
+
+    // Check the transfer has been reverted
+    let new_balance = node0.get_balance(recipient).await;
+    assert_eq!(new_balance, initial_balance);
 }
 
 struct Simulator {
@@ -383,6 +401,13 @@ impl Node {
             .send_raw_transaction(&encoded_tx)
             .await
             .unwrap();
+    }
+
+    async fn get_balance(&self, address: H160) -> U256 {
+        self.rpc_client
+            .get_balance(address, Default::default())
+            .await
+            .unwrap()
     }
 }
 
