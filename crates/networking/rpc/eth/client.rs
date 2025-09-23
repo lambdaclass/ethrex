@@ -103,7 +103,7 @@ impl RpcHandler for Config {
         let chain_config = context.storage.get_chain_config()?;
         let latest_block_timestamp = context
             .storage
-            .get_block_by_number(0)
+            .get_block_by_number(context.storage.get_latest_block_number().await?)
             .await?
             .unwrap()
             .header
