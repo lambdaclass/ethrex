@@ -110,6 +110,8 @@ impl BlobsBundle {
         tx: &crate::types::EIP4844Transaction,
         fork: crate::types::Fork,
     ) -> Result<(), BlobsBundleError> {
+        use ethrex_crypto::kzg::verify_blob_kzg_proof;
+
         let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
 
@@ -146,8 +148,6 @@ impl BlobsBundle {
             .zip(self.commitments.iter())
             .zip(self.proofs.iter())
         {
-            use ethrex_crypto::kzg::verify_blob_kzg_proof;
-
             if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
                 return Err(BlobsBundleError::BlobToCommitmentAndProofError);
             }
