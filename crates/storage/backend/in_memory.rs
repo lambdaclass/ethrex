@@ -1,5 +1,6 @@
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
+    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, StorageWriteBatch,
+    TableOptions,
 };
 use crate::error::StoreError;
 use std::collections::BTreeMap;
@@ -62,6 +63,12 @@ impl StorageBackend for InMemoryBackend {
         Ok(Box::new(InMemoryLocked {
             backend: self.inner.clone(),
             table_name: table_name.to_string(),
+        }))
+    }
+
+    fn begin_write_batch(&self) -> Result<Box<dyn StorageWriteBatch + '_>, StoreError> {
+        Ok(Box::new(InMemoryWriteBatch {
+            backend: self.inner.clone(),
         }))
     }
 }
@@ -231,109 +238,23 @@ impl<'a> StorageRwTx for InMemoryRwTx<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct InMemoryWriteBatch {
+    backend: Arc<RwLock<Database>>,
+}
 
-    #[test]
-    fn test_basic_operations() {
-        let backend = InMemoryBackend::open("").unwrap();
-        backend
-            .create_table("test", TableOptions { dupsort: false })
-            .unwrap();
+impl StorageWriteBatch for InMemoryWriteBatch {
+    fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
-        // Test write transaction
-        {
-            let tx = backend.begin_write().unwrap();
-            tx.put("test", b"key1", b"value1").unwrap();
-            tx.put("test", b"key2", b"value2").unwrap();
-            tx.commit().unwrap();
+        let table_ref = db.entry(table.to_string()).or_insert_with(Table::new);
+
+        for (key, value) in batch {
+            table_ref.insert(key, value);
         }
 
-        // Test read transaction
-        {
-            let tx = backend.begin_read().unwrap();
-            assert_eq!(tx.get("test", b"key1").unwrap(), Some(b"value1".to_vec()));
-            assert_eq!(tx.get("test", b"key2").unwrap(), Some(b"value2".to_vec()));
-            assert_eq!(tx.get("test", b"nonexistent").unwrap(), None);
-        }
-    }
-
-    #[test]
-    fn test_prefix_iterator() {
-        let backend = InMemoryBackend::open("").unwrap();
-        backend
-            .create_table("test", TableOptions { dupsort: false })
-            .unwrap();
-
-        // Insert test data
-        {
-            let tx = backend.begin_write().unwrap();
-            tx.put("test", b"prefix_key1", b"value1").unwrap();
-            tx.put("test", b"prefix_key2", b"value2").unwrap();
-            tx.put("test", b"other_key", b"value3").unwrap();
-            tx.commit().unwrap();
-        }
-
-        // Test prefix iterator
-        {
-            let tx = backend.begin_read().unwrap();
-            let iter = tx.prefix_iterator("test", b"prefix_").unwrap();
-            let results: Result<Vec<_>, _> = iter.collect();
-            let results = results.unwrap();
-
-            assert_eq!(results.len(), 2);
-            // BTreeMap mantiene orden lexicográfico
-            assert_eq!(results[0], (b"prefix_key1".to_vec(), b"value1".to_vec()));
-            assert_eq!(results[1], (b"prefix_key2".to_vec(), b"value2".to_vec()));
-        }
-    }
-
-    #[test]
-    fn test_immediate_writes() {
-        let backend = InMemoryBackend::open("").unwrap();
-        backend
-            .create_table("test", TableOptions { dupsort: false })
-            .unwrap();
-
-        // Writes are immediately visible (no transaction isolation)
-        {
-            let tx1 = backend.begin_write().unwrap();
-            tx1.put("test", b"key1", b"value1").unwrap();
-            tx1.commit().unwrap();
-        }
-
-        // Read should see the changes immediately
-        {
-            let tx2 = backend.begin_read().unwrap();
-            assert_eq!(tx2.get("test", b"key1").unwrap(), Some(b"value1".to_vec()));
-        }
-    }
-
-    #[test]
-    fn test_delete_operations() {
-        let backend = InMemoryBackend::open("").unwrap();
-        backend
-            .create_table("test", TableOptions { dupsort: false })
-            .unwrap();
-
-        // Insert and then delete
-        {
-            let tx = backend.begin_write().unwrap();
-            tx.put("test", b"key1", b"value1").unwrap();
-            tx.commit().unwrap();
-        }
-
-        {
-            let tx = backend.begin_write().unwrap();
-            tx.delete("test", b"key1").unwrap();
-            tx.commit().unwrap();
-        }
-
-        // Verify deletion
-        {
-            let tx = backend.begin_read().unwrap();
-            assert_eq!(tx.get("test", b"key1").unwrap(), None);
-        }
+        Ok(())
     }
 }

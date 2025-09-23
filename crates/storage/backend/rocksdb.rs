@@ -1,11 +1,12 @@
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions,
+    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, StorageWriteBatch,
+    TABLES, TableOptions,
 };
 use crate::error::StoreError;
-use rocksdb::OptimisticTransactionDB;
 use rocksdb::{
     ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode, Transaction,
 };
+use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -109,6 +110,12 @@ impl StorageBackend for RocksDBBackend {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
 
         Ok(Box::new(RocksDBLocked { db, lock, cf }))
+    }
+
+    fn begin_write_batch(&self) -> Result<Box<dyn StorageWriteBatch + '_>, StoreError> {
+        Ok(Box::new(RocksDBWriteBatch {
+            db: self.db.clone(),
+        }))
     }
 }
 
@@ -287,5 +294,28 @@ impl Drop for RocksDBLocked {
                     as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
             ));
         }
+    }
+}
+
+pub struct RocksDBWriteBatch {
+    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+}
+
+impl StorageWriteBatch for RocksDBWriteBatch {
+    fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+            .clone();
+
+        let mut write_batch = WriteBatchWithTransaction::<true>::default();
+        for (key, value) in batch {
+            write_batch.put_cf(&cf, key, value);
+        }
+
+        self.db
+            .write(write_batch)
+            .map_err(|e| StoreError::Custom(format!("Failed to write batch: {}", e)))
     }
 }
