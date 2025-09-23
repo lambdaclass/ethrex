@@ -9,7 +9,6 @@ use rocksdb::{
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::info;
 
 #[derive(Debug)]
 pub struct RocksDBBackend {
@@ -237,16 +236,12 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
-        let mut write_batch = self.tx.get_writebatch();
-
+        // TODO: Optimize this by using a WriteBatchWithTransaction?
         for (key, value) in batch {
-            write_batch.put_cf(&cf, key, value);
+            self.tx.put_cf(&cf, key, value)?;
         }
 
-        // Adds the keys from the WriteBatch to the transaction
-        self.tx
-            .rebuild_from_writebatch(&write_batch)
-            .map_err(|e| StoreError::Custom(format!("Failed to rebuild from write batch: {}", e)))
+        Ok(())
     }
 
     fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
