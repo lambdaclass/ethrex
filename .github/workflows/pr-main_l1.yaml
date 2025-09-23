@@ -72,44 +72,6 @@ jobs:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
 
-  setup-hive-fork:
-    name: "Setup Hive"
-    runs-on: ubuntu-latest
-    env:
-      HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43 # commit from our fork
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Hive
-        run: |
-          git clone --single-branch --branch update_dockerfile https://github.com/lambdaclass/hive
-          cd hive
-          git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
-          go build .
-      - name: Upload hive artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: hive-fork
-          path: hive
-
-  setup-hive-upstream:
-    name: "Setup Hive"
-    runs-on: ubuntu-latest
-    env:
-      HIVE_COMMIT_HASH: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Hive
-        run: |
-          git clone --single-branch --branch master https://github.com/lambdaclass/hive
-          cd hive
-          git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
-          go build .
-      - name: Upload hive artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: hive-upstream
-          path: hive
-
   run-assertoor:
     name: Assertoor - ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -155,44 +117,63 @@ jobs:
   run-hive:
     name: Hive - ${{ matrix.name }}
     runs-on: ubuntu-latest
-    needs: [docker_build, setup-hive-fork, setup-hive-upstream]
+    needs: [docker_build]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
       fail-fast: true
       matrix:
         include:
           - name: "Rpc Compat tests"
-            hive_version: "fork"
             simulation: ethereum/rpc-compat
-            test_pattern: ""
+            limit: ""
+            hive_repository: lambdaclass/hive
+            hive_version: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
+            artifact_prefix: rpc_compat
           - name: "Devp2p tests"
-            hive_version: "fork"
             simulation: devp2p
-            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate
+            limit: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs|BlockRangeUpdate
             # AccountRange and GetTrieNodes don't pass anymore.
-            #|BlobViolations
             # Findnode/BasicFindnode fails due to packets being processed out of order
             # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
+            hive_repository: lambdaclass/hive
+            hive_version: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
+            artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
-            test_pattern: engine-(auth|exchange-capabilities)/
+            limit: engine-(auth|exchange-capabilities)/
+            hive_repository: ethereum/hive
+            hive_version: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
+            artifact_prefix: engine_auth_ec
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Request Blob Pooled Transactions Single|Invalid NewPayload, Incomplete Transactions|Re-Org Back to Canonical Chain*|Invalid PayloadAttributes*|Invalid NewPayload, VersionedHashes|Invalid NewPayload, Incomplete VersionedHashes|Invalid NewPayload, Extra VersionedHashes|Bad Hash on NewPayload|Unknown HeadBlockHash|In-Order Consecutive Payload Execution|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Syncing=False|Payload Build after New Invalid Payload|Invalid NewPayload|Invalid Missing Ancestor ReOrg|Invalid Missing Ancestor Syncing ReOrG"
+            limit: "engine-cancun"
+            hive_repository: lambdaclass/hive
+            hive_version: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
+            artifact_prefix: engine_cancun
           - name: "Paris Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-api/RPC|Bad Hash on NewPayload|Build Payload|Fork ID|In-Order Consecutive Payload Execution|Inconsistent|Invalid Missing Ancestor ReOrg|Invalid NewPayload|Invalid PayloadAttributes|Multiple New Payloads|NewPayload with|ParentHash equals BlockHash on NewPayload|Payload Build|PrevRandao Opcode Transactions|Re-Execute Payload|Re-Org Back|Re-org to Previously Validated Sidechain Payload|RPC:|Safe Re-Org|Suggested Fee|Transaction Re-Org|Unique Payload ID|Unknown|Valid NewPayload->ForkchoiceUpdated" # |Invalid P9 -> flaky
-            ethrex_flags: ""
+            limit: "engine-api"
+            hive_repository: lambdaclass/hive
+            hive_version: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
+            artifact_prefix: engine_paris
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
-            test_pattern: "engine-withdrawals/Corrupted Block Hash Payload|Empty Withdrawals|engine-withdrawals test loader|GetPayloadBodies|GetPayloadV2 Block Value|Max Initcode Size|Sync after 2 blocks - Withdrawals on Genesis|Withdraw many accounts|Withdraw to a single account|Withdraw to two accounts|Withdraw zero amount|Withdraw many accounts|Withdrawals Fork on Block 1 - 1 Block Re-Org|Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload|Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
+            limit: "engine-withdrawals/Corrupted Block Hash Payload|Empty Withdrawals|engine-withdrawals test loader|GetPayloadBodies|GetPayloadV2 Block Value|Max Initcode Size|Sync after 2 blocks - Withdrawals on Genesis|Withdraw many accounts|Withdraw to a single account|Withdraw to two accounts|Withdraw zero amount|Withdraw many accounts|Withdrawals Fork on Block 1 - 1 Block Re-Org|Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload|Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
+            hive_repository: lambdaclass/hive
+            hive_version: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
+            artifact_prefix: engine_withdrawals
           - name: "Sync full"
             simulation: ethereum/sync
-            test_pattern: ""
+            limit: ""
+            hive_repository: lambdaclass/hive
+            hive_version: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
+            artifact_prefix: sync_full
           - name: "Sync snap"
             simulation: ethereum/sync
-            test_pattern: ""
-            ethrex_flags: "--syncmode snap"
+            limit: ""
+            hive_repository: lambdaclass/hive
+            hive_version: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
+            artifact_prefix: sync_snap
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -203,17 +184,44 @@ jobs:
           name: ethrex_image
           path: /tmp
 
-      - name: Download hive artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: hive-${{ matrix.hive_version || 'upstream' }}
-
       - name: Load image
         run: |
           docker load --input /tmp/ethrex_image.tar
 
+      - name: Load hive client config
+        id: client-config
+        shell: bash
+        run: |
+          {
+            echo "config<<EOF"
+            cat .github/config/hive/clients.yaml
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Determine hive flags
+        id: hive-flags
+        shell: bash
+        env:
+          SIM_LIMIT: ${{ matrix.limit }}
+        run: |
+          FLAGS='--sim.parallelism 16 --sim.loglevel 1'
+          if [[ -n "$SIM_LIMIT" ]]; then
+            FLAGS+=" --sim.limit \"$SIM_LIMIT\""
+          fi
+          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
+
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
+        id: run-hive-action
+        uses: ethpandaops/hive-github-action@v0.5.0
+        with:
+          hive_repository: ${{ matrix.hive_repository }}
+          hive_version: ${{ matrix.hive_version }}
+          simulator: ${{ matrix.simulation }}
+          client: ethrex
+          client_config: ${{ steps.client-config.outputs.config }}
+          extra_flags: ${{ steps.hive-flags.outputs.flags }}
+          workflow_artifact_upload: true
+          workflow_artifact_prefix: ${{ matrix.artifact_prefix }}
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
