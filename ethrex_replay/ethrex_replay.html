@@ -444,17 +444,23 @@ ethrex-replay l2 transaction --tx-hash &lt;TX_HASH&gt; --execute --rpc-url &lt;R
 <hr />
 <h2 id="benchmarking--profiling"><a class="header" href="#benchmarking--profiling">Benchmarking &amp; Profiling</a></h2>
 <h3 id="run-samply"><a class="header" href="#run-samply">Run Samply</a></h3>
+<h4 id="on-zkvms"><a class="header" href="#on-zkvms">On zkVMs</a></h4>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
   important
 </p>
 <ol>
-<li>The <code>ethrex-replay</code> binary must be built with the <code>profiling</code> feature enabled.</li>
+<li>For profiling zkVMs like SP1 the <code>ethrex-replay</code> binary must be built with the <code>profiling</code> feature enabled.</li>
 <li>The <code>TRACE_SAMPLE_RATE</code> environment variable controls the sampling rate (in milliseconds). Adjust it according to your needs.</li>
 </ol>
 </div>
 <pre><code>TRACE_FILE=output.json TRACE_SAMPLE_RATE=1000 ethrex-replay &lt;COMMAND&gt; [ARGS]
+</code></pre>
+<h4 id="execution-without-zkvms"><a class="header" href="#execution-without-zkvms">Execution without zkVMs</a></h4>
+<p>We recommend building in release-with-debug mode so that the flamegraph is the most accurate.</p>
+<pre><code class="language-bash">cargo build -p ethrex-replay --profile release-with-debug
+samply record target/release-with-debug/ethrex-replay &lt;COMMAND&gt; [ARGS]
 </code></pre>
 <h3 id="run-bytehound"><a class="header" href="#run-bytehound">Run Bytehound</a></h3>
 <div class="mdbook-alerts mdbook-alerts-important">
