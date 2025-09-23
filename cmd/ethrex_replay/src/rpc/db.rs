@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::time::{Duration, Instant};
 
 use crate::rpc::{get_account, get_block, retry};
 
@@ -21,18 +22,16 @@ use ethrex_vm::backends::levm::LEVM;
 use eyre::Context;
 use futures_util::future::join_all;
 use sha3::{Digest, Keccak256};
-use tokio_utils::RateLimiter;
+use tokio::time::sleep;
 use tracing::{debug, info};
 
+use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::{Arc, LazyLock};
 
 use super::{Account, NodeRLP};
 
-const RPC_RATE_LIMIT: usize = 15;
-
-static RATE_LIMITER: LazyLock<RateLimiter> =
-    LazyLock::new(|| RateLimiter::new(std::time::Duration::from_secs(1)));
+const RPC_RATE_LIMIT: usize = 15; // Max amount of concurrent requests at once.
+const RATE_LIMIT: Duration = Duration::from_millis(100); // 10rps
 
 /// Structure for a database that fetches data from an RPC endpoint on demand.
 /// Caches already fetched data to minimize RPC calls.
@@ -160,7 +159,8 @@ impl RpcDB {
 
         // Fetch accounts in chunks to respect rate limits of the RPC endpoint
         for chunk in index.chunks(RPC_RATE_LIMIT) {
-            // Call to `eth_getProof` for each account in the chunk
+            let start = Instant::now();
+
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
@@ -177,21 +177,29 @@ impl RpcDB {
                 ))
             });
 
-            // Wait for all requests in the chunk to complete
-            let fetched_chunk = RATE_LIMITER
-                .throttle(|| async { join_all(futures).await })
+            let fetched_chunk = join_all(futures)
                 .await
                 .into_iter()
                 .collect::<eyre::Result<HashMap<_, _>>>()?;
 
             fetched.extend(fetched_chunk);
 
+            // logging
             if index.len() == 1 {
                 let address = chunk.first().unwrap().0;
                 debug!("fetched account {address}");
             } else {
                 counter += chunk.len();
                 debug!("fetched {} accounts of {}", counter, index.len());
+            }
+
+            // Compute the cooldown needed to honor the per-request rate
+            let chunk_size = chunk.len() as u32;
+            let target_gap = RATE_LIMIT * chunk_size;
+            let elapsed = start.elapsed();
+
+            if target_gap > elapsed {
+                sleep(target_gap - elapsed).await;
             }
         }
 
