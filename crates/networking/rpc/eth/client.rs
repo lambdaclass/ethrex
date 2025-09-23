@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use ethrex_common::H32;
 use ethrex_common::H160;
-use ethrex_common::addresses::*;
 use ethrex_common::serde_utils;
+use ethrex_common::system_contracts::*;
 use ethrex_common::types::Fork;
 use ethrex_common::types::ForkBlobSchedule;
 use ethrex_common::types::ForkId;

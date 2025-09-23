@@ -9,7 +9,7 @@ use crate::backends::revm::db::EvmState;
 use crate::backends::revm::helpers::spec_id;
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use ethrex_common::addresses::{
+use ethrex_common::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
