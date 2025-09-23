@@ -21,13 +21,17 @@ use ethrex_rpc::{
 use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
 };
-use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRef, node::LeafNode};
+use ethrex_trie::{
+    InMemoryTrieDB, Node, NodeHash, NodeRef,
+    node::{BranchNode, LeafNode},
+};
 use eyre::OptionExt;
 use reqwest::Url;
 use std::{
     cmp::max,
     collections::HashSet,
     io::Write,
+    str::FromStr,
     sync::{Arc, RwLock},
     time::{Instant, SystemTime},
 };
@@ -540,6 +544,41 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
                 Ok(trie) => trie.inner,
                 Err(_) => continue,
             };
+
+            {
+                let mut storage_nodes = storage_trie.lock().unwrap();
+                let mut referenced_storage_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the storage trie (by Branch or Ext nodes).
+
+                for (_node_hash, node_rlp) in storage_nodes.iter() {
+                    let node = Node::decode(node_rlp)?;
+                    match node {
+                        Node::Branch(node) => {
+                            for choice in &node.choices {
+                                let NodeRef::Hash(hash) = *choice else {
+                                    unreachable!()
+                                };
+
+                                referenced_storage_node_hashes.insert(hash);
+                            }
+                        }
+                        Node::Extension(node) => {
+                            let NodeRef::Hash(hash) = node.child else {
+                                unreachable!()
+                            };
+
+                            referenced_storage_node_hashes.insert(hash);
+                        }
+                        Node::Leaf(_node) => {}
+                    }
+                }
+
+                for hash in referenced_storage_node_hashes {
+                    let dummy_branch: Node = BranchNode::default().into();
+                    storage_nodes
+                        .entry(hash)
+                        .or_insert(dummy_branch.encode_to_vec());
+                }
+            }
 
             inner_store
                 .storage_trie_nodes
