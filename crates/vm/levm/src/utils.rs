@@ -15,7 +15,7 @@ use crate::{
 };
 use ExceptionalHalt::OutOfGas;
 use bitvec::{bitvec, order::Msb0, vec::BitVec};
-use bytes::{Bytes, buf::IntoIter};
+use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
@@ -31,7 +31,7 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::{collections::HashMap, iter::Enumerate};
+use std::collections::HashMap;
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -98,6 +98,11 @@ impl JumpTargetFilter {
         this
     }
 
+    #[expect(
+        clippy::as_conversions,
+        clippy::arithmetic_side_effects,
+        clippy::indexing_slicing
+    )]
     pub fn precompute(&mut self) {
         let code = &self.bytecode;
         let len = code.len();
@@ -109,12 +114,12 @@ impl JumpTargetFilter {
                 self.jumpdests.resize(i + 1, false); // Rare, if len changes
             }
 
-            let opcode = code[i];
-            if opcode == 0x5b {
+            let opcode = Opcode::from(code[i]);
+            if opcode == Opcode::JUMPDEST {
                 self.jumpdests.set(i, true);
-            } else if opcode >= 0x60 && opcode <= 0x7f {
+            } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&opcode) {
                 // PUSH1 (0x60) to PUSH32 (0x7f): skip 1 to 32 bytes
-                let skip = (opcode - 0x5f) as usize;
+                let skip = opcode as usize - Opcode::PUSH0 as usize;
                 i += skip; // Advance past data bytes
             }
             i += 1;
@@ -122,6 +127,7 @@ impl JumpTargetFilter {
     }
 
     /// Check whether a target jump address is blacklisted or not.
+    #[expect(clippy::indexing_slicing)]
     pub fn is_blacklisted(&self, address: usize) -> bool {
         if address >= self.bytecode.len() {
             return true; // Or false, depending on if out-of-bounds is blacklisted
