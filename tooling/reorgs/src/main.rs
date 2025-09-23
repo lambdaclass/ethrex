@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
 };
 
@@ -24,11 +25,22 @@ async fn main() {
         .map(|o| o.parse().unwrap())
         .unwrap_or_else(|| "../../target/debug/ethrex".parse().unwrap());
 
-    info!(binary = %cmd_path.display(), "Starting test run");
+    let version = get_ethrex_version(&cmd_path).await;
+
+    info!(%version, binary_path = %cmd_path.display(), "Fetched ethrex binary version");
+    info!("Starting test run");
     info!("");
 
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_many_blocks_reorg).await;
+}
+
+async fn get_ethrex_version(cmd_path: &Path) -> String {
+    let version_output = Command::new(&cmd_path)
+        .arg("--version")
+        .output()
+        .expect("failed to get ethrex version");
+    String::from_utf8(version_output.stdout).expect("failed to parse version output")
 }
 
 async fn run_test<F, Fut>(cmd_path: &Path, test_fn: F)
