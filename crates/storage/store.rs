@@ -35,9 +35,9 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<dyn StoreEngine>,
-    chain_config: Arc<RwLock<ChainConfig>>,
-    latest_block_header: Arc<RwLock<BlockHeader>>,
+    pub engine: Arc<dyn StoreEngine>,
+    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -139,9 +139,11 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
+
         let account_state = AccountState::decode(&encoded_state)?;
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
@@ -1331,6 +1333,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
+
 fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
