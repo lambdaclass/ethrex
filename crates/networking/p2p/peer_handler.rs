@@ -1443,10 +1443,15 @@ impl PeerHandler {
                             let old_intervals = accounts_done
                                 .get_mut(&current_account_hashes[remaining_start])
                                 .unwrap();
+                            dbg!(&current_account_hashes[remaining_start]);
                             old_intervals.remove(
                                 old_intervals
                                     .iter()
-                                    .position(|(_old_start, end)| end == &hash_end)
+                                    .position(|(_old_start, end)| {
+                                        dbg!(&end);
+                                        dbg!(&hash_end);
+                                        end == &hash_end
+                                    })
                                     .unwrap(),
                             );
                         }
