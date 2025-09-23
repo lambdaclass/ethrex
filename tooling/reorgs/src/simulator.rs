@@ -1,6 +1,7 @@
 use std::{fs::File, io::Read, path::PathBuf, process::Stdio, time::Duration};
 
 use ethrex::{cli::Options, initializers::get_network};
+use ethrex_blockchain::fork_choice;
 use ethrex_common::{
     Bytes, H160, H256, U256,
     types::{
@@ -210,20 +211,11 @@ impl Node {
             head = %fork_choice_state.head_block_hash,
             "Updating fork choice"
         );
+        let syncing_fut = wait_until_synced(&self.engine_client, fork_choice_state);
 
-        let fork_choice_response = self
-            .engine_client
-            .engine_forkchoice_updated_v3(fork_choice_state, None)
+        tokio::time::timeout(Duration::from_secs(5), syncing_fut)
             .await
             .unwrap();
-
-        assert_eq!(
-            fork_choice_response.payload_status.status,
-            PayloadValidationStatus::Valid,
-            "Validation failed with error: {:?}",
-            fork_choice_response.payload_status.validation_error
-        );
-        assert!(fork_choice_response.payload_id.is_none());
     }
 
     pub async fn build_payload(&self, mut chain: Chain) -> Chain {
@@ -294,18 +286,11 @@ impl Node {
         //     .collect();
         let commitments = vec![];
         let parent_beacon_block_root = head.header.parent_beacon_block_root.unwrap();
-        let payload_status = self
+        let _payload_status = self
             .engine_client
             .engine_new_payload_v4(execution_payload, commitments, parent_beacon_block_root)
             .await
             .unwrap();
-
-        assert_eq!(
-            payload_status.status,
-            PayloadValidationStatus::Valid,
-            "Validation failed with error: {:?}",
-            payload_status.validation_error
-        );
     }
 
     pub async fn send_eth_transfer(&self, signer: &Signer, recipient: H160, amount: u64) {
@@ -430,4 +415,19 @@ fn keccak256(data: &[u8]) -> H256 {
             .try_into()
             .unwrap(),
     )
+}
+
+async fn wait_until_synced(engine_client: &EngineClient, fork_choice_state: ForkChoiceState) {
+    loop {
+        let fork_choice_response = engine_client
+            .engine_forkchoice_updated_v3(fork_choice_state, None)
+            .await
+            .unwrap();
+
+        let status = fork_choice_response.payload_status.status;
+        if status == PayloadValidationStatus::Valid {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
