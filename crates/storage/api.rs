@@ -40,6 +40,14 @@ pub const TABLES: [&str; 13] = [
     "storage_trie_nodes",
 ];
 
+/// Configuration options for table creation.
+#[derive(Debug, Clone)]
+pub struct TableOptions {
+    /// Whether the table supports duplicate keys, this means that multiple values can be stored for the same key.
+    /// This is useful for certain indexing scenarios but not supported by all backends.
+    pub dupsort: bool,
+}
+
 /// This trait provides the minimal set of operations required from a database backend.
 /// Implementations should focus on providing efficient access to the underlying storage
 /// without implementing business logic.
@@ -66,18 +74,6 @@ pub trait StorageBackend: Debug + Send + Sync + 'static {
     /// This provides a persistent read-only view of a single table, optimized
     /// for batch read operations. The snapshot remains valid until dropped.
     fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError>;
-
-    /// Writes multiple key-value pairs to a table in a single atomic operation.
-    /// FIXME: This shouldn't be here, it's a write operation.
-    fn write_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError>;
-}
-
-/// Configuration options for table creation.
-#[derive(Debug, Clone)]
-pub struct TableOptions {
-    /// Whether the table supports duplicate keys, this means that multiple values can be stored for the same key.
-    /// This is useful for certain indexing scenarios but not supported by all backends.
-    pub dupsort: bool,
 }
 
 /// Read-only transaction interface.
@@ -117,6 +113,7 @@ pub trait StorageRwTx: StorageRoTx {
 /// This is optimized for scenarios where many reads are performed on the same
 /// table, such as trie traversal operations.
 /// This is currently only used in snapsync stage.
+/// TODO: Check if we can remove this trait and use [`StorageRoTx`] instead.
 pub trait StorageLocked: Send + Sync + 'static {
     /// Retrieves a value by key from the locked table.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;

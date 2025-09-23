@@ -1082,6 +1082,7 @@ impl StoreEngine {
         &self,
         storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
+        let txn = self.backend.begin_write()?;
         let mut key_values: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         for (address_hash, nodes) in storage_trie_nodes {
             for (node_hash, node_data) in nodes {
@@ -1092,19 +1093,22 @@ impl StoreEngine {
                 key_values.push((key, node_data));
             }
         }
-        self.backend.write_batch(STORAGE_TRIE_NODES, key_values)
+        txn.put_batch(STORAGE_TRIE_NODES, key_values)?;
+        txn.commit()
     }
 
     pub async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError> {
+        let txn = self.backend.begin_write()?;
         let mut key_values: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         for (code_hash, code) in account_codes {
             let value = AccountCodeRLP::from(code).bytes().clone();
             key_values.push((code_hash.as_bytes().to_vec(), value));
         }
 
-        self.backend.write_batch(ACCOUNT_CODES, key_values)
+        txn.put_batch(ACCOUNT_CODES, key_values)?;
+        txn.commit()
     }
 }

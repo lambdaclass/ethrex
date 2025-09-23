@@ -65,9 +65,14 @@ impl TrieDB for BackendTrieDB {
             .map(|(node_hash, value)| (self.make_key(node_hash), value))
             .collect();
 
-        self.backend
-            .write_batch(&self.table_name, batch)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
+        let txn = self.backend.begin_write().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
+        })?;
+
+        txn.put_batch(&self.table_name, batch)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+        txn.commit()
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
     }
 }
 
