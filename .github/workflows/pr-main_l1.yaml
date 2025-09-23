@@ -120,7 +120,7 @@ jobs:
     needs: [docker_build]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - name: "Rpc Compat tests"
@@ -206,7 +206,8 @@ jobs:
         run: |
           FLAGS='--sim.parallelism 16 --sim.loglevel 1'
           if [[ -n "$SIM_LIMIT" ]]; then
-            FLAGS+=" --sim.limit \"$SIM_LIMIT\""
+            escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
+            FLAGS+=" --sim.limit '$escaped_limit'"
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
