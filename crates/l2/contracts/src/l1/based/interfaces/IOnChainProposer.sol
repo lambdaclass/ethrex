@@ -30,6 +30,14 @@ interface IOnChainProposer {
     /// @param bridge the address of the bridge contract.
     function initializeBridgeAddress(address bridge) external;
 
+    /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
+    /// @param new_vk new verification key for SP1 verifier
+    function upgradeSP1VerificationKey(bytes32 new_vk) public;
+
+    /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
+    /// @param new_vk new verification key for RISC0 verifier
+    function upgradeRISC0VerificationKey(bytes32 new_vk) public;
+
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.
@@ -75,6 +83,7 @@ interface IOnChainProposer {
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external;
+
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
 
