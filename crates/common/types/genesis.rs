@@ -491,7 +491,7 @@ impl ChainConfig {
         } else {
             None
         };
-        if next.is_some() && next > self.fork(block_timestamp) {
+        if next.is_some() && next.unwrap() > self.fork(block_timestamp) {
             next
         } else {
             None
