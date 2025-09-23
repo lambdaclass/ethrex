@@ -176,16 +176,19 @@ build-prover-exec:
 
 init-prover-sp1:
 	cargo run --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend sp1
 
 init-prover-risc0:
 	cargo run --release --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend risc0
 
 init-prover-exec:
 	cargo run --release --features "$(GPU?)" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend exec
 
