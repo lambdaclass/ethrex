@@ -138,7 +138,7 @@ fn flush_nodes_to_write(
 #[inline(never)]
 pub fn trie_from_sorted_accounts<'scope, T>(
     db: &'scope dyn TrieDB,
-    accounts_iter: &mut T,
+    data_iter: &mut T,
     scoped_thread: &'scope Scope<'scope, '_>,
 ) -> Result<H256, TrieGenerationError>
 where
@@ -149,8 +149,20 @@ where
     let mut write_threads = Vec::new();
 
     let mut left_side = StackElement::default();
-    let mut center_side: CenterSide = CenterSide::from_value(accounts_iter.next().unwrap());
-    let mut right_side_opt: Option<(H256, Vec<u8>)> = accounts_iter.next();
+    let initial_value = data_iter.next().unwrap();
+    let mut center_side: CenterSide = CenterSide::from_value(initial_value.clone());
+    let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
+
+    // Edge Case
+    if right_side_opt.is_none() {
+        let node = LeafNode {
+            partial: center_side.path,
+            value: initial_value.1,
+        };
+        let hash = node.compute_hash().finalize();
+        flush_nodes_to_write(vec![node.into()], db)?;
+        return Ok(hash);
+    }
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
@@ -188,7 +200,7 @@ where
             left_side = element;
         }
         center_side = CenterSide::from_value(right_side);
-        right_side_opt = accounts_iter.next();
+        right_side_opt = data_iter.next();
     }
 
     while !is_child(&center_side.path, &left_side) {
@@ -328,6 +340,13 @@ mod test {
         accounts
     }
 
+    fn generate_input_4() -> BTreeMap<H256, Vec<u8>> {
+        let mut accounts: BTreeMap<H256, Vec<u8>> = BTreeMap::new();
+        let string = "0532f23d3bd5277790ece5a6cb6fc684bc473a91ffe3a0334049527c4f6987e9";
+        accounts.insert(H256::from_str(string).unwrap(), vec![0, 1]);
+        accounts
+    }
+
     fn generate_input_slots_1() -> BTreeMap<H256, U256> {
         let mut slots: BTreeMap<H256, U256> = BTreeMap::new();
         for string in [
@@ -397,6 +416,11 @@ mod test {
     #[test]
     fn test_3() {
         run_test_account_state(generate_input_3());
+    }
+
+    #[test]
+    fn test_4() {
+        run_test_account_state(generate_input_4());
     }
 
     #[test]
