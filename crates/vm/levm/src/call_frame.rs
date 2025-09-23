@@ -10,7 +10,6 @@ use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use keccak_hash::H256;
 use std::{
-    cell::OnceCell,
     collections::{BTreeMap, HashMap},
     fmt,
 };
