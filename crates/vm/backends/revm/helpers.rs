@@ -122,5 +122,6 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::Cancun => SpecId::CANCUN,
         Fork::Prague => SpecId::PRAGUE,
         Fork::Osaka => SpecId::OSAKA,
+        _ => SpecId::LATEST,
     }
 }

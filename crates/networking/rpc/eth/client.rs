@@ -105,7 +105,7 @@ impl RpcHandler for Config {
             .storage
             .get_block_by_number(context.storage.get_latest_block_number().await?)
             .await?
-            .unwrap()
+            .unwrap_or_default()
             .header
             .timestamp;
         let current_fork = chain_config.get_fork(latest_block_timestamp);
@@ -144,7 +144,7 @@ async fn get_config_for_fork(
                 .storage
                 .get_block_by_number(0)
                 .await?
-                .unwrap()
+                .expect("Failed to get genesis block. This should not happen.")
                 .header,
             timestamp,
             0,
