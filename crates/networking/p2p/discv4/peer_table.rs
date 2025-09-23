@@ -292,12 +292,17 @@ impl PeerTableHandle {
     }
 
     /// Return the amount of connected peers that matches any of the given capabilities
-    // TODO filter results by capabilities
     pub async fn peer_count_by_capabilities(
         &mut self,
-        _capabilities: &[Capability],
+        capabilities: &[Capability],
     ) -> Result<usize, PeerTableError> {
-        match self.0.call(CallMessage::PeerCount).await? {
+        match self
+            .0
+            .call(CallMessage::PeerCountByCapabilities {
+                capabilities: capabilities.to_vec(),
+            })
+            .await?
+        {
             OutMessage::PeerCount(peer_count) => Ok(peer_count),
             _ => unreachable!(),
         }
@@ -450,8 +455,17 @@ impl PeerTableHandle {
     }
 
     /// Get peer channels for communication
-    pub async fn get_peer_channels(&mut self) -> Result<Vec<(H256, PeerChannels)>, PeerTableError> {
-        match self.0.call(CallMessage::GetPeerChannels).await? {
+    pub async fn get_peer_channels(
+        &mut self,
+        capabilities: &[Capability],
+    ) -> Result<Vec<(H256, PeerChannels)>, PeerTableError> {
+        match self
+            .0
+            .call(CallMessage::GetPeerChannels {
+                capabilities: capabilities.to_vec(),
+            })
+            .await?
+        {
             OutMessage::PeerChannels(peer_channels) => Ok(peer_channels),
             _ => unreachable!(),
         }
@@ -507,8 +521,15 @@ impl PeerTableHandle {
     /// Retrieve a random peer.
     pub async fn get_random_peer(
         &mut self,
+        capabilities: &[Capability],
     ) -> Result<Option<(H256, PeerChannels)>, PeerTableError> {
-        match self.0.call(CallMessage::GetRandomPeer).await? {
+        match self
+            .0
+            .call(CallMessage::GetRandomPeer {
+                capabilities: capabilities.to_vec(),
+            })
+            .await?
+        {
             OutMessage::FoundPeer {
                 node_id,
                 peer_channels,
@@ -539,7 +560,7 @@ impl PeerTable {
 
     // Internal functions //
 
-    async fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerChannels)> {
+    fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerChannels)> {
         self.peers
             .iter()
             // We filter only to those peers which are useful to us
@@ -568,8 +589,8 @@ impl PeerTable {
     }
 
     /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
-    async fn use_best_peer(&mut self, capabilities: &[Capability]) -> Option<(H256, PeerChannels)> {
-        let (peer_id, peer_channel) = self.get_best_peer(capabilities).await?;
+    fn use_best_peer(&mut self, capabilities: &[Capability]) -> Option<(H256, PeerChannels)> {
+        let (peer_id, peer_channel) = self.get_best_peer(capabilities)?;
 
         self.peers
             .entry(peer_id)
@@ -687,7 +708,66 @@ impl PeerTable {
         }
     }
 
-    pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
+    fn peer_count_by_capabilities(&mut self, capabilities: Vec<Capability>) -> usize {
+        self.peers
+            .iter()
+            .filter_map(|(node_id, peer_data)| {
+                // if the peer doesn't have all the capabilities we need, we skip it
+                if !capabilities
+                    .iter()
+                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    None
+                } else {
+                    Some(*node_id)
+                }
+            })
+            .collect::<Vec<_>>()
+            .len()
+    }
+
+    fn get_peer_channels(&mut self, capabilities: Vec<Capability>) -> Vec<(H256, PeerChannels)> {
+        self.peers
+            .iter()
+            .filter_map(|(peer_id, peer_data)| {
+                // if the peer doesn't have all the capabilities we need, we skip it
+                if !capabilities
+                    .iter()
+                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    return None;
+                }
+                peer_data
+                    .channels
+                    .clone()
+                    .map(|peer_channels| (*peer_id, peer_channels))
+            })
+            .collect()
+    }
+
+    fn get_random_peer(&mut self, capabilities: Vec<Capability>) -> Option<(H256, PeerChannels)> {
+        let mut peers: Vec<(H256, PeerChannels)> = self
+            .peers
+            .iter()
+            .filter_map(|(node_id, peer_data)| {
+                // if the peer doesn't have all the capabilities we need, we skip it
+                if !capabilities
+                    .iter()
+                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    return None;
+                }
+                peer_data
+                    .channels
+                    .clone()
+                    .map(|peer_channels| (*node_id, peer_channels))
+            })
+            .collect();
+        peers.shuffle(&mut rand::rngs::OsRng);
+        peers.first().cloned()
+    }
+
+    fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
         let xor = node_id_1 ^ node_id_2;
         let distance = U256::from_big_endian(xor.as_bytes());
         distance.bits().saturating_sub(1)
@@ -788,7 +868,9 @@ pub enum CallMessage {
     },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerChannels,
+    GetPeerChannels {
+        capabilities: Vec<Capability>,
+    },
     InsertIfNew {
         node: Node,
     },
@@ -800,7 +882,9 @@ pub enum CallMessage {
         node_id: H256,
     },
     GetPeersData,
-    GetRandomPeer,
+    GetRandomPeer {
+        capabilities: Vec<Capability>,
+    },
 }
 
 #[derive(Debug)]
@@ -846,9 +930,9 @@ impl GenServer for PeerTable {
             CallMessage::PeerCount => {
                 CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()))
             }
-            CallMessage::PeerCountByCapabilities { capabilities: _ } => {
-                CallResponse::Reply(Self::OutMsg::PeerCount(self.peers.len()))
-            }
+            CallMessage::PeerCountByCapabilities { capabilities } => CallResponse::Reply(
+                OutMessage::PeerCount(self.peer_count_by_capabilities(capabilities)),
+            ),
             CallMessage::FreePeers => CallResponse::Reply(Self::OutMsg::PeerCount(
                 self.peers
                     .iter_mut()
@@ -878,7 +962,7 @@ impl GenServer for PeerTable {
                 Self::OutMsg::Contacts(self.get_contacts_to_revalidate(revalidation_interval)),
             ),
             CallMessage::GetBestPeer { capabilities } => {
-                let channels = self.get_best_peer(&capabilities).await;
+                let channels = self.get_best_peer(&capabilities);
                 CallResponse::Reply(channels.map_or(
                     Self::OutMsg::NotFound,
                     |(node_id, peer_channels)| Self::OutMsg::FoundPeer {
@@ -888,7 +972,7 @@ impl GenServer for PeerTable {
                 ))
             }
             CallMessage::UseBestPeer { capabilities } => {
-                let channels = self.use_best_peer(&capabilities).await;
+                let channels = self.use_best_peer(&capabilities);
                 CallResponse::Reply(channels.map_or(
                     Self::OutMsg::NotFound,
                     |(node_id, peer_channels)| Self::OutMsg::FoundPeer {
@@ -925,17 +1009,9 @@ impl GenServer for PeerTable {
                         .collect(),
                 ))
             }
-            CallMessage::GetPeerChannels => CallResponse::Reply(Self::OutMsg::PeerChannels(
-                self.peers
-                    .iter()
-                    .filter_map(|(peer_id, peer_data)| {
-                        peer_data
-                            .channels
-                            .clone()
-                            .map(|peer_channels| (*peer_id, peer_channels))
-                    })
-                    .collect(),
-            )),
+            CallMessage::GetPeerChannels { capabilities } => CallResponse::Reply(
+                OutMessage::PeerChannels(self.get_peer_channels(capabilities)),
+            ),
             CallMessage::InsertIfNew { node } => CallResponse::Reply(Self::OutMsg::IsNew(
                 match self.contacts.entry(node.node_id()) {
                     Entry::Occupied(_) => false,
@@ -954,27 +1030,16 @@ impl GenServer for PeerTable {
             CallMessage::GetPeersData => CallResponse::Reply(OutMessage::PeersData(
                 self.peers.values().cloned().collect(),
             )),
-            CallMessage::GetRandomPeer => {
-                let mut peers: Vec<(H256, PeerChannels)> = self
-                    .peers
-                    .iter()
-                    .filter_map(|(node_id, peer_data)| {
-                        peer_data
-                            .channels
-                            .clone()
-                            .map(|peer_channels| (*node_id, peer_channels))
-                    })
-                    .collect();
-                peers.shuffle(&mut rand::rngs::OsRng);
-                if let Some((node_id, peer_channels)) = peers.first() {
-                    CallResponse::Reply(OutMessage::FoundPeer {
-                        node_id: *node_id,
-                        peer_channels: peer_channels.clone(),
-                    })
+            CallMessage::GetRandomPeer { capabilities } => CallResponse::Reply(
+                if let Some((node_id, peer_channels)) = self.get_random_peer(capabilities) {
+                    OutMessage::FoundPeer {
+                        node_id,
+                        peer_channels,
+                    }
                 } else {
-                    CallResponse::Reply(OutMessage::NotFound)
-                }
-            }
+                    OutMessage::NotFound
+                },
+            ),
         }
     }
 

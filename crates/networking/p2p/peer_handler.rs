@@ -159,10 +159,9 @@ impl PeerHandler {
     /// It doesn't guarantee that the selected peer is not currently busy
     async fn get_random_peer(
         &mut self,
-        // TODO implement filter by capabilities
-        _capabilities: &[Capability],
+        capabilities: &[Capability],
     ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
-        return Ok(self.peer_table.get_random_peer().await?);
+        return Ok(self.peer_table.get_random_peer(capabilities).await?);
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -194,8 +193,10 @@ impl PeerHandler {
                 // sync_head might be invalid
                 return Ok(None);
             }
-            // TODO filter by capability &SUPPORTED_ETH_CAPABILITIES
-            let peer_channels = self.peer_table.get_peer_channels().await?;
+            let peer_channels = self
+                .peer_table
+                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                .await?;
 
             for (peer_id, mut peer_channel) in peer_channels {
                 match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
