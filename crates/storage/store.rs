@@ -78,9 +78,9 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 // Store wrapper with business logic
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<StoreEngine>,
-    chain_config: Arc<std::sync::RwLock<ChainConfig>>,
-    latest_block_header: Arc<std::sync::RwLock<BlockHeader>>,
+    pub engine: Arc<StoreEngine>,
+    pub chain_config: Arc<std::sync::RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<std::sync::RwLock<BlockHeader>>,
 }
 
 impl Store {

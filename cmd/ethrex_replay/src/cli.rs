@@ -19,7 +19,8 @@ use ethrex_rpc::{
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::{
-    EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
+    EngineType, Store, api::StorageBackend, backend::in_memory::InMemoryBackend,
+    engine::StoreEngine, hash_address,
 };
 use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRef, node::LeafNode};
 use eyre::OptionExt;
@@ -459,7 +460,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     // For the code hashes that we don't have we'll will it with <CodeHash, Bytes::new()>
     let mut all_codes_hashed = guest_program.codes_hashed.clone();
 
-    let in_memory_store = InMemoryStore::new();
+    let in_memory_store = InMemoryBackend::open("in_memory_store")?;
 
     // - Set up state trie nodes
     let all_nodes = &guest_program.nodes_hashed;
@@ -507,11 +508,20 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
             nodes.entry(hash).or_insert(dummy_leaf.encode_to_vec());
         }
 
+        // Write state trie nodes to backend
+        let rw_tx = in_memory_store.begin_write()?;
+        let mut state_batch = Vec::new();
+        for (node_hash, node_data) in nodes.iter() {
+            state_batch.push((
+                "state_trie_nodes",
+                node_hash.as_ref().to_vec(),
+                node_data.clone(),
+            ));
+        }
+        rw_tx.put_batch(state_batch)?;
+        rw_tx.commit()?;
+
         drop(nodes);
-
-        let mut inner_store = in_memory_store.inner()?;
-
-        inner_store.state_trie_nodes = state_trie_nodes;
 
         // - Set up storage trie nodes
         let addresses: Vec<Address> = witness
@@ -521,6 +531,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
             .map(|k| Address::from_slice(k))
             .collect();
 
+        let mut storage_batch = Vec::new();
         for address in &addresses {
             let hashed_address = hash_address(address);
 
@@ -537,19 +548,27 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
             let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
 
             let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
-                Ok(trie) => trie.inner,
+                Ok(trie) => trie,
                 Err(_) => continue,
             };
 
-            inner_store
-                .storage_trie_nodes
-                .insert(H256::from_slice(&hashed_address), storage_trie);
+            let storage_nodes = storage_trie.inner.lock().unwrap();
+            for (node_hash, node_data) in storage_nodes.iter() {
+                let mut key = hashed_address.to_vec();
+                key.extend_from_slice(node_hash.as_ref());
+                storage_batch.push(("storage_trie_nodes", key, node_data.clone()));
+            }
+        }
+
+        if !storage_batch.is_empty() {
+            let rw_tx = in_memory_store.begin_write()?;
+            rw_tx.put_batch(storage_batch)?;
         }
     }
 
     // Set up store with preloaded database and the right chain config.
     let store = Store {
-        engine: Arc::new(in_memory_store),
+        engine: Arc::new(StoreEngine::new(Arc::new(in_memory_store))?),
         chain_config: Arc::new(RwLock::new(chain_config)),
         latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
     };
