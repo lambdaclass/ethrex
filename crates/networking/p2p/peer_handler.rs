@@ -274,7 +274,7 @@ impl PeerHandler {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
                     self.peer_table.free_peer(&peer_id).await?;
-                    self.peer_table.record_success(&peer_id).await?;
+                    self.peer_table.record_failure(&peer_id).await?;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
