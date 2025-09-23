@@ -1,6 +1,5 @@
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, StorageWriteBatch,
-    TABLES, TableOptions,
+    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions,
 };
 use crate::error::StoreError;
 use rocksdb::{
@@ -126,12 +125,6 @@ impl StorageBackend for RocksDBBackend {
 
         Ok(Box::new(RocksDBLocked { db, lock, cf }))
     }
-
-    fn begin_write_batch(&self) -> Result<Box<dyn StorageWriteBatch + '_>, StoreError> {
-        Ok(Box::new(RocksDBWriteBatch {
-            db: self.db.clone(),
-        }))
-    }
 }
 
 pub struct RocksDBRoTx<'a> {
@@ -239,18 +232,6 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
 }
 
 impl<'a> StorageRwTx for RocksDBRwTx<'a> {
-    fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        let cf = self
-            .cfs
-            .get(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-            .clone();
-
-        self.tx
-            .put_cf(&cf, key, value)
-            .map_err(|e| StoreError::Custom(format!("Failed to put to {}: {}", table, e)))
-    }
-
     fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
         let cf = self
             .cfs
@@ -310,28 +291,5 @@ impl Drop for RocksDBLocked {
                     as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
             ));
         }
-    }
-}
-
-pub struct RocksDBWriteBatch {
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
-}
-
-impl StorageWriteBatch for RocksDBWriteBatch {
-    fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-            .clone();
-
-        let mut write_batch = WriteBatchWithTransaction::<true>::default();
-        for (key, value) in batch {
-            write_batch.put_cf(&cf, key, value);
-        }
-
-        self.db
-            .write(write_batch)
-            .map_err(|e| StoreError::Custom(format!("Failed to write batch: {}", e)))
     }
 }

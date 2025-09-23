@@ -1,6 +1,5 @@
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, StorageWriteBatch,
-    TableOptions,
+    PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TableOptions,
 };
 use crate::error::StoreError;
 use std::collections::BTreeMap;
@@ -63,12 +62,6 @@ impl StorageBackend for InMemoryBackend {
         Ok(Box::new(InMemoryLocked {
             backend: self.inner.clone(),
             table_name: table_name.to_string(),
-        }))
-    }
-
-    fn begin_write_batch(&self) -> Result<Box<dyn StorageWriteBatch + '_>, StoreError> {
-        Ok(Box::new(InMemoryWriteBatch {
-            backend: self.inner.clone(),
         }))
     }
 }
@@ -193,18 +186,6 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
 }
 
 impl<'a> StorageRwTx for InMemoryRwTx<'a> {
-    fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        let mut db = self
-            .backend
-            .write()
-            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
-
-        let table_ref = db.entry(table.to_string()).or_insert_with(Table::new);
-
-        table_ref.insert(key.to_vec(), value.to_vec());
-        Ok(())
-    }
-
     fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
         let mut db = self
             .backend
@@ -234,27 +215,6 @@ impl<'a> StorageRwTx for InMemoryRwTx<'a> {
 
     fn commit(self: Box<Self>) -> Result<(), StoreError> {
         // We don't need to commit for in-memory backend
-        Ok(())
-    }
-}
-
-pub struct InMemoryWriteBatch {
-    backend: Arc<RwLock<Database>>,
-}
-
-impl StorageWriteBatch for InMemoryWriteBatch {
-    fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
-        let mut db = self
-            .backend
-            .write()
-            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
-
-        let table_ref = db.entry(table.to_string()).or_insert_with(Table::new);
-
-        for (key, value) in batch {
-            table_ref.insert(key, value);
-        }
-
         Ok(())
     }
 }
