@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::atomic::Ordering,
@@ -1289,6 +1289,8 @@ impl PeerHandler {
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
+
+        // TODO: here we need to push, for each big account, its current start/end_hash stuff.
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
@@ -1318,7 +1320,8 @@ impl PeerHandler {
         let mut completed_tasks = 0;
 
         // TODO: in a refactor, delete this replace with a structure that can handle removes
-        let mut accounts_done: Vec<H256> = Vec::new();
+        // let mut accounts_done: Vec<(H256, Vec<(H256, H256)>)> = Vec::new();
+        let mut accounts_done: HashMap<H256, Vec<(H256, H256)>> = HashMap::new();
         let current_account_hashes = account_storage_roots
             .accounts_with_storage_root
             .iter()
@@ -1384,8 +1387,21 @@ impl PeerHandler {
 
                 self.peer_table.free_peer(peer_id).await;
 
-                for account in &current_account_hashes[start_index..remaining_start] {
-                    accounts_done.push(*account);
+                for (index, account) in current_account_hashes[start_index..remaining_start]
+                    .iter()
+                    .enumerate()
+                {
+                    // accounts_done.push((*account, vec![]));
+                    // If this is not a big account, insert it as done.
+                    // If it's a big account, its logic will be handled below
+
+                    if index + 1 < remaining_start {
+                        accounts_done.insert(*account, vec![]);
+                    } else {
+                        if hash_start.is_zero() {
+                            accounts_done.insert(*account, vec![]);
+                        }
+                    }
                 }
 
                 if remaining_start < remaining_end {
@@ -1411,10 +1427,28 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
-                            accounts_done.push(current_account_hashes[remaining_start]);
+                            // accounts_done.push(current_account_hashes[remaining_start]);
+                            let old_intervals = accounts_done
+                                .get_mut(&current_account_hashes[remaining_start])
+                                .unwrap();
+                            for (old_start, end) in old_intervals {
+                                if end == &hash_end {
+                                    *old_start = hash_start;
+                                }
+                            }
                             account_storage_roots
                                 .healed_accounts
                                 .insert(current_account_hashes[start_index]);
+                        } else {
+                            let old_intervals = accounts_done
+                                .get_mut(&current_account_hashes[remaining_start])
+                                .unwrap();
+                            old_intervals.remove(
+                                old_intervals
+                                    .iter()
+                                    .position(|(_old_start, end)| end == &hash_end)
+                                    .unwrap(),
+                            );
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
@@ -1445,6 +1479,13 @@ impl PeerHandler {
 
                         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
+                        // *intervals = Some(vec![]);
+
+                        accounts_done.insert(current_account_hashes[remaining_start], vec![]);
+                        let intervals = accounts_done
+                            .get_mut(&current_account_hashes[remaining_start])
+                            .unwrap();
+
                         for i in 0..chunk_count {
                             let start_hash_u256 = start_hash_u256 + chunk_size * i;
                             let start_hash = H256::from_uint(&start_hash_u256);
@@ -1462,6 +1503,9 @@ impl PeerHandler {
                                 start_hash,
                                 end_hash: Some(end_hash),
                             };
+
+                            intervals.push((start_hash, end_hash));
+
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
                         }
@@ -1536,7 +1580,7 @@ impl PeerHandler {
                     .iter()
                     .skip(task.start_index)
                     .take(task.end_index - task.start_index)
-                    .map(|(hash, root)| (*hash, *root))
+                    .map(|(hash, (root, _))| (*hash, *root))
                     .unzip();
 
             if task_count - completed_tasks < 30 {
@@ -1594,11 +1638,19 @@ impl PeerHandler {
             .collect::<Result<Vec<()>, DumpError>>()
             .map_err(PeerHandlerError::DumpError)?;
 
-        for account_done in accounts_done {
-            account_storage_roots
-                .accounts_with_storage_root
-                .remove(&account_done);
+        for (account_done, intervals) in accounts_done {
+            if intervals.is_empty() {
+                account_storage_roots
+                    .accounts_with_storage_root
+                    .remove(&account_done);
+            }
         }
+
+        // accounts_with_storage_root tracks accounts to download storage ranges by
+        // setting account_hash -> storage_root (root for verify_range)
+
+        // We need to track the following: (storage_root, Vec<start_hash, end_hash>) with the vec having the start and
+        // end of each task to resume on a big account. The storage root needs to be modified each time the pivot jumps.
 
         // Dropping the task sender so that the recv returns None
         drop(task_sender);
