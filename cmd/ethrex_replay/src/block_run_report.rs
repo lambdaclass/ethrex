@@ -9,6 +9,7 @@ use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookReq
 #[derive(Debug, Clone)]
 pub enum ReplayerMode {
     Execute,
+    ExecuteNoZkvm,
     ExecuteSP1,
     ExecuteRISC0,
     ProveSP1,
@@ -36,6 +37,7 @@ impl Display for ReplayerMode {
             ReplayerMode::ExecuteRISC0 => write!(f, "execute_risc0"),
             ReplayerMode::ProveSP1 => write!(f, "prove_sp1"),
             ReplayerMode::ProveRISC0 => write!(f, "prove_risc0"),
+            ReplayerMode::ExecuteNoZkvm => write!(f, "execute_no_zkvm"),
         }
     }
 }
@@ -124,7 +126,10 @@ impl BlockRunReport {
                     text: Box::new(SlackWebHookBlock::PlainText {
                         text: match (&self.run_result, &self.replayer_mode) {
                             (Ok(_), ReplayerMode::Execute) => {
-                                String::from("✅ Successfully Executed Block")
+                                String::from("✅ Successfully Executed Block with Exec Backend")
+                            }
+                            (Ok(_), ReplayerMode::ExecuteNoZkvm) => {
+                                String::from("✅ Successfully Executed Block without zkVM")
                             }
                             (Ok(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("✅ Successfully Executed Block with SP1")
@@ -139,7 +144,10 @@ impl BlockRunReport {
                                 String::from("✅ Successfully Proved Block with RISC0")
                             }
                             (Err(_), ReplayerMode::Execute) => {
-                                String::from("⚠️ Failed to Execute Block")
+                                String::from("⚠️ Failed to Execute Block with Exec Backend")
+                            }
+                            (Err(_), ReplayerMode::ExecuteNoZkvm) => {
+                                String::from("⚠️ Failed to Execute Block without zkVM")
                             }
                             (Err(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("⚠️ Failed to Execute Block with SP1")
@@ -237,7 +245,7 @@ impl Display for BlockRunReport {
     }
 }
 
-fn format_duration(duration: Duration) -> String {
+pub fn format_duration(duration: Duration) -> String {
     let total_seconds = duration.as_secs();
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
