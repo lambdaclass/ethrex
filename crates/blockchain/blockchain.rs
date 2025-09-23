@@ -8,7 +8,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info};
-use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
+use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -765,6 +765,15 @@ impl Blockchain {
             return Err(MempoolError::TxMaxDataSizeError);
         }
 
+        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        {
+            // https://eips.ethereum.org/EIPS/eip-7825
+            return Err(MempoolError::TxMaxGasLimitExceededError(
+                tx.hash(),
+                tx.gas_limit(),
+            ));
+        }
+
         // Check gas limit is less than header's gas limit
         if header.gas_limit < tx.gas_limit() {
             return Err(MempoolError::TxGasLimitExceededError);
@@ -775,7 +784,7 @@ impl Blockchain {
             return Err(MempoolError::TxTipAboveFeeCapError);
         }
 
-        // Check that the gas limit is covers the gas needs for transaction metadata.
+        // Check that the gas limit covers the gas needs for transaction metadata.
         if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, &header, &config)? {
             return Err(MempoolError::TxIntrinsicGasCostAboveLimitError);
         }
@@ -1002,6 +1011,9 @@ pub fn validate_block(
         validate_prague_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
+        if chain_config.is_osaka_activated(block.header.timestamp) {
+            verify_transaction_max_gas_limit(block)?;
+        }
     } else if chain_config.is_cancun_activated(block.header.timestamp) {
         validate_cancun_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
@@ -1073,6 +1085,24 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
         return Err(ChainError::InvalidBlock(
             InvalidBlockError::BlobGasUsedMismatch,
         ));
+    }
+    Ok(())
+}
+
+// Perform validations over the block's gas usage.
+// Must be called only if the block has osaka activated
+// as specified in https://eips.ethereum.org/EIPS/eip-7825
+fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), ChainError> {
+    for transaction in block.body.transactions.iter() {
+        if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
+            return Err(ChainError::InvalidBlock(
+                InvalidBlockError::InvalidTransaction(format!(
+                    "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
+                    transaction.hash(),
+                    transaction.gas_limit()
+                )),
+            ));
+        }
     }
     Ok(())
 }

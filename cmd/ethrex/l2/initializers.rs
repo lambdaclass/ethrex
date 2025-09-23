@@ -1,5 +1,5 @@
 use std::fs::read_to_string;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,6 +53,8 @@ async fn init_rpc_api(
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
+    init_datadir(&opts.datadir);
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
@@ -60,7 +62,7 @@ async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        init_datadir(&opts.datadir),
+        opts.datadir.clone(),
     )
     .await;
 
@@ -104,7 +106,7 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     addresses
 }
 
-pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
+pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rollup_storage_sql")] {
             let engine_type = EngineTypeRollup::SQL;
@@ -114,7 +116,7 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
         }
     }
     let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+        StoreRollup::new(datadir, engine_type).expect("Failed to create StoreRollup");
     rollup_store
         .init()
         .await
@@ -160,23 +162,24 @@ pub async fn init_l2(
     #[cfg(feature = "revm")]
     panic!("L2 doesn't support REVM");
 
-    let data_dir = init_datadir(&opts.node_opts.datadir);
-    let rollup_store_dir = data_dir.clone() + "/rollup_store";
+    let datadir = opts.node_opts.datadir.clone();
+    init_datadir(&opts.node_opts.datadir);
+    let rollup_store_dir = datadir.join("rollup_store");
 
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&data_dir, genesis).await;
+    let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
 
-    let signer = get_signer(&data_dir);
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
     let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &data_dir,
+        &datadir,
         &local_p2p_node,
         &signer,
     )));
@@ -224,7 +227,7 @@ pub async fn init_l2(
         init_network(
             &opts.node_opts,
             &network,
-            &data_dir,
+            &datadir,
             local_p2p_node,
             local_node_record.clone(),
             signer,
@@ -278,7 +281,7 @@ pub async fn init_l2(
         }
     }
     info!("Server shut down started...");
-    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(

@@ -169,7 +169,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
         let tx = RpcTransaction::build(
             tx.clone(),
             Some(block_number),
-            block_header.hash(),
+            Some(block_header.hash()),
             Some(self.transaction_index),
         )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -216,7 +216,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
         let tx = RpcTransaction::build(
             tx.clone(),
             Some(block_number),
-            self.block,
+            Some(self.block),
             Some(self.transaction_index),
         )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -244,28 +244,32 @@ impl RpcHandler for GetTransactionByHashRequest {
             "Requested transaction with hash: {:#x}",
             self.transaction_hash,
         );
-        let (block_number, block_hash, index) = match storage
+        let transaction = if let Some((block_number, block_hash, index)) = storage
             .get_transaction_location(self.transaction_hash)
             .await?
         {
-            Some(location) => location,
-            _ => return Ok(Value::Null),
+            let Some(tx) = storage
+                .get_transaction_by_location(block_hash, index)
+                .await?
+            else {
+                return Ok(Value::Null);
+            };
+            RpcTransaction::build(
+                tx,
+                Some(block_number),
+                Some(block_hash),
+                Some(index as usize),
+            )?
+        } else {
+            let Some(tx) = context
+                .blockchain
+                .mempool
+                .get_transaction_by_hash(self.transaction_hash)?
+            else {
+                return Ok(Value::Null);
+            };
+            RpcTransaction::build(tx, None, None, None)?
         };
-
-        let transaction: ethrex_common::types::Transaction = match storage
-            .get_transaction_by_location(block_hash, index)
-            .await?
-        {
-            Some(transaction) => transaction,
-            _ => return Ok(Value::Null),
-        };
-
-        let transaction = RpcTransaction::build(
-            transaction,
-            Some(block_number),
-            block_hash,
-            Some(index as usize),
-        )?;
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -395,16 +399,20 @@ impl RpcHandler for GetRawTransaction {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let tx = context
+        let mut tx = context
             .storage
             .get_transaction_by_hash(self.transaction_hash)
             .await?;
-
+        if tx.is_none() {
+            tx = context
+                .blockchain
+                .mempool
+                .get_transaction_by_hash(self.transaction_hash)?;
+        }
         let tx = match tx {
             Some(tx) => tx,
             _ => return Ok(Value::Null),
         };
-
         serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

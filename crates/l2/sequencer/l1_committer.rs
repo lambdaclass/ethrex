@@ -73,7 +73,6 @@ pub enum InMessage {
     Commit,
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub enum OutMessage {
     Done,
@@ -485,6 +484,8 @@ impl L1Committer {
                     .collect::<Vec<H256>>(),
             );
 
+            message_hashes.extend(messages.iter().map(get_l1_message_hash));
+
             new_state_root = self
                 .store
                 .state_trie(block_to_commit.hash())?
@@ -495,7 +496,7 @@ impl L1Committer {
 
             last_added_block_number += 1;
             acc_gas_used += current_block_gas_used;
-        }
+        } // end loop
 
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
                 privileged_transactions_hashes.len().try_into(),
@@ -527,9 +528,7 @@ impl L1Committer {
 
         let privileged_transactions_hash =
             compute_privileged_transactions_hash(privileged_transactions_hashes)?;
-        for msg in &acc_messages {
-            message_hashes.push(get_l1_message_hash(msg));
-        }
+
         Ok((
             blobs_bundle,
             new_state_root,
