@@ -1,14 +1,8 @@
 use std::ops::AddAssign;
 
-use crate::kzg::KzgError;
 use crate::serde_utils;
-use crate::{
-    Bytes, H256,
-    types::{Fork, constants::VERSIONED_HASH_VERSION_KZG},
-};
-
-#[cfg(feature = "c-kzg")]
-use crate::types::EIP4844Transaction;
+use crate::types::constants::VERSIONED_HASH_VERSION_KZG;
+use crate::{Bytes, H256};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -85,13 +79,12 @@ impl BlobsBundle {
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
     #[cfg(feature = "c-kzg")]
     pub fn create_from_blobs(blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
+        use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
 
         // Populate the commitments and proofs
         for blob in blobs {
-            use crate::kzg::blob_to_kzg_commitment_and_proof;
-
             let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
             commitments.push(commitment);
             proofs.push(proof);
@@ -112,7 +105,13 @@ impl BlobsBundle {
     }
 
     #[cfg(feature = "c-kzg")]
-    pub fn validate(&self, tx: &EIP4844Transaction, fork: Fork) -> Result<(), BlobsBundleError> {
+    pub fn validate(
+        &self,
+        tx: &crate::types::EIP4844Transaction,
+        fork: crate::types::Fork,
+    ) -> Result<(), BlobsBundleError> {
+        use ethrex_crypto::kzg::verify_blob_kzg_proof;
+
         let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
 
@@ -149,8 +148,6 @@ impl BlobsBundle {
             .zip(self.commitments.iter())
             .zip(self.proofs.iter())
         {
-            use crate::kzg::verify_blob_kzg_proof;
-
             if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
                 return Err(BlobsBundleError::BlobToCommitmentAndProofError);
             }
@@ -196,11 +193,14 @@ impl AddAssign for BlobsBundle {
     }
 }
 
+#[cfg(feature = "c-kzg")]
 const MAX_BLOB_COUNT: usize = 6;
+#[cfg(feature = "c-kzg")]
 const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
-fn max_blobs_per_block(fork: Fork) -> usize {
-    if fork >= Fork::Prague {
+#[cfg(feature = "c-kzg")]
+fn max_blobs_per_block(fork: crate::types::Fork) -> usize {
+    if fork >= crate::types::Fork::Prague {
         MAX_BLOB_COUNT_ELECTRA
     } else {
         MAX_BLOB_COUNT
@@ -221,18 +221,24 @@ pub enum BlobsBundleError {
     BlobToCommitmentAndProofError,
     #[error("Max blobs per block exceeded")]
     MaxBlobsExceeded,
+    #[cfg(feature = "c-kzg")]
     #[error("KZG related error: {0}")]
-    Kzg(#[from] KzgError),
+    Kzg(#[from] ethrex_crypto::kzg::KzgError),
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        Address, Bytes, U256,
-        types::{blobs_bundle, transaction::EIP4844Transaction},
-    };
+    #[cfg(feature = "c-kzg")]
+    use super::MAX_BLOB_COUNT_ELECTRA;
+    #[cfg(feature = "c-kzg")]
+    use crate::H256;
+    #[cfg(feature = "c-kzg")]
+    use crate::types::BYTES_PER_BLOB;
+    #[cfg(feature = "c-kzg")]
+    use crate::types::{BlobsBundle, BlobsBundleError};
+
     mod shared {
+        #[cfg(feature = "c-kzg")]
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
             let bytes = hex::decode(s).expect("Invalid hex string");
             let mut array = [0u8; 48];
@@ -246,7 +252,10 @@ mod tests {
     fn transaction_with_valid_blobs_should_pass() {
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
-            .map(|data| blobs_bundle::blob_from_bytes(data.into()).expect("Failed to create blob"))
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
             .collect();
 
         let blobs_bundle =
@@ -254,21 +263,24 @@ mod tests {
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
-        let tx: EIP4844Transaction = EIP4844Transaction {
+        let tx = crate::types::transaction::EIP4844Transaction {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: Address::from_low_u64_be(1), // Normal tx
-            value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
-            access_list: Default::default(), // No access list
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
             blob_versioned_hashes,
             ..Default::default()
         };
 
-        assert!(matches!(blobs_bundle.validate(&tx, Fork::Prague), Ok(())));
+        assert!(matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            Ok(())
+        ));
     }
 
     #[test]
@@ -293,16 +305,16 @@ mod tests {
                             .collect()
         };
 
-        let tx = EIP4844Transaction {
+        let tx = crate::types::transaction::EIP4844Transaction {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: Address::from_low_u64_be(1), // Normal tx
-            value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
-            access_list: Default::default(), // No access list
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
             blob_versioned_hashes: vec![
                 "01ec8054d05bfec80f49231c6e90528bbb826ccd1464c255f38004099c8918d9",
                 "0180cb2dee9e6e016fabb5da4fb208555f5145c32895ccd13b26266d558cd77d",
@@ -317,7 +329,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, Fork::Prague),
+            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
             Err(BlobsBundleError::BlobToCommitmentAndProofError)
         ));
     }
@@ -344,16 +356,16 @@ mod tests {
                               .collect()
         };
 
-        let tx = EIP4844Transaction {
+        let tx = crate::types::transaction::EIP4844Transaction {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: Address::from_low_u64_be(1), // Normal tx
-            value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
-            access_list: Default::default(), // No access list
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
             blob_versioned_hashes: vec![
                 "01ec8054d05bfec80f49231c6e90528bbb826ccd1464c255f38004099c8918d9",
                 "0180cb2dee9e6e016fabb5da4fb208555f5145c32895ccd13b26266d558cd77d",
@@ -368,7 +380,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, Fork::Prague),
+            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
             Err(BlobsBundleError::BlobVersionedHashesError)
         ));
     }
@@ -376,7 +388,7 @@ mod tests {
     #[test]
     #[cfg(feature = "c-kzg")]
     fn transaction_with_too_many_blobs_should_fail() {
-        let blob = blobs_bundle::blob_from_bytes("Im a Blob".as_bytes().into())
+        let blob = crate::types::blobs_bundle::blob_from_bytes("Im a Blob".as_bytes().into())
             .expect("Failed to create blob");
         let blobs = std::iter::repeat_n(blob, MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
 
@@ -385,22 +397,22 @@ mod tests {
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
-        let tx: EIP4844Transaction = EIP4844Transaction {
+        let tx = crate::types::transaction::EIP4844Transaction {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: Address::from_low_u64_be(1), // Normal tx
-            value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
-            access_list: Default::default(), // No access list
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
             blob_versioned_hashes,
             ..Default::default()
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, Fork::Prague),
+            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
             Err(BlobsBundleError::MaxBlobsExceeded)
         ));
     }

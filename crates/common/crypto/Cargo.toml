@@ -5,3 +5,14 @@ edition.workspace = true
 
 [lib]
 path = "./lib.rs"
+
+[dependencies]
+# TODO(#1102): Move to Lambdaworks in the future
+c-kzg = { version = "^1.0.3", optional = true }
+kzg-rs.workspace = true
+
+thiserror.workspace = true
+
+[features]
+default = []
+c-kzg = ["dep:c-kzg"]
