@@ -323,7 +323,8 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
     let mut recid_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
-        Ok(v @ (27 | 28)) => v - 27,
+        Ok(27) => 0,
+        Ok(28) => 1,
         _ => return Ok(Bytes::new()),
     };
 
