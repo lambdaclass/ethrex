@@ -1616,7 +1616,7 @@ async fn insert_storage_into_rocksdb(
         )
         .inspect_err(|err: &TrieGenerationError| {
             error!(
-                "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}, count {count}"
+                "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
             );
         })
         .map_err(SyncError::TrieGenerationError)?;
