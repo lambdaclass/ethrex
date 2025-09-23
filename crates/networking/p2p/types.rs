@@ -106,7 +106,7 @@ impl<'de> serde::de::Deserialize<'de> for Node {
         D: serde::Deserializer<'de>,
     {
         Node::from_str(&<String>::deserialize(deserializer)?)
-            .map_err(|e| serde::de::Error::custom(format!("{}", e)))
+            .map_err(|e| serde::de::Error::custom(format!("{e}")))
     }
 }
 
