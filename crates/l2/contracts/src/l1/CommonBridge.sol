@@ -375,7 +375,18 @@ contract CommonBridge is
             withdrawalMessageId,
             withdrawalProof
         );
-        (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
+
+        if (NATIVE_TOKEN_L1_ADDRESS == address(0)) {
+            (bool success, ) = payable(msg.sender).call{value: claimedAmount}(
+                ""
+            );
+        } else {
+            IERC20(NATIVE_TOKEN_L1_ADDRESS).safeTransfer(
+                msg.sender,
+                claimedAmount
+            );
+        }
+
         require(success, "CommonBridge: failed to send the claimed amount");
     }
 
