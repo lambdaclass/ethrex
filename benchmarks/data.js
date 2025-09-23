@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758643198097,
+  "lastUpdate": 1758643609713,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16105,6 +16105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 88671510092,
             "range": "± 1000224236",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3f3d00b8d7d70bd813da95e546ed3527938fdfb9",
+          "message": "fix(l1,l2): avoid potential blocking code in p2p (#4531)\n\n**Motivation**\nThere are different parts of the code that could potentially block\nexecution.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdds spawn blocking so that the execution is not blocked\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4494",
+          "timestamp": "2025-09-23T15:18:53Z",
+          "tree_id": "bace75d258fcc60bced47377d565cfe9ab01070e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3f3d00b8d7d70bd813da95e546ed3527938fdfb9"
+        },
+        "date": 1758643588644,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90436910886,
+            "range": "± 318528273",
             "unit": "ns/iter"
           }
         ]
