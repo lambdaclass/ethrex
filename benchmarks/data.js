@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758606020803,
+  "lastUpdate": 1758607914954,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -32613,6 +32613,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001533600538599641,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7b992b826b88272de4c72c3def5531e35e5ad7b6",
+          "message": "ci(l1): remove stale comment (#4597)\n\nThis comment is stale. We are still using our fork because we need some\nfixes that it introduces related to pre-merge data included in some\ntests.",
+          "timestamp": "2025-09-22T14:59:13Z",
+          "tree_id": "39ff296d76118079e77c69660038cee64f92d637",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7b992b826b88272de4c72c3def5531e35e5ad7b6"
+        },
+        "date": 1758607914304,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0044259870466321245,
             "unit": "Mgas/s"
           }
         ]
