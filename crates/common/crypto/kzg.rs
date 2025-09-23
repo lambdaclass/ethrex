@@ -17,19 +17,59 @@ pub enum KzgError {
     #[cfg(feature = "kzg-rs")]
     #[error("kzg-rs error: {0}")]
     KzgRs(#[from] kzg_rs::KzgError),
+    #[cfg(feature = "openvm-kzg")]
+    #[error("openvm-kzg error: {0}")]
+    OpenvmKzg(openvm_kzg::KzgError),
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "kzg-rs"),
+        not(feature = "openvm-kzg")
+    ))]
+    #[error(
+        "no kzg backend enabled, enable at least one of `c-kzg`, `kzg-rs` or `openvm-kzg` features."
+    )]
+    NoBackendEnabled,
+}
+
+#[cfg(feature = "kzg-rs")]
+impl From<kzg_rs::KzgError> for KzgError {
+    fn from(value: kzg_rs::KzgError) -> Self {
+        KzgError::KzgRs(value)
+    }
+}
+
+#[cfg(feature = "openvm-kzg")]
+impl From<openvm_kzg::KzgError> for KzgError {
+    fn from(value: openvm_kzg::KzgError) -> Self {
+        KzgError::OpenvmKzg(value)
+    }
 }
 
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
 /// as defined by c-kzg-4844.
+///
+/// Dispatches one of the enabled implementations following the hierarchy:
+/// c-kzg > kzg-rs
+///
+/// Different implementations exist for different targets:
+/// - Host (any, usually c-kzg as it's more performant)
+/// - SP1 Guest (kzg-rs)
+/// - Risc0 Guest (c-kzg patched)
+///
+/// There's no implementation of blob verification for openvm-kzg yet.
 pub fn verify_blob_kzg_proof(
     blob: Blob,
     commitment: Commitment,
     proof: Proof,
 ) -> Result<bool, KzgError> {
-    #[cfg(all(not(feature = "c-kzg"), not(feature = "kzg-rs")))]
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "kzg-rs"),
+        not(feature = "openvm-kzg")
+    ))]
     {
         compile_error!(
-            "Either the `c-kzg` or `kzg-rs` feature must be enabled to use KZG functionality."
+            "Either the `c-kzg`, `kzg-rs` or `openvm-kzg` feature must be enabled to use KZG functionality."
         );
         return Ok(false);
     }
@@ -53,6 +93,11 @@ pub fn verify_blob_kzg_proof(
         )
         .map_err(KzgError::from)
     }
+    #[cfg(feature = "openvm-kzg")]
+    {
+        unimplemented!("There's no implementation of blob verification for openvm-kzg yet.");
+    }
+
 }
 
 /// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
@@ -62,10 +107,14 @@ pub fn verify_kzg_proof(
     y: [u8; 32],
     proof_bytes: [u8; 48],
 ) -> Result<bool, KzgError> {
-    #[cfg(all(not(feature = "c-kzg"), not(feature = "kzg-rs")))]
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "kzg-rs"),
+        not(feature = "openvm-kzg")
+    ))]
     {
         compile_error!(
-            "Either the `c-kzg` or `kzg-rs` feature must be enabled to use KZG functionality."
+            "Either the `c-kzg`, `kzg-rs` or `openvm-kzg` feature must be enabled to use KZG functionality."
         );
         return Ok(false);
     }
@@ -88,6 +137,17 @@ pub fn verify_kzg_proof(
             &y.into(),
             &proof_bytes.into(),
             c_kzg::ethereum_kzg_settings(),
+        )
+        .map_err(KzgError::from)
+    }
+    #[cfg(feature = "openvm-kzg")]
+    {
+        openvm_kzg::KzgProof::verify_kzg_proof(
+            &openvm_kzg::Bytes48::from_slice(&commitment_bytes)?,
+            &openvm_kzg::Bytes32::from_slice(&z)?,
+            &openvm_kzg::Bytes32::from_slice(&y)?,
+            &openvm_kzg::Bytes48::from_slice(&proof_bytes)?,
+            &openvm_kzg::get_kzg_settings(),
         )
         .map_err(KzgError::from)
     }

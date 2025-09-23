@@ -35,6 +35,7 @@ hex-literal.workspace = true
 [features]
 default = []
 c-kzg = [ "ethrex-crypto/c-kzg" ]
+kzg-rs = [ "ethrex-crypto/kzg-rs" ]
 
 [lib]
 path = "./common.rs"
