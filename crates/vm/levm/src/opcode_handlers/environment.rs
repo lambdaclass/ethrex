@@ -59,10 +59,8 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
-        let caller = current_call_frame.msg_sender;
-        current_call_frame
-            .stack
-            .push(&[u256_from_big_endian_const(caller.to_fixed_bytes())])?;
+        let caller = u256_from_big_endian_const(current_call_frame.msg_sender.to_fixed_bytes());
+        current_call_frame.stack.push1(caller)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -91,7 +89,7 @@ impl<'a> VM<'a> {
         // If the offset is larger than the actual calldata, then you
         // have no data to return.
         if offset > calldata_size {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
         let offset: usize = offset
@@ -419,7 +417,7 @@ impl<'a> VM<'a> {
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
