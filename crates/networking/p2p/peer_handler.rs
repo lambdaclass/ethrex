@@ -1395,7 +1395,7 @@ impl PeerHandler {
                     // If this is not a big account, insert it as done.
                     // If it's a big account, its logic will be handled below
 
-                    if index + 1 < remaining_start {
+                    if start_index + index + 1 < remaining_start {
                         accounts_done.insert(*account, vec![]);
                     } else {
                         if hash_start.is_zero() {
