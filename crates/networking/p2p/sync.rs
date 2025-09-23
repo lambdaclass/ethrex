@@ -1610,11 +1610,11 @@ async fn insert_storage_into_rocksdb(
             trie.db(),
             &mut iter
                 .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-                .map(|(k, v)| (H256::from_slice(&k[32..]), v.to_vec())),
+                .map(|(k, v)| (H256::from_slice(&k[32..]), v.to_vec()))
+                .skip_while(|(hash, _)| *hash != account_hash)
+                .take_while(|(hash, _)| *hash == account_hash),
         )
         .inspect_err(|err: &TrieGenerationError| {
-            let iter = db.prefix_iterator(account_hash.as_bytes());
-            let mut count = iter.count();
             error!(
                 "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}, count {count}"
             );
