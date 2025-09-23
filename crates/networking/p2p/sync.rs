@@ -1601,23 +1601,30 @@ async fn insert_storage_into_rocksdb(
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
 
-    accounts_with_storage.par_iter().for_each(|account_hash| {
+    for account_hash in accounts_with_storage {
         let trie = store
-            .open_storage_trie(*account_hash, *EMPTY_TRIE_HASH)
+            .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
             .expect("Should be able to open trie");
         let iter = db.prefix_iterator(account_hash.as_bytes());
-        let _ = trie_from_sorted_accounts_wrap(
+        let result = trie_from_sorted_accounts_wrap(
             trie.db(),
             &mut iter
                 .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
                 .map(|(k, v)| (H256::from_slice(&k[32..]), v.to_vec())),
         )
         .inspect_err(|err: &TrieGenerationError| {
+            let iter = db.prefix_iterator(account_hash.as_bytes());
+            let mut count = 0 as usize;
+            for element in iter {
+                let element_unwrap = element.unwrap();
+                println!("{element_unwrap:?}");
+                count += 1;
+            }
             error!(
-                "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
-            )
+                "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}, count {count}"
+            );
         })
-        .map_err(SyncError::TrieGenerationError);
-    });
+        .map_err(SyncError::TrieGenerationError)?;
+    }
     Ok(())
 }
