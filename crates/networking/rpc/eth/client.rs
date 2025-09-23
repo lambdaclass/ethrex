@@ -108,9 +108,7 @@ impl RpcHandler for Config {
             .unwrap()
             .header
             .timestamp;
-        dbg!(latest_block_timestamp);
         let current_fork = chain_config.get_fork(latest_block_timestamp);
-        dbg!(current_fork);
         let current = get_config_for_fork(current_fork, &context).await?;
         let next = if let Some(next_fork) = chain_config.next_fork(latest_block_timestamp) {
             Some(get_config_for_fork(next_fork, &context).await?)
@@ -148,15 +146,15 @@ async fn get_config_for_fork(
                 .await?
                 .unwrap()
                 .header,
+            timestamp,
             0,
-            timestamp + 1,
         )
         .fork_hash
     } else {
         H32::zero()
     };
     let mut system_contracts = BTreeMap::new();
-    system_contracts.insert("BECON_ROOTS_ADDRESS".to_string(), *BEACON_ROOTS_ADDRESS);
+    system_contracts.insert("BEACON_ROOTS_ADDRESS".to_string(), *BEACON_ROOTS_ADDRESS);
     if fork >= Fork::Prague {
         system_contracts.insert(
             "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
@@ -186,7 +184,7 @@ async fn get_config_for_fork(
         activation_time,
         blob_schedule: chain_config.get_blob_schedule_for_fork(fork),
         chain_id: chain_config.chain_id,
-        fork_id: fork_id,
+        fork_id,
         precompiles,
         system_contracts,
     })
