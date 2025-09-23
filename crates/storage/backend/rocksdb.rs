@@ -6,9 +6,10 @@ use rocksdb::OptimisticTransactionDB;
 use rocksdb::{
     ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode, Transaction,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
+use tracing::info;
 
 #[derive(Debug)]
 pub struct RocksDBBackend {
@@ -38,14 +39,17 @@ impl StorageBackend for RocksDBBackend {
         opts.set_enable_pipelined_write(true);
         opts.set_allow_concurrent_memtable_write(true);
 
-        // Create descriptors for ALL required tables
-        let mut cf_descriptors = vec![];
-        cf_descriptors.push(ColumnFamilyDescriptor::new("default", Options::default()));
+        let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
+            .unwrap_or_else(|_| vec!["default".to_string()]);
 
-        for &table in TABLES.iter() {
-            let cf_opts = Options::default();
-            cf_descriptors.push(ColumnFamilyDescriptor::new(table, cf_opts));
-        }
+        let mut all_cfs_to_open = HashSet::new();
+        all_cfs_to_open.extend(existing_cfs.iter().cloned());
+        all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
+
+        let cf_descriptors = all_cfs_to_open
+            .iter()
+            .map(|cf| ColumnFamilyDescriptor::new(cf, Options::default()))
+            .collect::<Vec<_>>();
 
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &opts,
@@ -53,6 +57,8 @@ impl StorageBackend for RocksDBBackend {
             cf_descriptors,
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
+
+        info!("Created RocksDB backend with CFs: {:?}", TABLES);
 
         Ok(Arc::new(Self { db: Arc::new(db) }))
     }
@@ -81,6 +87,10 @@ impl StorageBackend for RocksDBBackend {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
             cfs.insert(table.to_string(), cf);
         }
+        info!(
+            "Creating RocksDBRoTx with CFs: {:?}",
+            cfs.keys().map(|k| k.as_str()).collect::<Vec<&str>>()
+        );
         Ok(Box::new(RocksDBRoTx { tx, cfs }))
     }
 
@@ -96,6 +106,10 @@ impl StorageBackend for RocksDBBackend {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
             cfs.insert(table.to_string(), cf);
         }
+        info!(
+            "Creating RocksDBRwTx with CFs: {:?}",
+            cfs.keys().map(|k| k.as_str()).collect::<Vec<&str>>()
+        );
         Ok(Box::new(RocksDBRwTx { tx, cfs }))
     }
 
