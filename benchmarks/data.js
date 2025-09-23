@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758641586145,
+  "lastUpdate": 1758643198097,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16075,6 +16075,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91912562468,
             "range": "± 614337469",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7bb40f56ce9f3f41548ba6e29cc111df0b9123e8",
+          "message": "perf(levm): improve opcode table setup based on fork, instruction fetching, stack push_zero (#4579)\n\n**Motivation**\n\n- Changes the pc mutation to be more localized and opcodes instead\nreturn a setpc if they need to set the pc to an absolute value.\n- Changed the opcode table setup to be dynamic based on the given fork,\nso we avoid some fork checks at runtime. This could be extended further\nwith more opcodes that have fork checks within, such as create, or gas\ncalculation functions, but for this first pr i kept it simple. Removing\nthe branches helps the branch predictor and results in better\nperformance.\n- Added push_zero to the stack\n\n\nStatus: benching\n\nCloses #issue_number\n\n<img width=\"2560\" height=\"2235\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/06780227-353c-4abc-859f-416e3a853648\"\n/>",
+          "timestamp": "2025-09-23T15:13:02Z",
+          "tree_id": "a765c657d33bdcb97788214bd431702c3c6ec1f8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7bb40f56ce9f3f41548ba6e29cc111df0b9123e8"
+        },
+        "date": 1758643176848,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 88671510092,
+            "range": "± 1000224236",
             "unit": "ns/iter"
           }
         ]
