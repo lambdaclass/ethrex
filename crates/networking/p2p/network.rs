@@ -193,6 +193,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let elapsed = format_duration(start.elapsed());
             let peer_number = peer_table.peer_count().await.unwrap_or(0);
             let current_step = METRICS.current_step.lock().await.clone();
+            let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
             let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
@@ -355,6 +356,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
 elapsed: {elapsed}
 {peer_number} peers.
 \x1b[93mCurrent step:\x1b[0m {current_step}
+Current Header Hash: {current_header_hash:x}
 ---
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
