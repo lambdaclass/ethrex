@@ -22,7 +22,7 @@ use nix::unistd::Pid;
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info};
 
 pub struct Simulator {
     cmd_path: PathBuf,
@@ -69,6 +69,7 @@ impl Simulator {
 
     pub async fn start_node(&mut self) -> Node {
         let n = self.configs.len();
+        info!(node = n, "Starting node");
         let mut opts = self.base_opts.clone();
         opts.http_port = (8545 + n * 2).to_string();
         opts.authrpc_port = (8545 + n * 2 + 1).to_string();
@@ -111,7 +112,7 @@ impl Simulator {
 
         let logs_file = File::open(&logs_file_path).expect("Failed to open logs file");
         let enode =
-            tokio::time::timeout(Duration::from_secs(1), wait_for_initialization(logs_file))
+            tokio::time::timeout(Duration::from_secs(5), wait_for_initialization(logs_file))
                 .await
                 .expect("node initialization timed out");
         self.enodes.push(enode);
@@ -214,7 +215,10 @@ impl Node {
 
         tokio::time::timeout(Duration::from_secs(5), syncing_fut)
             .await
-            .unwrap();
+            .inspect_err(|_| {
+                error!(node = self.index, "Timed out waiting for node to sync");
+            })
+            .expect("timed out waiting for node to sync");
     }
 
     pub async fn build_payload(&self, mut chain: Chain) -> Chain {

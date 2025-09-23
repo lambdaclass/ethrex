@@ -6,6 +6,7 @@ use std::{
 use ethrex::{cli::Options, initializers::init_tracing};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use tokio::sync::Mutex;
+use tracing::warn;
 
 use crate::simulator::Simulator;
 
@@ -22,7 +23,7 @@ async fn main() {
         .nth(1)
         .map(|o| o.parse().unwrap())
         .unwrap_or_else(|| {
-            println!("No binary path provided, using default");
+            warn!("No binary path provided, using default");
             "../../target/debug/ethrex".parse().unwrap()
         });
 
