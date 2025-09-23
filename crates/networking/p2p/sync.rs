@@ -1586,6 +1586,41 @@ async fn insert_storage_into_rocksdb(
 ) -> Result<(), SyncError> {
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
     use rayon::iter::IntoParallelRefIterator;
+    use rocksdb::DBCommon;
+
+    struct RocksDBIterator<'a> {
+        iter: rocksdb::DBRawIterator<'a>,
+        limit: H256,
+    }
+
+    impl<'a> Iterator for RocksDBIterator<'a> {
+        type Item = (H256, Vec<u8>);
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if !self.iter.valid() {
+                return None;
+            }
+            let return_value = {
+                let key = self.iter.key();
+                let value = self.iter.value();
+                match (key, value) {
+                    (Some(key), Some(value)) => {
+                        let hash = H256::from_slice(&key[0..32]);
+                        let key = H256::from_slice(&key[32..]);
+                        let value = value.to_vec();
+                        if hash != self.limit {
+                            None
+                        } else {
+                            Some((key, value))
+                        }
+                    }
+                    _ => None,
+                }
+            };
+            self.iter.next();
+            return_value
+        }
+    }
 
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
@@ -1605,14 +1640,18 @@ async fn insert_storage_into_rocksdb(
         let trie = store
             .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
             .expect("Should be able to open trie");
-        let iter = db.prefix_iterator(account_hash.as_bytes());
+        let mut iter = db.raw_iterator();
+        let mut initial_key = account_hash.as_bytes().to_vec();
+        initial_key.extend([0_u8; 32]);
+        iter.seek(initial_key);
+        let mut iter = RocksDBIterator {
+            iter,
+            limit: account_hash,
+        };
+
         let result = trie_from_sorted_accounts_wrap(
             trie.db(),
-            &mut iter
-                .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-                .map(|(k, v)| (H256::from_slice(&k[32..]), v.to_vec()))
-                .skip_while(|(hash, _)| *hash != account_hash)
-                .take_while(|(hash, _)| *hash == account_hash),
+            &mut iter,
         )
         .inspect_err(|err: &TrieGenerationError| {
             error!(
