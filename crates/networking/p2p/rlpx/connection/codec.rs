@@ -156,7 +156,7 @@ impl Decoder for RLPxCodec {
             return Err(RLPxError::InvalidMessageLength());
         }
 
-        let total_message_size = (RLPX_HEADER_SIZE + padded_size as usize + RLPX_MAC_SIZE) as usize;
+        let total_message_size = RLPX_HEADER_SIZE + padded_size as usize + RLPX_MAC_SIZE;
 
         if src.len() < total_message_size {
             // The full string has not yet arrived.
