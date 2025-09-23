@@ -17,7 +17,7 @@
 //!   only used in snapsync stage.
 
 use crate::error::StoreError;
-use std::{fmt::Debug, path::Path, sync::Arc};
+use std::{fmt::Debug, path::Path};
 
 /// Type alias for the result of a prefix iterator.
 pub type PrefixResult = Result<(Vec<u8>, Vec<u8>), StoreError>;
@@ -51,9 +51,9 @@ pub struct TableOptions {
 /// This trait provides the minimal set of operations required from a database backend.
 /// Implementations should focus on providing efficient access to the underlying storage
 /// without implementing business logic.
-pub trait StorageBackend: Debug + Send + Sync + 'static {
+pub trait StorageBackend: Debug + Send + Sync {
     /// Opens a storage backend at the specified path.
-    fn open(path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
+    fn open(path: impl AsRef<Path>) -> Result<Self, StoreError>
     where
         Self: Sized;
 
@@ -123,6 +123,6 @@ pub trait StorageLocked: Send + Sync + 'static {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 }
 
-pub trait StorageWriteBatch: Send + Sync + 'static {
+pub trait StorageWriteBatch: Send + Sync {
     fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError>;
 }

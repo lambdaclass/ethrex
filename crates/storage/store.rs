@@ -93,14 +93,14 @@ impl Store {
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
-                engine: Arc::new(StoreEngine::new(RocksDBBackend::open(path)?)?),
+                engine: Arc::new(StoreEngine::new(Arc::new(RocksDBBackend::open(path)?))?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(std::sync::RwLock::new(BlockHeader::default())),
             },
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => todo!("LIBMDBX not implemented yet"),
             EngineType::InMemory => Self {
-                engine: Arc::new(StoreEngine::new(InMemoryBackend::open(path)?)?),
+                engine: Arc::new(StoreEngine::new(Arc::new(InMemoryBackend::open(path)?))?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(std::sync::RwLock::new(BlockHeader::default())),
             },

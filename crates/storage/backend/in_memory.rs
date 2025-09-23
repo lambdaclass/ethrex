@@ -16,13 +16,13 @@ pub struct InMemoryBackend {
 }
 
 impl StorageBackend for InMemoryBackend {
-    fn open(_path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
+    fn open(_path: impl AsRef<Path>) -> Result<Self, StoreError>
     where
         Self: Sized,
     {
-        Ok(Arc::new(Self {
+        Ok(Self {
             inner: Arc::new(RwLock::new(Database::new())),
-        }))
+        })
     }
 
     fn create_table(&self, name: &str, _options: TableOptions) -> Result<(), StoreError> {

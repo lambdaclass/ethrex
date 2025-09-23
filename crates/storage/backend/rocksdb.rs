@@ -17,7 +17,7 @@ pub struct RocksDBBackend {
 }
 
 impl StorageBackend for RocksDBBackend {
-    fn open(path: impl AsRef<Path>) -> Result<Arc<Self>, StoreError>
+    fn open(path: impl AsRef<Path>) -> Result<Self, StoreError>
     where
         Self: Sized,
     {
@@ -57,7 +57,7 @@ impl StorageBackend for RocksDBBackend {
             cf_descriptors,
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
-        Ok(Arc::new(Self { db: Arc::new(db) }))
+        Ok(Self { db: Arc::new(db) })
     }
 
     fn create_table(&self, _name: &str, _options: TableOptions) -> Result<(), StoreError> {
@@ -103,6 +103,9 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
+        // Create a self-contained snapshot that can live independently
+        // We use Box::leak because RocksDB's Snapshot needs 'static references to the DB
+        // This is necessary for long-lived trie operations in snap sync
         let db = Box::leak(Box::new(self.db.clone()));
         let lock = db.snapshot();
         let cf = db
@@ -271,10 +274,11 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
 }
 
 pub struct RocksDBLocked {
+    /// Reference to database
     db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Snapshot/locked transaction
     lock: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
-    /// Column family handle
+    /// Column family handle  
     cf: Arc<rocksdb::BoundColumnFamily<'static>>,
 }
 
