@@ -101,12 +101,18 @@ impl RpcHandler for Config {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let chain_config = context.storage.get_chain_config()?;
-        let latest_block_number = context.storage.get_latest_block_number().await?;
-        dbg!(latest_block_number);
-        let current_fork = chain_config.get_fork(latest_block_number);
+        let latest_block_timestamp = context
+            .storage
+            .get_block_by_number(0)
+            .await?
+            .unwrap()
+            .header
+            .timestamp;
+        dbg!(latest_block_timestamp);
+        let current_fork = chain_config.get_fork(latest_block_timestamp);
         dbg!(current_fork);
         let current = get_config_for_fork(current_fork, &context).await?;
-        let next = if let Some(next_fork) = chain_config.next_fork(latest_block_number) {
+        let next = if let Some(next_fork) = chain_config.next_fork(latest_block_timestamp) {
             Some(get_config_for_fork(next_fork, &context).await?)
         } else {
             None
