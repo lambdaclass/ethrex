@@ -57,9 +57,6 @@ impl StorageBackend for RocksDBBackend {
             cf_descriptors,
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
-
-        info!("Created RocksDB backend with CFs: {:?}", TABLES);
-
         Ok(Arc::new(Self { db: Arc::new(db) }))
     }
 
@@ -87,10 +84,6 @@ impl StorageBackend for RocksDBBackend {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
             cfs.insert(table.to_string(), cf);
         }
-        info!(
-            "Creating RocksDBRoTx with CFs: {:?}",
-            cfs.keys().map(|k| k.as_str()).collect::<Vec<&str>>()
-        );
         Ok(Box::new(RocksDBRoTx { tx, cfs }))
     }
 
@@ -106,10 +99,6 @@ impl StorageBackend for RocksDBBackend {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
             cfs.insert(table.to_string(), cf);
         }
-        info!(
-            "Creating RocksDBRwTx with CFs: {:?}",
-            cfs.keys().map(|k| k.as_str()).collect::<Vec<&str>>()
-        );
         Ok(Box::new(RocksDBRwTx { tx, cfs }))
     }
 
