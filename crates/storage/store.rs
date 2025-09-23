@@ -1082,7 +1082,7 @@ impl Store {
         Ok(nodes)
     }
 
-    pub async fn get_receipts_for_block(
+    pub fn get_receipts_for_block(
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
