@@ -643,28 +643,24 @@ impl L1Committer {
             .map_err(CommitterError::from)?
         };
 
-        let commit_tx_hash =
+        let receipt =
             send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
 
         metrics!(
-            let commit_tx_receipt = self
-                .eth_client
-                .get_transaction_receipt(commit_tx_hash)
-                .await?
-                .ok_or(CommitterError::UnexpectedError("no commit tx receipt".to_string()))?;
-            let commit_gas_used = commit_tx_receipt.tx_info.gas_used.try_into()?;
+            let commit_gas_used = receipt.tx_info.gas_used.try_into()?;
             METRICS.set_batch_commitment_gas(batch.number, commit_gas_used)?;
             if !self.validium {
-                let blob_gas_used = commit_tx_receipt.tx_info.blob_gas_used
+                let blob_gas_used = receipt.tx_info.blob_gas_used
                     .ok_or(CommitterError::UnexpectedError("no blob in rollup mode".to_string()))?
                     .try_into()?;
                 METRICS.set_batch_commitment_blob_gas(batch.number, blob_gas_used)?;
             }
         );
 
-        info!("Commitment sent: {commit_tx_hash:#x}");
+        let tx_hash = receipt.tx_info.transaction_hash;
+        info!(?tx_hash, "Commitment sent");
 
-        Ok(commit_tx_hash)
+        Ok(tx_hash)
     }
 
     fn stop_committer(&mut self) -> CallResponse<Self> {

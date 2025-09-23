@@ -72,8 +72,10 @@ pub async fn send_verify_tx(
     )
     .await?;
 
-    let verify_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, l1_signer).await?;
+    let verify_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, l1_signer)
+        .await?
+        .tx_info
+        .transaction_hash;
 
     Ok(verify_tx_hash)
 }

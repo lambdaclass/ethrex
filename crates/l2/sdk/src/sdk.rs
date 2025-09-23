@@ -547,8 +547,10 @@ async fn create2_deploy(
     )
     .await?;
 
-    let deploy_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer).await?;
+    let deploy_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer)
+        .await?
+        .tx_info
+        .transaction_hash;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
 
@@ -602,7 +604,10 @@ pub async fn initialize_contract(
     .await?;
 
     let initialize_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, initialize_tx, initializer).await?;
+        send_tx_bump_gas_exponential_backoff(eth_client, initialize_tx, initializer)
+            .await?
+            .tx_info
+            .transaction_hash;
 
     Ok(initialize_tx_hash)
 }
@@ -690,7 +695,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
     client: &EthClient,
     mut tx: GenericTransaction,
     signer: &Signer,
-) -> Result<H256, EthClientError> {
+) -> Result<RpcReceipt, EthClientError> {
     let mut number_of_retries = 0;
 
     'outer: while number_of_retries < client.config.max_number_of_retries {
@@ -793,7 +798,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             .await;
         }
 
-        return Ok(tx_hash);
+        return Ok(receipt_info);
     }
 
     Err(EthClientError::TimeoutError)
