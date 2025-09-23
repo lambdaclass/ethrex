@@ -547,7 +547,7 @@ fn get_initial_downloads(
         account_paths
             .accounts_with_storage_root
             .par_iter()
-            .filter_map(|(acc_path, storage_root)| {
+            .filter_map(|(acc_path, (storage_root, _))| {
                 if store
                     .contains_storage_node(*acc_path, *storage_root)
                     .expect("We should be able to open the store")
