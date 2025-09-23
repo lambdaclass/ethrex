@@ -209,23 +209,59 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function deposit(
+        uint256 _amount,
+        address _token,
         address l2Recipient
     ) public payable override whenNotPaused {
-        _deposit(l2Recipient);
-    }
+        uint256 value;
 
-    function _deposit(address l2Recipient) private {
-        deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
+        if (_token == address(0)) {
+            require(
+                msg.value > 0,
+                "CommonBridge: the native token is ETH, msg.value must be greater than zero"
+            );
+
+            require(
+                _amount == 0,
+                "CommonBridge: the native token is ETH, _amount must be zero"
+            );
+
+            value = msg.value;
+        } else {
+            require(
+                msg.value == 0,
+                "CommonBridge: the native token is an ERC20, msg.value must be zero"
+            );
+
+            require(
+                _token == NATIVE_TOKEN_L1_ADDRESS,
+                "CommonBridge: token address is not the native token address. Use depositERC20() instead"
+            );
+
+            require(
+                _amount > 0,
+                "CommonBridge: the native token is an ERC20, _amount must be greater than zero"
+            );
+
+            value = _amount;
+
+            IERC20(_token).safeTransferFrom(msg.sender, address(this), value);
+        }
+
+        deposits[ETH_TOKEN][ETH_TOKEN] += value;
+
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintETH,
             (l2Recipient)
         );
+
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
             gasLimit: 21000 * 5,
-            value: msg.value,
+            value: value,
             data: callData
         });
+
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
