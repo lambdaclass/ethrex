@@ -1,7 +1,7 @@
 use std::thread::{Scope, scope};
 
 use crate::{
-    Nibbles, Node, TrieDB, TrieError,
+    EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use ethereum_types::H256;
@@ -149,7 +149,9 @@ where
     let mut write_threads = Vec::new();
 
     let mut left_side = StackElement::default();
-    let initial_value = data_iter.next().unwrap();
+    let Some(initial_value) = data_iter.next() else {
+        return Ok(*EMPTY_TRIE_HASH);
+    };
     let mut center_side: CenterSide = CenterSide::from_value(initial_value.clone());
     let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
 
