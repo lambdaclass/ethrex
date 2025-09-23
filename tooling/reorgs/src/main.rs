@@ -6,7 +6,7 @@ use std::{
 use ethrex::{cli::Options, initializers::init_tracing};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{error, info, warn};
 
 use crate::simulator::Simulator;
 
@@ -22,12 +22,12 @@ async fn main() {
     let cmd_path: PathBuf = std::env::args()
         .nth(1)
         .map(|o| o.parse().unwrap())
-        .unwrap_or_else(|| {
-            warn!("No binary path provided, using default");
-            "../../target/debug/ethrex".parse().unwrap()
-        });
+        .unwrap_or_else(|| "../../target/debug/ethrex".parse().unwrap());
 
-    // run_test(&cmd_path, test_one_block_reorg_and_back).await;
+    info!(binary = %cmd_path.display(), "Starting test run");
+    info!("");
+
+    run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_many_blocks_reorg).await;
 }
 
@@ -36,6 +36,10 @@ where
     F: Fn(Arc<Mutex<Simulator>>) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
 {
+    let test_name = std::any::type_name::<F>();
+    let start = std::time::Instant::now();
+
+    info!(test=%test_name, "Running test");
     let simulator = Arc::new(Mutex::new(Simulator::new(cmd_path.to_path_buf())));
 
     // Run in another task to clean up properly on panic
@@ -44,10 +48,18 @@ where
     simulator.lock_owned().await.stop();
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    if result.is_err() {
-        eprintln!("Test panicked");
-        std::process::exit(1);
+    match result {
+        Ok(_) => info!(test=%test_name, elapsed=?start.elapsed(), "test completed successfully"),
+        Err(err) if err.is_panic() => {
+            error!(test=%test_name, %err, "test panicked");
+            std::process::exit(1);
+        }
+        Err(err) => {
+            warn!(test=%test_name, %err, "test task was cancelled");
+        }
     }
+    // Add a blank line after each test for readability
+    info!("");
 }
 
 async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {

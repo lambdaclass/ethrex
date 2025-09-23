@@ -122,6 +122,7 @@ impl Simulator {
             tokio::select! {
                 _ = cancel.cancelled() => {
                     if let Some(pid) = child.id() {
+                        // NOTE: we use SIGTERM instead of child.kill() so sockets are closed
                         signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM).unwrap();
                     }
                 }
