@@ -443,6 +443,10 @@ impl ChainConfig {
         }
     }
 
+    #[allow(
+        clippy::unwrap_used,
+        reason = "if a fork is activated its time should be Some(value)"
+    )]
     pub fn get_current_fork_activation_timestamp(&self, block_timestamp: u64) -> u64 {
         if self.is_bpo5_activated(block_timestamp) {
             self.bpo5_time.unwrap()
@@ -491,10 +495,9 @@ impl ChainConfig {
         } else {
             None
         };
-        if next.is_some() && next.unwrap() > self.fork(block_timestamp) {
-            next
-        } else {
-            None
+        match next {
+            Some(fork) if fork > self.fork(block_timestamp) => next,
+            _ => None,
         }
     }
 
