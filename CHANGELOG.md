@@ -5,6 +5,7 @@
 ### 2025-09-17
 
 - Refactor `bls12_g1add` to use `lambdaworks` [#4500](https://github.com/lambdaclass/ethrex/pull/4500)
+- Refactor `bls12_g2add` to use `lambdaworks` [#4538](https://github.com/lambdaclass/ethrex/pull/4538)
 
 ### 2025-09-15
 
