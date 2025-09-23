@@ -29,7 +29,7 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
 
     match result {
         Ok(exec_result) => {
-            exec_result.map_err(|e| eyre::Error::msg(format!("Execution failed: {}", e)))?;
+            exec_result.map_err(|e| eyre::Error::msg(format!("Execution failed: {e}")))?;
             Ok(())
         }
         Err(panic_info) => {
@@ -37,8 +37,7 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
             let panic_msg = extract_panic_message(&panic_info);
 
             Err(eyre::Error::msg(format!(
-                "Execution panicked: {}",
-                panic_msg
+                "Execution panicked: {panic_msg}"
             )))
         }
     }
@@ -57,14 +56,14 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
 
     match result {
         Ok(prove_result) => {
-            prove_result.map_err(|e| eyre::Error::msg(format!("Proving failed: {}", e)))?;
+            prove_result.map_err(|e| eyre::Error::msg(format!("Proving failed: {e}")))?;
             Ok(())
         }
         Err(panic_info) => {
             // Try to extract meaningful error message from panic info
             let panic_msg = extract_panic_message(&panic_info);
 
-            Err(eyre::Error::msg(format!("Proving panicked: {}", panic_msg)))
+            Err(eyre::Error::msg(format!("Proving panicked: {panic_msg}")))
         }
     }
 }

@@ -304,7 +304,7 @@ fn cpu_info() -> Option<String> {
                     "cat /proc/cpuinfo | grep \"model name\" | head -n 1 | awk -F': ' '{print $2}'",
                 )
                 .output()
-                .inspect_err(|e| eprintln!("Failed to get CPU info: {}", e))
+                .inspect_err(|e| eprintln!("Failed to get CPU info: {e}"))
                 .ok()?;
             Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }
@@ -314,7 +314,7 @@ fn cpu_info() -> Option<String> {
                 .arg("-n")
                 .arg("machdep.cpu.brand_string")
                 .output()
-                .inspect_err(|e| eprintln!("Failed to get CPU info: {}", e))
+                .inspect_err(|e| eprintln!("Failed to get CPU info: {e}"))
                 .ok()?;
             Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }
@@ -330,7 +330,7 @@ fn ram_info() -> Option<String> {
                 .arg("-c")
                 .arg("free --giga -h | grep \"Mem:\" | awk '{print $2}'")
                 .output()
-                .inspect_err(|e| eprintln!("Failed to get RAM info: {}", e))
+                .inspect_err(|e| eprintln!("Failed to get RAM info: {e}"))
                 .ok()?;
             Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }
@@ -340,7 +340,7 @@ fn ram_info() -> Option<String> {
                 .arg("-c")
                 .arg("system_profiler SPHardwareDataType | grep \"Memory:\" | awk -F': ' '{print $2}'")
                 .output()
-                .inspect_err(|e| eprintln!("Failed to get RAM info: {}", e))
+                .inspect_err(|e| eprintln!("Failed to get RAM info: {e}"))
                 .ok()?;
             Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
         }

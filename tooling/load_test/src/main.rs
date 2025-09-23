@@ -324,7 +324,7 @@ fn parse_private_key_into_local_signer(pkey: &str) -> Signer {
         .parse::<H256>()
         .unwrap_or_else(|_| panic!("Private key is not a valid hex representation {pkey}"));
     let secret_key = SecretKey::from_slice(key.as_bytes())
-        .unwrap_or_else(|_| panic!("Invalid private key {}", pkey));
+        .unwrap_or_else(|_| panic!("Invalid private key {pkey}"));
     LocalSigner::new(secret_key).into()
 }
 

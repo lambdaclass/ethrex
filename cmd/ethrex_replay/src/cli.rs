@@ -665,7 +665,7 @@ pub async fn replay_custom_l1_blocks(
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
     let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {e}"))
     })?;
 
     let cache = Cache::new(
