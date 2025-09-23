@@ -827,12 +827,7 @@ pub async fn replay_custom_l1_blocks(
         store_inner
     };
 
-    let blockchain = Arc::new(Blockchain::new(
-        store.clone(),
-        BlockchainType::L1,
-        false,
-        None,
-    ));
+    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L1, false));
 
     let blocks = produce_l1_blocks(
         blockchain.clone(),
@@ -843,7 +838,9 @@ pub async fn replay_custom_l1_blocks(
     )
     .await?;
 
-    let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
+    let execution_witness = blockchain
+        .generate_witness_for_blocks(&blocks, None)
+        .await?;
 
     let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
         eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
@@ -930,7 +927,7 @@ pub async fn produce_l1_block(
             err => ethrex_rpc::RpcErr::Internal(err.to_string()),
         })?;
 
-    blockchain.add_block(&block).await?;
+    blockchain.add_block(&block, None).await?;
 
     let new_block_hash = block.hash();
 

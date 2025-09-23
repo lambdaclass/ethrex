@@ -135,7 +135,7 @@ pub fn stateless_validation_l1(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_vault: Option<Address>,
+    _fee_vault: Option<Address>,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
@@ -144,7 +144,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, fee_vault)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
 
     Ok(ProgramOutput {
         initial_state_hash,

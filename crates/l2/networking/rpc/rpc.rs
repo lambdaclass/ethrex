@@ -217,6 +217,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
         "ethrex_batchNumber" => BatchNumberRequest::call(req, context).await,
         "ethrex_getBatchByNumber" => GetBatchByBatchNumberRequest::call(req, context).await,
+        "ethrex_getFeeVaultAddress" => GetFeeVaultAddress::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
         }

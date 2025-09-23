@@ -47,3 +47,16 @@ pub async fn get_batch_by_number(
         }
     }
 }
+
+pub async fn get_fee_vault_address(client: &EthClient) -> Result<Option<Address>, EthClientError> {
+    let request = RpcRequest::new("ethrex_getFeeVaultAddress", None);
+
+    match client.send_request(request).await? {
+        RpcResponse::Success(result) => serde_json::from_value(result.result)
+            .map_err(GetFeeVaultAddressError::SerdeJSONError)
+            .map_err(EthClientError::from),
+        RpcResponse::Error(error_response) => {
+            Err(GetFeeVaultAddressError::RPCError(error_response.error.message).into())
+        }
+    }
+}
