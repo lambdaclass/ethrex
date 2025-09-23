@@ -162,7 +162,6 @@ impl Syncer {
             METRICS.disable().await;
             sync_cycle_result
         } else {
-            info!("[DEBUG] Full sync");
             self.sync_cycle_full(sync_head, store).await
         }
     }
@@ -306,7 +305,6 @@ impl Syncer {
 
         if let SyncMode::Snap = sync_mode {
             self.snap_sync(store, &mut block_sync_state).await?;
-            info!("[DEBUG] Snap sync finished");
 
             // Next sync will be full-sync
             block_sync_state.into_fullsync().await?;
@@ -549,7 +547,6 @@ impl BlockSyncState {
     /// Converts self into a FullSync state, does nothing if self is already a FullSync state
     pub async fn into_fullsync(self) -> Result<Self, SyncError> {
         // Switch from Snap to Full sync and vice versa
-        info!("[DEBUG] Converting Snap to Full sync");
         let state = match self {
             BlockSyncState::Full(state) => state,
             BlockSyncState::Snap(state) => state.into_fullsync().await?,
@@ -780,7 +777,6 @@ impl SnapBlockSyncState {
     /// Clears SnapSync checkpoints from the Store
     /// In the rare case that block headers were stored in a previous iteration, these will be fetched and saved to the FullSync state for full retrieval and execution
     async fn into_fullsync(self) -> Result<FullBlockSyncState, SyncError> {
-        info!("[DEBUG] Converting Snap to Full sync");
         // For all collected hashes we must also have the corresponding headers stored
         // As this switch will only happen when the sync_head is 64 blocks away or less from our latest block
         // The headers to fetch will be at most 64, and none in the most common case
