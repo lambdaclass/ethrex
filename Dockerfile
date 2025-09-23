@@ -61,9 +61,7 @@ RUN cargo build --release $BUILD_FLAGS
 FROM debian:12-slim
 WORKDIR /usr/local/bin
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 \
-    ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder /ethrex/target/release/ethrex .
