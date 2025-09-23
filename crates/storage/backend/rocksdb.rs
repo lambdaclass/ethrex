@@ -67,9 +67,21 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn clear_table(&self, table: &str) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+        let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+        let mut batch = WriteBatchWithTransaction::<true>::default();
+
+        while let Some(Ok((key, _))) = iter.next() {
+            batch.delete_cf(&cf, key);
+        }
+
         self.db
-            .drop_cf(table)
-            .map_err(|e| StoreError::Custom(format!("Failed to clear table {}: {}", table, e)))
+            .write(batch)
+            .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
