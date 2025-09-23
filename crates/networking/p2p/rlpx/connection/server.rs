@@ -909,7 +909,15 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::StorageRanges(response)).await?
         }
         Message::GetByteCodes(req) => {
-            let response = process_byte_codes_request(req, state.storage.clone())?;
+            let storage_clone = state.storage.clone();
+            let response =
+                tokio::task::spawn_blocking(move || process_byte_codes_request(req, storage_clone))
+                    .await
+                    .map_err(|_| {
+                        RLPxError::InternalError(
+                            "Failed to execute bytecode retrieval task".to_string(),
+                        )
+                    })??;
             send(state, Message::ByteCodes(response)).await?
         }
         Message::GetTrieNodes(req) => {
