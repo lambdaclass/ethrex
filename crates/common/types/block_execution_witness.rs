@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -14,7 +14,7 @@ use alloy_primitives::map::B256Map;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{Node, NodeRLP};
+use ethrex_trie::NodeRLP;
 use keccak_hash::keccak;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
@@ -213,7 +213,7 @@ impl GuestProgramState {
 
         let account_state_rlp = self.state_trie.as_ref()?.get(account_hash)?;
 
-        let account_state = AccountState::decode(&account_state_rlp).ok()?;
+        let account_state = AccountState::decode(account_state_rlp).ok()?;
 
         let root = B256::from_slice(account_state.storage_root.as_bytes());
         let storage_trie = Trie::from_prehashed_nodes(root, &self.nodes_hashed)
@@ -248,8 +248,9 @@ impl GuestProgramState {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
                 let mut account_state = match state_trie.get(&hashed_address) {
-                    Some(encoded_state) => AccountState::decode(&encoded_state)
-                        .expect("failed to decode account state"),
+                    Some(encoded_state) => {
+                        AccountState::decode(encoded_state).expect("failed to decode account state")
+                    }
                     None => AccountState::default(),
                 };
                 if let Some(info) = &update.info {
@@ -265,7 +266,7 @@ impl GuestProgramState {
                 if !update.added_storage.is_empty() {
                     let storage_trie = storage_tries
                         .entry(update.address)
-                        .or_insert_with(|| Trie::default());
+                        .or_insert_with(Trie::default);
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -376,7 +377,7 @@ impl GuestProgramState {
         let Some(encoded_state) = state_trie.get(hashed_address) else {
             return Ok(None);
         };
-        let state = AccountState::decode(&encoded_state).map_err(|_| {
+        let state = AccountState::decode(encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
