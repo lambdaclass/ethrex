@@ -783,14 +783,14 @@ impl SnapBlockSyncState {
         // For all collected hashes we must also have the corresponding headers stored
         // As this switch will only happen when the sync_head is 64 blocks away or less from our latest block
         // The headers to fetch will be at most 64, and none in the most common case
-        let mut current_headers = Vec::new();
-        for hash in self.block_hashes {
-            let header = self
-                .store
-                .get_block_header_by_hash(hash)?
-                .ok_or(SyncError::CorruptDB)?;
-            current_headers.push(header);
-        }
+        let current_headers = Vec::new();
+        // for hash in self.block_hashes {
+        //     let header = self
+        //         .store
+        //         .get_block_header_by_hash(hash)?
+        //         .ok_or(SyncError::CorruptDB)?;
+        //     current_headers.push(header);
+        // }
         self.store.clear_snap_state().await?;
         Ok(FullBlockSyncState {
             current_headers,
