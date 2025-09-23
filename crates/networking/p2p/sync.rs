@@ -771,7 +771,7 @@ impl SnapBlockSyncState {
                 *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
             )
             .await?;
-        self.block_hashes.extend_from_slice(&block_hashes);
+        //self.block_hashes.extend_from_slice(&block_hashes);
         self.store.add_block_headers(block_headers).await?;
         Ok(())
     }
