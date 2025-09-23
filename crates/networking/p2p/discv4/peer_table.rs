@@ -565,10 +565,10 @@ impl PeerTable {
                     return None;
                 }
 
-                // if the peer doesn't have all the capabilities we need, we skip it
+                // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
                     .iter()
-                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
                 {
                     return None;
                 }
@@ -707,10 +707,10 @@ impl PeerTable {
         self.peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
-                // if the peer doesn't have all the capabilities we need, we skip it
+                // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
                     .iter()
-                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
                 {
                     None
                 } else {
@@ -725,10 +725,10 @@ impl PeerTable {
         self.peers
             .iter()
             .filter_map(|(peer_id, peer_data)| {
-                // if the peer doesn't have all the capabilities we need, we skip it
+                // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
                     .iter()
-                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
                 {
                     return None;
                 }
@@ -745,10 +745,10 @@ impl PeerTable {
             .peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
-                // if the peer doesn't have all the capabilities we need, we skip it
+                // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
                     .iter()
-                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
                 {
                     return None;
                 }
