@@ -110,7 +110,11 @@ impl StorageBackend for RocksDBBackend {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
             cfs.insert(table.to_string(), cf);
         }
-        Ok(Box::new(RocksDBRwTx { tx, cfs }))
+        Ok(Box::new(RocksDBRwTx {
+            db: self.db.clone(),
+            tx,
+            cfs,
+        }))
     }
 
     fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
@@ -186,6 +190,7 @@ impl Iterator for RocksDBPrefixIter {
 }
 
 pub struct RocksDBRwTx<'a> {
+    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     tx: Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
     cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
@@ -239,12 +244,14 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
-        // TODO: Optimize this by using a WriteBatchWithTransaction?
+        let mut write_batch = WriteBatchWithTransaction::<true>::default();
         for (key, value) in batch {
-            self.tx.put_cf(&cf, key, value)?;
+            write_batch.put_cf(&cf, key, value);
         }
 
-        Ok(())
+        self.db
+            .write(write_batch)
+            .map_err(|e| StoreError::Custom(format!("Failed to write batch: {}", e)))
     }
 
     fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
