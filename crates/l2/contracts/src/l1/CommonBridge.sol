@@ -87,6 +87,8 @@ contract CommonBridge is
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
+    address public NATIVE_TOKEN_L1_ADDRESS;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -103,7 +105,8 @@ contract CommonBridge is
     function initialize(
         address owner,
         address onChainProposer,
-        uint256 inclusionMaxWait
+        uint256 inclusionMaxWait,
+        address _nativeTokenL1Address
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -115,6 +118,8 @@ contract CommonBridge is
         transactionId = 0;
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
+
+        NATIVE_TOKEN_L1_ADDRESS = _nativeTokenL1Address;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
