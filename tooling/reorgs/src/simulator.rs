@@ -1,4 +1,4 @@
-use std::{fs::File, path::PathBuf, process::Stdio, time::Duration};
+use std::{fs::File, io::Read, path::PathBuf, process::Stdio, time::Duration};
 
 use ethrex::{cli::Options, initializers::get_network};
 use ethrex_common::{
@@ -30,6 +30,7 @@ pub struct Simulator {
     jwt_secret: Bytes,
     genesis_path: PathBuf,
     configs: Vec<Options>,
+    enodes: Vec<String>,
     cancellation_tokens: Vec<CancellationToken>,
 }
 
@@ -56,6 +57,7 @@ impl Simulator {
             jwt_secret,
             configs: vec![],
             cancellation_tokens: vec![],
+            enodes: vec![],
         }
     }
 
@@ -77,8 +79,8 @@ impl Simulator {
         let _ = std::fs::remove_dir_all(&opts.datadir);
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
 
-        let logs_file =
-            File::create(format!("data/node{n}.log")).expect("Failed to create logs file");
+        let logs_file_path = format!("data/node{n}.log");
+        let logs_file = File::create(&logs_file_path).expect("Failed to create logs file");
 
         let cancel = CancellationToken::new();
 
@@ -98,10 +100,21 @@ impl Simulator {
             "--force".to_string(),
         ])
         .stdin(Stdio::null())
-        .stdout(logs_file.try_clone().expect("Failed to clone logs file"))
+        .stdout(logs_file.try_clone().unwrap())
         .stderr(logs_file);
 
+        if !self.enodes.is_empty() {
+            cmd.arg(format!("--bootnodes={}", self.enodes.join(",")));
+        }
+
         let child = cmd.spawn().expect("Failed to start ethrex process");
+
+        let logs_file = File::open(&logs_file_path).expect("Failed to open logs file");
+        let enode =
+            tokio::time::timeout(Duration::from_secs(1), wait_for_initialization(logs_file))
+                .await
+                .expect("node initialization timed out");
+        self.enodes.push(enode);
 
         tokio::spawn(async move {
             let mut child = child;
@@ -121,8 +134,6 @@ impl Simulator {
             "Started node {n} at http://{}:{}",
             opts.http_addr, opts.http_port
         );
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
 
         self.get_node(n)
     }
@@ -156,6 +167,33 @@ impl Simulator {
             rpc_client,
         }
     }
+}
+
+/// Waits until the node is initialized by reading its logs.
+/// Returns the enode URL of the node.
+async fn wait_for_initialization(mut logs_file: File) -> String {
+    const NODE_STARTED_LOG: &str = "Starting Auth-RPC server at";
+
+    let mut file_contents = String::new();
+
+    // Wait a bit until the node starts
+    loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        logs_file.read_to_string(&mut file_contents).unwrap();
+
+        if file_contents.contains(NODE_STARTED_LOG) {
+            break;
+        }
+    }
+    let node_enode_log = file_contents
+        .lines()
+        .find(|line| line.contains("Local node initialized"))
+        .unwrap();
+    // Look for the "enode://node_id@host:port" part
+    let prefix = "enode://";
+    let node_enode = node_enode_log.split_once(prefix).unwrap().1;
+    format!("{prefix}{}", node_enode.trim_end())
 }
 
 pub struct Node {
