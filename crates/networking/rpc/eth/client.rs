@@ -90,8 +90,8 @@ struct EthConfigObject {
 #[serde(rename_all = "camelCase")]
 struct EthConfigResponse {
     current: EthConfigObject,
-    last: Option<EthConfigObject>,
     next: Option<EthConfigObject>,
+    last: Option<EthConfigObject>,
 }
 
 impl RpcHandler for Config {
@@ -118,15 +118,15 @@ impl RpcHandler for Config {
             None
         };
         let last_fork = chain_config.get_last_scheduled_fork();
-        let last = if last_fork == current_fork {
+        let last = if last_fork > current_fork {
             Some(get_config_for_fork(last_fork, &context).await?)
         } else {
             None
         };
         let response = EthConfigResponse {
             current,
-            last,
             next,
+            last,
         };
 
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -149,7 +149,7 @@ async fn get_config_for_fork(
                 .unwrap()
                 .header,
             0,
-            timestamp,
+            timestamp + 1,
         )
         .fork_hash
     } else {

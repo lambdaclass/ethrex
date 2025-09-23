@@ -470,24 +470,31 @@ impl ChainConfig {
     }
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
-        if self.is_bpo5_activated(block_timestamp) {
+        let next = if self.is_bpo5_activated(block_timestamp) {
             None
-        } else if self.is_bpo4_activated(block_timestamp) {
+        } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
             Some(Fork::BPO5)
-        } else if self.is_bpo3_activated(block_timestamp) {
+        } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
             Some(Fork::BPO4)
-        } else if self.is_bpo2_activated(block_timestamp) {
+        } else if self.is_bpo2_activated(block_timestamp) && self.bpo3_time.is_some() {
             Some(Fork::BPO3)
-        } else if self.is_bpo1_activated(block_timestamp) {
+        } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
             Some(Fork::BPO2)
-        } else if self.is_osaka_activated(block_timestamp) {
+        } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
             Some(Fork::BPO1)
-        } else if self.is_prague_activated(block_timestamp) {
+        } else if self.is_prague_activated(block_timestamp) && self.osaka_time.is_some() {
             Some(Fork::Osaka)
-        } else if self.is_cancun_activated(block_timestamp) {
+        } else if self.is_cancun_activated(block_timestamp) && self.prague_time.is_some() {
             Some(Fork::Prague)
-        } else {
+        } else if self.is_shanghai_activated(block_timestamp) && self.cancun_time.is_some() {
             Some(Fork::Cancun)
+        } else {
+            None
+        };
+        if next.is_some() && next > self.fork(block_timestamp) {
+            next
+        } else {
+            None
         }
     }
 
