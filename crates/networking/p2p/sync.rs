@@ -1614,12 +1614,7 @@ async fn insert_storage_into_rocksdb(
         )
         .inspect_err(|err: &TrieGenerationError| {
             let iter = db.prefix_iterator(account_hash.as_bytes());
-            let mut count = 0 as usize;
-            for element in iter {
-                let element_unwrap = element.unwrap();
-                println!("{element_unwrap:?}");
-                count += 1;
-            }
+            let mut count = iter.count();
             error!(
                 "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}, count {count}"
             );
