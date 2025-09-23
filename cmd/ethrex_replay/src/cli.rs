@@ -499,10 +499,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
                     referenced_node_hashes.insert(hash);
                 }
-                Node::Leaf(node) => {
-                    let info = AccountState::decode(&node.value)?;
-                    all_codes_hashed.entry(info.code_hash).or_insert(vec![]);
-                }
+                Node::Leaf(_node) => {}
             }
         }
 
@@ -538,8 +535,13 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
                 continue;
             };
 
-            let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
+            let account_state = AccountState::decode(&account_state_rlp)?;
 
+            // If code hash of account isn't present insert empty code so that if not found the execution doesn't break.
+            let code_hash = account_state.code_hash;
+            all_codes_hashed.entry(code_hash).or_insert(vec![]);
+
+            let storage_root = account_state.storage_root;
             let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
                 Ok(trie) => trie.inner,
                 Err(_) => continue,
