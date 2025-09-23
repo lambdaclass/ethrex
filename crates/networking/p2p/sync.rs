@@ -1620,6 +1620,7 @@ async fn insert_storage_into_rocksdb(
             );
         })
         .map_err(SyncError::TrieGenerationError)?;
+        METRICS.storage_tries_state_roots_computed.inc();
     }
     Ok(())
 }
