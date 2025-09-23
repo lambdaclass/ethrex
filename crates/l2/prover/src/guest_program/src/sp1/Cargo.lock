@@ -85,16 +85,19 @@ dependencies = [
 [[package]]
 name = "alloy-rlp"
 version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f70d83b765fdc080dbcd4f4db70d8d23fe4761f2f02ebfa9146b833900634b4"
 dependencies = [
  "alloy-rlp-derive",
  "arrayvec",
  "bytes",
- "const-hex",
 ]
 
 [[package]]
 name = "alloy-rlp-derive"
 version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64b728d511962dda67c1bc7ea7c03736ec275ed2cf4c35d9585298ac9ccf3b73"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1238,6 +1241,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
+ "bitvec",
  "bls12_381",
  "bytes",
  "datatest-stable",
@@ -2747,7 +2751,8 @@ dependencies = [
 
 [[package]]
 name = "risc0-ethereum-trie"
-version = "0.1.0"
+version = "0.2.0"
+source = "git+https://github.com/risc0/risc0-ethereum.git?tag=v3.0.0#32aa0b6f23ddd02dd93fc71717667606e5c7db86"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
