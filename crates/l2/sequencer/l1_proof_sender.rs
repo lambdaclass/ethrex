@@ -391,7 +391,7 @@ impl L1ProofSender {
             needed_proof_types: self
                 .needed_proof_types
                 .iter()
-                .map(|proof_type| format!("{:?}", proof_type))
+                .map(|proof_type| format!("{proof_type:?}"))
                 .collect(),
             proof_send_interval_ms: self.proof_send_interval_ms,
             sequencer_state: format!("{:?}", self.sequencer_state.status().await),
