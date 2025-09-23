@@ -212,9 +212,8 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let network = Network::try_from(chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {e}"))
-    })?;
+    let network = Network::try_from(chain_config.chain_id)
+        .map_err(|e| eyre::Error::msg(format!("Failed to determine network from chain ID: {e}")))?;
 
     let cache = Cache::new(blocks, witness_rpc, Some(network));
 

@@ -170,39 +170,23 @@ pub async fn re_run_failed_ef_test_tx(
     Ok(())
 }
 
+type RevmState<'state> = &'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>;
+type RevmContext<'state> =
+    Context<RevmBlockEnv, RevmTxEnv, CfgEnv, RevmState<'state>, Journal<RevmState<'state>>>;
+type RevmWithTracer<'state> = Revm<
+    RevmContext<'state>,
+    RevmTracerEip3155,
+    EthInstructions<EthInterpreter, RevmContext<'state>>,
+    EthPrecompiles,
+    EthFrame,
+>;
+
 pub fn prepare_revm_for_tx<'state>(
     initial_state: &'state mut EvmState,
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<
-    (
-        Revm<
-            Context<
-                RevmBlockEnv,
-                RevmTxEnv,
-                CfgEnv,
-                &'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>,
-                Journal<&'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>>,
-            >,
-            RevmTracerEip3155,
-            EthInstructions<
-                EthInterpreter,
-                revm::Context<
-                    RevmBlockEnv,
-                    RevmTxEnv,
-                    CfgEnv,
-                    &'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>,
-                    Journal<&'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>>,
-                >,
-            >,
-            EthPrecompiles,
-            EthFrame,
-        >,
-        RevmTxEnv,
-    ),
-    EFTestRunnerError,
-> {
+) -> Result<(RevmWithTracer<'state>, RevmTxEnv), EFTestRunnerError> {
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;

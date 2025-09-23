@@ -36,9 +36,7 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
             // Try to extract meaningful error message from panic info
             let panic_msg = extract_panic_message(&panic_info);
 
-            Err(eyre::Error::msg(format!(
-                "Execution panicked: {panic_msg}"
-            )))
+            Err(eyre::Error::msg(format!("Execution panicked: {panic_msg}")))
         }
     }
 }

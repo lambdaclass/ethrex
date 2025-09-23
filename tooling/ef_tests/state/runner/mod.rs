@@ -95,7 +95,6 @@ fn parse_forks(value: &str) -> Result<Vec<SpecId>, String> {
         forks.push(SpecId::from_str(fork_str).map_err(|_| format!("Unknown fork: {fork_str}"))?);
     }
     Ok(forks)
-
 }
 
 pub async fn run_ef_tests(
