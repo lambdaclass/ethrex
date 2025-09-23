@@ -23,6 +23,12 @@ interface IOnChainProposer {
     /// @dev Event emitted when a batch is verified.
     event BatchVerified(uint256 indexed lastVerifiedBatch);
 
+    /// @notice A verification key has been upgraded.
+    /// @dev Event emitted when a verification key is upgraded.
+    /// @param verifier The name of the verifier whose key was upgraded.
+    /// @param newVerificationKey The new verification key.
+    event VerificationKeyUpgraded(string verifier, bytes32 newVerificationKey);
+
     /// @notice Set the bridge address for the first time.
     /// @dev This method is separated from initialize because both the CommonBridge
     /// and the OnChainProposer need to know the address of the other. This solves

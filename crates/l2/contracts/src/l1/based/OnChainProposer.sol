@@ -230,11 +230,13 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function upgradeSP1VerificationKey(bytes32 new_vk) public onlyOwner {
         SP1_VERIFICATION_KEY = new_vk;
+        emit VerificationKeyUpgraded("SP1", new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
     function upgradeRISC0VerificationKey(bytes32 new_vk) public onlyOwner {
         RISC0_VERIFICATION_KEY = new_vk;
+        emit VerificationKeyUpgraded("RISC0", new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
