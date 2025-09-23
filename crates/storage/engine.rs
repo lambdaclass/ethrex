@@ -11,7 +11,7 @@ use ethrex_trie::{Nibbles, Trie};
 
 use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
-    api::{StorageBackend, TableOptions},
+    api::StorageBackend,
     error::StoreError,
     rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
     store::StorageUpdates,
@@ -41,19 +41,8 @@ pub struct StoreEngine {
 
 impl StoreEngine {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Result<Self, StoreError> {
-        backend.create_table(CHAIN_DATA, TableOptions { dupsort: false })?;
-        backend.create_table(ACCOUNT_CODES, TableOptions { dupsort: false })?;
-        backend.create_table(BODIES, TableOptions { dupsort: false })?;
-        backend.create_table(BLOCK_NUMBERS, TableOptions { dupsort: false })?;
-        backend.create_table(CANONICAL_BLOCK_HASHES, TableOptions { dupsort: false })?;
-        backend.create_table(HEADERS, TableOptions { dupsort: false })?;
-        backend.create_table(PENDING_BLOCKS, TableOptions { dupsort: false })?;
-        backend.create_table(TRANSACTION_LOCATIONS, TableOptions { dupsort: false })?;
-        backend.create_table(RECEIPTS, TableOptions { dupsort: false })?;
-        backend.create_table(SNAP_STATE, TableOptions { dupsort: false })?;
-        backend.create_table(INVALID_CHAINS, TableOptions { dupsort: false })?;
-        backend.create_table(STATE_TRIE_NODES, TableOptions { dupsort: false })?;
-        backend.create_table(STORAGE_TRIE_NODES, TableOptions { dupsort: false })?;
+        // All required tables are guaranteed to exist after backend.open()
+        // No need to create tables here
         Ok(Self { backend })
     }
 

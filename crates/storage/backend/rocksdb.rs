@@ -38,44 +38,29 @@ impl StorageBackend for RocksDBBackend {
         opts.set_enable_pipelined_write(true);
         opts.set_allow_concurrent_memtable_write(true);
 
-        // Get existing CFs, or default if new DB
-        let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
-            .unwrap_or_else(|_| vec!["default".to_string()]);
+        // Create descriptors for ALL required tables
+        let mut cf_descriptors = vec![];
+        cf_descriptors.push(ColumnFamilyDescriptor::new("default", Options::default()));
 
-        let mut all_cfs: std::collections::HashSet<String> = existing_cfs.into_iter().collect();
         for &table in TABLES.iter() {
-            all_cfs.insert(table.to_string());
+            let cf_opts = Options::default();
+            cf_descriptors.push(ColumnFamilyDescriptor::new(table, cf_opts));
         }
-
-        let cf_descriptors: Vec<ColumnFamilyDescriptor> = all_cfs
-            .into_iter()
-            .map(|cf_name| {
-                let cf_opts = Options::default();
-                ColumnFamilyDescriptor::new(cf_name, cf_opts)
-            })
-            .collect();
 
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &opts,
             path.as_ref(),
             cf_descriptors,
         )
-        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
 
         Ok(Arc::new(Self { db: Arc::new(db) }))
     }
 
-    fn create_table(&self, name: &str, _options: TableOptions) -> Result<(), StoreError> {
-        // Check if column family already exists
-        if self.db.cf_handle(name).is_some() {
-            return Ok(());
-        }
-
-        // Create column family if it doesn't exist
-        let opts = Options::default();
-        self.db
-            .create_cf(name, &opts)
-            .map_err(|e| StoreError::Custom(format!("Failed to create table {}: {}", name, e)))
+    fn create_table(&self, _name: &str, _options: TableOptions) -> Result<(), StoreError> {
+        // Now we are creating the tables in the open() function
+        // Check if this function is still needed
+        Ok(())
     }
 
     fn clear_table(&self, table: &str) -> Result<(), StoreError> {
@@ -86,6 +71,7 @@ impl StorageBackend for RocksDBBackend {
 
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
         let tx = self.db.transaction();
+
         let mut cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'_>>> =
             HashMap::with_capacity(TABLES.len());
         for &table in TABLES.iter() {
@@ -100,6 +86,7 @@ impl StorageBackend for RocksDBBackend {
 
     fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError> {
         let tx = self.db.transaction();
+
         let mut cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'_>>> =
             HashMap::with_capacity(TABLES.len());
         for &table in TABLES.iter() {
@@ -117,7 +104,7 @@ impl StorageBackend for RocksDBBackend {
         let lock = db.snapshot();
         let cf = db
             .cf_handle(table_name)
-            .ok_or_else(|| StoreError::Custom(format!("Tabla {} no encontrada", table_name)))?;
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
 
         Ok(Box::new(RocksDBLocked { db, lock, cf }))
     }
