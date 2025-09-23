@@ -1,6 +1,4 @@
-use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
-
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use ethrex_blockchain::{
     Blockchain, BlockchainType,
     fork_choice::apply_fork_choice,
@@ -8,15 +6,31 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address, H256,
-    types::{AccountUpdate, Block, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Receipt},
+    types::{
+        AccountState, AccountUpdate, Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL,
+        ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
+    },
 };
 use ethrex_prover_lib::backend::Backend;
-use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::{
-    debug::execution_witness::RpcExecutionWitness, types::block_identifier::BlockTag,
+    EthClient,
+    debug::execution_witness::{RpcExecutionWitness, execution_witness_from_rpc_chain_config},
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{
+    EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
+};
+use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRef, node::LeafNode};
+use eyre::OptionExt;
 use reqwest::Url;
+use std::{
+    cmp::max,
+    collections::HashSet,
+    io::Write,
+    sync::{Arc, RwLock},
+    time::{Instant, SystemTime},
+};
 use tracing::info;
 
 use crate::bench::run_and_measure;
@@ -58,9 +72,6 @@ pub enum EthrexReplayCommand {
     #[cfg(not(feature = "l2"))]
     #[command(about = "Replay multiple blocks")]
     Blocks(BlocksOptions),
-    #[cfg(not(feature = "l2"))]
-    #[command(about = "Replay a range of blocks")]
-    BlockRange(BlockRangeOptions),
     #[cfg(not(feature = "l2"))]
     #[command(about = "Plots the composition of a range of blocks.")]
     BlockComposition {
@@ -115,8 +126,6 @@ pub enum CacheSubcommand {
     Block(BlockOptions),
     #[command(about = "Cache multiple blocks.")]
     Blocks(BlocksOptions),
-    #[command(about = "Cache a range of blocks")]
-    BlockRange(BlockRangeOptions),
 }
 
 #[derive(Parser)]
@@ -139,10 +148,26 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source")]
     pub cached: bool,
+    #[arg(long, help = "Execute with `add_block`, without using zkvm as backend")]
+    pub no_zkvm: bool,
     #[arg(long, required = false)]
     pub bench: bool,
     #[arg(long, required = false)]
     pub to_csv: bool,
+    #[arg(
+        long,
+        help = "Block cache level: off, failed, on (default: on)",
+        default_value = "on"
+    )]
+    pub cache_level: CacheLevel,
+}
+
+#[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Default)]
+pub enum CacheLevel {
+    Off,
+    Failed,
+    #[default]
+    On,
 }
 
 #[derive(Parser)]
@@ -155,20 +180,14 @@ pub struct BlockOptions {
 
 #[cfg(not(feature = "l2"))]
 #[derive(Parser)]
+#[command(group(ArgGroup::new("block_list").required(true).args(["blocks", "from"])))]
 pub struct BlocksOptions {
-    #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',')]
+    #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"])]
     blocks: Vec<u64>,
-    #[command(flatten)]
-    opts: EthrexReplayOptions,
-}
-
-#[cfg(not(feature = "l2"))]
-#[derive(Parser)]
-pub struct BlockRangeOptions {
     #[arg(long, help = "Starting block. (Inclusive)")]
-    start: u64,
-    #[arg(long, help = "Ending block. (Inclusive)")]
-    end: u64,
+    from: Option<u64>,
+    #[arg(long, help = "Ending block. (Inclusive)", requires = "from")]
+    to: Option<u64>,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -210,12 +229,17 @@ impl EthrexReplayCommand {
             #[cfg(not(feature = "l2"))]
             Self::Block(block_opts) => replay_block(block_opts).await?,
             #[cfg(not(feature = "l2"))]
-            Self::Blocks(BlocksOptions { mut blocks, opts }) => {
+            Self::Blocks(BlocksOptions {
+                blocks,
+                from,
+                to,
+                opts,
+            }) => {
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                blocks.sort();
+                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
 
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!(
@@ -227,26 +251,6 @@ impl EthrexReplayCommand {
 
                     replay_block(BlockOptions {
                         block: Some(*block_number),
-                        opts: opts.clone(),
-                    })
-                    .await?;
-                }
-            }
-            #[cfg(not(feature = "l2"))]
-            Self::BlockRange(BlockRangeOptions { start, end, opts }) => {
-                if opts.cached {
-                    unimplemented!("cached mode is not implemented yet");
-                }
-
-                if start >= end {
-                    return Err(eyre::Error::msg(
-                        "starting point can't be greater than ending point",
-                    ));
-                }
-
-                for block in start..=end {
-                    replay_block(BlockOptions {
-                        block: Some(block),
                         opts: opts.clone(),
                     })
                     .await?;
@@ -267,8 +271,13 @@ impl EthrexReplayCommand {
                 }
             }
             #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::Blocks(BlocksOptions { mut blocks, opts })) => {
-                blocks.sort();
+            Self::Cache(CacheSubcommand::Blocks(BlocksOptions {
+                blocks,
+                from,
+                to,
+                opts,
+            })) => {
+                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
 
                 let (eth_client, network) = setup(&opts).await?;
 
@@ -282,14 +291,6 @@ impl EthrexReplayCommand {
                 }
 
                 info!("Blocks data cached successfully.");
-            }
-            #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::BlockRange(BlockRangeOptions { start, end, opts })) => {
-                let (eth_client, network) = setup(&opts).await?;
-
-                get_rangedata(eth_client, network, start, end).await?;
-
-                info!("Block from {start} to {end} data cached successfully.");
             }
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Block(CustomBlockOptions { prove })) => {
@@ -312,6 +313,8 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    no_zkvm: false,
+                    cache_level: CacheLevel::default(),
                 };
 
                 let elapsed = replay_custom_l1_blocks(max(1, n_blocks), &opts).await?;
@@ -392,6 +395,7 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    cache_level: CacheLevel::default(),
                 };
 
                 let elapsed = replay_custom_l2_blocks(max(1, n_blocks), &opts).await?;
@@ -423,6 +427,152 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     } else {
         prove(BACKEND, cache).await?;
     }
+
+    Ok(gas_used)
+}
+
+async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
+    if opts.prove {
+        eyre::bail!("Proving not enabled without backend");
+    }
+    if cache.blocks.len() > 1 {
+        eyre::bail!("Cache for L1 witness should contain only one block.");
+    }
+
+    let start = Instant::now();
+    info!("Preparing Storage for execution without zkVM");
+
+    let chain_config = cache.get_chain_config()?;
+    let block = cache.blocks[0].clone();
+    let gas_used = block.header.gas_used as f64;
+
+    let witness = execution_witness_from_rpc_chain_config(
+        cache.witness.clone(),
+        chain_config,
+        cache.get_first_block_number()?,
+    )?;
+    let network = &cache.network.ok_or_eyre("Network should be set for L1")?;
+
+    let guest_program = GuestProgramState::try_from(witness.clone())?;
+
+    // This will contain all code hashes with the corresponding bytecode
+    // For the code hashes that we don't have we'll will it with <CodeHash, Bytes::new()>
+    let mut all_codes_hashed = guest_program.codes_hashed.clone();
+
+    let in_memory_store = InMemoryStore::new();
+
+    // - Set up state trie nodes
+    let all_nodes = &guest_program.nodes_hashed;
+    let state_root_hash = guest_program.parent_block_header.state_root;
+
+    let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, all_nodes)?.inner;
+    {
+        // We now have the state trie built and we want 2 things:
+        //   1. Add arbitrary Leaf nodes to the trie so that every reference in branch nodes point to an actual node.
+        //   2. Get all code hashes that exist in the accounts that we have so that if we don't have the code we set it to empty bytes.
+        // We do these things because sometimes the witness may be incomplete and in those cases we don't want failures for missing data.
+        // This only applies when we use the InMemoryDatabase and not when we use the ExecutionWitness as database, that's because in the latter failures are dismissed and we fall back to default values.
+        let mut nodes = state_trie_nodes.lock().unwrap();
+        let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie (by Branch or Ext nodes).
+
+        for (_node_hash, node_rlp) in nodes.iter() {
+            let node = Node::decode(node_rlp)?;
+            match node {
+                Node::Branch(node) => {
+                    for choice in &node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            unreachable!()
+                        };
+
+                        referenced_node_hashes.insert(hash);
+                    }
+                }
+                Node::Extension(node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        unreachable!()
+                    };
+
+                    referenced_node_hashes.insert(hash);
+                }
+                Node::Leaf(node) => {
+                    let info = AccountState::decode(&node.value)?;
+                    all_codes_hashed.entry(info.code_hash).or_insert(vec![]);
+                }
+            }
+        }
+
+        // Insert arbitrary leaf nodes to state trie.
+        for hash in referenced_node_hashes {
+            let dummy_leaf: Node = LeafNode::default().into();
+            nodes.entry(hash).or_insert(dummy_leaf.encode_to_vec());
+        }
+
+        drop(nodes);
+
+        let mut inner_store = in_memory_store.inner()?;
+
+        inner_store.state_trie_nodes = state_trie_nodes;
+
+        // - Set up storage trie nodes
+        let addresses: Vec<Address> = witness
+            .keys
+            .iter()
+            .filter(|k| k.len() == Address::len_bytes())
+            .map(|k| Address::from_slice(k))
+            .collect();
+
+        for address in &addresses {
+            let hashed_address = hash_address(address);
+
+            // Account state may not be in the state trie
+            let Some(account_state_rlp) = guest_program
+                .state_trie
+                .as_ref()
+                .unwrap()
+                .get(&hashed_address)?
+            else {
+                continue;
+            };
+
+            let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
+
+            let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
+                Ok(trie) => trie.inner,
+                Err(_) => continue,
+            };
+
+            inner_store
+                .storage_trie_nodes
+                .insert(H256::from_slice(&hashed_address), storage_trie);
+        }
+    }
+
+    // Set up store with preloaded database and the right chain config.
+    let store = Store {
+        engine: Arc::new(in_memory_store),
+        chain_config: Arc::new(RwLock::new(chain_config)),
+        latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+    };
+
+    // Add codes to DB
+    for (code_hash, code) in all_codes_hashed {
+        store.add_account_code(code_hash, code.into()).await?;
+    }
+
+    // Add block headers to DB
+    for (_n, header) in guest_program.block_headers.clone() {
+        store.add_block_header(header.hash(), header).await?;
+    }
+
+    let blockchain = Blockchain::default_with_store(store);
+
+    info!("Storage preparation finished in {:.2?}", start.elapsed());
+
+    info!("Executing block {} on {}", block.header.number, network);
+    let start_time = Instant::now();
+    blockchain.add_block(&block).await?;
+    let duration = start_time.elapsed();
+    info!("add_block execution time: {:.2?}", duration);
 
     Ok(gas_used)
 }
@@ -480,16 +630,27 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
+    // Always write the cache after fetching from RPC.
+    // It will be deleted later if not needed.
+    cache.write()?;
+
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
+    let replayer_mode = replayer_mode(opts.execute, opts.no_zkvm)?;
+
     let start = SystemTime::now();
 
-    let block_run_result = run_and_measure(replay(cache, &opts), opts.bench).await;
+    let block_run_result = if opts.no_zkvm {
+        run_and_measure(replay_no_zkvm(cache.clone(), &opts), opts.bench).await
+    } else {
+        run_and_measure(replay(cache.clone(), &opts), opts.bench).await
+    };
 
-    let replayer_mode = replayer_mode(opts.execute)?;
+    // We save this because block_run_result (Result<u64, Report>) is not clonable.
+    let block_run_failed = block_run_result.is_err();
 
     let block_run_report = BlockRunReport::new_for(
         block,
@@ -500,6 +661,20 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     );
 
     block_run_report.log();
+
+    // Apply cache level rules
+    match opts.cache_level {
+        // Cache is already saved
+        CacheLevel::On => {}
+        // Only save the cache if the block run failed
+        CacheLevel::Failed => {
+            if !block_run_failed {
+                cache.delete()?;
+            }
+        }
+        // Don't keep the cache
+        CacheLevel::Off => cache.delete()?,
+    }
 
     if opts.to_csv {
         let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
@@ -519,7 +694,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn network_from_chain_id(chain_id: u64) -> Network {
+pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
     match chain_id {
         MAINNET_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Mainnet),
         HOLESKY_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Holesky),
@@ -535,7 +710,16 @@ fn network_from_chain_id(chain_id: u64) -> Network {
     }
 }
 
-pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
+pub fn replayer_mode(execute: bool, no_zkvm: bool) -> eyre::Result<ReplayerMode> {
+    if no_zkvm {
+        if cfg!(any(feature = "sp1", feature = "risc0")) {
+            return Err(eyre::Error::msg(
+                "no-zkvm mode is not supported with SP1 or RISC0 features enabled",
+            ));
+        } else {
+            return Ok(ReplayerMode::ExecuteNoZkvm);
+        }
+    }
     if execute {
         #[cfg(feature = "sp1")]
         return Ok(ReplayerMode::ExecuteSP1);
@@ -564,6 +748,25 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
         Some(n) => BlockIdentifier::Number(n),
         None => BlockIdentifier::Tag(BlockTag::Latest),
     })
+}
+
+async fn resolve_blocks(
+    mut blocks: Vec<u64>,
+    from: Option<u64>,
+    to: Option<u64>,
+    rpc_url: Url,
+) -> eyre::Result<Vec<u64>> {
+    if let Some(start) = from {
+        let end = to.unwrap_or(fetch_latest_block_number(rpc_url).await?);
+
+        for block in start..=end {
+            blocks.push(block);
+        }
+    } else {
+        blocks.sort();
+    }
+
+    Ok(blocks)
 }
 
 fn print_transition(update: AccountUpdate) {
@@ -903,4 +1106,12 @@ pub async fn produce_custom_l2_block(
     apply_fork_choice(store, new_block_hash, new_block_hash, new_block_hash).await?;
 
     Ok(new_block)
+}
+
+async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
+    let eth_client = EthClient::new(rpc_url.as_str())?;
+
+    let latest_block = eth_client.get_block_number().await?;
+
+    Ok(latest_block.as_u64())
 }

@@ -73,7 +73,6 @@ pub enum InMessage {
     Commit,
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub enum OutMessage {
     Done,
@@ -90,6 +89,7 @@ pub struct L1Committer {
     store: Store,
     rollup_store: StoreRollup,
     commit_time_ms: u64,
+    batch_gas_limit: Option<u64>,
     arbitrary_base_blob_gas_price: u64,
     validium: bool,
     signer: Signer,
@@ -151,6 +151,7 @@ impl L1Committer {
             store,
             rollup_store,
             commit_time_ms: committer_config.commit_time_ms,
+            batch_gas_limit: committer_config.batch_gas_limit,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             validium: committer_config.validium,
             signer: committer_config.signer.clone(),
@@ -182,7 +183,9 @@ impl L1Committer {
             sequencer_state,
         )
         .await?;
-        let l1_committer = state.start();
+        // NOTE: we spawn as blocking due to `generate_blobs_bundle` and
+        // `send_tx_bump_gas_exponential_backoff` blocking for more than 40ms
+        let l1_committer = state.start_blocking();
         if let OutMessage::Error(reason) = l1_committer
             .clone()
             .call(CallMessage::Start(cfg.l1_committer.first_wake_up_time_ms))
@@ -315,6 +318,7 @@ impl L1Committer {
         let mut message_hashes = vec![];
         let mut privileged_transactions_hashes = vec![];
         let mut new_state_root = H256::default();
+        let mut acc_gas_used = 0_u64;
 
         #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
@@ -344,6 +348,18 @@ impl L1Committer {
                 .ok_or(CommitterError::FailedToGetInformationFromStorage(
                     "Failed to get_block_header() after get_block_body()".to_owned(),
                 ))?;
+
+            let current_block_gas_used = block_to_commit_header.gas_used;
+
+            // Check if adding this block would exceed the batch gas limit
+            if let Some(batch_gas_limit) = self.batch_gas_limit {
+                if acc_gas_used + current_block_gas_used > batch_gas_limit {
+                    debug!(
+                        "Batch gas limit reached. Any remaining blocks will be processed in the next batch"
+                    );
+                    break;
+                }
+            }
 
             // Get block transactions and receipts
             let mut txs = vec![];
@@ -464,6 +480,8 @@ impl L1Committer {
                     .collect::<Vec<H256>>(),
             );
 
+            message_hashes.extend(messages.iter().map(get_l1_message_hash));
+
             new_state_root = self
                 .store
                 .state_trie(block_to_commit.hash())?
@@ -473,7 +491,8 @@ impl L1Committer {
                 .hash_no_commit();
 
             last_added_block_number += 1;
-        }
+            acc_gas_used += current_block_gas_used;
+        } // end loop
 
         metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
                 privileged_transactions_hashes.len().try_into(),
@@ -505,9 +524,7 @@ impl L1Committer {
 
         let privileged_transactions_hash =
             compute_privileged_transactions_hash(privileged_transactions_hashes)?;
-        for msg in &acc_messages {
-            message_hashes.push(get_l1_message_hash(msg));
-        }
+
         Ok((
             blobs_bundle,
             new_state_root,
