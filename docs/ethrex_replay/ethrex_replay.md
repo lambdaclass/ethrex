@@ -1,41 +1,25 @@
 # ethrex-replay
 
 A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by [starknet-replay](https://github.com/lambdaclass/starknet-replay).
-Currently ethrex replay only works against ethrex nodes with the `debug_executionWitness` RPC endpoint.
-
-## Status
-
-| Node       | Network | `ethrex-replay execute block` | Additional Comments                                                                                           | `ethrex-replay prove block` | Additional Comments                                                                                           |
-| ---------- | ------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| reth       | hoodi   | ✅                            | Most of the recent blocks can be executed with or without SP1 and proved with SP1                             | ✅                          | Every block that is successfully executed with SP1, can also be successfully proved.                          |
-| reth       | sepolia | ✅                            | Most of the recent blocks can be executed with or without SP1 and proved with SP1                             | ✅                          | SP1 panicked in all attempts to prove blocks.                                                                 |
-| reth       | mainnet | ✅                            | Works reliably. Execution with SP1 works in most of the blocks, but with SP1 it works with ~8/10 success rate | ✅                          | Works reliably. Execution with SP1 works in most of the blocks, but with SP1 it works with ~8/10 success rate |
-| geth       | hoodi   | ✅                            | -                                                                                                             | 🔜                          | -                                                                                                             |
-| geth       | sepolia | 🔜                            | -                                                                                                             | 🔜                          | -                                                                                                             |
-| geth       | mainnet | 🔜                            | -                                                                                                             | 🔜                          | -                                                                                                             |
-| nethermind | hoodi   | 🏗️                            | Fails sometimes.                                                                                              | 🔜                          | -                                                                                                             |
-| nethermind | sepolia | 🔜                            | -                                                                                                             | 🔜                          | -                                                                                                             |
-| nethermind | mainnet | 🔜                            | -                                                                                                             | 🔜                          | -                                                                                                             |
-| ethrex     | hoodi   | ✅                            | -                                                                                                             | ✅                          | -                                                                                                             |
-| ethrex     | sepolia | ✅                            | -                                                                                                             | ✅                          | -                                                                                                             |
-| ethrex     | mainnet | ✅                            | Works reliably. Execution with SP1 works in most of the blocks, but with SP1 it works with ~8/10 success rate | ✅                          | Works reliably. Execution with SP1 works in most of the blocks, but with SP1 it works with ~8/10 success rate |
-| erigon     | hoodi   | 🔜                            | -                                                                                                             | 🔜                          | -                                                                                                             |
-| erigon     | sepolia | 🔜                            | -                                                                                                             | 🔜                          | -                                                                                                             |
-| erigon     | mainnet | 🔜                            | -                                                                                                             | 🔜                          | -                                                                                                             |
 
 ## Client Compatibility
 
-| Client     | `ethrex-replay execute block` | `ethrex-replay prove block` |
-| ---------- | ----------------------------- | --------------------------- |
-| reth       | ✅                            | ✅                          |
-| geth       | ✅                            | ✅                          |
-| nethermind | 🏗️                            | 🏗️                          |
-| ethrex     | ✅                            | ✅                          |
-| erigon     | 🔜                            | 🔜                          |
+| Client     | `ethrex-replay block`         | method                           |
+| ---------- | ----------------------------- | ------------------------------   |
+| reth       | ✅                            | debug_executionWitness (fast)    |
+| geth       | ✅                            | eth_getProof (slow)              |
+| nethermind | 🏗️                            |                                  |
+| ethrex     | ✅                            | debug_executionWitness (fast)    |
+| erigon     | 🔜                            |                                  |
+
+Disclaimer: Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using zkVMs (with the `--no-zkvm` flag) it should work for any block. Read more about this in [FAQ](./faq.md)
 
 ## Getting Started
 
 ### Dependencies
+
+These dependencies are optional, install them only if you want to run with the features `risc0` or `sp1` respectively. 
+Make sure to use the correct versions of these.
 
 #### [RISC0](https://dev.risczero.com/api/zkvm/install)
 
@@ -46,7 +30,7 @@ rzup install risc0-groth16
 rzup install rust
 ```
 
-#### [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
+#### [SP1](https://docs.succinct.xyz/docs/sp1/getting-started/install)
 
 ```sh
 curl -L https://sp1up.succinct.xyz | bash
@@ -240,11 +224,11 @@ TRACE_FILE=output.json TRACE_SAMPLE_RATE=1000 ethrex-replay <COMMAND> [ARGS]
 
 #### Execution without zkVMs
 
-We recommend building in release-with-debug mode so that the flamegraph is the most accurate.
+We recommend building in `release-with-debug` mode so that the flamegraph is the most accurate.
 
 ```bash
 cargo build -p ethrex-replay --profile release-with-debug
-samply record target/release-with-debug/ethrex-replay <COMMAND> [ARGS]
+samply record target/release-with-debug/ethrex-replay <COMMAND> --no-zkvm [OTHER_ARGS]
 ```
 
 ### Run Bytehound
@@ -265,6 +249,7 @@ LD_PRELOAD=/path/to/bytehound/preload/target/release/libbytehound.so:/path/to/li
 >
 > 1. The following requires [Jemalloc](https://github.com/jemalloc/jemalloc) and [Heaptrack](https://github.com/KDE/heaptrack) to be installed.
 > 2. The `ethrex-replay` binary must be built with the `jemalloc` feature enabled.
+> 3. Note that Heaptrack is a **Linux** profiler, so it won't work natively on macOS.
 
 ```
 LD_PRELOAD=/path/to/libjemalloc.so heaptrack ethrex-replay <COMMAND> [ARGS]
