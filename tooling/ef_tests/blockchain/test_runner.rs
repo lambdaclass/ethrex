@@ -243,7 +243,7 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
         ) | ("gas floor exceeds the gas limit", "Intrinsic gas too low")
             | ("empty blobs", "Type 3 transaction without blobs")
             | (
-                "blob versioned hashes not supported",
+                "Eip4844 is not supported",
                 "Type 3 transactions are not supported before the Cancun fork"
             )
             | ("blob version not supported", "Invalid blob versioned hash")
