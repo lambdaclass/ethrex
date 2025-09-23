@@ -1,7 +1,4 @@
-use ethrex_common::{
-    H256,
-    types::{BlockHash, BlockHeader, BlockNumber},
-};
+use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber};
 use ethrex_storage::{Store, error::StoreError};
 
 use crate::{
@@ -20,9 +17,9 @@ use crate::{
 /// If the fork choice state is applied correctly, the head block header is returned.
 pub async fn apply_fork_choice(
     store: &Store,
-    head_hash: H256,
-    safe_hash: H256,
-    finalized_hash: H256,
+    head_hash: BlockHash,
+    safe_hash: BlockHash,
+    finalized_hash: BlockHash,
 ) -> Result<BlockHeader, InvalidForkChoice> {
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);

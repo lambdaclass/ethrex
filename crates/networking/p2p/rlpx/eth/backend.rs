@@ -66,8 +66,8 @@ mod tests {
     use crate::rlpx::eth::eth68::status::StatusMessage68;
     use crate::rlpx::p2p::Capability;
     use ethrex_common::{
-        H256, U256,
-        types::{ForkId, Genesis},
+        U256,
+        types::{BlockHash, ForkId, Genesis},
     };
 
     use ethrex_storage::{EngineType, Store};
@@ -100,7 +100,7 @@ mod tests {
             eth_version: eth.version,
             network_id: 3503995874084926,
             total_difficulty,
-            block_hash: H256::random(),
+            block_hash: BlockHash::random(),
             genesis: genesis_hash,
             fork_id,
         };

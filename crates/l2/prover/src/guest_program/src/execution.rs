@@ -13,7 +13,7 @@ use ethrex_common::types::{
 use ethrex_common::{Address, U256};
 use ethrex_common::{
     H256,
-    types::{Block, BlockHeader},
+    types::{Block, BlockHash, BlockHeader},
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
@@ -240,7 +240,7 @@ struct StatelessResult {
     final_state_hash: H256,
     account_updates: HashMap<Address, AccountUpdate>,
     last_block_header: BlockHeader,
-    last_block_hash: H256,
+    last_block_hash: BlockHash,
     non_privileged_count: U256,
 
     // These fields are only used in L2 to validate state diff blobs.

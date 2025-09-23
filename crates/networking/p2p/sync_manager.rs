@@ -7,7 +7,7 @@ use std::{
 };
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::H256;
+use ethrex_common::types::BlockHash;
 use ethrex_storage::Store;
 use tokio::{
     sync::Mutex,
@@ -28,7 +28,7 @@ pub struct SyncManager {
     /// It is a READ_ONLY value, as modifications will disrupt the current active sync progress
     snap_enabled: Arc<AtomicBool>,
     syncer: Arc<Mutex<Syncer>>,
-    last_fcu_head: Arc<Mutex<H256>>,
+    last_fcu_head: Arc<Mutex<BlockHash>>,
     store: Store,
 }
 
@@ -52,7 +52,7 @@ impl SyncManager {
         let sync_manager = Self {
             snap_enabled,
             syncer,
-            last_fcu_head: Arc::new(Mutex::new(H256::zero())),
+            last_fcu_head: Arc::new(Mutex::new(BlockHash::zero())),
             store: store.clone(),
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
@@ -73,14 +73,14 @@ impl SyncManager {
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             syncer: Arc::new(Mutex::new(Syncer::dummy())),
-            last_fcu_head: Arc::new(Mutex::new(H256::zero())),
+            last_fcu_head: Arc::new(Mutex::new(BlockHash::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
                 .expect("Failed to start Storage Engine"),
         }
     }
 
     /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
-    pub fn sync_to_head(&self, fcu_head: H256) {
+    pub fn sync_to_head(&self, fcu_head: BlockHash) {
         self.set_head(fcu_head);
         if !self.is_active() {
             self.start_sync();
@@ -97,7 +97,7 @@ impl SyncManager {
     }
 
     /// Updates the last fcu head. This may be used on the next sync cycle if needed
-    fn set_head(&self, fcu_head: H256) {
+    fn set_head(&self, fcu_head: BlockHash) {
         if let Ok(mut latest_fcu_head) = self.last_fcu_head.try_lock() {
             *latest_fcu_head = fcu_head;
         } else {
@@ -154,7 +154,7 @@ impl SyncManager {
         });
     }
 
-    pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
+    pub fn get_last_fcu_head(&self) -> Result<BlockHash, tokio::sync::TryLockError> {
         Ok(*self.last_fcu_head.try_lock()?)
     }
 }

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcBlock {
-    pub hash: H256,
+    pub hash: BlockHash,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub size: u64,
     #[serde(flatten)]
@@ -30,7 +30,7 @@ pub enum BlockBodyWrapper {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
-    pub uncles: Vec<H256>,
+    pub uncles: Vec<BlockHash>,
     pub withdrawals: Vec<Withdrawal>,
 }
 
@@ -38,7 +38,7 @@ pub struct FullBlockBody {
 pub struct OnlyHashesBlockBody {
     // Only tx hashes
     pub transactions: Vec<H256>,
-    pub uncles: Vec<H256>,
+    pub uncles: Vec<BlockHash>,
     pub withdrawals: Vec<Withdrawal>,
 }
 
@@ -69,7 +69,7 @@ impl RpcBlock {
     pub fn build(
         header: BlockHeader,
         body: BlockBody,
-        hash: H256,
+        hash: BlockHash,
         full_transactions: bool,
     ) -> Result<RpcBlock, RpcErr> {
         let size = Block::new(header.clone(), body.clone())
@@ -135,7 +135,8 @@ mod test {
             parent_hash: H256::from_str(
                 "0x48e29e7357408113a4166e04e9f1aeff0680daa2b97ba93df6512a73ddf7a154",
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
             ommers_hash: H256::from_str(
                 "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
             )
@@ -171,7 +172,7 @@ mod test {
             ),
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
-            parent_beacon_block_root: Some(H256::zero()),
+            parent_beacon_block_root: Some(BlockHash::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };

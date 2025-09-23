@@ -59,7 +59,7 @@ pub struct UpdateBatch {
     /// Blocks to be added
     pub blocks: Vec<Block>,
     /// Receipts added per block
-    pub receipts: Vec<(H256, Vec<Receipt>)>,
+    pub receipts: Vec<(BlockHash, Vec<Receipt>)>,
     /// Code updates
     pub code_updates: Vec<(H256, Bytes)>,
 }
@@ -690,7 +690,10 @@ impl Store {
             .await
     }
 
-    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<Option<Block>, StoreError> {
+    pub async fn get_block_by_hash(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<Block>, StoreError> {
         self.engine.get_block_by_hash(block_hash).await
     }
 
@@ -1540,7 +1543,8 @@ mod tests {
             parent_hash: H256::from_str(
                 "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
             ommers_hash: H256::from_str(
                 "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
             )
@@ -1576,7 +1580,7 @@ mod tests {
             ),
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
-            parent_beacon_block_root: Some(H256::zero()),
+            parent_beacon_block_root: Some(BlockHash::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };
@@ -1590,7 +1594,7 @@ mod tests {
     }
 
     async fn test_store_block_number(store: Store) {
-        let block_hash = H256::random();
+        let block_hash = BlockHash::random();
         let block_number = 6;
 
         store
@@ -1605,7 +1609,7 @@ mod tests {
 
     async fn test_store_transaction_location(store: Store) {
         let transaction_hash = H256::random();
-        let block_hash = H256::random();
+        let block_hash = BlockHash::random();
         let block_number = 6;
         let index = 3;
 
@@ -1636,7 +1640,7 @@ mod tests {
     async fn test_store_transaction_location_not_canonical(store: Store) {
         let transaction_hash = H256::random();
         let block_header = BlockHeader::default();
-        let random_hash = H256::random();
+        let random_hash = BlockHash::random();
         let block_number = 6;
         let index = 3;
 

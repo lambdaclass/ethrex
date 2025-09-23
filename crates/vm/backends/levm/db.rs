@@ -1,6 +1,6 @@
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
-use ethrex_common::types::AccountInfo;
+use ethrex_common::types::{AccountInfo, BlockHash};
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct DatabaseLogger {
-    pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
+    pub block_hashes_accessed: Arc<Mutex<HashMap<u64, BlockHash>>>,
     pub state_accessed: Arc<Mutex<HashMap<CoreAddress, Vec<CoreH256>>>>,
     pub code_accessed: Arc<Mutex<Vec<CoreH256>>>,
     // TODO: Refactor this
@@ -63,7 +63,7 @@ impl LevmDatabase for DatabaseLogger {
             .get_storage_value(address, key)
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
+    fn get_block_hash(&self, block_number: u64) -> Result<BlockHash, DatabaseError> {
         let block_hash = self
             .store
             .lock()
@@ -121,7 +121,7 @@ impl LevmDatabase for DynVmDatabase {
         )
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
+    fn get_block_hash(&self, block_number: u64) -> Result<BlockHash, DatabaseError> {
         <dyn VmDatabase>::get_block_hash(self.as_ref(), block_number)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }

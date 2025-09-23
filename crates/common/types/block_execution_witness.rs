@@ -6,7 +6,7 @@ use crate::types::Block;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    types::{AccountInfo, AccountState, AccountUpdate, BlockHash, BlockHeader, ChainConfig},
     utils::decode_hex,
 };
 use bytes::Bytes;
@@ -397,7 +397,7 @@ impl GuestProgramState {
 
     /// Fetches the block hash for a specific block number.
     /// Looks up `self.block_headers` and computes the hash if it is not already computed.
-    pub fn get_block_hash(&self, block_number: u64) -> Result<H256, GuestProgramStateError> {
+    pub fn get_block_hash(&self, block_number: u64) -> Result<BlockHash, GuestProgramStateError> {
         self.block_headers
             .get(&block_number)
             .map(|header| header.hash())

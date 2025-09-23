@@ -140,7 +140,7 @@ impl Syncer {
     /// If the sync fails, no error will be returned but a warning will be emitted
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
-    pub async fn start_sync(&mut self, sync_head: H256, store: Store) {
+    pub async fn start_sync(&mut self, sync_head: BlockHash, store: Store) {
         let start_time = Instant::now();
         match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
@@ -157,7 +157,7 @@ impl Syncer {
     }
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
-    async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+    async fn sync_cycle(&mut self, sync_head: BlockHash, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
             METRICS.enable().await;
@@ -170,7 +170,11 @@ impl Syncer {
     }
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
-    async fn sync_cycle_snap(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+    async fn sync_cycle_snap(
+        &mut self,
+        sync_head: BlockHash,
+        store: Store,
+    ) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         let mut sync_mode = SyncMode::Snap;
         // Request all block headers between the current head and the sync head
@@ -321,7 +325,11 @@ impl Syncer {
     /// # Returns
     ///
     /// Returns an error if the sync fails at any given step and aborts all active processes
-    async fn sync_cycle_full(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+    async fn sync_cycle_full(
+        &mut self,
+        sync_head: BlockHash,
+        store: Store,
+    ) -> Result<(), SyncError> {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
@@ -438,7 +446,7 @@ impl Syncer {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
-            let mut last_valid_hash = H256::default();
+            let mut last_valid_hash = BlockHash::default();
             for block in blocks {
                 blockchain.add_block(&block).await.map_err(|e| {
                     (
@@ -519,7 +527,7 @@ pub enum BlockSyncState {
 /// Persisted State during the Block Sync phase for SnapSync
 #[derive(Clone)]
 pub struct SnapBlockSyncState {
-    block_hashes: Vec<H256>,
+    block_hashes: Vec<BlockHash>,
     store: Store,
 }
 
@@ -540,7 +548,7 @@ impl BlockSyncState {
     }
 
     /// Obtain the current head from where to start or resume block sync
-    async fn get_current_head(&self) -> Result<H256, SyncError> {
+    async fn get_current_head(&self) -> Result<BlockHash, SyncError> {
         match self {
             BlockSyncState::Full(state) => state.get_current_head().await,
             BlockSyncState::Snap(state) => state.get_current_head().await,
@@ -568,7 +576,7 @@ impl FullBlockSyncState {
     }
 
     /// Obtain the current head from where to start or resume block sync
-    async fn get_current_head(&self) -> Result<H256, SyncError> {
+    async fn get_current_head(&self) -> Result<BlockHash, SyncError> {
         self.store
             .get_latest_canonical_block_hash()
             .await?
@@ -584,7 +592,7 @@ impl FullBlockSyncState {
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
-        sync_head: H256,
+        sync_head: BlockHash,
         sync_head_found_in_block_headers: bool,
         blockchain: Arc<Blockchain>,
         mut peers: PeerHandler,
@@ -685,7 +693,7 @@ impl FullBlockSyncState {
                 warn!("Failed to add block during FullSync: {err}");
                 // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
                 if let ChainError::InvalidBlock(_) = err {
-                    let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
+                    let mut block_hashes_with_invalid_ancestor: Vec<BlockHash> = vec![];
                     if let Some(index) = block_batch_hashes
                         .iter()
                         .position(|x| x == &batch_failure.failed_block_hash)
@@ -749,7 +757,7 @@ impl SnapBlockSyncState {
     }
 
     /// Obtain the current head from where to start or resume block sync
-    async fn get_current_head(&self) -> Result<H256, SyncError> {
+    async fn get_current_head(&self) -> Result<BlockHash, SyncError> {
         if let Some(head) = self.store.get_header_download_checkpoint().await? {
             Ok(head)
         } else {
@@ -1236,7 +1244,7 @@ fn compute_storage_roots(
     store: Store,
     account_hash: H256,
     key_value_pairs: Vec<(H256, U256)>,
-    pivot_hash: H256,
+    pivot_hash: BlockHash,
 ) -> Result<StorageRoots, SyncError> {
     let account_storage_root = match maybe_big_account_storage_state_roots
         .lock()
@@ -1370,7 +1378,7 @@ pub enum SyncError {
     #[error("Range received is invalid")]
     InvalidRangeReceived,
     #[error("Failed to fetch block number for head {0}")]
-    BlockNumber(H256),
+    BlockNumber(BlockHash),
     #[error("No blocks found")]
     NoBlocks,
     #[error("Failed to read snapshot from {0:?} with error {1:?}")]
@@ -1380,7 +1388,7 @@ pub enum SyncError {
     #[error("Failed to RLP decode code_hashes_snapshot from {0:?}")]
     CodeHashesSnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
-    AccountState(H256, H256),
+    AccountState(BlockHash, H256),
     #[error("Failed to acquire lock on maybe_big_account_storage")]
     MaybeBigAccount,
     #[error("Failed to fetch bytecodes from peers")]

@@ -20,7 +20,7 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlobsBundle, Block, GenericTransaction, TxKind, TxType},
+    types::{BlobsBundle, Block, BlockHash, GenericTransaction, TxKind, TxType},
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -414,7 +414,10 @@ impl EthClient {
         }
     }
 
-    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<RpcBlock, EthClientError> {
+    pub async fn get_block_by_hash(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<RpcBlock, EthClientError> {
         let params = Some(vec![json!(block_hash), json!(true)]);
         let request = RpcRequest::new("eth_getBlockByHash", params);
 
@@ -717,7 +720,7 @@ pub struct GetTransactionByHashTransaction {
     #[serde(default)]
     pub block_number: U256,
     #[serde(default)]
-    pub block_hash: H256,
+    pub block_hash: BlockHash,
     #[serde(default)]
     pub from: Address,
     #[serde(default)]

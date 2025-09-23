@@ -7,6 +7,7 @@ edition = "2024"
 
 [dependencies]
 ethrex-rpc.workspace = true
+ethrex-common.workspace = true
 
 tokio.workspace = true
 tracing.workspace = true

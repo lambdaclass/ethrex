@@ -81,7 +81,7 @@ pub struct BuildPayloadArgs {
     pub fee_recipient: Address,
     pub random: H256,
     pub withdrawals: Option<Vec<Withdrawal>>,
-    pub beacon_root: Option<H256>,
+    pub beacon_root: Option<BlockHash>,
     pub version: u8,
     pub elasticity_multiplier: u64,
     pub gas_ceil: u64,
@@ -97,7 +97,7 @@ impl BuildPayloadArgs {
     /// Computes an 8-byte identifier by hashing the components of the payload arguments.
     pub fn id(&self) -> Result<u64, BuildPayloadArgsError> {
         let mut hasher = Keccak256::new();
-        hasher.update(self.parent);
+        hasher.update(self.parent.as_bytes());
         hasher.update(self.timestamp.to_be_bytes());
         hasher.update(self.random);
         hasher.update(self.fee_recipient);
@@ -105,7 +105,7 @@ impl BuildPayloadArgs {
             hasher.update(withdrawals.encode_to_vec());
         }
         if let Some(beacon_root) = self.beacon_root {
-            hasher.update(beacon_root);
+            hasher.update(beacon_root.as_bytes());
         }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;

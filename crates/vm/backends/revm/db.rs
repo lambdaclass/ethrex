@@ -88,7 +88,7 @@ impl revm::Database for DynVmDatabase {
 
     fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
         <dyn VmDatabase>::get_block_hash(self.as_ref(), number)
-            .map(|hash| RevmB256::from_slice(&hash.0))
+            .map(|hash| RevmB256::from_slice(hash.as_bytes()))
     }
 }
 
@@ -131,6 +131,6 @@ impl revm::DatabaseRef for DynVmDatabase {
 
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
         <dyn VmDatabase>::get_block_hash(self.as_ref(), number)
-            .map(|hash| RevmB256::from_slice(&hash.0))
+            .map(|hash| RevmB256::from_slice(hash.as_bytes()))
     }
 }

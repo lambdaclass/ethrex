@@ -12,7 +12,7 @@ use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
+        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockHash, BlockNumber,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
     },
 };
@@ -543,7 +543,7 @@ impl L1Committer {
             Value::FixedBytes(batch.state_root.0.to_vec().into()),
             Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
             Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
-            Value::FixedBytes(last_block_hash.0.to_vec().into()),
+            Value::FixedBytes(last_block_hash.as_bytes().to_vec().into()),
         ];
 
         let (commit_function_signature, values) = if self.based {
@@ -794,7 +794,7 @@ pub fn generate_blobs_bundle(
 fn get_last_block_hash(
     store: &Store,
     last_block_number: BlockNumber,
-) -> Result<H256, CommitterError> {
+) -> Result<BlockHash, CommitterError> {
     store
         .get_block_header(last_block_number)?
         .map(|header| header.hash())
