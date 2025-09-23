@@ -443,32 +443,6 @@ impl ChainConfig {
         }
     }
 
-    #[allow(
-        clippy::unwrap_used,
-        reason = "if a fork is activated its time should be Some(value)"
-    )]
-    pub fn get_current_fork_activation_timestamp(&self, block_timestamp: u64) -> u64 {
-        if self.is_bpo5_activated(block_timestamp) {
-            self.bpo5_time.unwrap()
-        } else if self.is_bpo4_activated(block_timestamp) {
-            self.bpo4_time.unwrap()
-        } else if self.is_bpo3_activated(block_timestamp) {
-            self.bpo3_time.unwrap()
-        } else if self.is_bpo2_activated(block_timestamp) {
-            self.bpo2_time.unwrap()
-        } else if self.is_bpo1_activated(block_timestamp) {
-            self.bpo1_time.unwrap()
-        } else if self.is_osaka_activated(block_timestamp) {
-            self.osaka_time.unwrap()
-        } else if self.is_prague_activated(block_timestamp) {
-            self.prague_time.unwrap()
-        } else if self.is_cancun_activated(block_timestamp) {
-            self.cancun_time.unwrap()
-        } else {
-            0
-        }
-    }
-
     pub fn fork(&self, block_timestamp: u64) -> Fork {
         self.get_fork(block_timestamp)
     }
