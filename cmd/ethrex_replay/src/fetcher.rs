@@ -73,7 +73,8 @@ pub async fn get_blockdata(
         .wrap_err("Failed to convert from rpc block to block")?;
 
     let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
+        warn!("SystemTime::elapsed failed: {e}, using zero duration for metrics");
+        Duration::ZERO
     });
 
     debug!(
@@ -135,7 +136,8 @@ pub async fn get_blockdata(
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
         .elapsed()
         .unwrap_or_else(|e| {
-            panic!("SystemTime::elapsed failed: {e}");
+            warn!("SystemTime::elapsed failed: {e}, using zero duration for metrics");
+            Duration::ZERO
         });
 
     debug!(
@@ -180,7 +182,8 @@ async fn fetch_rangedata_from_client(
     }
 
     let block_retrieval_duration = block_retrieval_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
+        warn!("SystemTime::elapsed failed: {e}, using zero duration for metrics");
+        Duration::ZERO
     });
 
     info!(
@@ -204,7 +207,8 @@ async fn fetch_rangedata_from_client(
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
         .elapsed()
         .unwrap_or_else(|e| {
-            panic!("SystemTime::elapsed failed: {e}");
+            warn!("SystemTime::elapsed failed: {e}, using zero duration for metrics");
+            Duration::ZERO
         });
 
     info!(

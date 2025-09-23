@@ -11,6 +11,7 @@ use ethrex_rpc::{EthClient, clients::EthClientError, types::block_identifier::Bl
 use futures::future::select_all;
 use reqwest::Url;
 use tokio::task::{JoinError, JoinHandle};
+use tracing::warn;
 
 #[derive(Parser)]
 #[clap(group = clap::ArgGroup::new("rpc_urls").multiple(true).required(true))]
@@ -260,7 +261,8 @@ async fn replay_proving(
             .await?;
         }
         let elapsed = start.elapsed().unwrap_or_else(|e| {
-            panic!("SystemTime::elapsed failed: {e}");
+            warn!("SystemTime::elapsed failed: {e}, using zero duration for timing");
+            Duration::ZERO
         });
 
         // Wait at most 12 seconds for executing the next block.
@@ -333,7 +335,8 @@ async fn replay_latest_block(
     };
 
     let elapsed = start.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
+        warn!("SystemTime::elapsed failed: {e}, using zero duration for reporting");
+        Duration::ZERO
     });
 
     let block_run_report = BlockRunReport::new_for(
