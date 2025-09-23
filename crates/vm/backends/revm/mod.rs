@@ -567,7 +567,7 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),
-        tx_type: infer_generic_tx_type(&tx) as u8,
+        tx_type: infer_generic_tx_type(tx) as u8,
     }
 }
 

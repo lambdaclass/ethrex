@@ -17,7 +17,7 @@ use ethrex_levm::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{
-    DynVmDatabase, EvmError,
+    EvmError, VmDatabase,
     backends::{
         self,
         revm::{db::EvmState, helpers::fork_to_spec_id},
@@ -28,9 +28,9 @@ pub use revm::primitives::{
     Address as RevmAddress, TxKind as RevmTxKind, U256 as RevmU256, hardfork::SpecId,
 };
 use revm::{
-    ExecuteCommitEvm, MainBuilder, MainContext,
+    Context, ExecuteCommitEvm, Journal, MainBuilder, MainContext,
     context::{
-        BlockEnv as RevmBlockEnv, ContextTr, Evm as Revm, TxEnv as RevmTxEnv, either::Either,
+        BlockEnv as RevmBlockEnv, CfgEnv, Evm as Revm, TxEnv as RevmTxEnv, either::Either,
         transaction::AccessList,
     },
     context_interface::{
@@ -39,7 +39,9 @@ use revm::{
         transaction::{AccessListItem, Authorization, SignedAuthorization},
     },
     database::State,
+    handler::{EthFrame, EthPrecompiles, instructions::EthInstructions},
     inspector::inspectors::TracerEip3155 as RevmTracerEip3155,
+    interpreter::interpreter::EthInterpreter,
     primitives::B256,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -168,12 +170,39 @@ pub async fn re_run_failed_ef_test_tx(
     Ok(())
 }
 
-pub fn prepare_revm_for_tx<'state, I, P, F>(
+pub fn prepare_revm_for_tx<'state>(
     initial_state: &'state mut EvmState,
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<(Revm<RevmBlockEnv, RevmTracerEip3155, I, P, F>, RevmTxEnv), EFTestRunnerError> {
+) -> Result<
+    (
+        Revm<
+            Context<
+                RevmBlockEnv,
+                RevmTxEnv,
+                CfgEnv,
+                &'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>,
+                Journal<&'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>>,
+            >,
+            RevmTracerEip3155,
+            EthInstructions<
+                EthInterpreter,
+                revm::Context<
+                    RevmBlockEnv,
+                    RevmTxEnv,
+                    CfgEnv,
+                    &'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>,
+                    Journal<&'state mut State<Box<(dyn VmDatabase + Send + Sync + 'static)>>>,
+                >,
+            >,
+            EthPrecompiles,
+            EthFrame,
+        >,
+        RevmTxEnv,
+    ),
+    EFTestRunnerError,
+> {
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
@@ -294,7 +323,7 @@ pub fn prepare_revm_for_tx<'state, I, P, F>(
         cfg.spec = fork_to_spec_id(*fork);
         cfg.chain_id = chain_spec.chain_id;
     });
-    let mut evm = evm_context.build_mainnet_with_inspector(
+    let evm = evm_context.build_mainnet_with_inspector(
         RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
     );
     Ok((evm, tx_env))
