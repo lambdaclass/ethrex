@@ -36,11 +36,11 @@ interface IOnChainProposer {
 
     /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
     /// @param new_vk new verification key for SP1 verifier
-    function upgradeSP1VerificationKey(bytes32 new_vk) public;
+    function upgradeSP1VerificationKey(bytes32 new_vk) external;
 
     /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
     /// @param new_vk new verification key for RISC0 verifier
-    function upgradeRISC0VerificationKey(bytes32 new_vk) public;
+    function upgradeRISC0VerificationKey(bytes32 new_vk) external;
 
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
