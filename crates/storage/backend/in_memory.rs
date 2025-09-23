@@ -127,7 +127,6 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
         let table_data = db.get(table).cloned().unwrap_or_default();
         let prefix_vec = prefix.to_vec();
 
-        // Colectar resultados inmediatamente
         let results: Vec<PrefixResult> = table_data
             .into_iter()
             .filter(|(key, _)| key.starts_with(&prefix_vec))
