@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::l2::batch::RpcBatch;
 use ethrex_l2_common::l1_messages::L1MessageProof;
 use ethrex_rpc::{
@@ -9,17 +11,23 @@ use ethrex_rpc::{
             errors::{GetBatchByNumberError, GetMessageProofError},
         },
     },
-    utils::RpcRequest,
+    utils::{RpcRequest, RpcRequestId},
 };
 use keccak_hash::H256;
 use serde_json::json;
+
+static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub async fn get_message_proof(
     client: &EthClient,
     transaction_hash: H256,
 ) -> Result<Option<Vec<L1MessageProof>>, EthClientError> {
     let params = Some(vec![json!(format!("{:#x}", transaction_hash))]);
-    let request = RpcRequest::new("ethrex_getMessageProof", params);
+    let request = RpcRequest::new(
+        RpcRequestId::Number(REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)),
+        "ethrex_getMessageProof",
+        params,
+    );
 
     match client.send_request(request).await? {
         RpcResponse::Success(result) => serde_json::from_value(result.result)
@@ -36,7 +44,11 @@ pub async fn get_batch_by_number(
     batch_number: u64,
 ) -> Result<RpcBatch, EthClientError> {
     let params = Some(vec![json!(format!("{batch_number:#x}")), json!(true)]);
-    let request = RpcRequest::new("ethrex_getBatchByNumber", params);
+    let request = RpcRequest::new(
+        RpcRequestId::Number(REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)),
+        "ethrex_getBatchByNumber",
+        params,
+    );
 
     match client.send_request(request).await? {
         RpcResponse::Success(result) => serde_json::from_value(result.result)

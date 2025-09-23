@@ -115,7 +115,6 @@ impl Decoder for RLPxCodec {
         frame_header.copy_from_slice(&src[..RLPX_HEADER_SIZE]);
 
         // Both are padded to the block's size (16 bytes)
-        let (header_ciphertext, header_mac) = frame_header.split_at_mut(AES_BLOCK_SIZE);
         let (header_ciphertext, header_mac) =
             frame_header.split_at_mut_checked(16).ok_or_else(|| {
                 RLPxError::CryptographyError("Invalid frame header length".to_owned())
@@ -124,8 +123,6 @@ impl Decoder for RLPxCodec {
         // Validate MAC header
         // header-mac-seed = aes(mac-secret, keccak256.digest(egress-mac)[:16]) ^ header-ciphertext
         let header_mac_seed = {
-            let mac_digest: [u8; RLPX_MAC_SIZE] = self.ingress_mac.clone().finalize()
-                [..RLPX_MAC_SIZE]
             let mac_digest: [u8; 16] = self
                 .ingress_mac
                 .clone()
@@ -150,7 +147,6 @@ impl Decoder for RLPxCodec {
 
         // header-mac = keccak256.digest(egress-mac)[:16]
         let expected_header_mac = H128(
-            temp_ingress_mac.clone().finalize()[..RLPX_MAC_SIZE]
             temp_ingress_mac
                 .clone()
                 .finalize()
@@ -203,7 +199,6 @@ impl Decoder for RLPxCodec {
 
         // Use advance to modify src such that it no longer contains
         // this frame.
-        let mut frame_data = src[RLPX_HEADER_SIZE..total_message_size].to_vec();
         let mut frame_data = src
             .get(32..total_message_size)
             .ok_or_else(|| RLPxError::CryptographyError("Invalid frame data length".to_owned()))?
@@ -224,8 +219,6 @@ impl Decoder for RLPxCodec {
         // check MAC
         self.ingress_mac.update(&frame_ciphertext);
         let frame_mac_seed = {
-            let mac_digest: [u8; RLPX_MAC_SIZE] = self.ingress_mac.clone().finalize()
-                [..RLPX_MAC_SIZE]
             let mac_digest: [u8; 16] = self
                 .ingress_mac
                 .clone()
@@ -240,16 +233,12 @@ impl Decoder for RLPxCodec {
         };
         self.ingress_mac.update(frame_mac_seed);
 
-        let expected_frame_mac: [u8; RLPX_MAC_SIZE] = self.ingress_mac.clone().finalize()
-            [..RLPX_MAC_SIZE]
-
         let expected_frame_mac: [u8; 16] = self
             .ingress_mac
             .clone()
             .finalize()
             .get(..16)
             .ok_or_else(|| RLPxError::CryptographyError("Invalid frame mac".to_owned()))?
-
             .try_into()
             .map_err(|_| RLPxError::CryptographyError("Invalid frame mac".to_owned()))?;
 
@@ -330,10 +319,6 @@ impl Encoder<rlpx::Message> for RLPxCodec {
         self.egress_aes
             .apply_keystream(&mut header[..AES_BLOCK_SIZE]);
 
-        let header_mac_seed = {
-            let mac_digest: [u8; RLPX_MAC_SIZE] = self.egress_mac.clone().finalize()
-                [..RLPX_MAC_SIZE]
-
         header.resize(16, 0);
         self.egress_aes.try_apply_keystream(
             header
@@ -348,20 +333,10 @@ impl Encoder<rlpx::Message> for RLPxCodec {
                 .finalize()
                 .get(..16)
                 .ok_or_else(|| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?
-
                 .try_into()
                 .map_err(|_| RLPxError::CryptographyError("Invalid mac digest".to_owned()))?;
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
-
-            H128(seed.into())
-                ^ H128(header[..AES_BLOCK_SIZE].try_into().map_err(|_| {
-                    RLPxError::CryptographyError("Invalid header length".to_owned())
-                })?)
-        };
-        self.egress_mac.update(header_mac_seed);
-        let header_mac = self.egress_mac.clone().finalize();
-        header.extend_from_slice(&header_mac[..RLPX_MAC_SIZE]);
 
             let header_data = header
                 .get(..16)
@@ -381,8 +356,6 @@ impl Encoder<rlpx::Message> for RLPxCodec {
         buffer.extend_from_slice(&header);
 
         // Pad to next multiple of 16
-        frame_data.resize(frame_data.len().next_multiple_of(AES_BLOCK_SIZE), 0);
-        self.egress_aes.apply_keystream(&mut frame_data);
         frame_data.resize(frame_data.len().next_multiple_of(16), 0);
         self.egress_aes.try_apply_keystream(&mut frame_data)?;
         let frame_ciphertext = frame_data;
@@ -395,8 +368,6 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 
         // frame-mac-seed = aes(mac-secret, keccak256.digest(egress-mac)[:16]) ^ keccak256.digest(egress-mac)[:16]
         let frame_mac_seed = {
-            let mac_digest: [u8; RLPX_MAC_SIZE] = self.egress_mac.clone().finalize()
-                [..RLPX_MAC_SIZE]
             let mac_digest: [u8; 16] = self
                 .egress_mac
                 .clone()

@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use crate::{
     clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
@@ -7,7 +7,7 @@ use crate::{
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
-        block_identifier::BlockIdentifier,
+        block_identifier::{BlockIdentifier, BlockTag},
         receipt::{RpcLog, RpcReceipt},
     },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
@@ -21,10 +21,21 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlobsBundle, Block, GenericTransaction, TxKind, TxType},
+    types::{AccessListEntry, BlobsBundle, Block, GenericTransaction, TxKind, TxType},
     utils::decode_hex,
 };
+#[cfg(feature = "ethrex-l2-common")]
+use ethrex_l2_common::l1_messages::L1MessageProof;
+
+// L2-specific imports and type aliases
+#[cfg(feature = "ethrex-l2-common")]
+use ethrex_l2_rpc::l2::batch::RpcBatch;
+#[cfg(not(feature = "ethrex-l2-common"))]
+pub type RpcBatch = ();
+#[cfg(not(feature = "ethrex-l2-common"))]
+pub type L1MessageProof = ();
 use ethrex_rlp::decode::RLPDecode;
+use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -487,14 +498,12 @@ impl EthClient {
         block: BlockIdentifier,
         hydrated: bool,
     ) -> Result<RpcBlock, EthClientError> {
-        let params = Some(vec![block.into(), json!(false)]); // With false it just returns the hash of the transactions.
+        let params = Some(vec![block.into(), json!(hydrated)]);
         let request = RpcRequest::new(
             RpcRequestId::Number(REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)),
             "eth_getBlockByNumber",
             params,
         );
-        let params = Some(vec![block.into(), json!(hydrated)]);
-        let request = RpcRequest::new("eth_getBlockByNumber", params);
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
@@ -962,6 +971,7 @@ impl EthClient {
         ))
     }
 
+    #[cfg(feature = "ethrex-l2-common")]
     pub async fn get_message_proof(
         &self,
         transaction_hash: H256,
@@ -984,6 +994,7 @@ impl EthClient {
         }
     }
 
+    #[cfg(feature = "ethrex-l2-common")]
     pub async fn wait_for_message_proof(
         &self,
         transaction_hash: H256,
@@ -1010,8 +1021,8 @@ impl EthClient {
         message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
     }
 
-    /// Fethches the execution witnes for a given block or range of blocks.
-    /// WARNNING: This method is only compatible with ethrex and not with other debug_executionWitness implementations.
+    /// Fetches the execution witness for a given block or range of blocks.
+    /// WARNING: This method is only compatible with ethrex and not with other debug_executionWitness implementations.
     pub async fn get_witness(
         &self,
         from: BlockIdentifier,
@@ -1056,7 +1067,9 @@ impl EthClient {
         }
     }
 
+    #[cfg(feature = "ethrex-l2-common")]
     pub async fn get_batch_by_number(&self, batch_number: u64) -> Result<RpcBatch, EthClientError> {
+        use errors::GetBatchByNumberError;
         let params = Some(vec![json!(format!("{batch_number:#x}")), json!(true)]);
         let request = RpcRequest::new(
             RpcRequestId::Number(REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)),
@@ -1071,12 +1084,19 @@ impl EthClient {
             RpcResponse::Error(error_response) => {
                 Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
             }
-    /// Smoke test the all the urls by calling eth_blockNumber
+        }
+    }
+
+    /// Smoke test all the urls by calling eth_blockNumber
     pub async fn test_urls(&self) -> BTreeMap<String, serde_json::Value> {
         let mut map = BTreeMap::new();
         for url in self.urls.iter() {
             let response = match self
-                .send_request_to_url(url, &RpcRequest::new("eth_blockNumber", None))
+                .send_request_to_url(url, &RpcRequest::new(
+                    RpcRequestId::Number(1),
+                    "eth_blockNumber", 
+                    None
+                ))
                 .await
             {
                 Ok(RpcResponse::Success(ok)) => serde_json::to_value(ok).unwrap_or_else(|e| {
@@ -1091,6 +1111,47 @@ impl EthClient {
         }
         map
     }
+
+    /// Helper function to get max fee per gas from override or fetch from network
+    async fn get_fee_from_override_or_get_gas_price(
+        &self,
+        override_fee: Option<u64>,
+    ) -> Result<u64, EthClientError> {
+        if let Some(fee) = override_fee {
+            Ok(fee)
+        } else {
+            Ok(self.get_gas_price().await?.try_into().map_err(|_| {
+                EthClientError::Custom("Failed to convert gas price to u64".to_owned())
+            })?)
+        }
+    }
+
+    /// Helper function to get priority fee from override or fetch from network
+    async fn priority_fee_from_override_or_rpc(
+        &self,
+        override_fee: Option<u64>,
+    ) -> Result<u64, EthClientError> {
+        if let Some(fee) = override_fee {
+            Ok(fee)
+        } else {
+            Ok(self.get_max_priority_fee().await?.try_into().map_err(|_| {
+                EthClientError::Custom("Failed to convert priority fee to u64".to_owned())
+            })?)
+        }
+    }
+}
+
+/// Helper function to convert hex string to U256
+fn from_hex_string_to_u256(hex_string: &str) -> Result<U256, EthClientError> {
+    let hex_str = hex_string.strip_prefix("0x").unwrap_or(hex_string);
+    U256::from_str_radix(hex_str, 16)
+        .map_err(|_| EthClientError::Custom("Failed to parse hex string to U256".to_owned()))
+}
+
+/// Helper function to add blobs to a generic transaction
+fn add_blobs_to_generic_tx(tx: &mut GenericTransaction, blobs_bundle: &BlobsBundle) {
+    tx.blobs = blobs_bundle.blobs.iter().map(|blob| Bytes::copy_from_slice(blob)).collect();
+    tx.blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 }
 
 #[derive(Serialize, Deserialize, Debug)]
