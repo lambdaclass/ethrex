@@ -82,54 +82,60 @@ pub fn calculate_create2_address(
 #[derive(Debug)]
 pub struct JumpTargetFilter {
     bytecode: Bytes,
-    jumpdests: BitVec<u8, Msb0>,
+    jumpdests: Option<BitVec<u8, Msb0>>,
 }
 
 impl JumpTargetFilter {
     /// Create an empty `JumpTargetFilter`.
     pub fn new(bytecode: Bytes) -> Self {
-        let mut this = Self {
+        Self {
             bytecode,
-            jumpdests: bitvec![u8, Msb0; 0; 0],
-        };
-
-        this.precompute();
-
-        this
+            jumpdests: None,
+        }
     }
 
+    /// Check whether a target jump address is blacklisted or not.
+    ///
+    /// Builds the jumpdest table on the first call, and caches it for future calls.
     #[expect(
         clippy::as_conversions,
         clippy::arithmetic_side_effects,
         clippy::indexing_slicing
     )]
-    pub fn precompute(&mut self) {
-        let code = &self.bytecode;
-        let len = code.len();
-        self.jumpdests = bitvec![u8, Msb0; 0; len]; // All false, size = len
+    pub fn is_blacklisted(&mut self, address: usize) -> bool {
+        match self.jumpdests {
+            // Already built the jumpdest table, just check it
+            Some(ref jumpdests) => address >= jumpdests.len() || !jumpdests[address],
+            // First time we are called, need to build the jumpdest table
+            None => {
+                let code = &self.bytecode;
+                let len = code.len();
+                let mut jumpdests = bitvec![u8, Msb0; 0; len]; // All false, size = len
 
-        let mut i = 0;
-        while i < len {
-            if self.jumpdests.len() < i + 1 {
-                self.jumpdests.resize(i + 1, false); // Rare, if len changes
-            }
+                let mut i = 0;
+                while i < len {
+                    if jumpdests.len() < i + 1 {
+                        jumpdests.resize(i + 1, false); // Rare, if len changes
+                    }
 
-            let opcode = Opcode::from(code[i]);
-            if opcode == Opcode::JUMPDEST {
-                self.jumpdests.set(i, true);
-            } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&opcode) {
-                // PUSH1 (0x60) to PUSH32 (0x7f): skip 1 to 32 bytes
-                let skip = opcode as usize - Opcode::PUSH0 as usize;
-                i += skip; // Advance past data bytes
+                    let opcode = Opcode::from(code[i]);
+                    if opcode == Opcode::JUMPDEST {
+                        jumpdests.set(i, true);
+                    } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&opcode) {
+                        // PUSH1 (0x60) to PUSH32 (0x7f): skip 1 to 32 bytes
+                        let skip = opcode as usize - Opcode::PUSH0 as usize;
+                        i += skip; // Advance past data bytes
+                    }
+                    i += 1;
+                }
+
+                let is_blacklisted = address >= jumpdests.len() || !jumpdests[address];
+
+                self.jumpdests = Some(jumpdests);
+
+                is_blacklisted
             }
-            i += 1;
         }
-    }
-
-    /// Check whether a target jump address is blacklisted or not.
-    #[expect(clippy::indexing_slicing)]
-    pub fn is_blacklisted(&self, address: usize) -> bool {
-        address >= self.bytecode.len() || !self.jumpdests[address]
     }
 }
 
