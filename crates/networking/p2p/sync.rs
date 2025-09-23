@@ -854,7 +854,8 @@ impl Syncer {
         std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
 
         // Create collector to store code hashes in files
-        let mut code_hash_collector = CodeHashCollector::new(code_hashes_snapshot_dir.clone());
+        let mut code_hash_collector: CodeHashCollector =
+            CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -884,7 +885,8 @@ impl Syncer {
                         store.clone(),
                         &mut storage_accounts,
                         &account_state_snapshots_dir,
-                        &get_rocksdb_temp_accounts_dir(&self.datadir)
+                        &get_rocksdb_temp_accounts_dir(&self.datadir),
+                        &mut code_hash_collector,
                     ).await?;
                     let accounts_with_storage: BTreeSet<H256> = BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().into_iter().map(|k| *k));
                 } else {
@@ -892,6 +894,7 @@ impl Syncer {
                         store.clone(),
                         &mut storage_accounts,
                         &account_state_snapshots_dir,
+                        &mut code_hash_collector,
                     ).await?;
                 }
             }
@@ -1433,6 +1436,7 @@ async fn insert_accounts_into_db(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
+    code_hash_collector: &mut CodeHashCollector,
 ) -> Result<H256, SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
     for entry in std::fs::read_dir(account_state_snapshots_dir)
@@ -1453,6 +1457,17 @@ async fn insert_accounts_into_db(
                 (state.storage_root != *EMPTY_TRIE_HASH).then_some((*hash, state.storage_root))
             }),
         );
+
+        // Collect valid code hashes from current account snapshot
+        let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
+            .iter()
+            .filter_map(|(_, state)| {
+                (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
+            })
+            .collect();
+
+        code_hash_collector.extend(code_hashes_from_snapshot);
+        code_hash_collector.flush_if_needed().await?;
 
         info!("Inserting accounts into the state trie");
 
@@ -1539,6 +1554,7 @@ async fn insert_accounts_into_rocksdb(
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
     temp_db_dir: &Path,
+    code_hash_collector: &mut CodeHashCollector,
 ) -> Result<H256, SyncError> {
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
@@ -1570,6 +1586,10 @@ async fn insert_accounts_into_rocksdb(
                     storage_accounts
                         .accounts_with_storage_root
                         .insert(H256::from_slice(k), account_state.storage_root);
+                }
+                if account_state.code_hash != *EMPTY_KECCACK_HASH {
+                    code_hash_collector.add(account_state.code_hash);
+                    code_hash_collector.flush_if_needed();
                 }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
