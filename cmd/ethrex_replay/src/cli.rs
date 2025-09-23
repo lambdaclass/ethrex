@@ -478,6 +478,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         // This only applies when we use the InMemoryDatabase and not when we use the ExecutionWitness as database, that's because in the latter failures are dismissed and we fall back to default values.
         let mut nodes = state_trie_nodes.lock().unwrap();
         let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie (by Branch or Ext nodes).
+        let dummy_leaf = Node::from(LeafNode::default()).encode_to_vec();
 
         for (_node_hash, node_rlp) in nodes.iter() {
             let node = Node::decode(node_rlp)?;
@@ -507,8 +508,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
         // Insert arbitrary leaf nodes to state trie.
         for hash in referenced_node_hashes {
-            let dummy_leaf: Node = LeafNode::default().into();
-            nodes.entry(hash).or_insert(dummy_leaf.encode_to_vec());
+            nodes.entry(hash).or_insert(dummy_leaf.clone());
         }
 
         drop(nodes);
@@ -545,9 +545,14 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
                 Err(_) => continue,
             };
 
+            // Fill storage trie with dummy branch nodes that have the hash of the missing nodes
+            // This is useful for eth_getProofs when we want to restructure the trie after removing a node whose sibling isn't known
+            // We assume the sibling is a branch node becuase we already covered the cases in which it's a Leaf or Extension node by injecting nodes in the witness.
+            // For more info read: https://github.com/kkrt-labs/zk-pig/blob/v0.8.0/docs/modified-mpt.md
             {
                 let mut storage_nodes = storage_trie.lock().unwrap();
                 let mut referenced_storage_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the storage trie (by Branch or Ext nodes).
+                let dummy_branch = Node::from(BranchNode::default()).encode_to_vec();
 
                 for (_node_hash, node_rlp) in storage_nodes.iter() {
                     let node = Node::decode(node_rlp)?;
@@ -573,10 +578,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
                 }
 
                 for hash in referenced_storage_node_hashes {
-                    let dummy_branch: Node = BranchNode::default().into();
-                    storage_nodes
-                        .entry(hash)
-                        .or_insert(dummy_branch.encode_to_vec());
+                    storage_nodes.entry(hash).or_insert(dummy_branch.clone());
                 }
             }
 
