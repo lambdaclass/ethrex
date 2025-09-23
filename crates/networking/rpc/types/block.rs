@@ -105,7 +105,7 @@ impl FullBlockBody {
             transactions.push(RpcTransaction::build(
                 tx.clone(),
                 Some(block_number),
-                block_hash,
+                Some(block_hash),
                 Some(index),
             )?);
         }
