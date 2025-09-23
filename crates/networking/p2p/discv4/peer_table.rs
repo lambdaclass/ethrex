@@ -550,12 +550,7 @@ pub struct PeerTable {
 
 impl PeerTable {
     pub fn spawn() -> PeerTableHandle {
-        let peer_table = Self::new();
-        PeerTableHandle(peer_table.start())
-    }
-
-    pub fn new() -> Self {
-        Self::default()
+        PeerTableHandle(Self::default().start())
     }
 
     // Internal functions //

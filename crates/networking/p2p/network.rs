@@ -1,6 +1,6 @@
 use crate::{
     discv4::{
-        peer_table::{PeerData, PeerTable, PeerTableHandle},
+        peer_table::{PeerData, PeerTableHandle},
         server::{DiscoveryServer, DiscoveryServerError},
     },
     metrics::METRICS,
@@ -96,10 +96,6 @@ pub enum NetworkError {
     RLPxInitiatorError(#[from] RLPxInitiatorError),
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
-}
-
-pub fn peer_table() -> PeerTableHandle {
-    PeerTable::spawn()
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {

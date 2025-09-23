@@ -1,30 +1,3 @@
-use std::fs::read_to_string;
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
-
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::Address;
-use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
-use ethrex_l2::SequencerConfig;
-use ethrex_p2p::discv4::peer_table::PeerTableHandle;
-use ethrex_p2p::network::peer_table;
-use ethrex_p2p::peer_handler::PeerHandler;
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
-use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::{Node, NodeRecord};
-use ethrex_storage::Store;
-use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use secp256k1::SecretKey;
-use tokio::sync::Mutex;
-use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
-use tracing::{error, info, warn};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{EnvFilter, Registry, reload};
-use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
-
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
@@ -34,6 +7,25 @@ use crate::l2::L2Options;
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
+use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_l2::SequencerConfig;
+use ethrex_p2p::{
+    discv4::peer_table::{PeerTable, PeerTableHandle},
+    peer_handler::PeerHandler,
+    rlpx::l2::l2_connection::P2PBasedContext,
+    sync_manager::SyncManager,
+    types::{Node, NodeRecord},
+};
+use ethrex_storage::Store;
+use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use secp256k1::SecretKey;
+use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use tokio::{sync::Mutex, task::JoinSet};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::{error, info, warn};
+use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
+use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
@@ -182,7 +174,7 @@ pub async fn init_l2(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_handler = PeerHandler::new(PeerTable::spawn());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
