@@ -780,6 +780,19 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             receipt = client.get_transaction_receipt(tx_hash).await?;
         }
 
+        let Some(receipt_info) = receipt else {
+            return Err(EthClientError::InternalError(
+                "Receipt is None. This is a bug.".to_string(),
+            ));
+        };
+
+        while !block_is_safe(client, receipt_info.block_info.block_number).await? {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                WAIT_TIME_FOR_RECEIPT_SECONDS,
+            ))
+            .await;
+        }
+
         return Ok(tx_hash);
     }
 
@@ -1057,4 +1070,23 @@ async fn _call_bytes32_variable(
         .map_err(|_| EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned()))?;
 
     Ok(arr)
+}
+
+/// Check if a block number is considered safe based on the safe_block_delay configuration.
+/// If safe_block_delay is 0, all blocks are considered safe.
+async fn block_is_safe(client: &EthClient, block_number: u64) -> Result<bool, EthClientError> {
+    if client.config.safe_block_delay == 0 {
+        return Ok(true);
+    }
+
+    if let Some(safe_block) = client
+        .get_block_number()
+        .await
+        .map(|x| U256::low_u64(&x))?
+        .checked_sub(client.config.safe_block_delay)
+    {
+        Ok(block_number >= safe_block)
+    } else {
+        Ok(false)
+    }
 }
