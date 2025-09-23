@@ -4291,6 +4291,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
+ "bitvec",
  "bls12_381 0.8.0",
  "bytes",
  "colored",
