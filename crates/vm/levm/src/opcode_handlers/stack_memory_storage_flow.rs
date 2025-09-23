@@ -10,7 +10,6 @@ use crate::{
 };
 use ethrex_common::{
     U256,
-    types::Fork,
     utils::{u256_to_big_endian, u256_to_h256},
 };
 
@@ -30,11 +29,6 @@ impl<'a> VM<'a> {
 
     // TLOAD operation
     pub fn op_tload(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.config.fork < Fork::Cancun {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-
         let key = self.current_call_frame.stack.pop1()?;
         let to = self.current_call_frame.to;
         let value = self.substate.get_transient(&to, &key);
@@ -49,10 +43,6 @@ impl<'a> VM<'a> {
 
     // TSTORE operation
     pub fn op_tstore(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-1153] - TLOAD is only available from CANCUN
-        if self.env.config.fork < Fork::Cancun {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
         let (key, value, to) = {
             let current_call_frame = &mut self.current_call_frame;
 
@@ -262,10 +252,6 @@ impl<'a> VM<'a> {
 
     // MCOPY operation
     pub fn op_mcopy(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-5656] - MCOPY is only available from CANCUN
-        if self.env.config.fork < Fork::Cancun {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
         let current_call_frame = &mut self.current_call_frame;
         let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
         let size: usize = u256_to_usize(size)?;
@@ -297,9 +283,9 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
 
         let jump_address = current_call_frame.stack.pop1()?;
-        Self::jump(current_call_frame, jump_address)?;
+        let new_pc = Self::jump(current_call_frame, jump_address)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 0 })
+        Ok(OpcodeResult::SetPc { new_pc })
     }
 
     /// Check if the jump destination is valid by:
@@ -320,7 +306,7 @@ impl<'a> VM<'a> {
     /// This function will change the PC for the specified call frame
     /// to be equal to the specified address. If the address is not a
     /// valid JUMPDEST, it will return an error
-    pub fn jump(call_frame: &mut CallFrame, jump_address: U256) -> Result<(), VMError> {
+    pub fn jump(call_frame: &mut CallFrame, jump_address: U256) -> Result<usize, VMError> {
         let jump_address_usize = jump_address
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -329,8 +315,8 @@ impl<'a> VM<'a> {
         if Self::target_address_is_valid(call_frame, jump_address_usize) {
             call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
 
-            call_frame.pc = jump_address_usize + 1;
-            Ok(())
+            let new_pc = jump_address_usize + 1;
+            Ok(new_pc)
         } else {
             Err(ExceptionalHalt::InvalidJump.into())
         }
@@ -343,14 +329,14 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::JUMPI)?;
 
-        let pc_increment = if !condition.is_zero() {
+        let result = if !condition.is_zero() {
             // Move the PC but don't increment it afterwards
-            Self::jump(&mut self.current_call_frame, jump_address)?;
-            0
+            let new_pc = Self::jump(&mut self.current_call_frame, jump_address)?;
+            OpcodeResult::SetPc { new_pc }
         } else {
-            1
+            OpcodeResult::Continue { pc_increment: 1 }
         };
-        Ok(OpcodeResult::Continue { pc_increment })
+        Ok(result)
     }
 
     // JUMPDEST operation
