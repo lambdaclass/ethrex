@@ -203,7 +203,7 @@ impl Decoder for RLPxCodec {
             .get(32..total_message_size)
             .ok_or_else(|| RLPxError::CryptographyError("Invalid frame data length".to_owned()))?
             .to_vec();
-      
+
         src.advance(total_message_size);
 
         // The buffer contains the full message and will be consumed; update the ingress_mac and aes values

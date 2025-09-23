@@ -1092,11 +1092,10 @@ impl EthClient {
         let mut map = BTreeMap::new();
         for url in self.urls.iter() {
             let response = match self
-                .send_request_to_url(url, &RpcRequest::new(
-                    RpcRequestId::Number(1),
-                    "eth_blockNumber", 
-                    None
-                ))
+                .send_request_to_url(
+                    url,
+                    &RpcRequest::new(RpcRequestId::Number(1), "eth_blockNumber", None),
+                )
                 .await
             {
                 Ok(RpcResponse::Success(ok)) => serde_json::to_value(ok).unwrap_or_else(|e| {
@@ -1150,7 +1149,11 @@ fn from_hex_string_to_u256(hex_string: &str) -> Result<U256, EthClientError> {
 
 /// Helper function to add blobs to a generic transaction
 fn add_blobs_to_generic_tx(tx: &mut GenericTransaction, blobs_bundle: &BlobsBundle) {
-    tx.blobs = blobs_bundle.blobs.iter().map(|blob| Bytes::copy_from_slice(blob)).collect();
+    tx.blobs = blobs_bundle
+        .blobs
+        .iter()
+        .map(|blob| Bytes::copy_from_slice(blob))
+        .collect();
     tx.blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 }
 
