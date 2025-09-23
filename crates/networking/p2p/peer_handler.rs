@@ -1387,21 +1387,10 @@ impl PeerHandler {
 
                 self.peer_table.free_peer(peer_id).await;
 
-                for (index, account) in current_account_hashes[start_index..remaining_start]
-                    .iter()
-                    .enumerate()
-                {
-                    // accounts_done.push((*account, vec![]));
+                for account in current_account_hashes[start_index..remaining_start].iter() {
                     // If this is not a big account, insert it as done.
                     // If it's a big account, its logic will be handled below
-
-                    if start_index + index + 1 < remaining_start {
-                        accounts_done.insert(*account, vec![]);
-                    } else {
-                        if hash_start.is_zero() {
-                            accounts_done.insert(*account, vec![]);
-                        }
-                    }
+                    accounts_done.insert(*account, vec![]);
                 }
 
                 if remaining_start < remaining_end {
