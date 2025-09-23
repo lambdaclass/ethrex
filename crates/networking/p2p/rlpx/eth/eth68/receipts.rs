@@ -10,7 +10,7 @@ use ethrex_rlp::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct Receipts68 {
+pub struct Receipts68 {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
@@ -25,10 +25,10 @@ impl Receipts68 {
                 receipts: vec![],
             };
         }
-        let mut transformed_receipts = vec![];
-        for r in &receipts {
-            transformed_receipts.push(vec![ReceiptWithBloom::from(&r[0])]);
-        }
+        let transformed_receipts = receipts
+            .iter()
+            .map(|receipts| receipts.iter().map(ReceiptWithBloom::from).collect())
+            .collect();
         Self {
             id,
             receipts: transformed_receipts,
@@ -39,16 +39,19 @@ impl Receipts68 {
         if self.receipts.is_empty() {
             return vec![];
         }
-        let mut receipts = vec![];
-        for r in &self.receipts {
-            receipts.push(vec![Receipt::from(&r[0])]);
-        }
-        receipts
+        self.receipts
+            .iter()
+            .map(|receipts| receipts.iter().map(Receipt::from).collect())
+            .collect()
+    }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
     }
 }
 
 impl RLPxMessage for Receipts68 {
-    const CODE: u8 = 0x0F;
+    const CODE: u8 = 0x10;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];

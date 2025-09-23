@@ -36,7 +36,30 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
         test._info.clone(),
         hash,
     );
+
+    //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
+    //EIPs should be added as strings in the format 'eip-XXXX'
+    let fusaka_eips_to_test: Vec<&str> = vec![
+        "eip-7594", "eip-7883", "eip-7918", "eip-7934", "eip-7892", "eip-7939", "eip-7951",
+        "eip-7594", "eip-7825",
+    ];
+
+    //Names of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
+    //We should really remove this once we're finished with implementing Fusaka, but it's a good-enough workaround to run specific tests for now
+    let names_of_fusaka_tests_to_run: Vec<&str> = vec![];
+
+    let test_eip = test._info.clone().reference_spec.unwrap_or_default();
+
     for fork in test.post.forks.keys() {
+        if fork == &Fork::Osaka
+            && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
+            && !names_of_fusaka_tests_to_run
+                .iter()
+                .any(|name| *name == test.name)
+        {
+            continue;
+        }
+
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
         for (vector, _tx) in test.transactions.iter() {
@@ -176,6 +199,7 @@ pub fn prepare_vm_for_tx<'a>(
             data: test_tx.data.clone(),
             access_list,
             authorization_list: list,
+            gas_limit: test_tx.gas_limit,
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -183,6 +207,7 @@ pub fn prepare_vm_for_tx<'a>(
             value: test_tx.value,
             data: test_tx.data.clone(),
             access_list,
+            gas_limit: test_tx.gas_limit,
             ..Default::default()
         }),
     };
@@ -344,6 +369,12 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::Type4TxContractCreation,
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
+            ) | (
+                TransactionExpectedException::TxMaxGasLimitExceeded,
+                VMError::TxValidation(TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: _,
+                    tx_gas_limit: _
+                })
             ) | (
                 TransactionExpectedException::Other,
                 VMError::TxValidation(_) //TODO: Decide whether to support more specific errors, I think this is enough.

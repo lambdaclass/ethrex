@@ -1,14 +1,15 @@
-use std::{fmt::Display, time::Duration};
+use std::{fmt::Display, process::Command, time::Duration};
 
 use ethrex_common::types::Block;
 use ethrex_config::networks::{Network, PublicNetwork};
+use tracing::{error, info};
 
 use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest};
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ReplayerMode {
     Execute,
+    ExecuteNoZkvm,
     ExecuteSP1,
     ExecuteRISC0,
     ProveSP1,
@@ -36,6 +37,7 @@ impl Display for ReplayerMode {
             ReplayerMode::ExecuteRISC0 => write!(f, "execute_risc0"),
             ReplayerMode::ProveSP1 => write!(f, "prove_sp1"),
             ReplayerMode::ProveRISC0 => write!(f, "prove_risc0"),
+            ReplayerMode::ExecuteNoZkvm => write!(f, "execute_no_zkvm"),
         }
     }
 }
@@ -88,13 +90,46 @@ impl BlockRunReport {
     }
 
     pub fn to_slack_message(&self) -> SlackWebHookRequest {
+        let eth_proofs_button = SlackWebHookActionElement::Button {
+            text: SlackWebHookBlock::PlainText {
+                text: String::from("View on EthProofs"),
+                emoji: false,
+            },
+            url: format!("https://ethproofs.org/blocks/{}", self.number),
+        };
+
+        let mut slack_webhook_actions = vec![SlackWebHookActionElement::Button {
+            text: SlackWebHookBlock::PlainText {
+                text: String::from("View on Etherscan"),
+                emoji: false,
+            },
+            url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+                format!("https://etherscan.io/block/{}", self.number)
+            } else {
+                format!(
+                    "https://{}.etherscan.io/block/{}",
+                    self.network, self.number
+                )
+            },
+        }];
+
+        if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+            // EthProofs only prove block numbers multiples of 100.
+            if self.number % 100 == 0 && self.replayer_mode.is_proving_mode() {
+                slack_webhook_actions.push(eth_proofs_button);
+            }
+        }
+
         SlackWebHookRequest {
             blocks: vec![
                 SlackWebHookBlock::Header {
                     text: Box::new(SlackWebHookBlock::PlainText {
                         text: match (&self.run_result, &self.replayer_mode) {
                             (Ok(_), ReplayerMode::Execute) => {
-                                String::from("✅ Successfully Executed Block")
+                                String::from("✅ Successfully Executed Block with Exec Backend")
+                            }
+                            (Ok(_), ReplayerMode::ExecuteNoZkvm) => {
+                                String::from("✅ Successfully Executed Block without zkVM")
                             }
                             (Ok(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("✅ Successfully Executed Block with SP1")
@@ -109,7 +144,10 @@ impl BlockRunReport {
                                 String::from("✅ Successfully Proved Block with RISC0")
                             }
                             (Err(_), ReplayerMode::Execute) => {
-                                String::from("⚠️ Failed to Execute Block")
+                                String::from("⚠️ Failed to Execute Block with Exec Backend")
+                            }
+                            (Err(_), ReplayerMode::ExecuteNoZkvm) => {
+                                String::from("⚠️ Failed to Execute Block without zkVM")
                             }
                             (Err(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("⚠️ Failed to Execute Block with SP1")
@@ -130,7 +168,7 @@ impl BlockRunReport {
                 SlackWebHookBlock::Section {
                     text: Box::new(SlackWebHookBlock::Markdown {
                         text: format!(
-                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}\n*Time Taken:* {time_taken}",
+                            "*Network:* `{network}`\n*Block:* {number}\n*Gas:* {gas}\n*#Txs:* {txs}\n*Execution Result:* {execution_result}{maybe_gpu}{maybe_cpu}{maybe_ram}\n*Time Taken:* {time_taken}",
                             network = self.network,
                             number = self.number,
                             gas = self.gas,
@@ -141,27 +179,25 @@ impl BlockRunReport {
                             } else {
                                 "Success".to_string()
                             },
+                            maybe_gpu = hardware_info_slack_message("GPU"),
+                            maybe_cpu = hardware_info_slack_message("CPU"),
+                            maybe_ram = hardware_info_slack_message("RAM"),
                             time_taken = format_duration(self.time_taken),
                         ),
                     }),
                 },
                 SlackWebHookBlock::Actions {
-                    elements: vec![SlackWebHookActionElement::Button {
-                        text: SlackWebHookBlock::PlainText {
-                            text: String::from("View on Etherscan"),
-                            emoji: false,
-                        },
-                        url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
-                            format!("https://etherscan.io/block/{}", self.number)
-                        } else {
-                            format!(
-                                "https://{}.etherscan.io/block/{}",
-                                self.network, self.number
-                            )
-                        },
-                    }],
+                    elements: slack_webhook_actions,
                 },
             ],
+        }
+    }
+
+    pub fn log(&self) {
+        if self.run_result.is_err() {
+            error!("{self}");
+        } else {
+            info!("{self}");
         }
     }
 }
@@ -209,7 +245,7 @@ impl Display for BlockRunReport {
     }
 }
 
-fn format_duration(duration: Duration) -> String {
+pub fn format_duration(duration: Duration) -> String {
     let total_seconds = duration.as_secs();
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
@@ -225,4 +261,97 @@ fn format_duration(duration: Duration) -> String {
     }
 
     format!("{minutes:02}m {seconds:02}s")
+}
+
+fn hardware_info_slack_message(hardware: &str) -> String {
+    let hardware_info = match hardware {
+        "GPU" => gpu_info(),
+        "CPU" => cpu_info(),
+        "RAM" => ram_info(),
+        _ => None,
+    };
+
+    if let Some(info) = hardware_info {
+        format!("\n*{hardware}:* `{info}`")
+    } else {
+        String::new()
+    }
+}
+
+fn gpu_info() -> Option<String> {
+    match std::env::consts::OS {
+        // Linux: nvidia-smi --query-gpu=name --format=csv | tail -n +2
+        "linux" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("nvidia-smi --query-gpu=name --format=csv | tail -n +2")
+                .output()
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        // macOS: system_profiler SPDisplaysDataType | grep "Chipset Model" | awk -F': ' '{print $2}' | head -n 1
+        "macos" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("system_profiler SPDisplaysDataType | grep \"Chipset Model\" | awk -F': ' '{print $2}' | head -n 1")
+                .output()
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        _ => None,
+    }
+}
+
+fn cpu_info() -> Option<String> {
+    match std::env::consts::OS {
+        // Linux: cat /proc/cpuinfo | grep "model name" | head -n 1 | awk -F': ' '{print $2}'
+        "linux" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg(
+                    "cat /proc/cpuinfo | grep \"model name\" | head -n 1 | awk -F': ' '{print $2}'",
+                )
+                .output()
+                .inspect_err(|e| eprintln!("Failed to get CPU info: {}", e))
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        // macOS: sysctl -n machdep.cpu.brand_string
+        "macos" => {
+            let output = Command::new("sysctl")
+                .arg("-n")
+                .arg("machdep.cpu.brand_string")
+                .output()
+                .inspect_err(|e| eprintln!("Failed to get CPU info: {}", e))
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        _ => None,
+    }
+}
+
+fn ram_info() -> Option<String> {
+    match std::env::consts::OS {
+        // Linux: free --giga -h | grep "Mem:" | awk '{print $2}'
+        "linux" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("free --giga -h | grep \"Mem:\" | awk '{print $2}'")
+                .output()
+                .inspect_err(|e| eprintln!("Failed to get RAM info: {}", e))
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        // macOS: system_profiler SPHardwareDataType | grep "Memory:" | awk -F': ' '{print $2}'
+        "macos" => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg("system_profiler SPHardwareDataType | grep \"Memory:\" | awk -F': ' '{print $2}'")
+                .output()
+                .inspect_err(|e| eprintln!("Failed to get RAM info: {}", e))
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        _ => None,
+    }
 }

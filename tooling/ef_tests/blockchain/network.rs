@@ -53,6 +53,45 @@ lazy_static! {
         prague_time: Some(0),
         ..*CANCUN_TO_PRAGUE_AT_15K_CONFIG
     };
+
+    pub static ref PRAGUE_TO_OSAKA_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        osaka_time: Some(0x3a98),
+        ..*PRAGUE_CONFIG
+
+    };
+
+    pub static ref OSAKA_CONFIG: ChainConfig = ChainConfig {
+        osaka_time: Some(0),
+        ..*PRAGUE_CONFIG
+    };
+
+    pub static ref OSAKA_TO_BPO1_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0x3a98),
+        ..*OSAKA_CONFIG
+    };
+
+    pub static ref BPO1_TO_BPO2_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        bpo2_time: Some(0x3a98),
+        ..*OSAKA_CONFIG
+    };
+
+    pub static ref BPO2_TO_BPO3_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo2_time: Some(0),
+        bpo3_time: Some(0x3a98),
+        ..*OSAKA_CONFIG
+    };
+    pub static ref BPO3_TO_BPO4_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo3_time: Some(0),
+        bpo4_time: Some(0x3a98),
+        ..*OSAKA_CONFIG
+    };
+    pub static ref BPO4_TO_BPO5_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo4_time: Some(0),
+        bpo5_time: Some(0x3a98),
+        ..*OSAKA_CONFIG
+    };
+
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -73,6 +112,13 @@ pub enum Network {
     Cancun = 11,
     CancunToPragueAtTime15k = 12,
     Prague = 13,
+    PragueToOsakaAtTime15k = 14,
+    Osaka = 15,
+    OsakaToBPO1AtTime15k = 16,
+    BPO1ToBPO2AtTime15k = 17,
+    BPO2ToBPO3AtTime15k = 18,
+    BPO3ToBPO4AtTime15k = 19,
+    BPO4ToBPO5AtTime15k = 20,
 }
 
 impl Network {
@@ -85,6 +131,13 @@ impl Network {
             Network::Cancun => &CANCUN_CONFIG,
             Network::CancunToPragueAtTime15k => &CANCUN_TO_PRAGUE_AT_15K_CONFIG,
             Network::Prague => &PRAGUE_CONFIG,
+            Network::PragueToOsakaAtTime15k => &PRAGUE_TO_OSAKA_AT_15K_CONFIG,
+            Network::Osaka => &OSAKA_CONFIG,
+            Network::OsakaToBPO1AtTime15k => &OSAKA_TO_BPO1_AT_15K_CONFIG,
+            Network::BPO1ToBPO2AtTime15k => &BPO1_TO_BPO2_AT_15K_CONFIG,
+            Network::BPO2ToBPO3AtTime15k => &BPO2_TO_BPO3_AT_15K_CONFIG,
+            Network::BPO3ToBPO4AtTime15k => &BPO3_TO_BPO4_AT_15K_CONFIG,
+            Network::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
             Network::Frontier
             | Network::Homestead
             | Network::ConstantinopleFix

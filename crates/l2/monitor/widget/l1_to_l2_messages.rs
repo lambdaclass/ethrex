@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
+use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, get_pending_privileged_transactions};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use keccak_hash::keccak;
@@ -48,8 +48,7 @@ impl L1ToL2MessageStatus {
     ) -> Result<Self, MonitorError> {
         if let Ok(Some(_tx)) = store.get_transaction_by_hash(l2_tx_hash).await {
             Ok(Self::ProcessedOnL2)
-        } else if eth_client
-            .get_pending_privileged_transactions(common_bridge_address)
+        } else if get_pending_privileged_transactions(eth_client, common_bridge_address)
             .await
             .map_err(|_| MonitorError::GetPendingPrivilegedTx)?
             .contains(&l2_tx_hash)

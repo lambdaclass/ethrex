@@ -17,26 +17,53 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
-use ethrex_prover_lib::backends::Backend;
+use ethrex_prover_lib::backend::Backend;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{EvmEngine, EvmError};
+use ethrex_vm::EvmError;
+use guest_program::input::ProgramInput;
 use regex::Regex;
-use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(
     path: &Path,
-    evm: EvmEngine,
     skipped_tests: Option<&[&str]>,
     stateless_backend: Option<Backend>,
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
+    //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
+    //EIPs should be added as strings in the format 'eip-XXXX'
+    let fusaka_eips_to_test: Vec<&str> = vec![
+        "eip-7594", "eip-7883", "eip-7918", "eip-7934", "eip-7892", "eip-7939", "eip-7951",
+        "eip-7594", "eip-7825",
+    ];
+
+    //Hashes of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
+    //We should really remove this once we're finished with implementing Fusaka, but it's a good-enough workaround to run specific tests for now
+    let hashes_of_fusaka_tests_to_run: Vec<&str> = vec![
+        "0xf0672af9718013a1f396a9268e91e220ff09e7fa97480844e31da500f8ef291f", //All opcodes test
+    ];
+
+    // Names of tests to run, to run entire specific .json files. Checked against the TestUnit URl
+    let specific_fusaka_tests_to_run: Vec<&str> = vec![
+        "/tests/frontier/precompiles/test_precompiles.py",
+        "/tests/frontier/precompiles/test_precompile_absence.py",
+    ];
 
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
+        let test_eip = test.info.clone().reference_spec.unwrap_or_default();
+
         let should_skip_test = test.network < Network::Merge
+            || (test.network > Network::Prague
+                && (!fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
+                    && !hashes_of_fusaka_tests_to_run
+                        .iter()
+                        .any(|hash| *hash == test.info.hash.clone().unwrap())
+                    && !specific_fusaka_tests_to_run
+                        .iter()
+                        .any(|name| test.info.url.clone().unwrap().contains(*name))))
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
@@ -45,7 +72,7 @@ pub fn parse_and_execute(
             continue;
         }
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, evm, stateless_backend));
+        let result = rt.block_on(run_ef_test(&test_key, &test, stateless_backend));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
@@ -64,7 +91,6 @@ pub fn parse_and_execute(
 pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
-    evm: EvmEngine,
     stateless_backend: Option<Backend>,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
@@ -79,7 +105,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(evm, store.clone(), BlockchainType::L1);
+    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
@@ -158,7 +184,8 @@ fn exception_is_expected(
     expected_exceptions.iter().any(|exception| {
         if let (
             BlockChainExpectedException::TxtException(expected_error_msg),
-            ChainError::EvmError(EvmError::Transaction(error_msg)),
+            ChainError::EvmError(EvmError::Transaction(error_msg))
+            | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(error_msg)),
         ) = (exception, returned_error)
         {
             return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
@@ -194,11 +221,6 @@ fn exception_is_expected(
             ) | (
                 BlockChainExpectedException::BlockException(BlockExpectedException::InvalidRequest),
                 ChainError::InvalidBlock(InvalidBlockError::RequestsHashMismatch)
-            ) | (
-                BlockChainExpectedException::BlockException(
-                    BlockExpectedException::SystemContractEmpty
-                ),
-                ChainError::EvmError(EvmError::SystemContractEmpty(_))
             ) | (
                 BlockChainExpectedException::BlockException(
                     BlockExpectedException::SystemContractCallFailed
@@ -439,11 +461,11 @@ async fn re_run_stateless(
         return Err("Failed to create witness for a test that should not fail".into());
     }
     // At this point witness is guaranteed to be Ok
-    let witness = witness.unwrap();
+    let execution_witness = witness.unwrap();
 
     let program_input = ProgramInput {
         blocks,
-        db: witness,
+        execution_witness,
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()
     };

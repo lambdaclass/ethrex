@@ -10,7 +10,7 @@ use ethrex_rlp::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct Receipts69 {
+pub struct Receipts69 {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
@@ -21,10 +21,14 @@ impl Receipts69 {
     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self {
         Self { receipts, id }
     }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
+    }
 }
 
 impl RLPxMessage for Receipts69 {
-    const CODE: u8 = 0x0F;
+    const CODE: u8 = 0x10;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];

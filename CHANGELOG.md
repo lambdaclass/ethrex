@@ -2,6 +2,43 @@
 
 ## Perf
 
+
+### 2025-09-22
+
+- Improve instruction fetching, dynamic opcode table based on configured fork, specialized push_zero in stack #[4579](https://github.com/lambdaclass/ethrex/pull/4579)
+
+### 2025-09-17
+
+- Refactor `bls12_g1add` to use `lambdaworks` [#4500](https://github.com/lambdaclass/ethrex/pull/4500)
+- Refactor `bls12_g2add` to use `lambdaworks` [#4538](https://github.com/lambdaclass/ethrex/pull/4538)
+
+### 2025-09-15
+
+- Fix caching mechanism of the latest block's hash [#4479](https://github.com/lambdaclass/ethrex/pull/4479)
+- Add `jemalloc` as an optional global allocator used by default [#4301](https://github.com/lambdaclass/ethrex/pull/4301)
+
+- Improve time when downloading bytecodes from peers [#4487](https://github.com/lambdaclass/ethrex/pull/4487)
+
+### 2025-09-11
+
+- Add `RocksDB` as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)
+
+### 2025-09-10
+
+- Implement fast partition of `TrieIterator` and use it for quickly responding `GetAccountRanges` and `GetStorageRanges` [#4404](https://github.com/lambdaclass/ethrex/pull/4404)
+
+### 2025-09-09
+
+- Refactor substrate backup mechanism to avoid expensive clones [#4381](https://github.com/lambdaclass/ethrex/pull/4381)
+
+### 2025-09-02
+
+- Use x86-64-v2 cpu target on linux by default, dockerfile will use it too. [#4252](https://github.com/lambdaclass/ethrex/pull/4252)
+
+### 2025-09-01
+
+- Process JUMPDEST gas and pc together with the given JUMP JUMPI opcode, improving performance. #[4220](https://github.com/lambdaclass/ethrex/pull/4220)
+
 ### 2025-08-29
 
 - Improve P2P mempool gossip performance [#4205](https://github.com/lambdaclass/ethrex/pull/4205)
@@ -52,7 +89,7 @@
 
 - Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
 - Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
-
+- Add Blake2 NEON implementation.
 
 ### 2025-07-30
 

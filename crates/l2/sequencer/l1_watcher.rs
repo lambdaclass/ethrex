@@ -7,6 +7,9 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{PrivilegedL2Transaction, TxType};
 use ethrex_common::{H160, types::Transaction};
+use ethrex_l2_sdk::{
+    build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
+};
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
@@ -15,23 +18,29 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use keccak_hash::keccak;
-use spawned_concurrency::messages::Unused;
+use serde::Serialize;
 use spawned_concurrency::tasks::{
-    CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+    CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
 };
+use std::collections::BTreeMap;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
+
+#[derive(Clone)]
+pub enum CallMessage {
+    Health,
+}
 
 #[derive(Clone)]
 pub enum InMessage {
     Watch,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum OutMessage {
     Done,
     Error,
+    Health(L1WatcherHealth),
 }
 
 pub struct L1Watcher {
@@ -45,6 +54,18 @@ pub struct L1Watcher {
     pub check_interval: u64,
     pub l1_block_delay: u64,
     pub sequencer_state: SequencerState,
+}
+
+#[derive(Clone, Serialize)]
+pub struct L1WatcherHealth {
+    pub l1_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub l2_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub max_block_step: String,
+    pub last_block_fetched: String,
+    pub check_interval: u64,
+    pub l1_block_delay: u64,
+    pub sequencer_state: String,
+    pub bridge_address: Address,
 }
 
 impl L1Watcher {
@@ -77,7 +98,7 @@ impl L1Watcher {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
-    ) -> Result<(), L1WatcherError> {
+    ) -> Result<GenServerHandle<Self>, L1WatcherError> {
         let state = Self::new(
             store,
             blockchain,
@@ -85,8 +106,7 @@ impl L1Watcher {
             &cfg.l1_watcher,
             sequencer_state,
         )?;
-        state.start();
-        Ok(())
+        Ok(state.start())
     }
 
     async fn watch(&mut self) {
@@ -109,9 +129,7 @@ impl L1Watcher {
 
     pub async fn get_privileged_transactions(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
         if self.last_block_fetched.is_zero() {
-            self.last_block_fetched = self
-                .eth_client
-                .get_last_fetched_l1_block(self.address)
+            self.last_block_fetched = get_last_fetched_l1_block(&self.eth_client, self.address)
                 .await?
                 .into();
         }
@@ -166,13 +184,7 @@ impl L1Watcher {
                 self.address,
                 vec![topic],
             )
-            .await
-            .inspect_err(|error| {
-                // We may get an error if the RPC doesn't has the logs for the requested
-                // block interval. For example, Light Nodes.
-                warn!("Error when getting logs from L1: {}", error);
-            })
-            .unwrap_or_default();
+            .await?;
 
         debug!("Logs: {:#?}", logs);
 
@@ -263,16 +275,30 @@ impl L1Watcher {
 
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the transaction is marked as pending in the contract.
-        let pending_privileged_transactions = self
-            .eth_client
-            .get_pending_privileged_transactions(self.address)
-            .await?;
+        let pending_privileged_transactions =
+            get_pending_privileged_transactions(&self.eth_client, self.address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
+    }
+
+    async fn health(&mut self) -> CallResponse<Self> {
+        let l1_rpc_healthcheck = self.eth_client.test_urls().await;
+        let l2_rpc_healthcheck = self.l2_client.test_urls().await;
+
+        CallResponse::Reply(OutMessage::Health(L1WatcherHealth {
+            l1_rpc_healthcheck,
+            l2_rpc_healthcheck,
+            max_block_step: self.max_block_step.to_string(),
+            last_block_fetched: self.last_block_fetched.to_string(),
+            check_interval: self.check_interval,
+            l1_block_delay: self.l1_block_delay,
+            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            bridge_address: self.address,
+        }))
     }
 }
 
 impl GenServer for L1Watcher {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = L1WatcherError;
@@ -301,6 +327,16 @@ impl GenServer for L1Watcher {
                 send_after(check_interval, handle.clone(), Self::CastMsg::Watch);
                 CastResponse::NoReply
             }
+        }
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> spawned_concurrency::tasks::CallResponse<Self> {
+        match message {
+            CallMessage::Health => self.health().await,
         }
     }
 }
@@ -398,29 +434,29 @@ impl PrivilegedTransactionData {
         chain_id: u64,
         gas_price: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let generic_tx = eth_client
-            .build_generic_tx(
-                TxType::Privileged,
-                self.to_address,
-                self.from,
-                Bytes::copy_from_slice(&self.calldata),
-                Overrides {
-                    chain_id: Some(chain_id),
-                    // Using the transaction_id as nonce.
-                    // If we make a transaction on the L2 with this address, we may break the
-                    // privileged transaction workflow.
-                    nonce: Some(self.transaction_id.as_u64()),
-                    value: Some(self.value),
-                    gas_limit: Some(self.gas_limit.as_u64()),
-                    // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
-                    // Otherwise, the transaction is not included in the mempool.
-                    // We should override the blockchain to always include the transaction.
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        let generic_tx = build_generic_tx(
+            eth_client,
+            TxType::Privileged,
+            self.to_address,
+            self.from,
+            Bytes::copy_from_slice(&self.calldata),
+            Overrides {
+                chain_id: Some(chain_id),
+                // Using the transaction_id as nonce.
+                // If we make a transaction on the L2 with this address, we may break the
+                // privileged transaction workflow.
+                nonce: Some(self.transaction_id.as_u64()),
+                value: Some(self.value),
+                gas_limit: Some(self.gas_limit.as_u64()),
+                // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
+                // Otherwise, the transaction is not included in the mempool.
+                // We should override the blockchain to always include the transaction.
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
         Ok(generic_tx.try_into()?)
     }
 }

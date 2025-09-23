@@ -1,15 +1,13 @@
-use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::{collections::BTreeMap, fmt};
 
 use crate::{
-    clients::eth::errors::{
-        CallError, GetBatchByNumberError, GetPeerCountError, GetWitnessError, TxPoolContentError,
-    },
+    clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
     debug::execution_witness::RpcExecutionWitness,
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
-        block_identifier::{BlockIdentifier, BlockTag},
+        block_identifier::BlockIdentifier,
         receipt::{RpcLog, RpcReceipt},
     },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
@@ -23,19 +21,14 @@ use errors::{
 };
 use ethrex_common::{
     Address, H256, U256,
-    types::{
-        AccessListEntry, BlobsBundle, Block, BlockHash, GenericTransaction, TxKind, TxType,
-        batch::Batch,
-    },
+    types::{BlobsBundle, Block, GenericTransaction, TxKind, TxType},
     utils::decode_hex,
 };
 use ethrex_rlp::decode::RLPDecode;
-use keccak_hash::keccak;
 use reqwest::{Client, Url};
-use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::str::FromStr;
+use tracing::{debug, trace, warn};
 
 pub mod errors;
 
@@ -84,25 +77,6 @@ pub const MAX_RETRY_DELAY: u64 = 1800;
 
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct L1MessageProof {
-    pub batch_number: u64,
-    pub message_id: U256,
-    pub message_hash: H256,
-    pub merkle_proof: Vec<H256>,
-}
-
-// TODO: This struct is duplicated from `crates/l2/networking/rpc/l2/batch.rs`.
-// It can't be imported because of circular dependencies. After fixed, we should
-// remove the duplication.
-#[derive(Serialize, Deserialize)]
-pub struct RpcBatch {
-    #[serde(flatten)]
-    pub batch: Batch,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub block_hashes: Option<Vec<BlockHash>>,
-}
 
 impl EthClient {
     pub fn new(url: &str) -> Result<EthClient, EthClientError> {
@@ -158,52 +132,70 @@ impl EthClient {
         )
     }
 
-    async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+    /// Send a request to the RPC. Tries each URL until one succeeds.
+    pub async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
+        let mut response = Err(EthClientError::FailedAllRPC);
 
         for url in self.urls.iter() {
             response = self.send_request_to_url(url, &request).await;
-            if response.is_ok() {
-                // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
-                // so if the server returns Ok(RpcResponse::Error) we retry with the others
-                if let Ok(RpcResponse::Success(ref _a)) = response {
+            // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
+            // so if the server returns Ok(RpcResponse::Error) we retry with the others
+            match &response {
+                Ok(RpcResponse::Success(_)) => {
+                    debug!(endpoint = %url, "RPC request successful");
                     return response;
+                }
+                Ok(RpcResponse::Error(err)) => {
+                    debug!(endpoint = %url, error = ?err.error, "RPC server returned an error");
+                }
+                Err(error) => {
+                    warn!(endpoint = %url, %error, "Could not request RPC server");
                 }
             }
         }
+
         response
     }
 
+    /// Send a request to **all** RPC URLs.
+    ///
+    /// Return the first successful response, or the last error if all fail.
     async fn send_request_to_all(
         &self,
         request: RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
-        let mut response = Err(EthClientError::FailedAllRPC("No RPC endpoints".to_string()));
+        let mut response = Err(EthClientError::FailedAllRPC);
 
         for url in self.urls.iter() {
             let maybe_response = self.send_request_to_url(url, &request).await;
 
-            if response.is_ok() {
-                continue;
-            }
-
-            response = match &maybe_response {
-                Ok(RpcResponse::Success(_)) => maybe_response,
-                Ok(RpcResponse::Error(err)) => {
-                    Err(EthClientError::FailedAllRPC(err.error.message.clone()))
+            match &maybe_response {
+                Ok(RpcResponse::Success(_)) => {
+                    debug!(endpoint = %url, "RPC request successful");
                 }
-                Err(_) => maybe_response,
+                Ok(RpcResponse::Error(err)) => {
+                    debug!(endpoint = %url, error = ?err.error, "RPC server returned an error");
+                }
+                Err(error) => {
+                    warn!(endpoint = %url, %error, "Could not request RPC server");
+                }
             };
+
+            response = response.or(maybe_response);
         }
 
         response
     }
 
+    /// Send a request to a specific URL.
     async fn send_request_to_url(
         &self,
         rpc_url: &Url,
         request: &RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
+        let id = uuid::Uuid::new_v4();
+        trace!(endpoint = %rpc_url, ?request, %id, "Sending RPC request");
+
         self.client
             .post(rpc_url.as_str())
             .header("content-type", "application/json")
@@ -211,9 +203,12 @@ impl EthClient {
                 EthClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))
             })?)
             .send()
-            .await?
+            .await
+            .inspect(|_| trace!(endpoint = %rpc_url, %id, "Request finished successfully"))?
             .json::<RpcResponse>()
             .await
+            .inspect(|body| trace!(endpoint = %rpc_url, %id, ?body, "Response deserialized successfully"))
+            .inspect_err(|err| trace!(endpoint = %rpc_url, %id, %err, "Failed to deserialize response"))
             .map_err(EthClientError::from)
     }
 
@@ -308,57 +303,7 @@ impl EthClient {
             .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
-                let error_data = if let Some(error_data) = error_response.error.data {
-                    if &error_data == "0x" {
-                        "unknown error".to_owned()
-                    } else {
-                        let abi_decoded_error_data = hex::decode(
-                            error_data.strip_prefix("0x").ok_or(EthClientError::Custom(
-                                "Failed to strip_prefix in estimate_gas".to_owned(),
-                            ))?,
-                        )
-                        .map_err(|_| {
-                            EthClientError::Custom(
-                                "Failed to hex::decode in estimate_gas".to_owned(),
-                            )
-                        })?;
-                        let string_length = U256::from_big_endian(
-                            abi_decoded_error_data
-                                .get(36..68)
-                                .ok_or(EthClientError::Custom(
-                                    "Failed to slice index abi_decoded_error_data in estimate_gas"
-                                        .to_owned(),
-                                ))?,
-                        );
-
-                        let string_len = if string_length > usize::MAX.into() {
-                            return Err(EthClientError::Custom(
-                                "Failed to convert string_length to usize in estimate_gas"
-                                    .to_owned(),
-                            ));
-                        } else {
-                            string_length.as_usize()
-                        };
-                        let string_data = abi_decoded_error_data.get(68..68 + string_len).ok_or(
-                            EthClientError::Custom(
-                                "Failed to slice index abi_decoded_error_data in estimate_gas"
-                                    .to_owned(),
-                            ),
-                        )?;
-                        String::from_utf8(string_data.to_vec()).map_err(|_| {
-                            EthClientError::Custom(
-                                "Failed to String::from_utf8 in estimate_gas".to_owned(),
-                            )
-                        })?
-                    }
-                } else {
-                    "unknown error".to_owned()
-                };
-                Err(EstimateGasError::RPCError(format!(
-                    "{}: {}",
-                    error_response.error.message, error_data
-                ))
-                .into())
+                Err(EstimateGasError::RPCError(error_response.error.message.to_string()).into())
             }
         }
     }
@@ -375,11 +320,7 @@ impl EthClient {
             value: overrides.value.unwrap_or_default(),
             from: overrides.from.unwrap_or_default(),
             gas: overrides.gas_limit,
-            gas_price: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                self.get_gas_price().await?.as_u64()
-            },
+            gas_price: overrides.max_fee_per_gas.unwrap_or_default(),
             ..Default::default()
         };
         let params = Some(vec![
@@ -544,6 +485,7 @@ impl EthClient {
     pub async fn get_block_by_number(
         &self,
         block: BlockIdentifier,
+        hydrated: bool,
     ) -> Result<RpcBlock, EthClientError> {
         let params = Some(vec![block.into(), json!(false)]); // With false it just returns the hash of the transactions.
         let request = RpcRequest::new(
@@ -551,6 +493,8 @@ impl EthClient {
             "eth_getBlockByNumber",
             params,
         );
+        let params = Some(vec![block.into(), json!(hydrated)]);
+        let request = RpcRequest::new("eth_getBlockByNumber", params);
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
@@ -1095,36 +1039,6 @@ impl EthClient {
         }
     }
 
-    async fn get_fee_from_override_or_get_gas_price(
-        &self,
-        maybe_gas_fee: Option<u64>,
-    ) -> Result<u64, EthClientError> {
-        if let Some(gas_fee) = maybe_gas_fee {
-            return Ok(gas_fee);
-        }
-        self.get_gas_price()
-            .await?
-            .try_into()
-            .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))
-    }
-
-    async fn priority_fee_from_override_or_rpc(
-        &self,
-        maybe_priority_fee: Option<u64>,
-    ) -> Result<u64, EthClientError> {
-        if let Some(priority_fee) = maybe_priority_fee {
-            return Ok(priority_fee);
-        }
-
-        if let Ok(priority_fee) = self.get_max_priority_fee().await {
-            if let Ok(priority_fee_u64) = priority_fee.try_into() {
-                return Ok(priority_fee_u64);
-            }
-        }
-
-        self.get_fee_from_override_or_get_gas_price(None).await
-    }
-
     pub async fn tx_pool_content(&self) -> Result<MempoolContent, EthClientError> {
         let request = RpcRequest::new(
             RpcRequestId::Number(REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)),
@@ -1157,56 +1071,26 @@ impl EthClient {
             RpcResponse::Error(error_response) => {
                 Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
             }
+    /// Smoke test the all the urls by calling eth_blockNumber
+    pub async fn test_urls(&self) -> BTreeMap<String, serde_json::Value> {
+        let mut map = BTreeMap::new();
+        for url in self.urls.iter() {
+            let response = match self
+                .send_request_to_url(url, &RpcRequest::new("eth_blockNumber", None))
+                .await
+            {
+                Ok(RpcResponse::Success(ok)) => serde_json::to_value(ok).unwrap_or_else(|e| {
+                    serde_json::Value::String(format!("Failed to serialize success response: {e}"))
+                }),
+                Ok(RpcResponse::Error(e)) => serde_json::to_value(e).unwrap_or_else(|e| {
+                    serde_json::Value::String(format!("Failed to serialize error response: {e}"))
+                }),
+                Err(e) => serde_json::Value::String(format!("Request error: {e}")),
+            };
+            map.insert(url.to_string(), response);
         }
+        map
     }
-}
-
-pub fn from_hex_string_to_u256(hex_string: &str) -> Result<U256, EthClientError> {
-    let hex_string = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
-        "Couldn't strip prefix from request.".to_owned(),
-    ))?;
-
-    if hex_string.is_empty() {
-        return Err(EthClientError::Custom(
-            "Failed to fetch last_committed_block. Manual intervention required.".to_owned(),
-        ));
-    }
-
-    let value = U256::from_str_radix(hex_string, 16).map_err(|_| {
-        EthClientError::Custom(
-            "Failed to parse after call, U256::from_str_radix failed.".to_owned(),
-        )
-    })?;
-    Ok(value)
-}
-
-pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, EthClientError> {
-    let public_key = secret_key
-        .public_key(secp256k1::SECP256K1)
-        .serialize_uncompressed();
-    let hash = keccak(&public_key[1..]);
-
-    // Get the last 20 bytes of the hash
-    let address_bytes: [u8; 20] = hash
-        .as_ref()
-        .get(12..32)
-        .ok_or(EthClientError::Custom(
-            "Failed to get_address_from_secret_key: error slicing address_bytes".to_owned(),
-        ))?
-        .try_into()
-        .map_err(|err| {
-            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {err}"))
-        })?;
-
-    Ok(Address::from(address_bytes))
-}
-
-pub fn add_blobs_to_generic_tx(tx: &mut GenericTransaction, bundle: &BlobsBundle) {
-    tx.blobs = bundle
-        .blobs
-        .iter()
-        .map(|blob| Bytes::copy_from_slice(blob))
-        .collect()
 }
 
 #[derive(Serialize, Deserialize, Debug)]

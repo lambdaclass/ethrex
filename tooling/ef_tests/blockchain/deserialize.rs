@@ -32,9 +32,7 @@ where
                     )
                 }
                 "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
-                    BlockChainExpectedException::TxtException(
-                        "Contract creation in blob transaction".to_string(),
-                    )
+                    BlockChainExpectedException::RLPException
                 }
                 "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
                     BlockChainExpectedException::TxtException(
@@ -86,6 +84,11 @@ where
                         "Insufficient max fee per blob gas".to_string(),
                     )
                 }
+                "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM" => {
+                    BlockChainExpectedException::TxtException(
+                        "Transaction gas limit exceeds maximum.".to_string(),
+                    )
+                }
                 "BlockException.RLP_STRUCTURES_ENCODING" => {
                     BlockChainExpectedException::RLPException
                 }
@@ -112,11 +115,6 @@ where
                 "BlockException.INVALID_REQUESTS" => BlockChainExpectedException::BlockException(
                     BlockExpectedException::InvalidRequest,
                 ),
-                "BlockException.SYSTEM_CONTRACT_EMPTY" => {
-                    BlockChainExpectedException::BlockException(
-                        BlockExpectedException::SystemContractEmpty,
-                    )
-                }
                 "BlockException.SYSTEM_CONTRACT_CALL_FAILED" => {
                     BlockChainExpectedException::BlockException(
                         BlockExpectedException::SystemContractCallFailed,

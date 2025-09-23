@@ -34,10 +34,10 @@ ethrex-l2 = { path = "../", default-features = false }
 ethrex-l2-common = { workspace = true }
 ethrex-sdk.workspace = true
 
-zkvm_interface = { path = "./zkvm/interface", default-features = false }
+guest_program = { path = "./src/guest_program", default-features = false }
 
-risc0-zkvm = { version = "=2.3.1", optional = true }
-risc0-zkp = { version = "=2.0.2", optional = true }
+risc0-zkvm = { version = "=3.0.3", optional = true }
+risc0-zkp = { version = "=3.0.2", optional = true }
 
 sp1-sdk = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
@@ -53,13 +53,13 @@ path = "src/lib.rs"
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
 default = ["l2"]
 # prover backends
-risc0 = ["zkvm_interface/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
-sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
+risc0 = ["guest_program/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
+sp1 = ["guest_program/sp1", "dep:sp1-sdk"]
 profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = [
-    "zkvm_interface/l2",
+    "guest_program/l2",
     "ethrex-l2/l2",
 ] # the prover can work with either l1 or l2 blocks
 

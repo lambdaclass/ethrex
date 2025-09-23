@@ -52,7 +52,7 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         let Some(quotient) = dividend.checked_div(divisor) else {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
         current_call_frame.stack.push1(quotient)?;
@@ -67,7 +67,7 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         if divisor.is_zero() || dividend.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -113,7 +113,7 @@ impl<'a> VM<'a> {
         let [unchecked_dividend, unchecked_divisor] = *current_call_frame.stack.pop()?;
 
         if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -123,7 +123,7 @@ impl<'a> VM<'a> {
         let unchecked_remainder = match dividend.checked_rem(divisor) {
             Some(remainder) => remainder,
             None => {
-                current_call_frame.stack.push1(U256::zero())?;
+                current_call_frame.stack.push_zero()?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
@@ -147,7 +147,7 @@ impl<'a> VM<'a> {
         let [augend, addend, modulus] = *current_call_frame.stack.pop()?;
 
         if modulus.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -183,7 +183,7 @@ impl<'a> VM<'a> {
         let [multiplicand, multiplier, modulus] = *current_call_frame.stack.pop()?;
 
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -259,6 +259,19 @@ impl<'a> VM<'a> {
 
             Ok(OpcodeResult::Continue { pc_increment: 1 })
         }
+    }
+
+    pub fn op_clz(&mut self) -> Result<OpcodeResult, VMError> {
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::CLZ)?;
+
+        let value = self.current_call_frame.stack.pop1()?;
+
+        self.current_call_frame
+            .stack
+            .push1(U256::from(value.leading_zeros()))?;
+
+        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }
 

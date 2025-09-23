@@ -286,6 +286,6 @@ sequenceDiagram
 
 ## Limitations
 
-Due to the gas cost of computing the rolling hashes, there is a limit to how many deposits can be handled in a single batch.
-
-To prevent creation of invalid batches, we save to the rollup store information about the deposits being included in the current batch.
+Due to the gas cost of computing rolling hashes, there is a limit to how many deposits can be handled in a single batch.  
+To prevent the creation of invalid batches, we enforce a maximum cap on deposits per batch in the `l1_committer`.  
+We also enforce the same maximum cap per block in the `block_producer`, to avoid situations where the `l1_committer` could get stuck if a single block contains more deposits than the configured batch cap.
