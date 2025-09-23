@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758644642358,
+  "lastUpdate": 1758647277554,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16135,6 +16135,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90436910886,
             "range": "± 318528273",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d758fe7e68ba3adc8e2599fc520939d97bf3f5e",
+          "message": "fix(l2): add EthClient config to proof_sender and proof_verifier (#4607)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nCurrently, proof sender and proof verifier doesn't have control over max\ngas price, retries and so.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nReplace the simple `EthClient::new_with_multiple_urls` with\n`EthClient::new_with_config`\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #4562",
+          "timestamp": "2025-09-23T16:18:50Z",
+          "tree_id": "726097d11453cc5b6d67e1dfd11d888850c173bf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7d758fe7e68ba3adc8e2599fc520939d97bf3f5e"
+        },
+        "date": 1758647256854,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90201676367,
+            "range": "± 303702251",
             "unit": "ns/iter"
           }
         ]
