@@ -40,7 +40,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -526,6 +526,7 @@ impl Blockchain {
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
+                info!("Mempool removing tx in fill transactions payload");
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }

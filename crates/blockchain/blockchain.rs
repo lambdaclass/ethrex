@@ -650,6 +650,7 @@ impl Blockchain {
 
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+            info!("Mempool removing tx in add blob transaction to pool");
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
@@ -676,6 +677,7 @@ impl Blockchain {
         let sender = transaction.sender()?;
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+            info!("Mempool removing tx in add transaction to pool");
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 

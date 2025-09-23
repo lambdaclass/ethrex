@@ -233,6 +233,7 @@ async fn handle_forkchoice(
             match context.storage.get_block_by_hash(head.hash()).await {
                 Ok(Some(block)) => {
                     // Remove executed transactions from mempool
+                    info!("Mempool removing tx in fork choice updated");
                     context
                         .blockchain
                         .remove_block_transactions_from_pool(&block)?;

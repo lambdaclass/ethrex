@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
 use std::sync::Arc;
 use tokio::time::Instant;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -168,6 +168,7 @@ pub async fn fill_transactions(
             // Pull transaction from the mempool
             debug!("Ignoring replay-protected transaction: {}", tx_hash);
             txs.pop();
+            info!("Mempool removing tx in fill transaction payload builder 1");
             blockchain.remove_transaction_from_pool(&tx_hash)?;
             continue;
         }
@@ -180,6 +181,7 @@ pub async fn fill_transactions(
             if head_tx.nonce() < acc_info.nonce && !head_tx.is_privileged() {
                 debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
                 txs.pop();
+                info!("Mempool removing tx in fill transaction payload builder 2");
                 blockchain.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
@@ -244,6 +246,7 @@ pub async fn fill_transactions(
 
         txs.shift()?;
         // Pull transaction from the mempool
+        info!("Mempool removing tx in fill transaction payload builder 3");
         blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
 
         // We only add the messages and privileged transaction length because the accounts diffs may change
@@ -278,6 +281,7 @@ fn fetch_mempool_transactions(
     let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
     while let Some(blob_tx) = blob_txs.peek() {
         let tx_hash = blob_tx.hash();
+        info!("Mempool removing tx in fetch mempool transactions");
         blockchain.remove_transaction_from_pool(&tx_hash)?;
         blob_txs.pop();
     }
