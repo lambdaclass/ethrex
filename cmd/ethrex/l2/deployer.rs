@@ -324,6 +324,15 @@ pub struct DeployerOptions {
         help = "Genesis data is extracted at compile time, used for development"
     )]
     pub use_compiled_genesis: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        default_value = "0x0000000000000000000000000000000000000000",
+        env = "ETHREX_NATIVE_TOKEN_L1_ADDRESS",
+        help_heading = "Deployer options",
+        help = "The L1 address of the L2 native token (e.g., USDC, USDT, DAI, etc. Use address(0) for ETH)"
+    )]
+    pub native_token_l1_address: Address,
 }
 
 impl Default for DeployerOptions {
@@ -406,6 +415,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
+            native_token_l1_address: H160::zero(),
         }
     }
 }
