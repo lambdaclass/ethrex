@@ -51,65 +51,67 @@ impl StoreEngine {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
-            let txn = db.begin_write()?;
+            let mut batch_items = Vec::new();
 
+            // Account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                txn.put(STATE_TRIE_NODES, node_hash.as_ref(), node_data.as_slice())?;
+                batch_items.push((STATE_TRIE_NODES, node_hash.as_ref().to_vec(), node_data));
             }
 
+            // Storage updates
             for (hash_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     // Key: hash_address + node_hash
                     let mut key = Vec::with_capacity(64);
                     key.extend_from_slice(hash_address.as_bytes());
                     key.extend_from_slice(node_hash.as_ref());
-                    txn.put(STORAGE_TRIE_NODES, key.as_slice(), node_data.as_slice())?;
+                    batch_items.push((STORAGE_TRIE_NODES, key, node_data));
                 }
             }
 
+            // Code updates
             for (code_hash, code) in update_batch.code_updates {
                 let code_value = AccountCodeRLP::from(code).bytes().clone();
-                txn.put(ACCOUNT_CODES, code_hash.as_bytes(), code_value.as_slice())?;
+                batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), code_value));
             }
 
+            // Receipt updates
             for (block_hash, receipts) in update_batch.receipts {
                 for (index, receipt) in receipts.into_iter().enumerate() {
                     let key = (block_hash, index as u64).encode_to_vec();
                     let value = receipt.encode_to_vec();
-                    txn.put(RECEIPTS, key.as_slice(), value.as_slice())?;
+                    batch_items.push((RECEIPTS, key, value));
                 }
             }
 
+            // Block updates
             for block in update_batch.blocks {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
 
                 let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
+                batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
 
                 let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                txn.put(BODIES, block_hash.as_bytes(), body_value.as_slice())?;
+                batch_items.push((BODIES, block_hash.as_bytes().to_vec(), body_value));
 
-                txn.put(
+                batch_items.push((
                     BLOCK_NUMBERS,
-                    block_hash.as_bytes(),
-                    &block_number.to_le_bytes(),
-                )?;
+                    block_hash.as_bytes().to_vec(),
+                    block_number.to_le_bytes().to_vec(),
+                ));
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    let mut composite_key = [0; 64];
-                    composite_key[..32].copy_from_slice(transaction.hash().as_bytes());
-                    composite_key[32..].copy_from_slice(block_hash.as_bytes());
+                    let mut composite_key = Vec::with_capacity(64);
+                    composite_key.extend_from_slice(transaction.hash().as_bytes());
+                    composite_key.extend_from_slice(block_hash.as_bytes());
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    txn.put(
-                        TRANSACTION_LOCATIONS,
-                        composite_key.as_slice(),
-                        location_value.as_slice(),
-                    )?;
+                    batch_items.push((TRANSACTION_LOCATIONS, composite_key, location_value));
                 }
             }
 
-            txn.commit()
+            let txn = db.begin_write()?;
+            txn.put_batch(batch_items)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -120,39 +122,36 @@ impl StoreEngine {
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let txn = db.begin_write()?;
+            let mut batch_items: Vec<(&str, Vec<u8>, Vec<u8>)> = Vec::new();
 
             // TODO: Same logic in apply_updates
             for block in blocks {
-                let block_hash = block.hash();
                 let block_number = block.header.number;
+                let block_hash = block.hash();
 
                 let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
+                batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
 
                 let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                txn.put(BODIES, block_hash.as_bytes(), body_value.as_slice())?;
+                batch_items.push((BODIES, block_hash.as_bytes().to_vec(), body_value));
 
-                txn.put(
+                batch_items.push((
                     BLOCK_NUMBERS,
-                    block_hash.as_bytes(),
-                    &block_number.to_le_bytes(),
-                )?;
+                    block_hash.as_bytes().to_vec(),
+                    block_number.to_le_bytes().to_vec(),
+                ));
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    let mut composite_key = [0; 64];
-                    composite_key[..32].copy_from_slice(transaction.hash().as_bytes());
-                    composite_key[32..].copy_from_slice(block_hash.as_bytes());
+                    let mut composite_key = Vec::with_capacity(64);
+                    composite_key.extend_from_slice(transaction.hash().as_bytes());
+                    composite_key.extend_from_slice(block_hash.as_bytes());
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    txn.put(
-                        TRANSACTION_LOCATIONS,
-                        composite_key.as_slice(),
-                        location_value.as_slice(),
-                    )?;
+                    batch_items.push((TRANSACTION_LOCATIONS, composite_key, location_value));
                 }
             }
 
-            txn.commit()
+            let txn = db.begin_write()?;
+            txn.put_batch(batch_items)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -402,23 +401,19 @@ impl StoreEngine {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        let txn = self.backend.begin_write()?;
-        let key_values: Vec<([u8; 64], Vec<u8>)> = locations
+        let batch_items: Vec<(&str, Vec<u8>, Vec<u8>)> = locations
             .iter()
             .map(|(tx_hash, block_number, block_hash, index)| {
-                let mut composite_key = [0; 64];
-                composite_key[..32].copy_from_slice(tx_hash.as_bytes());
-                composite_key[32..].copy_from_slice(block_hash.as_bytes());
+                let mut composite_key = Vec::with_capacity(64);
+                composite_key.extend_from_slice(tx_hash.as_bytes());
+                composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (*block_number, *block_hash, *index).encode_to_vec();
-                (composite_key, location_value)
+                (TRANSACTION_LOCATIONS, composite_key, location_value)
             })
             .collect();
 
-        // TODO: Batch write?
-        for (key, value) in key_values {
-            txn.put(TRANSACTION_LOCATIONS, key.as_slice(), value.as_slice())?;
-        }
-        txn.commit()
+        let txn = self.backend.begin_write()?;
+        txn.put_batch(batch_items)
     }
 
     // FIXME: Check libmdbx implementation to see if we can replicate it
@@ -490,13 +485,17 @@ impl StoreEngine {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
+        let batch_items: Vec<(&str, Vec<u8>, Vec<u8>)> = receipts
+            .into_iter()
+            .enumerate()
+            .map(|(index, receipt)| {
+                let key = (block_hash, index as u64).encode_to_vec();
+                let value = receipt.encode_to_vec();
+                (RECEIPTS, key, value)
+            })
+            .collect();
         let txn = self.backend.begin_write()?;
-        for (index, receipt) in receipts.into_iter().enumerate() {
-            let key = (block_hash, index as u64).encode_to_vec();
-            let value = receipt.encode_to_vec();
-            txn.put(RECEIPTS, key.as_slice(), value.as_slice())?;
-        }
-        txn.commit()
+        txn.put_batch(batch_items)
     }
 
     /// Obtain receipt by block hash and index
@@ -794,52 +793,61 @@ impl StoreEngine {
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let tx = db.begin_write()?;
+            let mut batch_items = Vec::new();
 
             if let Some(canonical_blocks) = new_canonical_blocks {
                 for (block_number, block_hash) in canonical_blocks {
                     let head_value = BlockHashRLP::from(block_hash).bytes().clone();
-                    tx.put(
+                    batch_items.push((
                         CANONICAL_BLOCK_HASHES,
-                        block_number.to_le_bytes().as_slice(),
-                        head_value.as_slice(),
-                    )?;
+                        block_number.to_le_bytes().to_vec(),
+                        head_value,
+                    ));
                 }
             }
 
+            // TODO: Check if there is a better way to do this
+            let txn = db.begin_write()?;
             for number in (head_number + 1)..(latest + 1) {
-                tx.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
+                txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
             }
 
             // Make head canonical
             let head_value = BlockHashRLP::from(head_hash).bytes().clone();
-            tx.put(
+            batch_items.push((
                 CANONICAL_BLOCK_HASHES,
-                head_number.to_le_bytes().as_slice(),
-                head_value.as_slice(),
-            )?;
+                head_number.to_le_bytes().to_vec(),
+                head_value,
+            ));
 
             // Update chain data
             let latest_key = [ChainDataIndex::LatestBlockNumber as u8];
-            tx.put(CHAIN_DATA, &latest_key, &head_number.to_le_bytes())?;
+            batch_items.push((
+                CHAIN_DATA,
+                latest_key.to_vec(),
+                head_number.to_le_bytes().to_vec(),
+            ));
 
             if let Some(finalized) = finalized {
-                tx.put(
+                batch_items.push((
                     CHAIN_DATA,
-                    &[ChainDataIndex::FinalizedBlockNumber as u8],
-                    finalized.to_le_bytes().as_slice(),
-                )?;
+                    vec![ChainDataIndex::FinalizedBlockNumber as u8],
+                    finalized.to_le_bytes().to_vec(),
+                ));
             }
 
             if let Some(safe) = safe {
-                tx.put(
+                batch_items.push((
                     CHAIN_DATA,
-                    &[ChainDataIndex::SafeBlockNumber as u8],
-                    safe.to_le_bytes().as_slice(),
-                )?;
+                    vec![ChainDataIndex::SafeBlockNumber as u8],
+                    safe.to_le_bytes().to_vec(),
+                ));
             }
 
-            tx.commit()
+            txn.put_batch(batch_items)?;
+            // This commits is used since we deleted some items. We could have a better way to do this.
+            // Accept put and delete in the same batch.
+            txn.commit()
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
