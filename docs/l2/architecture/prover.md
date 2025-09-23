@@ -52,7 +52,7 @@ ethrex-prover is able to generate execution proofs of Ethereum Mainnet/Testnet b
 To run the blockchain (`proposer`) and prover in conjunction, start the `Prover`, use the following command:
 
 ```sh
-make init-prover PROVER<sp1/risc0> # optional: GPU=true
+make init-prover-<sp1/risc0> # optional: GPU=true
 ```
 
 #### Run the whole system with the prover - In one Machine
@@ -68,7 +68,7 @@ make init-prover PROVER<sp1/risc0> # optional: GPU=true
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-4. In a new terminal &rarr; `make init-prover PROVER=<sp1/risc0> # GPU=true`.
+4. In a new terminal &rarr; `make init-prover-<sp1/risc0> # GPU=true`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -106,7 +106,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       - PROVER_CLIENT_PROVING_TIME_MS: The amount of time to wait before requesting new data to prove
 
 - `Finally`, to start the `Prover`/`zkvm`, run:
-  - `make init-prover PROVER=<sp1/risc0> # optional: GPU=true`
+  - `make init-prover-<sp1/risc0> # optional: GPU=true`
 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
 

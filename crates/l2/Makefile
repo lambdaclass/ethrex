@@ -1,7 +1,7 @@
 .PHONY: help init down restart init-l1-docker down-l1-docker restart-l1-docker \
 	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
-	init-prover build-prover clean-tee clean-tee-contract-deps \
+	init-prover-sp1 init-prover-risc0 init-prover-exec build-prover clean-tee clean-tee-contract-deps \
 	test integration-test integration-test-gpu state-diff-test
 
 .DEFAULT_GOAL := help
