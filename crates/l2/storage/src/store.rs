@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use crate::api::StoreEngineRollup;
 use crate::error::RollupStoreError;
@@ -33,7 +33,7 @@ pub enum EngineType {
 }
 
 impl Store {
-    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, RollupStoreError> {
+    pub fn new(_path: &Path, engine_type: EngineType) -> Result<Self, RollupStoreError> {
         info!("Starting l2 storage engine ({engine_type:?})");
         let store = match engine_type {
             EngineType::InMemory => Self {
