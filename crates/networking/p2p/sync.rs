@@ -1656,7 +1656,7 @@ async fn insert_storage_into_rocksdb(
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
 
-    for account_hash in accounts_with_storage {
+    accounts_with_storage.into_par_iter().for_each(|account_hash| {
         let trie = store
             .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
             .expect("Should be able to open trie");
@@ -1678,8 +1678,8 @@ async fn insert_storage_into_rocksdb(
                 "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
             );
         })
-        .map_err(SyncError::TrieGenerationError)?;
+        .map_err(SyncError::TrieGenerationError);
         METRICS.storage_tries_state_roots_computed.inc();
-    }
+    });
     Ok(())
 }
