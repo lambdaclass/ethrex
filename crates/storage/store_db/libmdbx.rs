@@ -3,7 +3,6 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp,
-    TransactionHashRLP, TupleRLP,
 };
 use crate::store::STATE_TRIE_SEGMENTS;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -38,7 +37,7 @@ pub struct Store {
     db: Arc<Database>,
 }
 impl Store {
-    pub fn new(path: &str) -> Result<Self, StoreError> {
+    pub fn new(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
         })
