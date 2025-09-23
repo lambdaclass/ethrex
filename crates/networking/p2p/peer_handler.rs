@@ -1390,7 +1390,9 @@ impl PeerHandler {
                 for account in current_account_hashes[start_index..remaining_start].iter() {
                     // If this is not a big account, insert it as done.
                     // If it's a big account, its logic will be handled below
-                    accounts_done.insert(*account, vec![]);
+                    if !accounts_done.contains_key(account) {
+                        accounts_done.insert(*account, vec![]);
+                    }
                 }
 
                 if remaining_start < remaining_end {
