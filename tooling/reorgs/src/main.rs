@@ -26,7 +26,8 @@ async fn main() {
             "../../target/debug/ethrex".parse().unwrap()
         });
 
-    run_test(&cmd_path, test_simple_reorg_and_back).await;
+    // run_test(&cmd_path, test_one_block_reorg_and_back).await;
+    run_test(&cmd_path, test_many_blocks_reorg).await;
 }
 
 async fn run_test<F, Fut>(cmd_path: &Path, test_fn: F)
@@ -48,7 +49,7 @@ where
     }
 }
 
-async fn test_simple_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
+async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
     let signer: Signer = LocalSigner::new(
         "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
@@ -116,4 +117,81 @@ async fn test_simple_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
     // Check the transfer has been reverted
     let new_balance = node0.get_balance(recipient).await;
     assert_eq!(new_balance, initial_balance);
+}
+
+async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+    let signer: Signer = LocalSigner::new(
+        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+            .parse()
+            .unwrap(),
+    )
+    .into();
+    // Some random address
+    let recipient = "941e103320615d394a55708be13e45994c7d93b0".parse().unwrap();
+    let transfer_amount = 1000000;
+
+    let node0 = simulator.start_node().await;
+    let node1 = simulator.start_node().await;
+
+    // Create a chain with a few empty blocks
+    let mut base_chain = simulator.get_base_chain();
+    for _ in 0..10 {
+        let extended_base_chain = node0.build_payload(base_chain).await;
+        node0.notify_new_payload(&extended_base_chain).await;
+        node0.update_forkchoice(&extended_base_chain).await;
+
+        node1.notify_new_payload(&extended_base_chain).await;
+        node1.update_forkchoice(&extended_base_chain).await;
+        base_chain = extended_base_chain;
+    }
+
+    let initial_balance = node0.get_balance(recipient).await;
+
+    // Fork the chain
+    let mut side_chain = base_chain.fork();
+
+    // Create a side chain with multiple blocks only known to node0
+    for _ in 0..10 {
+        side_chain = node0.build_payload(side_chain).await;
+        node0.notify_new_payload(&side_chain).await;
+        node0.update_forkchoice(&side_chain).await;
+    }
+
+    // Sanity check: balance hasn't changed
+    let same_balance = node0.get_balance(recipient).await;
+    assert_eq!(same_balance, initial_balance);
+
+    // Make an ETH transfer in the base chain
+    // NOTE: we do this to ensure both blocks are different
+    node1
+        .send_eth_transfer(&signer, recipient, transfer_amount)
+        .await;
+
+    // Advance the base chain with multiple blocks only known to node1
+    for _ in 0..10 {
+        base_chain = node1.build_payload(base_chain).await;
+        node1.notify_new_payload(&base_chain).await;
+        node1.update_forkchoice(&base_chain).await;
+    }
+
+    // Sanity check: balance hasn't changed
+    let same_balance = node0.get_balance(recipient).await;
+    assert_eq!(same_balance, initial_balance);
+
+    // Advance the side chain with one more block and another ETH transfer
+    node1
+        .send_eth_transfer(&signer, recipient, transfer_amount)
+        .await;
+    base_chain = node1.build_payload(base_chain).await;
+    node1.notify_new_payload(&base_chain).await;
+    node1.update_forkchoice(&base_chain).await;
+
+    // Bring node0 again to the base chain, it should reorg
+    node0.notify_new_payload(&base_chain).await;
+    node0.update_forkchoice(&base_chain).await;
+
+    // Check the transfer has been processed
+    let new_balance = node0.get_balance(recipient).await;
+    assert_eq!(new_balance, initial_balance + transfer_amount);
 }
