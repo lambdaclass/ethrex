@@ -95,11 +95,6 @@ contract OnChainProposer is
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
     bool public ALIGNED_MODE;
 
-    error InvalidPrivilegedTransactionLogs(
-        bytes32 claimedProcessedTransactions,
-        bytes32 processedPrivilegedTransactionsRollingHash
-    );
-
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -205,15 +200,11 @@ contract OnChainProposer is
                 .getPendingTransactionsVersionedHash(
                     uint16(bytes2(processedPrivilegedTransactionsRollingHash))
                 );
-            if (
-                claimedProcessedTransactions !=
-                processedPrivilegedTransactionsRollingHash
-            ) {
-                revert InvalidPrivilegedTransactionLogs(
-                    claimedProcessedTransactions,
-                    processedPrivilegedTransactionsRollingHash
-                );
-            }
+            require(
+                claimedProcessedTransactions ==
+                    processedPrivilegedTransactionsRollingHash,
+                "OnChainProposer: invalid privileged transaction logs"
+            );
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
