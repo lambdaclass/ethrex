@@ -1,7 +1,6 @@
 use std::{fs::File, io::Read, path::PathBuf, process::Stdio, time::Duration};
 
 use ethrex::{cli::Options, initializers::get_network};
-use ethrex_blockchain::fork_choice;
 use ethrex_common::{
     Bytes, H160, H256, U256,
     types::{
