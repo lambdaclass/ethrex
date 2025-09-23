@@ -458,7 +458,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     let guest_program = GuestProgramState::try_from(witness.clone())?;
 
     // This will contain all code hashes with the corresponding bytecode
-    // For the code hashes that we don't have we'll will it with <CodeHash, Bytes::new()>
+    // For the code hashes that we don't have we'll fill it with <CodeHash, Bytes::new()>
     let mut all_codes_hashed = guest_program.codes_hashed.clone();
 
     let in_memory_store = InMemoryStore::new();

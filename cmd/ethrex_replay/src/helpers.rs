@@ -3,10 +3,11 @@ use std::collections::{BTreeMap, HashSet};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::{Node, NodeHash, NodeRef};
 
+/// Given a mapping of nodes with their corresponding hash get all hashes referenced by branch and extension nodes.
 pub fn get_referenced_hashes(
     nodes: &BTreeMap<NodeHash, Vec<u8>>,
 ) -> eyre::Result<HashSet<NodeHash>> {
-    let mut referenced_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie (by Branch or Ext nodes).
+    let mut referenced_hashes: HashSet<NodeHash> = HashSet::new();
 
     for (_node_hash, node_rlp) in nodes.iter() {
         let node = Node::decode(node_rlp)?;
