@@ -290,6 +290,11 @@ pub enum Fork {
     Cancun = 17,
     Prague = 18,
     Osaka = 19,
+    BPO1 = 20,
+    BPO2 = 21,
+    BPO3 = 22,
+    BPO4 = 23,
+    BPO5 = 24,
 }
 
 impl From<Fork> for &str {
@@ -315,13 +320,12 @@ impl From<Fork> for &str {
             Fork::Cancun => "Cancun",
             Fork::Prague => "Prague",
             Fork::Osaka => "Osaka",
+            Fork::BPO1 => "BPO1",
+            Fork::BPO2 => "BPO2",
+            Fork::BPO3 => "BPO3",
+            Fork::BPO4 => "BPO4",
+            Fork::BPO5 => "BPO5",
         }
-    }
-}
-
-impl Fork {
-    fn next_fork(&self) -> Option<Fork> {
-        (*self as u64 + 1).try_into().ok()
     }
 }
 
@@ -457,12 +461,97 @@ impl ChainConfig {
         } else if self.is_cancun_activated(block_timestamp) {
             self.cancun_time.unwrap()
         } else {
-            1
+            0
         }
     }
 
     pub fn fork(&self, block_timestamp: u64) -> Fork {
         self.get_fork(block_timestamp)
+    }
+
+    pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
+        if self.is_bpo5_activated(block_timestamp) {
+            None
+        } else if self.is_bpo4_activated(block_timestamp) {
+            Some(Fork::BPO5)
+        } else if self.is_bpo3_activated(block_timestamp) {
+            Some(Fork::BPO4)
+        } else if self.is_bpo2_activated(block_timestamp) {
+            Some(Fork::BPO3)
+        } else if self.is_bpo1_activated(block_timestamp) {
+            Some(Fork::BPO2)
+        } else if self.is_osaka_activated(block_timestamp) {
+            Some(Fork::BPO1)
+        } else if self.is_prague_activated(block_timestamp) {
+            Some(Fork::Osaka)
+        } else if self.is_cancun_activated(block_timestamp) {
+            Some(Fork::Prague)
+        } else {
+            Some(Fork::Cancun)
+        }
+    }
+
+    pub fn get_last_scheduled_fork(&self) -> Fork {
+        if self.bpo5_time.is_some() {
+            Fork::BPO5
+        } else if self.bpo4_time.is_some() {
+            Fork::BPO4
+        } else if self.bpo3_time.is_some() {
+            Fork::BPO3
+        } else if self.bpo2_time.is_some() {
+            Fork::BPO2
+        } else if self.bpo1_time.is_some() {
+            Fork::BPO1
+        } else if self.osaka_time.is_some() {
+            Fork::Osaka
+        } else if self.prague_time.is_some() {
+            Fork::Prague
+        } else if self.cancun_time.is_some() {
+            Fork::Cancun
+        } else {
+            Fork::Paris
+        }
+    }
+
+    pub fn get_activation_timestamp_for_fork(&self, fork: Fork) -> Option<u64> {
+        match fork {
+            Fork::Cancun => self.cancun_time,
+            Fork::Prague => self.prague_time,
+            Fork::Osaka => self.osaka_time,
+            Fork::BPO1 => self.bpo1_time,
+            Fork::BPO2 => self.bpo2_time,
+            Fork::BPO3 => self.bpo3_time,
+            Fork::BPO4 => self.bpo4_time,
+            Fork::BPO5 => self.bpo5_time,
+            Fork::Homestead => self.homestead_block,
+            Fork::DaoFork => self.dao_fork_block,
+            Fork::Byzantium => self.byzantium_block,
+            Fork::Constantinople => self.constantinople_block,
+            Fork::Petersburg => self.petersburg_block,
+            Fork::Istanbul => self.istanbul_block,
+            Fork::MuirGlacier => self.muir_glacier_block,
+            Fork::Berlin => self.berlin_block,
+            Fork::London => self.london_block,
+            Fork::ArrowGlacier => self.arrow_glacier_block,
+            Fork::GrayGlacier => self.gray_glacier_block,
+            Fork::Paris => self.merge_netsplit_block,
+            Fork::Shanghai => self.shanghai_time,
+            _ => None,
+        }
+    }
+
+    pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
+        match fork {
+            Fork::Cancun => Some(self.blob_schedule.cancun),
+            Fork::Prague => Some(self.blob_schedule.prague),
+            Fork::Osaka => Some(self.blob_schedule.osaka),
+            Fork::BPO1 => self.blob_schedule.bpo1,
+            Fork::BPO2 => self.blob_schedule.bpo2,
+            Fork::BPO3 => self.blob_schedule.bpo3,
+            Fork::BPO4 => self.blob_schedule.bpo4,
+            Fork::BPO5 => self.blob_schedule.bpo5,
+            _ => None,
+        }
     }
 
     pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
