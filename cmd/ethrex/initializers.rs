@@ -19,7 +19,9 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
+use ethrex_trie::EMPTY_TRIE_HASH;
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -374,6 +376,40 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
+async fn reset_to_head(store: &Store) -> eyre::Result<()> {
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+    let root = trie.db().get(Default::default()).unwrap().unwrap();
+    let root = ethrex_trie::Node::decode(&root).unwrap();
+    let state_root = root.compute_hash().finalize();
+
+    for block_number in (0..=store.get_latest_block_number().await.unwrap()).rev() {
+        if let Some(header) = store.get_block_header(block_number).unwrap() {
+            if header.state_root == state_root {
+                info!("Resetting head to {block_number}");
+                let last_kept_block = block_number;
+                let mut block_to_delete = last_kept_block + 1;
+                while store
+                    .get_canonical_block_hash(block_to_delete)
+                    .await?
+                    .is_some()
+                {
+                    debug!("Deleting block {block_to_delete}");
+                    store.remove_block(block_to_delete).await?;
+                    block_to_delete += 1;
+                }
+                let last_kept_header = store
+                    .get_block_header(last_kept_block)?
+                    .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
+                store
+                    .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+                    .await?;
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -385,6 +421,8 @@ pub async fn init_l1(
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
     let store = init_store(&data_dir, genesis).await;
+
+    reset_to_head(&store).await?;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
