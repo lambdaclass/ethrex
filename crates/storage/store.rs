@@ -144,9 +144,11 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
+
         let account_state = AccountState::decode(&encoded_state)?;
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
