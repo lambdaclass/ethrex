@@ -12,7 +12,6 @@ use crate::{
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
     types::{Node, NodeRecord},
 };
-use colored::Colorize;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
@@ -329,9 +328,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
                 .load(Ordering::Relaxed);
             let heal_current_throttle =
                 if METRICS.healing_empty_try_recv.load(Ordering::Relaxed) == 0 {
-                    "Database".red()
+                    "\x1b[31mDatabase\x1b[0m"
                 } else {
-                    "Peers".green()
+                    "\x1b[32mPeers\x1b[0m"
                 };
 
             // Bytecode metrics
@@ -356,13 +355,11 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
             let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
 
-            let current_step_text_yellow = "Current Step:".yellow();
-
             info!(
                 "P2P Snap Sync:
 elapsed: {elapsed}
 {peer_number} peers.
-{current_step_text_yellow} {current_step}
+\x1b[93mCurrent step:\x1b[0m {current_step}
 Current Header Hash: {current_header_hash:x}
 ---
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})

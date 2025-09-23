@@ -15,8 +15,6 @@ use crate::{
     metrics::METRICS,
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
-use colored::Colorize;
-
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     BigEndianHash, H256, U256,
@@ -935,9 +933,8 @@ impl Syncer {
                                 .fetch_add(1, Ordering::Relaxed);
                             trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                         }
-                        *METRICS.current_step.blocking_lock() = "Inserting Account Ranges - "
-                            .to_owned()
-                            + &"Writing to DB".red().to_string();
+                        *METRICS.current_step.blocking_lock() =
+                            "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
                         let current_state_root = trie.hash()?;
                         Ok(current_state_root)
                     })
@@ -1031,7 +1028,7 @@ impl Syncer {
 
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
             *METRICS.current_step.lock().await =
-                "Inserting Storage Ranges - ".to_owned() + &"Writing to DB".red().to_string();
+                "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
             for entry in std::fs::read_dir(&account_storages_snapshots_dir)
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?

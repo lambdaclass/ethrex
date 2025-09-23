@@ -4316,7 +4316,6 @@ dependencies = [
  "aes",
  "async-trait",
  "bytes",
- "colored",
  "concat-kdf",
  "ctr",
  "ethereum-types 0.15.1",

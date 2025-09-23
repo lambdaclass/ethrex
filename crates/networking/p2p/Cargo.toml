@@ -34,7 +34,6 @@ prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
 sha3 = "0.10.8"
-colored = "2.1.0"
 
 serde_json = "1.0.117"
 
