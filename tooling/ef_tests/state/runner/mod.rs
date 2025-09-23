@@ -62,7 +62,7 @@ pub struct EFTestRunnerOptions {
         long,
         value_name = "FORK",
         value_delimiter = ',',
-       value_parser=parse_forks,
+        value_parser=parse_fork,
         default_value = "Merge,Shanghai,Cancun,Prague,Osaka"
     )]
     pub forks: Option<Vec<SpecId>>,
@@ -88,13 +88,8 @@ pub struct EFTestRunnerOptions {
     pub paths: bool,
 }
 
-fn parse_forks(value: &str) -> Result<Vec<SpecId>, String> {
-    let fork_strs = value.rsplit(",");
-    let mut forks = vec![];
-    for fork_str in fork_strs {
-        forks.push(SpecId::from_str(fork_str).map_err(|_| format!("Unknown fork: {fork_str}"))?);
-    }
-    Ok(forks)
+fn parse_fork(value: &str) -> Result<SpecId, String> {
+    SpecId::from_str(value).map_err(|_| format!("Unknown fork: {value}"))
 }
 
 pub async fn run_ef_tests(
