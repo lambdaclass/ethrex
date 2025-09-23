@@ -35,8 +35,8 @@ pub struct GuestProgramState {
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
     /// It is used to rebuild the state trie and storage tries.
-    pub nodes_hashed: BTreeMap<H256, NodeRLP>,
-    pub nodes_hashed_alloy: B256Map<NodeRLP>,
+    // pub nodes_hashed: BTreeMap<H256, NodeRLP>,
+    pub nodes_hashed: B256Map<NodeRLP>,
     pub root_alloy: B256,
     /// Map of code hashes to their corresponding bytecode.
     /// This is computed during guest program execution inside the zkVM,
@@ -145,12 +145,12 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         )?;
 
         // hash nodes
-        let nodes_hashed: BTreeMap<H256, NodeRLP> = value
+        let nodes_hashed = value
             .nodes
             .into_iter()
             .map(|node| {
                 let node = node.to_vec();
-                (keccak(&node), node)
+                (B256::from_slice(keccak(&node).as_bytes()), node)
             })
             .collect();
 
@@ -161,11 +161,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .map(|code| (keccak(&code), code))
             .collect();
 
-        let root_alloy = B256::from_slice(&parent_header.state_root.as_bytes());
-        let nodes_hashed_alloy = nodes_hashed
-            .iter()
-            .map(|(k, v)| (B256::from_slice(k.as_bytes()), v.clone()))
-            .collect();
+        let root_alloy = B256::from_slice(parent_header.state_root.as_bytes());
 
         let mut guest_program_state = GuestProgramState {
             codes_hashed,
@@ -176,7 +172,6 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             first_block_number: value.first_block_number,
             chain_config: value.chain_config,
             nodes_hashed,
-            nodes_hashed_alloy,
             root_alloy,
             account_hashes_by_address: BTreeMap::new(),
         };
@@ -199,7 +194,7 @@ impl GuestProgramState {
             return Ok(());
         }
 
-        let state_trie = Trie::from_prehashed_nodes(self.root_alloy, &self.nodes_hashed_alloy)
+        let state_trie = Trie::from_prehashed_nodes(self.root_alloy, &self.nodes_hashed)
             .expect("failed to create state trie");
 
         self.state_trie = Some(state_trie);
@@ -221,7 +216,7 @@ impl GuestProgramState {
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
         let root = B256::from_slice(account_state.storage_root.as_bytes());
-        let storage_trie = Trie::from_prehashed_nodes(root, &self.nodes_hashed_alloy)
+        let storage_trie = Trie::from_prehashed_nodes(root, &self.nodes_hashed)
             .expect("failed to create storage trie");
         Some(storage_trie)
     }
