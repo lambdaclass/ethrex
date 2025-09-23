@@ -1606,12 +1606,17 @@ async fn insert_storage_into_rocksdb(
             .open_storage_trie(*account_hash, *EMPTY_TRIE_HASH)
             .expect("Should be able to open trie");
         let iter = db.prefix_iterator(account_hash.as_bytes());
-        trie_from_sorted_accounts_wrap(
+        let _ = trie_from_sorted_accounts_wrap(
             trie.db(),
             &mut iter
                 .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
                 .map(|(k, v)| (H256::from_slice(&k[32..]), v.to_vec())),
         )
+        .inspect_err(|err: &TrieGenerationError| {
+            error!(
+                "we found an error while inserting the storage trie for the account {account_hash}, err {err}"
+            )
+        })
         .map_err(SyncError::TrieGenerationError);
     });
     Ok(())
