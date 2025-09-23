@@ -31,8 +31,7 @@ impl MetricsProcess {
             r.register(Box::new(ProcessCollector::for_self()))
                 .map_err(|e| {
                     MetricsError::PrometheusErr(format!(
-                        "Failed to register process collector: {}",
-                        e
+                        "Failed to register process collector: {e}",
                     ))
                 })?;
         }
