@@ -22,25 +22,23 @@ use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
 };
 use ethrex_trie::{
-    InMemoryTrieDB, Node, NodeHash, NodeRef,
+    InMemoryTrieDB, Node,
     node::{BranchNode, LeafNode},
 };
 use eyre::OptionExt;
 use reqwest::Url;
 use std::{
     cmp::max,
-    collections::HashSet,
     io::Write,
-    str::FromStr,
     sync::{Arc, RwLock},
     time::{Instant, SystemTime},
 };
 use tracing::info;
 
-use crate::bench::run_and_measure;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
+use crate::{bench::run_and_measure, helpers::get_referenced_hashes};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
@@ -476,39 +474,16 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         //   2. Get all code hashes that exist in the accounts that we have so that if we don't have the code we set it to empty bytes.
         // We do these things because sometimes the witness may be incomplete and in those cases we don't want failures for missing data.
         // This only applies when we use the InMemoryDatabase and not when we use the ExecutionWitness as database, that's because in the latter failures are dismissed and we fall back to default values.
-        let mut nodes = state_trie_nodes.lock().unwrap();
-        let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie (by Branch or Ext nodes).
+        let mut state_nodes = state_trie_nodes.lock().unwrap();
+        let referenced_node_hashes = get_referenced_hashes(&state_nodes)?;
+
         let dummy_leaf = Node::from(LeafNode::default()).encode_to_vec();
-
-        for (_node_hash, node_rlp) in nodes.iter() {
-            let node = Node::decode(node_rlp)?;
-            match node {
-                Node::Branch(node) => {
-                    for choice in &node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
-
-                        referenced_node_hashes.insert(hash);
-                    }
-                }
-                Node::Extension(node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    referenced_node_hashes.insert(hash);
-                }
-                Node::Leaf(_node) => {}
-            }
-        }
-
         // Insert arbitrary leaf nodes to state trie.
         for hash in referenced_node_hashes {
-            nodes.entry(hash).or_insert(dummy_leaf.clone());
+            state_nodes.entry(hash).or_insert(dummy_leaf.clone());
         }
 
-        drop(nodes);
+        drop(state_nodes);
 
         let mut inner_store = in_memory_store.inner()?;
 
@@ -553,31 +528,9 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
             // For more info read: https://github.com/kkrt-labs/zk-pig/blob/v0.8.0/docs/modified-mpt.md
             {
                 let mut storage_nodes = storage_trie.lock().unwrap();
-                let mut referenced_storage_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the storage trie (by Branch or Ext nodes).
                 let dummy_branch = Node::from(BranchNode::default()).encode_to_vec();
 
-                for (_node_hash, node_rlp) in storage_nodes.iter() {
-                    let node = Node::decode(node_rlp)?;
-                    match node {
-                        Node::Branch(node) => {
-                            for choice in &node.choices {
-                                let NodeRef::Hash(hash) = *choice else {
-                                    unreachable!()
-                                };
-
-                                referenced_storage_node_hashes.insert(hash);
-                            }
-                        }
-                        Node::Extension(node) => {
-                            let NodeRef::Hash(hash) = node.child else {
-                                unreachable!()
-                            };
-
-                            referenced_storage_node_hashes.insert(hash);
-                        }
-                        Node::Leaf(_node) => {}
-                    }
-                }
+                let referenced_storage_node_hashes = get_referenced_hashes(&storage_nodes)?;
 
                 for hash in referenced_storage_node_hashes {
                     storage_nodes.entry(hash).or_insert(dummy_branch.clone());
