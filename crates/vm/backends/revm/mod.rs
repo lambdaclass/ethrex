@@ -13,13 +13,14 @@ use crate::constants::{
 };
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use ethrex_common::types::{AccountInfo, AccountUpdate, TxType};
+use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{
     BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, SYS_CALL_GAS_LIMIT,
     TX_BASE_COST,
 };
 
+use helpers::infer_generic_tx_type;
 use revm::context::ContextTr;
 use revm::context::either::Either;
 use revm::database::AccountStatus;
@@ -564,24 +565,9 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
                         ))
                     })
                     .collect::<Vec<_>>()
-                    .into()
             })
             .unwrap_or_default(),
-        tx_type: {
-            // Infer type
-            let tx_type = if tx.authorization_list.is_some() {
-                TxType::EIP7702
-            } else if !tx.blob_versioned_hashes.is_empty() {
-                TxType::EIP4844
-            } else if !tx.access_list.is_empty() {
-                TxType::EIP2930
-            } else if tx.max_priority_fee_per_gas.is_some() {
-                TxType::EIP1559
-            } else {
-                TxType::Legacy
-            };
-            tx_type as u8
-        },
+        tx_type: infer_generic_tx_type(&tx) as u8,
     }
 }
 

@@ -1,4 +1,4 @@
-use ethrex_common::types::{ChainConfig, Fork};
+use ethrex_common::types::{ChainConfig, Fork, TxType};
 use ethrex_common::{
     Address, H256,
     types::{BlockHeader, GenericTransaction, INITIAL_BASE_FEE, tx_fields::AccessList},
@@ -115,5 +115,19 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::Cancun => SpecId::CANCUN,
         Fork::Prague => SpecId::PRAGUE,
         Fork::Osaka => SpecId::OSAKA,
+    }
+}
+
+pub fn infer_generic_tx_type(tx: &GenericTransaction) -> TxType {
+    if tx.authorization_list.is_some() {
+        TxType::EIP7702
+    } else if !tx.blob_versioned_hashes.is_empty() {
+        TxType::EIP4844
+    } else if !tx.access_list.is_empty() {
+        TxType::EIP2930
+    } else if tx.max_priority_fee_per_gas.is_some() {
+        TxType::EIP1559
+    } else {
+        TxType::Legacy
     }
 }
