@@ -185,16 +185,15 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
 }
 
 impl<'a> StorageRwTx for InMemoryRwTx<'a> {
-    fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+    fn put_batch(&self, batch: Vec<(&str, &[u8], &[u8])>) -> Result<(), StoreError> {
         let mut db = self
             .backend
             .write()
             .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
-        let table_ref = db.entry(table.to_string()).or_insert_with(Table::new);
-
-        for (key, value) in batch {
-            table_ref.insert(key, value);
+        for (table, key, value) in batch {
+            let table_ref = db.entry(table.to_string()).or_insert_with(Table::new);
+            table_ref.insert(key.to_vec(), value.to_vec());
         }
 
         Ok(())

@@ -237,15 +237,15 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
 }
 
 impl<'a> StorageRwTx for RocksDBRwTx<'a> {
-    fn put_batch(&self, table: &str, batch: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
-        let cf = self
-            .cfs
-            .get(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-            .clone();
-
+    fn put_batch(&self, batch: Vec<(&str, &[u8], &[u8])>) -> Result<(), StoreError> {
         let mut write_batch = WriteBatchWithTransaction::<true>::default();
-        for (key, value) in batch {
+        for (table, key, value) in batch {
+            let cf = self
+                .cfs
+                .get(table)
+                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
+                .clone();
+
             write_batch.put_cf(&cf, key, value);
         }
 
