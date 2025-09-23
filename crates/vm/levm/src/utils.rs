@@ -129,10 +129,7 @@ impl JumpTargetFilter {
     /// Check whether a target jump address is blacklisted or not.
     #[expect(clippy::indexing_slicing)]
     pub fn is_blacklisted(&self, address: usize) -> bool {
-        if address >= self.bytecode.len() {
-            return true; // Or false, depending on if out-of-bounds is blacklisted
-        }
-        !self.jumpdests[address] // True if NOT a valid JUMPDEST (blacklisted)
+        address >= self.bytecode.len() || !self.jumpdests[address]
     }
 }
 
