@@ -16,7 +16,8 @@ keccak-hash.workspace = true
 serde.workspace = true
 lambdaworks-crypto.workspace = true
 sha3.workspace = true
-secp256k1.workspace = true
+k256 = { workspace = true, optional = true }
+secp256k1 = { workspace = true, optional = true }
 
 [lints.clippy]
 unwrap_used = "deny"
@@ -25,3 +26,8 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+
+[features]
+default = ["secp256k1"]
+k256 = ["dep:k256", "ethrex-common/kzg-rs"]
+secp256k1 = ["dep:secp256k1", "ethrex-common/c-kzg"]
