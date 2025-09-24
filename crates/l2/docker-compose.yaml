@@ -84,12 +84,9 @@ services:
       - ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY=${ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY:-0x0000000000000000000000000000000000000000}
       - ETHREX_COMMITTER_COMMIT_TIME=${ETHREX_COMMITTER_COMMIT_TIME:-60000}
       - ETHREX_WATCHER_WATCH_INTERVAL=${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
-    # env_file:
-    #   - ../../cmd/.env
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - env:/env/
-      # - ../../cmd/.env:/.env:ro
     entrypoint:
       - /bin/bash
       - -c
@@ -109,6 +106,18 @@ services:
     depends_on:
       contract_deployer:
         condition: service_completed_successfully
+
+  # After contract deployment, copy the generated .env file with contract addresses to the host machine
+  # so that tests running outside Docker can access them.
+  copy_env_to_host:
+    image: busybox
+    depends_on:
+      contract_deployer:
+        condition: service_completed_successfully
+    volumes:
+      - env:/env:ro
+      - ../../cmd:/host-cmd
+    command: sh -c "cp /env/.env /host-cmd/.env"
 
   ethrex_prover:
     container_name: ethrex_prover
