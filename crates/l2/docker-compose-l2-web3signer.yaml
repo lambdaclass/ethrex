@@ -19,6 +19,7 @@ services:
       --authrpc.port 8552
       --proof-coordinator.addr 0.0.0.0
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
+      --block-producer.fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127
       --committer.remote-signer-url http://web3signer:9000
       --committer.remote-signer-public-key 02eadbea0cdb17fda8d56fc9c51df8a6158c2ab157aabf2ca57c3a32cd69f98bbc
       --proof-coordinator.remote-signer-url http://web3signer:9000

@@ -30,6 +30,7 @@ use ethrex_rpc::{
 use hex::FromHexError;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
+use std::ops::{Add, AddAssign};
 use std::{
     fs::{File, read_to_string},
     io::{BufRead, BufReader},
@@ -56,6 +57,7 @@ use tokio::task::JoinSet;
 /// Contract addresses:
 /// ETHREX_WATCHER_BRIDGE_ADDRESS: The address of the l1 bridge contract
 /// INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS: The address of the l2 coinbase
+/// INTEGRATION_TEST_PROPOSER_FEE_VAULT_ADDRESS: The address of the l2 fee_vault
 ///
 /// Test parameters:
 ///
@@ -79,6 +81,12 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0xad, 0x62, 0x0c, 0x8d,
 ]);
 
+// 0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+const DEFAULT_PROPOSER_FEE_VAULT_ADDRESS: Address = H160([
+    0x00, 0x0c, 0x0d, 0x6b, 0x7c, 0x45, 0x16, 0xa5, 0xb2, 0x74, 0xc5, 0x1e, 0xa3, 0x31, 0xa9, 0x41,
+    0x0f, 0xe6, 0x91, 0x27,
+]);
+
 const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "../../fixtures/keys/private_keys_l1.txt";
@@ -96,11 +104,14 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         .map(|amount| amount.parse().expect("Invalid withdrawal amount value"))
         .unwrap_or(5);
 
-    // Not thread-safe (fee vault and bridge balance checks).
+    // Not thread-safe (coinbase and bridge balance checks).
     test_deposit(&l1_client, &l2_client, &private_keys.pop().unwrap()).await?;
 
     let coinbase_balance_before_tests = l2_client
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+    let fee_vault_balance_before_tests = l2_client
+        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let mut set = JoinSet::new();
@@ -175,25 +186,37 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
-    let mut recoverable_fees = U256::zero();
+    let mut acc_priority_fees = U256::zero();
+    let mut acc_base_fees = U256::zero();
     while let Some(res) = set.join_next().await {
-        let fee = res??;
-        recoverable_fees += fee;
+        let fees_details = res??;
+        acc_priority_fees += fees_details.total_fees - fees_details.base_fees;
+        acc_base_fees += fees_details.base_fees;
     }
 
     let coinbase_balance_after_tests = l2_client
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    println!("Checking fee vault balance");
+    let fee_vault_balance_after_tests = l2_client
+        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
+
+    println!("Checking coinbase and fee vault balances");
 
     assert_eq!(
         coinbase_balance_after_tests,
-        coinbase_balance_before_tests + recoverable_fees,
+        coinbase_balance_before_tests + acc_priority_fees,
+        "Coinbase is not correct after tests"
+    );
+
+    assert_eq!(
+        fee_vault_balance_after_tests,
+        fee_vault_balance_before_tests + acc_base_fees,
         "Fee vault is not correct after tests"
     );
 
-    // Not thread-safe (fee vault and bridge balance checks)
+    // Not thread-safe (coinbase and bridge balance checks)
     test_n_withdraws(
         &l1_client,
         &l2_client,
@@ -217,7 +240,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 /// 2. Deploys the new implementation on L2
 /// 3. Calls the upgrade function on the L1 bridge contract
 /// 4. Checks that the implementation address has changed
-async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256> {
+async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<FeesDetails> {
     println!("Testing upgrade");
     let bridge_owner_private_key = bridge_owner_private_key();
 
@@ -243,7 +266,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
 
     println!("test_upgrade: Deploying CommonBridgeL2 contract");
-    let (deploy_address, deploy_recoverable_fees) = test_deploy(
+    let (deploy_address, deploy_base_fees) = test_deploy(
         &l2_client,
         &bridge_code,
         &bridge_owner_private_key,
@@ -291,7 +314,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<U256
         .await?;
     println!("test upgrade: upgraded {initial_impl:#x} -> {final_impl:#x}");
     assert_ne!(initial_impl, final_impl);
-    Ok(deploy_recoverable_fees)
+    Ok(deploy_base_fees)
 }
 
 /// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
@@ -301,7 +324,7 @@ async fn test_privileged_tx_with_contract_call(
     l1_client: EthClient,
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     // pragma solidity ^0.8.27;
     // contract Test {
     //     event NumberSet(uint256 indexed number);
@@ -315,7 +338,7 @@ async fn test_privileged_tx_with_contract_call(
 
     println!("ptx_with_contract_call: Deploying contract on L2");
 
-    let (deployed_contract_address, recoverable_fees) = test_deploy(
+    let (deployed_contract_address, base_fees) = test_deploy(
         &l2_client,
         &init_code,
         &rich_wallet_private_key,
@@ -390,7 +413,7 @@ async fn test_privileged_tx_with_contract_call(
         "ptx_with_contract_call: Event emitted with wrong value. Expected 424242, got {number_emitted}"
     );
 
-    Ok(recoverable_fees)
+    Ok(base_fees)
 }
 
 /// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
@@ -399,7 +422,7 @@ async fn test_privileged_tx_with_contract_call_revert(
     l1_client: EthClient,
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     // pragma solidity ^0.8.27;
     // contract RevertTest {
     //     function revert_call() public {
@@ -412,7 +435,7 @@ async fn test_privileged_tx_with_contract_call_revert(
 
     println!("ptx_with_contract_call_revert: Deploying contract on L2");
 
-    let (deployed_contract_address, recoverable_fees) = test_deploy(
+    let (deployed_contract_address, base_fees) = test_deploy(
         &l2_client,
         &init_code,
         &rich_wallet_private_key,
@@ -434,7 +457,7 @@ async fn test_privileged_tx_with_contract_call_revert(
     )
     .await?;
 
-    Ok(recoverable_fees)
+    Ok(base_fees)
 }
 
 async fn find_withdrawal_with_widget(
@@ -464,7 +487,7 @@ async fn test_erc20_roundtrip(
     l1_client: EthClient,
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     let token_amount: U256 = U256::from(100);
 
     let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
@@ -658,7 +681,7 @@ async fn test_erc20_roundtrip(
     let l2_final_balance = test_balance_of(&l2_client, token_l2, rich_address).await;
     assert_eq!(initial_balance, l1_final_balance);
     assert!(l2_final_balance.is_zero());
-    Ok(deploy_fees + approve_fees.recoverable_fees + withdraw_fees.recoverable_fees)
+    Ok(deploy_fees + approve_fees + withdraw_fees)
 }
 
 /// Tests that the aliasing is done correctly when calling from L1 to L2
@@ -669,7 +692,7 @@ async fn test_aliasing(
     l1_client: EthClient,
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     println!("Testing aliasing");
     let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
     let caller_l1 = test_deploy_l1(&l1_client, &init_code_l1, &rich_wallet_private_key).await?;
@@ -708,7 +731,7 @@ async fn test_aliasing(
         receipt_l2.tx_info.from
     );
     assert_eq!(receipt_l2.tx_info.from, get_address_alias(caller_l1));
-    Ok(U256::zero())
+    Ok(FeesDetails::default())
 }
 
 /// Tests that a failed deposit can be withdrawn back to L1
@@ -719,7 +742,7 @@ async fn test_erc20_failed_deposit(
     l1_client: EthClient,
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     let token_amount: U256 = U256::from(100);
 
     let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
@@ -799,7 +822,7 @@ async fn test_erc20_failed_deposit(
     wait_for_transaction_receipt(withdraw_claim_tx, &l1_client, 5).await?;
     let l1_final_balance = test_balance_of(&l1_client, token_l1, rich_address).await;
     assert_eq!(initial_balance, l1_final_balance);
-    Ok(U256::zero())
+    Ok(FeesDetails::default())
 }
 
 /// Tests that a withdrawal can be triggered by a privileged transaction
@@ -808,7 +831,7 @@ async fn test_forced_withdrawal(
     l1_client: EthClient,
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     println!("forced_withdrawal: Testing forced withdrawal");
     let rich_address =
         get_address_from_secret_key(&rich_wallet_private_key).expect("Failed to get address");
@@ -922,7 +945,7 @@ async fn test_forced_withdrawal(
         l1_final_balance
     );
     assert_eq!(l2_initial_balance - transfer_value, l2_final_balance);
-    Ok(U256::zero())
+    Ok(FeesDetails::default())
 }
 
 async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U256 {
@@ -966,7 +989,7 @@ async fn test_send(
 }
 
 /// Test depositing ETH from L1 to L2
-/// 1. Fetch initial balances of depositor on L1, recipient on L2, bridge on L1 and fee vault on L2.
+/// 1. Fetch initial balances of depositor on L1, recipient on L2, bridge on L1 and coinbase on L2.
 /// 2. Perform deposit from L1 to L2
 /// 3. Check final balances.
 async fn test_deposit(
@@ -1067,7 +1090,7 @@ async fn test_deposit(
 
     assert_eq!(
         coinbase_balance_after_deposit, coinbase_balance_before_deposit,
-        "Fee vault balance should not change after deposit"
+        "Coinbase balance should not change after deposit"
     );
 
     Ok(())
@@ -1076,7 +1099,7 @@ async fn test_deposit(
 async fn test_privileged_spammer(
     l1_client: EthClient,
     rich_wallet_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     let init_code_l1 = hex::decode(std::fs::read(
         "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
     )?)?;
@@ -1092,7 +1115,7 @@ async fn test_privileged_spammer(
         )
         .await?;
     }
-    Ok(U256::zero())
+    Ok(FeesDetails::default())
 }
 
 /// Test transferring ETH on L2
@@ -1104,7 +1127,7 @@ async fn test_transfer(
     l2_client: EthClient,
     transferer_private_key: SecretKey,
     returnerer_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     println!("test_transfer: Transferring funds on L2");
     let transferer_address = get_address_from_secret_key(&transferer_private_key).unwrap();
     let returner_address = get_address_from_secret_key(&returnerer_private_key).unwrap();
@@ -1113,7 +1136,7 @@ async fn test_transfer(
         "test_transfer: Performing transfer from {transferer_address:#x} to {returner_address:#x}"
     );
 
-    let mut recoverable_fees = perform_transfer(
+    let mut base_fees = perform_transfer(
         &l2_client,
         &transferer_private_key,
         returner_address,
@@ -1127,7 +1150,7 @@ async fn test_transfer(
         "test_transfer: Performing return transfer from {returner_address:#x} to {transferer_address:#x} with amount {return_amount}"
     );
 
-    recoverable_fees += perform_transfer(
+    base_fees += perform_transfer(
         &l2_client,
         &returnerer_private_key,
         transferer_address,
@@ -1135,7 +1158,7 @@ async fn test_transfer(
     )
     .await?;
 
-    Ok(recoverable_fees)
+    Ok(base_fees)
 }
 
 /// Test transferring ETH on L2 through a privileged transaction (deposit from L1)
@@ -1147,7 +1170,7 @@ async fn test_transfer_with_privileged_tx(
     l2_client: EthClient,
     transferer_private_key: SecretKey,
     receiver_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     println!("transfer_with_ptx: Transferring funds on L2 through a deposit");
     let transferer_address = get_address_from_secret_key(&transferer_private_key).unwrap();
     let receiver_address = get_address_from_secret_key(&receiver_private_key).unwrap();
@@ -1195,7 +1218,7 @@ async fn test_transfer_with_privileged_tx(
         receiver_balance_after,
         receiver_balance_before + transfer_value()
     );
-    Ok(U256::zero())
+    Ok(FeesDetails::default())
 }
 
 /// Test that gas is burned from the L1 account when making a deposit with a specified L2 gas limit.
@@ -1204,7 +1227,7 @@ async fn test_transfer_with_privileged_tx(
 async fn test_gas_burning(
     l1_client: EthClient,
     rich_wallet_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     println!("test_gas_burning: Transferring funds on L2 through a deposit");
     let rich_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
     let l2_gas_limit = 2_000_000;
@@ -1228,7 +1251,7 @@ async fn test_gas_burning(
     assert!(l1_to_l2_tx_receipt.receipt.status);
     assert!(l1_to_l2_tx_receipt.tx_info.gas_used > l2_gas_limit);
     assert!(l1_to_l2_tx_receipt.tx_info.gas_used < l2_gas_limit + l1_extra_gas_limit);
-    Ok(U256::zero())
+    Ok(FeesDetails::default())
 }
 
 /// Test transferring ETH on L2 through a privileged transaction (deposit from L1) with insufficient balance
@@ -1240,7 +1263,7 @@ async fn test_privileged_tx_not_enough_balance(
     l2_client: EthClient,
     rich_wallet_private_key: SecretKey,
     receiver_private_key: SecretKey,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     println!(
         "ptx_not_enough_balance: Starting test for privileged transaction with insufficient balance"
     );
@@ -1292,7 +1315,7 @@ async fn test_privileged_tx_not_enough_balance(
         .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
     assert_eq!(balance_after, balance_before);
-    Ok(U256::zero())
+    Ok(FeesDetails::default())
 }
 
 /// Test helper
@@ -1304,7 +1327,7 @@ async fn perform_transfer(
     transferer_private_key: &SecretKey,
     transfer_recipient_address: Address,
     transfer_value: U256,
-) -> Result<U256> {
+) -> Result<FeesDetails> {
     let transferer_address = get_address_from_secret_key(transferer_private_key).unwrap();
 
     let transferer_initial_l2_balance = l2_client
@@ -1370,7 +1393,7 @@ async fn perform_transfer(
 
     let transfer_fees = get_fees_details_l2(&transfer_tx_receipt, l2_client).await;
 
-    Ok(transfer_fees.recoverable_fees)
+    Ok(transfer_fees)
 }
 
 async fn test_n_withdraws(
@@ -1478,17 +1501,15 @@ async fn test_n_withdraws(
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let mut recoverable_fees = U256::zero();
+    let mut base_fees = U256::zero();
     for receipt in receipts {
-        recoverable_fees += get_fees_details_l2(&receipt, l2_client)
-            .await
-            .recoverable_fees;
+        base_fees += get_fees_details_l2(&receipt, l2_client).await.base_fees;
     }
 
     assert_eq!(
         coinbase_balance_after_withdrawal,
-        coinbase_balance_before_withdrawal + recoverable_fees,
-        "Fee vault balance didn't increase as expected after withdrawal"
+        coinbase_balance_before_withdrawal + base_fees,
+        "Coinbase balance didn't increase as expected after withdrawal"
     );
 
     // We need to wait for all the txs to be included in some batch
@@ -1609,7 +1630,7 @@ async fn test_deploy(
     init_code: &[u8],
     deployer_private_key: &SecretKey,
     test_name: &str,
-) -> Result<(Address, U256)> {
+) -> Result<(Address, FeesDetails)> {
     println!("{test_name}: Deploying contract on L2");
 
     let deployer: Signer = LocalSigner::new(*deployer_private_key).into();
@@ -1655,7 +1676,7 @@ async fn test_deploy(
         "{test_name}: Deployed contract balance should be zero after deploy"
     );
 
-    Ok((contract_address, deploy_fees.recoverable_fees))
+    Ok((contract_address, deploy_fees))
 }
 
 async fn test_deploy_l1(
@@ -1678,7 +1699,7 @@ async fn test_deploy_l1(
     Ok(contract_address)
 }
 
-/// Fee vault must be 0
+/// Coinbase must be 0
 async fn test_call_to_contract_with_deposit(
     l1_client: &EthClient,
     l2_client: &EthClient,
@@ -1767,10 +1788,28 @@ fn bridge_owner_private_key() -> SecretKey {
     SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct FeesDetails {
     total_fees: U256,
-    recoverable_fees: U256,
+    base_fees: U256,
+}
+
+impl Add for FeesDetails {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            total_fees: self.total_fees + other.total_fees,
+            base_fees: self.base_fees + other.base_fees,
+        }
+    }
+}
+
+impl AddAssign for FeesDetails {
+    fn add_assign(&mut self, other: Self) {
+        self.total_fees += other.total_fees;
+        self.base_fees += other.base_fees;
+    }
 }
 
 async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> FeesDetails {
@@ -1791,11 +1830,11 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
 
     let max_priority_fee_per_gas_transfer: U256 = (effective_gas_price - base_fee_per_gas).into();
 
-    let recoverable_fees = max_priority_fee_per_gas_transfer.mul(tx_receipt.tx_info.gas_used);
+    let base_fees = max_priority_fee_per_gas_transfer.mul(tx_receipt.tx_info.gas_used);
 
     FeesDetails {
         total_fees,
-        recoverable_fees,
+        base_fees,
     }
 }
 
@@ -1813,6 +1852,12 @@ fn coinbase() -> Address {
     std::env::var("INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer coinbase address"))
         .unwrap_or(DEFAULT_PROPOSER_COINBASE_ADDRESS)
+}
+
+fn fee_vault() -> Address {
+    std::env::var("INTEGRATION_TEST_PROPOSER_FEE_VAULT_ADDRESS")
+        .map(|address| address.parse().expect("Invalid proposer coinbase address"))
+        .unwrap_or(DEFAULT_PROPOSER_FEE_VAULT_ADDRESS)
 }
 
 async fn wait_for_l2_deposit_receipt(
@@ -1954,7 +1999,7 @@ fn get_contract_dependencies(contracts_path: &Path) {
             .join("lib/openzeppelin-contracts-upgradeable")
             .to_str()
             .expect("Failed to convert path to str"),
-        None,
+        Some("release-v5.4"),
         true,
     )
     .unwrap();
