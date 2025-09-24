@@ -1954,7 +1954,7 @@ fn get_contract_dependencies(contracts_path: &Path) {
             .join("lib/openzeppelin-contracts-upgradeable")
             .to_str()
             .expect("Failed to convert path to str"),
-        None,
+        Some("release-v5.4"),
         true,
     )
     .unwrap();
