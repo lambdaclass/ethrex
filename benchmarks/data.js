@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758713107311,
+  "lastUpdate": 1758717009631,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33331,6 +33331,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004472332460732985,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a8a1a5e569514eccd8b381398358c9c8c18a447c",
+          "message": "perf(levm): refactor `bls12_g2add` to use lambdaworks (#4538)\n\n**Motivation**\n\nBLS12 computation is slow.\n\n**Description**\n\nReplace the BLS12 library with lambdaworks.",
+          "timestamp": "2025-09-23T14:18:00Z",
+          "tree_id": "59375dc4f21c9820dbe105052fc2eeb282260120",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a8a1a5e569514eccd8b381398358c9c8c18a447c"
+        },
+        "date": 1758717009003,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001543762951807229,
             "unit": "Mgas/s"
           }
         ]
