@@ -36,7 +36,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
+    sync::{AccountStorageRoots, BlockSyncState, SyncError, block_is_stale, update_pivot},
     utils::{
         SendMessageError, dump_accounts_to_file, dump_storages_to_file, dump_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
@@ -761,10 +761,6 @@ impl PeerHandler {
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
-        // channel to send the result of dumping accounts
-        let (dump_account_result_sender, mut dump_account_result_receiver) =
-            tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
-
         info!("Starting to download account ranges from peers");
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
@@ -772,6 +768,7 @@ impl PeerHandler {
         let mut completed_tasks = 0;
         let mut chunk_file = 0;
         let mut last_update: SystemTime = SystemTime::now();
+        let mut write_set = tokio::task::JoinSet::new();
 
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
@@ -791,22 +788,13 @@ impl PeerHandler {
                 }
 
                 let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
-                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                tokio::task::spawn(async move {
+                write_set.spawn(async move {
                     let path = get_account_state_snapshot_file(
                         &account_state_snapshots_dir_cloned,
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result = dump_accounts_to_file(&path, account_state_chunk);
-                    dump_account_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send account dump result through channel. Error: {err}"
-                            )
-                        })
+                    dump_accounts_to_file(&path, account_state_chunk)
                 });
 
                 chunk_file += 1;
@@ -857,30 +845,6 @@ impl PeerHandler {
                 );
             }
 
-            // Check if any dump account task finished
-            // TODO: consider tracking in-flight (dump) tasks
-            if let Ok(Err(dump_account_data)) = dump_account_result_receiver.try_recv() {
-                if dump_account_data.error == ErrorKind::StorageFull {
-                    return Err(PeerHandlerError::StorageFull);
-                }
-                // If the dumping failed, retry it
-                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                tokio::task::spawn(async move {
-                    let DumpError { path, contents, .. } = dump_account_data;
-                    // Dump the account data
-                    let result = dump_to_file(&path, contents);
-                    // Send the result through the channel
-                    dump_account_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send account dump result through channel. Error: {err}"
-                            )
-                        })
-                });
-            }
-
             let Some((peer_id, peer_channel)) = self
                 .peer_table
                 .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
@@ -922,6 +886,13 @@ impl PeerHandler {
                 tx,
             ));
         }
+
+        write_set
+            .join_all()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<()>, DumpError>>()
+            .map_err(PeerHandlerError::DumpError)?;
 
         // TODO: This is repeated code, consider refactoring
         {
