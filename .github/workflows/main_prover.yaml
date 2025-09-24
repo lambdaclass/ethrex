@@ -84,9 +84,9 @@ jobs:
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
+          docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-sp1 GPU=true &
-          docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
           kill $DOCKER_LOGS_PID || true
