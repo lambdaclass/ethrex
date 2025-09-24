@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758722826587,
+  "lastUpdate": 1758723357404,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16255,6 +16255,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89773531641,
             "range": "± 230800540",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1d4ae8fad5a8511742c26f89be8e252825477e6b",
+          "message": "refactor(levm): improve ecrecover (#4627)\n\n**Motivation**\n\nThis PR improves readibility of `ecrecover` of levm.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-24T13:28:19Z",
+          "tree_id": "417734e907f999f49cc1ccf5aabc411536a61020",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1d4ae8fad5a8511742c26f89be8e252825477e6b"
+        },
+        "date": 1758723331114,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 88753641821,
+            "range": "± 213932667",
             "unit": "ns/iter"
           }
         ]
