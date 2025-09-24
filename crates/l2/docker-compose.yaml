@@ -79,7 +79,6 @@ services:
     env_file:
       - ../../cmd/.env
     volumes:
-      - ./entrypoint.sh:/entrypoint.sh:ro
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - ../../cmd/.env:/.env:ro
     entrypoint:
