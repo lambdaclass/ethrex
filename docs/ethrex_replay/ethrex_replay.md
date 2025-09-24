@@ -12,7 +12,7 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches �
 | ethrex     | ✅                            | debug_executionWitness (fast)    |
 | erigon     | 🔜                            |                                  |
 
-Disclaimer: Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using zkVMs (with the `--no-zkvm` flag) it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a full node using `eth_getProof` if execution takes longer than 25 minutes it will probably fail because the node will have pruned it's state (128 blocks * 12 seconds = 25,6 min). We recommend using nodes close to the user (so that responses are quicker), hash-based archive nodes (so they don't prune state) or RPC Providers (they often use hash-based archive nodes themselves).
+Disclaimer: Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using zkVMs (with the `--no-zkvm` flag) it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a **full node** using `eth_getProof` if for some reason execution were to take longer than 25 minutes it would probably fail because the node may have pruned it's state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.
 
 ## Getting Started
 
