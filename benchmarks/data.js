@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758661051240,
+  "lastUpdate": 1758682993989,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33140,6 +33140,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001531309530923215,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "569783bea128302611d20b80980e768fbe25c44f",
+          "message": "fix(l1): `RpcTransaction` representation for pending transactions (#4583)\n\n**Motivation**\nPR #4533 Enabled mempool transactions to be fetched by rpc endpoints\n`GetTransactionByHash` and `GetRawTransaction`, but it used default\nvalues instead of null values in the representation for the block hash,\nblock number, and transaction index fields. This doesn't match the spec\n(geth) and caused problems when running hive tests.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Make `block_hash` field of `RpcTransaction` optional\n* Use null values for block hash, number and tx index when building\n`RpcTransaction`s from pending transactions\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None, but is needed for #3844\n\nSpecial thanks to @cdiielsi for pointing this out!",
+          "timestamp": "2025-09-23T08:11:06Z",
+          "tree_id": "9f8a2c3a448ce2c5a19bb46cd86cde330695ee93",
+          "url": "https://github.com/lambdaclass/ethrex/commit/569783bea128302611d20b80980e768fbe25c44f"
+        },
+        "date": 1758682958785,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0044259870466321245,
             "unit": "Mgas/s"
           }
         ]
