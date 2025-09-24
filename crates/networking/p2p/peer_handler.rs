@@ -1436,16 +1436,10 @@ impl PeerHandler {
                             let old_intervals = accounts_done
                                 .get_mut(&current_account_hashes[remaining_start])
                                 .unwrap();
-                            // dbg!(&old_intervals);
-                            // dbg!(&current_account_hashes[remaining_start]);
-                            // dbg!(&hash_end);
                             old_intervals.remove(
                                 old_intervals
                                     .iter()
-                                    .position(|(_old_start, end)| {
-                                        // dbg!(&end);
-                                        end == &hash_end
-                                    })
+                                    .position(|(_old_start, end)| end == &hash_end)
                                     .unwrap(),
                             );
                         }
@@ -1478,10 +1472,11 @@ impl PeerHandler {
 
                         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
-                        let maybe_old_intervals =
-                            accounts_done.get(&current_account_hashes[remaining_start]);
+                        let maybe_old_intervals = account_storage_roots
+                            .accounts_with_storage_root
+                            .get(&current_account_hashes[remaining_start]);
 
-                        if let Some(old_intervals) = maybe_old_intervals {
+                        if let Some((_, old_intervals)) = maybe_old_intervals {
                             for (start_hash, end_hash) in old_intervals {
                                 let task = StorageTask {
                                     start_index: remaining_start,
