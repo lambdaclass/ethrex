@@ -190,8 +190,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let mut acc_base_fees = U256::zero();
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
-        acc_priority_fees += fees_details.total_fees - fees_details.base_fees;
-        acc_base_fees += fees_details.base_fees;
+        acc_priority_fees += fees_details.priority_fees;
+        acc_base_fees += fees_details.total_fees - fees_details.priority_fees;
     }
 
     let coinbase_balance_after_tests = l2_client
@@ -210,11 +210,13 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "Coinbase is not correct after tests"
     );
 
-    assert_eq!(
-        fee_vault_balance_after_tests,
-        fee_vault_balance_before_tests + acc_base_fees,
-        "Fee vault is not correct after tests"
-    );
+    if std::env::var("INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK").is_err() {
+        assert_eq!(
+            fee_vault_balance_after_tests,
+            fee_vault_balance_before_tests + acc_base_fees,
+            "Fee vault is not correct after tests"
+        );
+    }
 
     // Not thread-safe (coinbase and bridge balance checks)
     test_n_withdraws(
@@ -338,7 +340,7 @@ async fn test_privileged_tx_with_contract_call(
 
     println!("ptx_with_contract_call: Deploying contract on L2");
 
-    let (deployed_contract_address, base_fees) = test_deploy(
+    let (deployed_contract_address, fees_details) = test_deploy(
         &l2_client,
         &init_code,
         &rich_wallet_private_key,
@@ -413,7 +415,7 @@ async fn test_privileged_tx_with_contract_call(
         "ptx_with_contract_call: Event emitted with wrong value. Expected 424242, got {number_emitted}"
     );
 
-    Ok(base_fees)
+    Ok(fees_details)
 }
 
 /// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
@@ -435,7 +437,7 @@ async fn test_privileged_tx_with_contract_call_revert(
 
     println!("ptx_with_contract_call_revert: Deploying contract on L2");
 
-    let (deployed_contract_address, base_fees) = test_deploy(
+    let (deployed_contract_address, fees_details) = test_deploy(
         &l2_client,
         &init_code,
         &rich_wallet_private_key,
@@ -457,7 +459,7 @@ async fn test_privileged_tx_with_contract_call_revert(
     )
     .await?;
 
-    Ok(base_fees)
+    Ok(fees_details)
 }
 
 async fn find_withdrawal_with_widget(
@@ -1136,7 +1138,7 @@ async fn test_transfer(
         "test_transfer: Performing transfer from {transferer_address:#x} to {returner_address:#x}"
     );
 
-    let mut base_fees = perform_transfer(
+    let mut fees_details = perform_transfer(
         &l2_client,
         &transferer_private_key,
         returner_address,
@@ -1150,7 +1152,7 @@ async fn test_transfer(
         "test_transfer: Performing return transfer from {returner_address:#x} to {transferer_address:#x} with amount {return_amount}"
     );
 
-    base_fees += perform_transfer(
+    fees_details += perform_transfer(
         &l2_client,
         &returnerer_private_key,
         transferer_address,
@@ -1158,7 +1160,7 @@ async fn test_transfer(
     )
     .await?;
 
-    Ok(base_fees)
+    Ok(fees_details)
 }
 
 /// Test transferring ETH on L2 through a privileged transaction (deposit from L1)
@@ -1503,7 +1505,7 @@ async fn test_n_withdraws(
 
     let mut base_fees = U256::zero();
     for receipt in receipts {
-        base_fees += get_fees_details_l2(&receipt, l2_client).await.base_fees;
+        base_fees += get_fees_details_l2(&receipt, l2_client).await.priority_fees;
     }
 
     assert_eq!(
@@ -1600,10 +1602,17 @@ async fn test_total_eth_l2(
 
     println!("Coinbase balance: {coinbase_balance}");
 
-    let total_eth_on_l2 = rich_accounts_balance + coinbase_balance;
+    let fee_vault_balance = l2_client
+        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
 
-    println!("Total ETH on L2: {rich_accounts_balance} + {coinbase_balance} = {total_eth_on_l2}");
+    println!("Fee vault balance: {fee_vault_balance}");
 
+    let total_eth_on_l2 = rich_accounts_balance + coinbase_balance + fee_vault_balance;
+
+    println!(
+        "Total ETH on L2: {rich_accounts_balance} + {coinbase_balance} + {fee_vault_balance} = {total_eth_on_l2}"
+    );
     println!("Checking locked ETH on CommonBridge");
 
     let bridge_address = bridge_address()?;
@@ -1613,10 +1622,17 @@ async fn test_total_eth_l2(
 
     println!("Bridge locked ETH: {bridge_locked_eth}");
 
-    assert!(
-        total_eth_on_l2 <= bridge_locked_eth,
-        "Total ETH on L2 ({total_eth_on_l2}) is greater than bridge locked ETH ({bridge_locked_eth})"
-    );
+    if std::env::var("INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK").is_err() {
+        assert!(
+            total_eth_on_l2 == bridge_locked_eth,
+            "Total ETH on L2 ({total_eth_on_l2}) differs from bridge locked ETH ({bridge_locked_eth})"
+        );
+    } else {
+        assert!(
+            total_eth_on_l2 < bridge_locked_eth,
+            "Total ETH on L2 ({total_eth_on_l2}) is greater than bridge locked ETH ({bridge_locked_eth})"
+        );
+    }
 
     Ok(())
 }
@@ -1791,7 +1807,7 @@ fn bridge_owner_private_key() -> SecretKey {
 #[derive(Debug, Default)]
 struct FeesDetails {
     total_fees: U256,
-    base_fees: U256,
+    priority_fees: U256,
 }
 
 impl Add for FeesDetails {
@@ -1800,7 +1816,7 @@ impl Add for FeesDetails {
     fn add(self, other: Self) -> Self {
         Self {
             total_fees: self.total_fees + other.total_fees,
-            base_fees: self.base_fees + other.base_fees,
+            priority_fees: self.priority_fees + other.priority_fees,
         }
     }
 }
@@ -1808,7 +1824,7 @@ impl Add for FeesDetails {
 impl AddAssign for FeesDetails {
     fn add_assign(&mut self, other: Self) {
         self.total_fees += other.total_fees;
-        self.base_fees += other.base_fees;
+        self.priority_fees += other.priority_fees;
     }
 }
 
@@ -1830,11 +1846,11 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
 
     let max_priority_fee_per_gas_transfer: U256 = (effective_gas_price - base_fee_per_gas).into();
 
-    let base_fees = max_priority_fee_per_gas_transfer.mul(tx_receipt.tx_info.gas_used);
+    let priority_fees = max_priority_fee_per_gas_transfer.mul(tx_receipt.tx_info.gas_used);
 
     FeesDetails {
         total_fees,
-        base_fees,
+        priority_fees,
     }
 }
 
