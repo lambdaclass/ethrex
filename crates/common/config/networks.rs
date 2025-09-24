@@ -99,7 +99,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
-            Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
+            Network::L2Chain(chain_id) => write!(f, "l2-chain-{chain_id}"),
             Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
         }
     }
