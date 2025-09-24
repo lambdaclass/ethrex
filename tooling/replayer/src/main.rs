@@ -218,13 +218,25 @@ async fn replay_latest_block(
     rpc_url: Url,
     eth_client: &EthClient,
 ) -> Result<Duration, EthClientError> {
-    let latest_block = eth_client
+    let mut latest_block = eth_client
         .get_block_number()
         .await
         .unwrap_or_else(|e| {
             panic!("Failed to get latest block number from {rpc_url}: {e}");
         })
         .as_u64();
+
+    // We only want to replay prover killers (see https://github.com/yourbuddyconner/zkarnage?tab=readme-ov-file#background)
+    while latest_block % 100 != 0 {
+        latest_block = eth_client
+            .get_block_number()
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Failed to get latest block number from {rpc_url}: {e}");
+            })
+            .as_u64();
+        tokio::time::sleep(Duration::from_secs(12)).await;
+    }
 
     if let Network::PublicNetwork(PublicNetwork::Mainnet) = network {
         tracing::info!("Replaying block https://etherscan.io/block/{latest_block}");
