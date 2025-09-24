@@ -255,7 +255,7 @@ dependencies = [
  "cfg-if 1.0.3",
  "const-hex",
  "derive_more 0.99.20",
- "hex-literal",
+ "hex-literal 0.4.1",
  "itoa",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-asm",
@@ -1579,6 +1579,19 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7bc6d6292be3a19e6379786dac800f551e5865a5bb51ebbe3064ab80433f403"
+dependencies = [
+ "ff 0.13.1",
+ "group 0.13.0",
+ "pairing 0.23.0",
+ "rand_core 0.6.4",
+ "subtle",
+]
+
+[[package]]
+name = "bls12_381"
+version = "0.8.0"
 source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct#219174187bd78154cec35b0809799fc2c991a579"
 dependencies = [
  "digest 0.10.7",
@@ -2833,7 +2846,7 @@ checksum = "85078445a8dbd2e1bd21f04a816f352db8d333643f0c9b78ca7c3d1df71063e7"
 dependencies = [
  "dashu-base",
  "dashu-int",
- "num-modular",
+ "num-modular 0.6.1",
  "num-order",
  "rustversion",
  "static_assertions",
@@ -2847,7 +2860,7 @@ checksum = "ee99d08031ca34a4d044efbbb21dff9b8c54bb9d8c82a189187c0651ffdb9fbf"
 dependencies = [
  "cfg-if 1.0.3",
  "dashu-base",
- "num-modular",
+ "num-modular 0.6.1",
  "num-order",
  "rustversion",
  "static_assertions",
@@ -2878,7 +2891,7 @@ dependencies = [
  "dashu-base",
  "dashu-float",
  "dashu-int",
- "num-modular",
+ "num-modular 0.6.1",
  "num-order",
  "rustversion",
 ]
@@ -4091,15 +4104,14 @@ name = "ethrex-common"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "c-kzg",
  "crc32fast",
  "ethereum-types 0.15.1",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "keccak-hash",
- "kzg-rs",
  "lazy_static",
  "once_cell",
  "rayon",
@@ -4130,6 +4142,12 @@ dependencies = [
 [[package]]
 name = "ethrex-crypto"
 version = "0.1.0"
+dependencies = [
+ "c-kzg",
+ "kzg-rs",
+ "openvm-kzg",
+ "thiserror 2.0.16",
+]
 
 [[package]]
 name = "ethrex-dev"
@@ -4222,6 +4240,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "lambdaworks-crypto 0.11.0",
  "secp256k1",
@@ -4267,7 +4286,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
- "bls12_381 0.8.0",
+ "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "bytes",
  "colored",
  "datatest-stable",
@@ -4327,7 +4346,7 @@ dependencies = [
  "ethrex-trie",
  "futures",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "hmac",
  "keccak-hash",
  "lazy_static",
@@ -4454,7 +4473,7 @@ dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "lazy_static",
  "snap",
  "thiserror 2.0.16",
@@ -4481,7 +4500,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "jemalloc_pprof",
  "jsonwebtoken 9.3.1",
  "keccak-hash",
@@ -4548,7 +4567,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "libmdbx",
  "rocksdb",
  "serde",
@@ -4593,7 +4612,7 @@ dependencies = [
  "ethrex-rlp",
  "hasher",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "lazy_static",
  "libmdbx",
  "proptest",
@@ -5343,6 +5362,7 @@ dependencies = [
  "bytes",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",
@@ -5449,6 +5469,34 @@ dependencies = [
  "pasta_curves 0.4.1",
  "rand_core 0.6.4",
  "rayon",
+]
+
+[[package]]
+name = "halo2curves-axiom"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd8309e4638b4f1bcf6613d72265a84074d26034c35edc5d605b5688e580b8b8"
+dependencies = [
+ "blake2b_simd",
+ "digest 0.10.7",
+ "ff 0.13.1",
+ "group 0.13.0",
+ "hex",
+ "lazy_static",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "pairing 0.23.0",
+ "pasta_curves 0.5.1",
+ "paste",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "serde_arrays 0.1.0",
+ "sha2",
+ "static_assertions",
+ "subtle",
+ "unroll",
 ]
 
 [[package]]
@@ -5618,6 +5666,12 @@ name = "hex-literal"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
+name = "hex-literal"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
 
 [[package]]
 name = "hive_report"
@@ -6571,7 +6625,7 @@ checksum = "9201effeea3fcc93b587904ae2df9ce97e433184b9d6d299e9ebc9830a546636"
 dependencies = [
  "ff 0.13.1",
  "hex",
- "serde_arrays",
+ "serde_arrays 0.2.0",
  "sha2",
  "sp1_bls12_381",
  "spin 0.9.8",
@@ -7658,6 +7712,17 @@ dependencies = [
 
 [[package]]
 name = "num-modular"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64a5fe11d4135c3bcdf3a95b18b194afa9608a5f6ff034f5d857bc9a27fb0119"
+dependencies = [
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-modular"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17bb261bf36fa7d83f4c294f834e91256769097b3cb505d44831e0a179ac647f"
@@ -7668,7 +7733,23 @@ version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "537b596b97c40fcf8056d153049eb22f481c17ebce72a513ec9286e4986d1bb6"
 dependencies = [
- "num-modular",
+ "num-modular 0.6.1",
+]
+
+[[package]]
+name = "num-prime"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e238432a7881ec7164503ccc516c014bf009be7984cde1ba56837862543bdec3"
+dependencies = [
+ "bitvec",
+ "either",
+ "lru",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-modular 0.5.1",
+ "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -7759,6 +7840,18 @@ name = "number_prefix"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
+
+[[package]]
+name = "nums"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf3c74f925fb8cfc49a8022f2afce48a0683b70f9e439885594e84c5edbf5b01"
+dependencies = [
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-traits",
+ "rand 0.8.5",
+]
 
 [[package]]
 name = "nvtx"
@@ -7888,6 +7981,184 @@ dependencies = [
 ]
 
 [[package]]
+name = "openvm"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "bytemuck",
+ "num-bigint 0.4.6",
+ "openvm-custom-insn",
+ "openvm-platform",
+ "openvm-rv32im-guest",
+ "serde",
+]
+
+[[package]]
+name = "openvm-algebra-complex-macros"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "openvm-macros-common",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "openvm-algebra-guest"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "halo2curves-axiom",
+ "num-bigint 0.4.6",
+ "once_cell",
+ "openvm-algebra-complex-macros",
+ "openvm-algebra-moduli-macros",
+ "openvm-custom-insn",
+ "openvm-rv32im-guest",
+ "serde-big-array",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "openvm-algebra-moduli-macros"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "num-bigint 0.4.6",
+ "num-prime",
+ "openvm-macros-common",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "openvm-custom-insn"
+version = "0.1.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "openvm-ecc-guest"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "ecdsa 0.16.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "elliptic-curve",
+ "group 0.13.0",
+ "halo2curves-axiom",
+ "once_cell",
+ "openvm",
+ "openvm-algebra-guest",
+ "openvm-custom-insn",
+ "openvm-ecc-sw-macros",
+ "openvm-rv32im-guest",
+ "serde",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "openvm-ecc-sw-macros"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "openvm-macros-common",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "openvm-kzg"
+version = "0.2.0-alpha"
+source = "git+https://github.com/axiom-crypto/openvm-kzg.git?rev=1a01e080656a638643f563a461f96498052ffb2c#1a01e080656a638643f563a461f96498052ffb2c"
+dependencies = [
+ "bls12_381 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hex",
+ "hex-literal 1.0.0",
+ "openvm-algebra-guest",
+ "openvm-ecc-guest",
+ "openvm-pairing",
+ "serde",
+ "serde-big-array",
+ "spin 0.10.0",
+]
+
+[[package]]
+name = "openvm-macros-common"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "openvm-pairing"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "group 0.13.0",
+ "hex-literal 0.4.1",
+ "itertools 0.14.0",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "openvm",
+ "openvm-algebra-complex-macros",
+ "openvm-algebra-guest",
+ "openvm-algebra-moduli-macros",
+ "openvm-custom-insn",
+ "openvm-ecc-guest",
+ "openvm-ecc-sw-macros",
+ "openvm-pairing-guest",
+ "openvm-platform",
+ "openvm-rv32im-guest",
+ "rand 0.8.5",
+ "serde",
+]
+
+[[package]]
+name = "openvm-pairing-guest"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "hex-literal 0.4.1",
+ "itertools 0.14.0",
+ "lazy_static",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "openvm",
+ "openvm-algebra-guest",
+ "openvm-algebra-moduli-macros",
+ "openvm-custom-insn",
+ "openvm-ecc-guest",
+ "rand 0.8.5",
+ "serde",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "openvm-platform"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "libm",
+ "openvm-custom-insn",
+ "openvm-rv32im-guest",
+]
+
+[[package]]
+name = "openvm-rv32im-guest"
+version = "1.4.0"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v1.4.0#39ee587f0f73646e3753cb2aa5f34885d4efffe0"
+dependencies = [
+ "openvm-custom-insn",
+ "p3-field 0.1.0",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7923,7 +8194,7 @@ version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05a97452c4b1cfa8626e69181d901fc8231d99ff7d87e9701a2e6b934606615"
 dependencies = [
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
 ]
 
@@ -7934,7 +8205,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7521838ecab2ddf4f7bc4ceebad06ec02414729598485c1ada516c39900820e8"
 dependencies = [
  "num-bigint 0.4.6",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-mds",
  "p3-poseidon2",
  "p3-symmetric",
@@ -7950,7 +8221,7 @@ checksum = "c0dd4d095d254783098bd09fc5fdf33fd781a1be54608ab93cb3ed4bd723da54"
 dependencies = [
  "ff 0.13.1",
  "num-bigint 0.4.6",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-poseidon2",
  "p3-symmetric",
  "rand 0.8.5",
@@ -7963,10 +8234,10 @@ version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5d18c223b7e0177f4ac91070fa3f6cc557d5ee3b279869924c3102fb1b20910"
 dependencies = [
- "p3-field",
- "p3-maybe-rayon",
+ "p3-field 0.2.3-succinct",
+ "p3-maybe-rayon 0.2.3-succinct",
  "p3-symmetric",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "serde",
  "tracing",
 ]
@@ -7979,9 +8250,9 @@ checksum = "b38fe979d53d4f1d64158c40b3cd9ea1bd6b7bc8f085e489165c542ef914ae28"
 dependencies = [
  "itertools 0.12.1",
  "p3-challenger",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "serde",
 ]
 
@@ -7991,10 +8262,27 @@ version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46414daedd796f1eefcdc1811c0484e4bced5729486b6eaba9521c572c76761a"
 dependencies = [
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
- "p3-maybe-rayon",
- "p3-util",
+ "p3-maybe-rayon 0.2.3-succinct",
+ "p3-util 0.2.3-succinct",
+ "tracing",
+]
+
+[[package]]
+name = "p3-field"
+version = "0.1.0"
+source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
+dependencies = [
+ "itertools 0.14.0",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-traits",
+ "nums",
+ "p3-maybe-rayon 0.1.0",
+ "p3-util 0.1.0",
+ "rand 0.8.5",
+ "serde",
  "tracing",
 ]
 
@@ -8007,7 +8295,7 @@ dependencies = [
  "itertools 0.12.1",
  "num-bigint 0.4.6",
  "num-traits",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "rand 0.8.5",
  "serde",
 ]
@@ -8022,11 +8310,11 @@ dependencies = [
  "p3-challenger",
  "p3-commit",
  "p3-dft",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-interpolation",
  "p3-matrix",
- "p3-maybe-rayon",
- "p3-util",
+ "p3-maybe-rayon 0.2.3-succinct",
+ "p3-util 0.2.3-succinct",
  "serde",
  "tracing",
 ]
@@ -8037,9 +8325,9 @@ version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed8de7333abb0ad0a17bb78726a43749cc7fcab4763f296894e8b2933841d4d8"
 dependencies = [
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
- "p3-util",
+ "p3-util 0.2.3-succinct",
 ]
 
 [[package]]
@@ -8049,10 +8337,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01c7ec21317c455d39588428e4ec85b96d663ff171ddf102a10e2ca54c942dea"
 dependencies = [
  "p3-air",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
- "p3-maybe-rayon",
- "p3-util",
+ "p3-maybe-rayon 0.2.3-succinct",
+ "p3-util 0.2.3-succinct",
  "tracing",
 ]
 
@@ -8063,13 +8351,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e4de3f373589477cb735ea58e125898ed20935e03664b4614c7fac258b3c42f"
 dependencies = [
  "itertools 0.12.1",
- "p3-field",
- "p3-maybe-rayon",
- "p3-util",
+ "p3-field 0.2.3-succinct",
+ "p3-maybe-rayon 0.2.3-succinct",
+ "p3-util 0.2.3-succinct",
  "rand 0.8.5",
  "serde",
  "tracing",
 ]
+
+[[package]]
+name = "p3-maybe-rayon"
+version = "0.1.0"
+source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
 
 [[package]]
 name = "p3-maybe-rayon"
@@ -8088,10 +8381,10 @@ checksum = "2356b1ed0add6d5dfbf7a338ce534a6fde827374394a52cec16a0840af6e97c9"
 dependencies = [
  "itertools 0.12.1",
  "p3-dft",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
  "p3-symmetric",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "rand 0.8.5",
 ]
 
@@ -8103,11 +8396,11 @@ checksum = "f159e073afbee02c00d22390bf26ebb9ce03bbcd3e6dcd13c6a7a3811ab39608"
 dependencies = [
  "itertools 0.12.1",
  "p3-commit",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
- "p3-maybe-rayon",
+ "p3-maybe-rayon 0.2.3-succinct",
  "p3-symmetric",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "serde",
  "tracing",
 ]
@@ -8119,7 +8412,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da1eec7e1b6900581bedd95e76e1ef4975608dd55be9872c9d257a8a9651c3a"
 dependencies = [
  "gcd",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-mds",
  "p3-symmetric",
  "rand 0.8.5",
@@ -8133,7 +8426,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edb439bea1d822623b41ff4b51e3309e80d13cadf8b86d16ffd5e6efb9fdc360"
 dependencies = [
  "itertools 0.12.1",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "serde",
 ]
 
@@ -8148,12 +8441,20 @@ dependencies = [
  "p3-challenger",
  "p3-commit",
  "p3-dft",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
- "p3-maybe-rayon",
- "p3-util",
+ "p3-maybe-rayon 0.2.3-succinct",
+ "p3-util 0.2.3-succinct",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "p3-util"
+version = "0.1.0"
+source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -10080,7 +10381,7 @@ dependencies = [
  "digest 0.10.7",
  "ff 0.13.1",
  "hex",
- "hex-literal",
+ "hex-literal 0.4.1",
  "metal",
  "ndarray",
  "parking_lot 0.12.4",
@@ -10939,6 +11240,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde_arrays"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38636132857f68ec3d5f3eb121166d2af33cb55174c4d5ff645db6165cbef0fd"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_arrays"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11418,9 +11737,9 @@ dependencies = [
  "nohash-hasher",
  "num",
  "p3-baby-bear",
- "p3-field",
- "p3-maybe-rayon",
- "p3-util",
+ "p3-field 0.2.3-succinct",
+ "p3-maybe-rayon 0.2.3-succinct",
+ "p3-util 0.2.3-succinct",
  "rand 0.8.5",
  "range-set-blaze",
  "rrs-succinct",
@@ -11463,14 +11782,14 @@ dependencies = [
  "p3-air",
  "p3-baby-bear",
  "p3-challenger",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-keccak-air",
  "p3-matrix",
- "p3-maybe-rayon",
+ "p3-maybe-rayon 0.2.3-succinct",
  "p3-poseidon2",
  "p3-symmetric",
  "p3-uni-stark",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "pathdiff",
  "rand 0.8.5",
  "rayon",
@@ -11527,7 +11846,7 @@ dependencies = [
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "num",
  "p256",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "serde",
  "snowbridge-amcl",
  "sp1-primitives",
@@ -11570,7 +11889,7 @@ dependencies = [
  "lazy_static",
  "num-bigint 0.4.6",
  "p3-baby-bear",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-poseidon2",
  "p3-symmetric",
  "serde",
@@ -11599,10 +11918,10 @@ dependencies = [
  "p3-bn254-fr",
  "p3-challenger",
  "p3-commit",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-matrix",
  "p3-symmetric",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "rayon",
  "serde",
  "serde_json",
@@ -11637,12 +11956,12 @@ dependencies = [
  "p3-challenger",
  "p3-commit",
  "p3-dft",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-fri",
  "p3-matrix",
  "p3-symmetric",
  "p3-uni-stark",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "rand 0.8.5",
  "rayon",
  "serde",
@@ -11667,7 +11986,7 @@ dependencies = [
  "itertools 0.13.0",
  "p3-baby-bear",
  "p3-bn254-fr",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-symmetric",
  "serde",
  "sp1-core-machine",
@@ -11700,14 +12019,14 @@ dependencies = [
  "p3-challenger",
  "p3-commit",
  "p3-dft",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-fri",
  "p3-matrix",
- "p3-maybe-rayon",
+ "p3-maybe-rayon 0.2.3-succinct",
  "p3-merkle-tree",
  "p3-poseidon2",
  "p3-symmetric",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "pathdiff",
  "rand 0.8.5",
  "serde",
@@ -11746,7 +12065,7 @@ dependencies = [
  "hex",
  "num-bigint 0.4.6",
  "p3-baby-bear",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-symmetric",
  "serde",
  "serde_json",
@@ -11779,7 +12098,7 @@ dependencies = [
  "itertools 0.13.0",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "p3-baby-bear",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-fri",
  "prost 0.13.5",
  "reqwest 0.12.23",
@@ -11819,15 +12138,15 @@ dependencies = [
  "p3-challenger",
  "p3-commit",
  "p3-dft",
- "p3-field",
+ "p3-field 0.2.3-succinct",
  "p3-fri",
  "p3-matrix",
- "p3-maybe-rayon",
+ "p3-maybe-rayon 0.2.3-succinct",
  "p3-merkle-tree",
  "p3-poseidon2",
  "p3-symmetric",
  "p3-uni-stark",
- "p3-util",
+ "p3-util 0.2.3-succinct",
  "rayon-scan",
  "serde",
  "sp1-derive",
@@ -11893,6 +12212,12 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 dependencies = [
  "lock_api",
 ]
+
+[[package]]
+name = "spin"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 
 [[package]]
 name = "spinoff"
@@ -13393,6 +13718,16 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unroll"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ad948c1cb799b1a70f836077721a92a35ac177d4daddf4c20a633786d4cf618"
+dependencies = [
+ "quote",
+ "syn 1.0.109",
+]
 
 [[package]]
 name = "untrusted"

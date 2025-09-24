@@ -38,7 +38,7 @@ ark-bn254 = "0.5.0"
 ark-ec = "0.5.0"
 ark-ff = "0.5.0"
 strum = { version = "0.27.1", features = ["derive"] }
-k256 = "0.13.4"
+k256.workspace = true
 
 
 [dev-dependencies]
@@ -49,6 +49,8 @@ spinoff = "0.8.0"
 [features]
 default = []
 c-kzg = ["ethrex-common/c-kzg"]
+kzg-rs = ["ethrex-common/kzg-rs"]
+openvm-kzg = ["ethrex-common/openvm-kzg"]
 ethereum_foundation_tests = []
 debug = []
 

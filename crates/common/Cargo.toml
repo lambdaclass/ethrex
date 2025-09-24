@@ -10,6 +10,7 @@ documentation.workspace = true
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
+ethrex-crypto.workspace = true
 
 tracing.workspace = true
 tinyvec = "1.6.0"
@@ -18,9 +19,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
-# TODO(#1102): Move to Lambdaworks in the future
-c-kzg = { version = "^1.0.3", optional = true }
-kzg-rs.workspace = true
 keccak-hash.workspace = true
 sha3.workspace = true
 secp256k1.workspace = true
@@ -38,7 +36,9 @@ hex-literal.workspace = true
 
 [features]
 default = []
-c-kzg = ["dep:c-kzg"]
+c-kzg = [ "ethrex-crypto/c-kzg" ]
+kzg-rs = [ "ethrex-crypto/kzg-rs" ]
+openvm-kzg = [ "ethrex-crypto/kzg-rs" ]
 
 [lib]
 path = "./common.rs"
