@@ -141,7 +141,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(&block).await;
+        let chain_result = blockchain.add_block(&block, None).await;
 
         match chain_result {
             Err(error) => {
@@ -453,7 +453,7 @@ async fn re_run_stateless(
 
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
-    let witness = blockchain.generate_witness_for_blocks(&blocks).await;
+    let witness = blockchain.generate_witness_for_blocks(&blocks, None).await;
     if test_should_fail && witness.is_err() {
         // We can't generate witness for a test that should fail.
         return Ok(());
