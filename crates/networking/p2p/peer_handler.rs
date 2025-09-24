@@ -1483,16 +1483,53 @@ impl PeerHandler {
                             .get(&current_account_hashes[remaining_start]);
 
                         if let Some((_, old_intervals)) = maybe_old_intervals {
-                            for (start_hash, end_hash) in old_intervals {
-                                let task = StorageTask {
-                                    start_index: remaining_start,
-                                    end_index: remaining_start + 1,
-                                    start_hash: *start_hash,
-                                    end_hash: Some(*end_hash),
-                                };
+                            if !old_intervals.is_empty() {
+                                for (start_hash, end_hash) in old_intervals {
+                                    let task = StorageTask {
+                                        start_index: remaining_start,
+                                        end_index: remaining_start + 1,
+                                        start_hash: *start_hash,
+                                        end_hash: Some(*end_hash),
+                                    };
 
-                                tasks_queue_not_started.push_back(task);
-                                task_count += 1;
+                                    tasks_queue_not_started.push_back(task);
+                                    task_count += 1;
+                                }
+                            } else {
+                                account_storage_roots.accounts_with_storage_root.insert(
+                                    current_account_hashes[remaining_start],
+                                    (None, vec![]),
+                                );
+                                let (_, intervals) = account_storage_roots
+                                    .accounts_with_storage_root
+                                    .get_mut(&current_account_hashes[remaining_start])
+                                    .unwrap();
+
+                                for i in 0..chunk_count {
+                                    let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                    let start_hash = H256::from_uint(&start_hash_u256);
+                                    let end_hash = if i == chunk_count - 1 {
+                                        H256::repeat_byte(0xff)
+                                    } else {
+                                        let end_hash_u256 = start_hash_u256
+                                            .checked_add(chunk_size)
+                                            .unwrap_or(U256::MAX);
+                                        H256::from_uint(&end_hash_u256)
+                                    };
+
+                                    let task = StorageTask {
+                                        start_index: remaining_start,
+                                        end_index: remaining_start + 1,
+                                        start_hash,
+                                        end_hash: Some(end_hash),
+                                    };
+
+                                    intervals.push((start_hash, end_hash));
+
+                                    tasks_queue_not_started.push_back(task);
+                                    task_count += 1;
+                                }
+                                debug!("Split big storage account into {chunk_count} chunks.");
                             }
                         } else {
                             account_storage_roots
