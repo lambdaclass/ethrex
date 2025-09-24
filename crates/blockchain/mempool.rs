@@ -18,9 +18,6 @@ use ethrex_common::{
 use ethrex_storage::error::StoreError;
 use std::collections::HashSet;
 
-// Max number of transactions in the mempool
-const MEMPOOL_MAX_SIZE: usize = 10000; //TODO: Define
-
 #[derive(Debug, Default)]
 pub struct Mempool {
     broadcast_pool: RwLock<HashSet<H256>>,
@@ -28,11 +25,13 @@ pub struct Mempool {
     blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
     txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
     txs_order: RwLock<Vec<H256>>,
+    max_mempool_size: usize,
 }
 impl Mempool {
-    pub fn new() -> Self {
+    pub fn new(max_mempool_size: usize) -> Self {
         Mempool {
-            txs_order: RwLock::new(Vec::with_capacity(MEMPOOL_MAX_SIZE)),
+            txs_order: RwLock::new(Vec::with_capacity(max_mempool_size)),
+            max_mempool_size,
             ..Default::default()
         }
     }
@@ -66,7 +65,7 @@ impl Mempool {
             .transaction_pool
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        if transaction_pool.len() >= MEMPOOL_MAX_SIZE {
+        if transaction_pool.len() >= self.max_mempool_size {
             self.remove_oldest_transaction(&mut transaction_pool)?;
         }
         self.txs_order
@@ -532,6 +531,8 @@ mod tests {
     use ethrex_storage::EngineType;
     use ethrex_storage::{Store, error::StoreError};
 
+    const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
+
     async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
         let block_number = header.number;
@@ -747,7 +748,7 @@ mod tests {
         let (config, header) = build_basic_config_and_header(false, true);
 
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store, MEMPOOL_MAX_SIZE_TEST);
 
         let tx = EIP1559Transaction {
             nonce: 3,
@@ -774,7 +775,7 @@ mod tests {
         let (config, header) = build_basic_config_and_header(false, false);
 
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store, MEMPOOL_MAX_SIZE_TEST);
 
         let tx = EIP1559Transaction {
             nonce: 3,
@@ -801,7 +802,7 @@ mod tests {
         let (config, header) = build_basic_config_and_header(false, false);
 
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store, MEMPOOL_MAX_SIZE_TEST);
 
         let tx = EIP1559Transaction {
             nonce: 3,
@@ -827,7 +828,7 @@ mod tests {
     async fn transaction_with_gas_limit_lower_than_intrinsic_gas_should_fail() {
         let (config, header) = build_basic_config_and_header(false, false);
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store, MEMPOOL_MAX_SIZE_TEST);
         let intrinsic_gas_cost = TX_GAS_COST;
 
         let tx = EIP1559Transaction {
@@ -854,7 +855,7 @@ mod tests {
     async fn transaction_with_blob_base_fee_below_min_should_fail() {
         let (config, header) = build_basic_config_and_header(false, false);
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store, MEMPOOL_MAX_SIZE_TEST);
 
         let tx = EIP4844Transaction {
             nonce: 3,
@@ -887,7 +888,7 @@ mod tests {
         let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
         let plain_tx_hash = plain_tx.hash();
         let blob_tx_hash = blob_tx.hash();
-        let mempool = Mempool::new();
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
         mempool
@@ -902,7 +903,7 @@ mod tests {
     fn blobs_bundle_loadtest() {
         // Write a bundle of 6 blobs 10 times
         // If this test fails please adjust the max_size in the DB config
-        let mempool = Mempool::new();
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
         for i in 0..300 {
             let blobs = [[i as u8; BYTES_PER_BLOB]; 6];
             let commitments = [[i as u8; 48]; 6];

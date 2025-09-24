@@ -118,12 +118,13 @@ pub fn init_blockchain(
     store: Store,
     blockchain_type: BlockchainType,
     perf_logs_enabled: bool,
+    max_mempool_size: usize,
 ) -> Arc<Blockchain> {
     #[cfg(feature = "revm")]
     info!("Initiating blockchain with revm");
     #[cfg(not(feature = "revm"))]
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
+    Blockchain::new(store, blockchain_type, perf_logs_enabled, max_mempool_size).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -388,7 +389,12 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
+    let blockchain = init_blockchain(
+        store.clone(),
+        BlockchainType::L1,
+        true,
+        opts.mempool_max_size,
+    );
 
     let signer = get_signer(datadir);
 

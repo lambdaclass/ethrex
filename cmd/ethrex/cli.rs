@@ -167,6 +167,13 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
+    #[arg(
+        help = "Maximum size of the mempool in number of transactions",
+        long = "mempool.maxsize",
+        default_value_t = 10_000,
+        value_name = "MEMPOOL_MAX_SIZE"
+    )]
+    pub mempool_max_size: usize,
 }
 
 impl Options {
@@ -229,6 +236,7 @@ impl Default for Options {
             metrics_enabled: Default::default(),
             dev: Default::default(),
             force: false,
+            mempool_max_size: Default::default(),
         }
     }
 }
@@ -322,7 +330,14 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, blockchain_type).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    blockchain_type,
+                    opts.mempool_max_size,
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -370,11 +385,12 @@ pub async fn import_blocks(
     datadir: &Path,
     genesis: Genesis,
     blockchain_type: BlockchainType,
+    max_mempool_size: usize,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
-    let blockchain = init_blockchain(store.clone(), blockchain_type, false);
+    let blockchain = init_blockchain(store.clone(), blockchain_type, false, max_mempool_size);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.

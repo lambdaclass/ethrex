@@ -24,6 +24,8 @@ use ethrex_vm::EvmError;
 use guest_program::input::ProgramInput;
 use regex::Regex;
 
+const MAX_MEMPOOL_SIZE_TEST: usize = 10_000;
+
 pub fn parse_and_execute(
     path: &Path,
     skipped_tests: Option<&[&str]>,
@@ -105,7 +107,12 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainType::L1,
+        false,
+        MAX_MEMPOOL_SIZE_TEST,
+    );
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {

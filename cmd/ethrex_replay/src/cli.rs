@@ -63,6 +63,8 @@ pub const BACKEND: Backend = Backend::RISC0;
 #[cfg(not(any(feature = "sp1", feature = "risc0")))]
 pub const BACKEND: Backend = Backend::Exec;
 
+const MAX_MEMPOOL_SIZE: usize = 10_000;
+
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
 pub struct EthrexReplayCLI {
@@ -571,7 +573,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         store.add_block_header(header.hash(), header).await?;
     }
 
-    let blockchain = Blockchain::default_with_store(store);
+    let blockchain = Blockchain::default_with_store(store, MAX_MEMPOOL_SIZE);
 
     info!("Storage preparation finished in {:.2?}", start.elapsed());
 
@@ -828,7 +830,12 @@ pub async fn replay_custom_l1_blocks(
         store_inner
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L1, false));
+    let blockchain = Arc::new(Blockchain::new(
+        store.clone(),
+        BlockchainType::L1,
+        false,
+        MAX_MEMPOOL_SIZE,
+    ));
 
     let blocks = produce_l1_blocks(
         blockchain.clone(),

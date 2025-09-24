@@ -21,6 +21,8 @@ use crate::modules::{
     utils::load_initial_state,
 };
 
+const MAX_MEMPOOL_SIZE_TEST: usize = 10_000;
+
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     for test in &tests {
         println!("Running test group: {}", test.name);
@@ -144,7 +146,12 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainType::L1,
+        false,
+        MAX_MEMPOOL_SIZE_TEST,
+    );
 
     let result = blockchain.add_block(&block).await;
 
