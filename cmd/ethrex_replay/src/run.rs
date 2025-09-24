@@ -87,9 +87,7 @@ pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<A
     let mut remaining_gas = block.header.gas_limit;
 
     let execution_witness = cache.witness;
-    let network = cache
-        .network
-        .ok_or_else(|| eyre::Error::msg("missing network data in cache"))?;
+    let network = cache.network;
     let chain_config = network
         .get_genesis()
         .map_err(|_| eyre::Error::msg("Failed to get genesis block"))?
@@ -136,6 +134,7 @@ pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<A
     Err(eyre::Error::msg("transaction not found inside block"))
 }
 
+#[cfg(not(feature = "l2"))]
 fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
@@ -151,7 +150,6 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     if chain_config.is_some() {
         return Err(eyre::eyre!("Unexpected chain config in cache"));
     }
-    let network = network.ok_or_else(|| eyre::eyre!("Missing network in cache"))?;
     let chain_config = network
         .get_genesis()
         .map_err(|_| eyre::Error::msg("Failed to get genesis block"))?
@@ -198,16 +196,14 @@ fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
         witness: db,
-        network,
         chain_config,
         l2_fields,
+        ..
     } = cache;
 
     let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
     let chain_config = chain_config.ok_or_else(|| eyre::eyre!("Missing chain config in cache"))?;
-    if network.is_some() {
-        return Err(eyre::eyre!("Unexpected network in cache"));
-    }
+
     let first_block_number = blocks
         .first()
         .ok_or_else(|| eyre::eyre!("No blocks in cache"))?
