@@ -24,11 +24,8 @@ use ethrex_common::{
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
+use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use keccak_hash::keccak;
-use secp256k1::{
-    Message,
-    ecdsa::{RecoverableSignature, RecoveryId},
-};
 use sha3::{Digest, Keccak256};
 use std::{collections::HashMap, iter::Enumerate};
 pub type Storage = HashMap<U256, H256>;
@@ -277,39 +274,37 @@ pub fn eip7702_recover_address(
     let mut hasher = Keccak256::new();
     hasher.update([MAGIC]);
     hasher.update(rlp_buf);
-    let bytes = &mut hasher.finalize();
+    let payload = &mut hasher.finalize();
 
-    let Ok(message) = Message::from_digest_slice(bytes) else {
-        return Ok(None);
-    };
-
-    let bytes = [
+    let signature_bytes = [
         auth_tuple.r_signature.to_big_endian(),
         auth_tuple.s_signature.to_big_endian(),
     ]
     .concat();
-
-    let Ok(recovery_id) = RecoveryId::from_i32(
-        auth_tuple
-            .y_parity
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?,
-    ) else {
+    let Ok(signature) = Signature::from_slice(&signature_bytes) else {
         return Ok(None);
     };
 
-    let Ok(signature) = RecoverableSignature::from_compact(&bytes, recovery_id) else {
+    let recovery_id_byte: u8 = auth_tuple
+        .y_parity
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let Some(recovery_id) = RecoveryId::from_byte(recovery_id_byte) else {
         return Ok(None);
     };
 
-    //recover
-    let Ok(authority) = signature.recover(&message) else {
+    let Ok(authority) = VerifyingKey::recover_from_prehash(payload, &signature, recovery_id) else {
         return Ok(None);
     };
 
-    let public_key = authority.serialize_uncompressed();
+    let public_key = authority.to_encoded_point(false);
     let mut hasher = Keccak256::new();
-    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
+    hasher.update(
+        public_key
+            .as_bytes()
+            .get(1..)
+            .ok_or(InternalError::Slicing)?,
+    );
     let address_hash = hasher.finalize();
 
     // Get the last 20 bytes of the hash -> Address

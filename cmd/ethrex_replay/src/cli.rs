@@ -11,8 +11,10 @@ use ethrex_common::{
     types::{AccountUpdate, Block, ELASTICITY_MULTIPLIER, Receipt},
 };
 use ethrex_prover_lib::backend::Backend;
-use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_rpc::{
+    debug::execution_witness::RpcExecutionWitness, types::block_identifier::BlockTag,
+};
 use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
 use tracing::info;
@@ -33,13 +35,6 @@ use ethrex_config::networks::{
 use crate::fetcher::get_batchdata;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
-
-#[cfg(feature = "sp1")]
-pub const BACKEND: Backend = Backend::SP1;
-#[cfg(all(feature = "risc0", not(feature = "sp1")))]
-pub const BACKEND: Backend = Backend::RISC0;
-#[cfg(not(any(feature = "sp1", feature = "risc0")))]
-pub const BACKEND: Backend = Backend::Exec;
 
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
@@ -432,10 +427,29 @@ async fn setup(opts: &EthrexReplayOptions, l2: bool) -> eyre::Result<(EthClient,
 async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     let gas_used = get_total_gas_used(&cache.blocks);
 
+    let backend = {
+        #[cfg(feature = "sp1")]
+        {
+            Backend::SP1
+        }
+        #[cfg(all(not(feature = "sp1"), feature = "risc0"))]
+        {
+            Backend::RISC0
+        }
+        #[cfg(all(not(feature = "sp1"), not(feature = "risc0"), feature = "openvm"))]
+        {
+            Backend::OpenVM
+        }
+        #[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "openvm")))]
+        {
+            Backend::Exec
+        }
+    };
+
     if opts.execute {
-        exec(BACKEND, cache).await?;
+        exec(backend, cache).await?;
     } else {
-        prove(BACKEND, cache).await?;
+        prove(backend, cache).await?;
     }
 
     Ok(gas_used)
@@ -555,21 +569,25 @@ fn network_from_chain_id(chain_id: u64, l2: bool) -> Network {
 
 pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
     if execute {
-        #[cfg(feature = "sp1")]
-        return Ok(ReplayerMode::ExecuteSP1);
-        #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return Ok(ReplayerMode::ExecuteRISC0);
-        #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return Ok(ReplayerMode::Execute);
+        if cfg!(feature = "sp1") {
+            Ok(ReplayerMode::ExecuteSP1)
+        } else if cfg!(feature = "risc0") {
+            Ok(ReplayerMode::ExecuteRISC0)
+        } else if cfg!(feature = "openvm") {
+            Ok(ReplayerMode::ExecuteOpenVM)
+        } else {
+            Ok(ReplayerMode::Execute)
+        }
+    } else if cfg!(feature = "sp1") {
+        Ok(ReplayerMode::ProveSP1)
+    } else if cfg!(feature = "risc0") {
+        Ok(ReplayerMode::ProveRISC0)
+    } else if cfg!(feature = "openvm") {
+        Ok(ReplayerMode::ProveOpenVM)
     } else {
-        #[cfg(feature = "sp1")]
-        return Ok(ReplayerMode::ProveSP1);
-        #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return Ok(ReplayerMode::ProveRISC0);
-        #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return Err(eyre::Error::msg(
-            "proving mode is not supported without SP1 or RISC0 features",
-        ));
+        Err(eyre::Error::msg(
+            "proving mode is not supported without `sp1`, `risc0` or `openvm` features",
+        ))
     }
 }
 
@@ -655,7 +673,15 @@ pub async fn replay_custom_l1_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let cache = Cache::new(blocks, execution_witness);
+    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let cache = Cache::new(
+        blocks,
+        RpcExecutionWitness::from(execution_witness),
+        Some(network),
+    );
 
     let start = SystemTime::now();
 
@@ -794,7 +820,15 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let mut cache = Cache::new(blocks, execution_witness);
+    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
+        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
+    })?;
+
+    let mut cache = Cache::new(
+        blocks,
+        RpcExecutionWitness::from(execution_witness),
+        Some(network),
+    );
 
     cache.l2_fields = Some(L2Fields {
         blob_commitment: [0_u8; 48],

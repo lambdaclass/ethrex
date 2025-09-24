@@ -1,5 +1,5 @@
 use ethrex_common::types::{
-    BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError,
+    BlobsBundleError, BlockHash, EcdsaError, InvalidBlockBodyError, InvalidBlockHeaderError,
 };
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
@@ -17,7 +17,7 @@ pub enum ChainError {
     #[error("DB error: {0}")]
     StoreError(#[from] StoreError),
     #[error("EVM error: {0}")]
-    EvmError(#[from] EvmError),
+    EvmError(EvmError),
     #[error("Invalid Transaction: {0}")]
     InvalidTransaction(String),
     #[error("Failed to generate witness: {0}")]
@@ -26,6 +26,20 @@ pub enum ChainError {
     Custom(String),
     #[error("Unknown Payload")]
     UnknownPayload,
+}
+
+impl From<EvmError> for ChainError {
+    fn from(value: EvmError) -> Self {
+        match value {
+            EvmError::Transaction(err) => {
+                ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(err))
+            }
+            EvmError::InvalidDepositRequest => ChainError::InvalidBlock(
+                InvalidBlockError::InvalidTransaction("Invalid deposit request layout".to_string()),
+            ),
+            other_errors => ChainError::EvmError(other_errors),
+        }
+    }
 }
 
 #[cfg(feature = "metrics")]
@@ -112,7 +126,7 @@ pub enum MempoolError {
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
     #[error("Transaction sender is invalid {0}")]
-    InvalidTxSender(#[from] secp256k1::Error),
+    InvalidTxSender(#[from] EcdsaError),
 }
 
 #[derive(Debug)]

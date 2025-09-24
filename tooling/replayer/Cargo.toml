@@ -24,6 +24,7 @@ futures.workspace = true
 [features]
 risc0 = ["ethrex-replay/risc0"]
 sp1 = ["ethrex-replay/sp1"]
+openvm = ["ethrex-replay/openvm"]
 gpu = ["ethrex-replay/gpu"]
 profiling = ["ethrex-replay/profiling"]
 ci = ["ethrex-replay/ci"]

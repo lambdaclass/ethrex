@@ -6,10 +6,12 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
-use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
-    utils::u256_from_big_endian,
+    Address, H160, H256, U256,
+    kzg::verify_kzg_proof,
+    serde_utils::bool,
+    types::Fork,
+    utils::{u256_from_big_endian, u256_from_big_endian_const},
 };
 use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};

@@ -44,6 +44,9 @@ path = "./lib.rs"
 [features]
 default = []
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+kzg-rs = ["ethrex-levm/kzg-rs", "ethrex-common/kzg-rs"]
+openvm-kzg = ["ethrex-levm/openvm-kzg", "ethrex-common/openvm-kzg"]
+blst = ["revm/blst"]
 debug = ["ethrex-levm/debug"]
 revm = [
     "dep:revm",

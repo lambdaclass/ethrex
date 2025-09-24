@@ -8,7 +8,7 @@ use crate::{
         BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
         MIN_BASE_FEE_PER_BLOB_GAS,
     },
-    types::{Receipt, Transaction},
+    types::{EcdsaError, Receipt, Transaction},
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
@@ -250,15 +250,13 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(
-        &self,
-    ) -> Result<Vec<(&Transaction, Address)>, secp256k1::Error> {
+    pub fn get_transactions_with_sender(&self) -> Result<Vec<(&Transaction, Address)>, EcdsaError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
             .par_iter()
             .map(|tx| Ok((tx, tx.sender()?)))
-            .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
+            .collect::<Result<Vec<(&Transaction, Address)>, _>>()
     }
 }
 

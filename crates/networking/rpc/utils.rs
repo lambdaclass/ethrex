@@ -1,4 +1,4 @@
-use ethrex_common::U256;
+use ethrex_common::{U256, types::EcdsaError};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -167,6 +167,12 @@ impl From<secp256k1::Error> for RpcErr {
     }
 }
 
+impl From<EcdsaError> for RpcErr {
+    fn from(err: EcdsaError) -> Self {
+        Self::Internal(format!("Cryptography error: {err}"))
+    }
+}
+
 pub enum RpcNamespace {
     Engine,
     Eth,
@@ -273,7 +279,7 @@ impl From<EvmError> for RpcErr {
 
 pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError> {
     if data == "0x" {
-        Ok("unknown error".to_owned())
+        Ok("Execution reverted without a reason string.".to_owned())
     // 4 byte function signature 0xXXXXXXXX
     } else if data.len() == 10 {
         Ok(data.to_owned())

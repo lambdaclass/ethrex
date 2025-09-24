@@ -12,8 +12,10 @@ pub enum ReplayerMode {
     Execute,
     ExecuteSP1,
     ExecuteRISC0,
+    ExecuteOpenVM,
     ProveSP1,
     ProveRISC0,
+    ProveOpenVM,
 }
 
 impl ReplayerMode {
@@ -35,8 +37,10 @@ impl Display for ReplayerMode {
             ReplayerMode::Execute => write!(f, "execute"),
             ReplayerMode::ExecuteSP1 => write!(f, "execute_sp1"),
             ReplayerMode::ExecuteRISC0 => write!(f, "execute_risc0"),
+            ReplayerMode::ExecuteOpenVM => write!(f, "execute_openvm"),
             ReplayerMode::ProveSP1 => write!(f, "prove_sp1"),
             ReplayerMode::ProveRISC0 => write!(f, "prove_risc0"),
+            ReplayerMode::ProveOpenVM => write!(f, "prove_openvm"),
         }
     }
 }
@@ -89,6 +93,36 @@ impl BlockRunReport {
     }
 
     pub fn to_slack_message(&self) -> SlackWebHookRequest {
+        let eth_proofs_button = SlackWebHookActionElement::Button {
+            text: SlackWebHookBlock::PlainText {
+                text: String::from("View on EthProofs"),
+                emoji: false,
+            },
+            url: format!("https://ethproofs.org/blocks/{}", self.number),
+        };
+
+        let mut slack_webhook_actions = vec![SlackWebHookActionElement::Button {
+            text: SlackWebHookBlock::PlainText {
+                text: String::from("View on Etherscan"),
+                emoji: false,
+            },
+            url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+                format!("https://etherscan.io/block/{}", self.number)
+            } else {
+                format!(
+                    "https://{}.etherscan.io/block/{}",
+                    self.network, self.number
+                )
+            },
+        }];
+
+        if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+            // EthProofs only prove block numbers multiples of 100.
+            if self.number % 100 == 0 && self.replayer_mode.is_proving_mode() {
+                slack_webhook_actions.push(eth_proofs_button);
+            }
+        }
+
         SlackWebHookRequest {
             blocks: vec![
                 SlackWebHookBlock::Header {
@@ -103,11 +137,17 @@ impl BlockRunReport {
                             (Ok(_), ReplayerMode::ExecuteRISC0) => {
                                 String::from("✅ Successfully Executed Block with RISC0")
                             }
+                            (Ok(_), ReplayerMode::ExecuteOpenVM) => {
+                                String::from("✅ Successfully Executed Block with OpenVM")
+                            }
                             (Ok(_), ReplayerMode::ProveSP1) => {
                                 String::from("✅ Successfully Proved Block with SP1")
                             }
                             (Ok(_), ReplayerMode::ProveRISC0) => {
                                 String::from("✅ Successfully Proved Block with RISC0")
+                            }
+                            (Ok(_), ReplayerMode::ProveOpenVM) => {
+                                String::from("✅ Successfully Proved Block with OpenVM")
                             }
                             (Err(_), ReplayerMode::Execute) => {
                                 String::from("⚠️ Failed to Execute Block")
@@ -118,11 +158,17 @@ impl BlockRunReport {
                             (Err(_), ReplayerMode::ExecuteRISC0) => {
                                 String::from("⚠️ Failed to Execute Block with RISC0")
                             }
+                            (Err(_), ReplayerMode::ExecuteOpenVM) => {
+                                String::from("⚠️ Failed to Execute Block with OpenVM")
+                            }
                             (Err(_), ReplayerMode::ProveSP1) => {
                                 String::from("⚠️ Failed to Prove Block with SP1")
                             }
                             (Err(_), ReplayerMode::ProveRISC0) => {
                                 String::from("⚠️ Failed to Prove Block with RISC0")
+                            }
+                            (Err(_), ReplayerMode::ProveOpenVM) => {
+                                String::from("⚠️ Failed to Prove Block with OpenVM")
                             }
                         },
                         emoji: true,
@@ -150,20 +196,7 @@ impl BlockRunReport {
                     }),
                 },
                 SlackWebHookBlock::Actions {
-                    elements: vec![SlackWebHookActionElement::Button {
-                        text: SlackWebHookBlock::PlainText {
-                            text: String::from("View on Etherscan"),
-                            emoji: false,
-                        },
-                        url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
-                            format!("https://etherscan.io/block/{}", self.number)
-                        } else {
-                            format!(
-                                "https://{}.etherscan.io/block/{}",
-                                self.network, self.number
-                            )
-                        },
-                    }],
+                    elements: slack_webhook_actions,
                 },
             ],
         }

@@ -38,11 +38,17 @@ charming = { version = "0.4.0", features = ["ssr"] }
 futures.workspace = true
 rkyv.workspace = true
 
-jemallocator = { version = "0.5.4", optional = true }
+tikv-jemallocator = { version = "0.6.0", optional = true, features = [
+    "profiling",
+    "stats",
+    "unprefixed_malloc_on_supported_platforms",
+    "background_threads"
+]}
 
 [features]
 risc0 = ["guest_program/risc0", "ethrex-prover/risc0"]
 sp1 = ["guest_program/sp1", "ethrex-prover/sp1"]
+openvm = ["guest_program/openvm", "ethrex-prover/openvm"]
 gpu = ["ethrex-prover/gpu"]
 l2 = [
     "guest_program/l2",
@@ -52,4 +58,4 @@ l2 = [
 ]
 profiling = ["ethrex-prover/profiling"]
 ci = []
-jemalloc = ["dep:jemallocator"]
+jemalloc = ["dep:tikv-jemallocator"]
