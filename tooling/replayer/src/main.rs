@@ -262,10 +262,7 @@ async fn replay_latest_block(
             to_csv: false,
             no_zkvm: opts.replayer.no_zkvm,
             cache_level: opts.replayer.cache_level.clone(),
-            slack_webhook_url: match opts.replayer.common.action {
-                Action::Execute => opts.replayer.slack_webhook_url.clone(),
-                Action::Prove => None,
-            },
+            slack_webhook_url: None,
         },
     })
     .run()
@@ -290,7 +287,7 @@ async fn replay_latest_block(
                     to_csv: false,
                     no_zkvm: false,
                     cache_level: opts.replayer.cache_level.clone(),
-                    slack_webhook_url: opts.replayer.slack_webhook_url.clone(),
+                    slack_webhook_url: None,
                 },
             })
             .run()
