@@ -762,8 +762,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         CacheLevel::On => {}
         // Only save the cache if the block run failed
         CacheLevel::Failed => {
-            if report.execution_result.is_err() || report.proving_result.is_some_and(|r| r.is_err())
-            {
+            if report.execution_result.is_ok() || report.proving_result.is_some_and(|r| r.is_ok()) {
                 cache.delete()?;
             }
         }
