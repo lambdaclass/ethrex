@@ -307,7 +307,9 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, &mut block_sync_state).await?;
+            self.snap_sync(store.clone(), &mut block_sync_state).await?;
+
+            store.clear_snap_state().await?;
 
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
