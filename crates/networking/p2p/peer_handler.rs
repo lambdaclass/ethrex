@@ -1476,37 +1476,53 @@ impl PeerHandler {
 
                         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
-                        // *intervals = Some(vec![]);
+                        let maybe_old_intervals =
+                            accounts_done.get(&current_account_hashes[remaining_start]);
 
-                        accounts_done.insert(current_account_hashes[remaining_start], vec![]);
-                        let intervals = accounts_done
-                            .get_mut(&current_account_hashes[remaining_start])
-                            .unwrap();
+                        if let Some(old_intervals) = maybe_old_intervals {
+                            for (start_hash, end_hash) in old_intervals {
+                                let task = StorageTask {
+                                    start_index: remaining_start,
+                                    end_index: remaining_start + 1,
+                                    start_hash: *start_hash,
+                                    end_hash: Some(*end_hash),
+                                };
 
-                        for i in 0..chunk_count {
-                            let start_hash_u256 = start_hash_u256 + chunk_size * i;
-                            let start_hash = H256::from_uint(&start_hash_u256);
-                            let end_hash = if i == chunk_count - 1 {
-                                H256::repeat_byte(0xff)
-                            } else {
-                                let end_hash_u256 =
-                                    start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
-                                H256::from_uint(&end_hash_u256)
-                            };
+                                tasks_queue_not_started.push_back(task);
+                                task_count += 1;
+                            }
+                        } else {
+                            accounts_done.insert(current_account_hashes[remaining_start], vec![]);
+                            let intervals = accounts_done
+                                .get_mut(&current_account_hashes[remaining_start])
+                                .unwrap();
 
-                            let task = StorageTask {
-                                start_index: remaining_start,
-                                end_index: remaining_start + 1,
-                                start_hash,
-                                end_hash: Some(end_hash),
-                            };
+                            for i in 0..chunk_count {
+                                let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                let start_hash = H256::from_uint(&start_hash_u256);
+                                let end_hash = if i == chunk_count - 1 {
+                                    H256::repeat_byte(0xff)
+                                } else {
+                                    let end_hash_u256 = start_hash_u256
+                                        .checked_add(chunk_size)
+                                        .unwrap_or(U256::MAX);
+                                    H256::from_uint(&end_hash_u256)
+                                };
 
-                            intervals.push((start_hash, end_hash));
+                                let task = StorageTask {
+                                    start_index: remaining_start,
+                                    end_index: remaining_start + 1,
+                                    start_hash,
+                                    end_hash: Some(end_hash),
+                                };
 
-                            tasks_queue_not_started.push_back(task);
-                            task_count += 1;
+                                intervals.push((start_hash, end_hash));
+
+                                tasks_queue_not_started.push_back(task);
+                                task_count += 1;
+                            }
+                            debug!("Split big storage account into {chunk_count} chunks.");
                         }
-                        debug!("Split big storage account into {chunk_count} chunks.");
                     }
                 }
 
