@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758723357404,
+  "lastUpdate": 1758727465889,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16285,6 +16285,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 88753641821,
             "range": "± 213932667",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "815b58439a556aa3da42311fbdd11771f3da86db",
+          "message": "deps(l2): remove unused crates in patch.crates-io section (#4540)\n\n**Motivation**\n\nThere where unused crates that where patched in `patch.crates-io`\nsection in `crates/l2/prover/src/guest_program/src/sp1/Cargo.toml`.\n\n**Description**\n\nThis PR removes that unused crates in the patch section.\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-24T14:25:20Z",
+          "tree_id": "fc3ca6e767462973578b947a8b1eeeb6c187c255",
+          "url": "https://github.com/lambdaclass/ethrex/commit/815b58439a556aa3da42311fbdd11771f3da86db"
+        },
+        "date": 1758727443679,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 91625278134,
+            "range": "± 707001828",
             "unit": "ns/iter"
           }
         ]
