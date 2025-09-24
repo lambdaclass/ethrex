@@ -224,7 +224,7 @@ fn download_contract_deps(contracts_path: &Path) {
         &contracts_path
             .join("lib/openzeppelin-contracts-upgradeable")
             .to_string_lossy(),
-        None,
+        Some("release-v5.4"),
         true,
     )
     .expect("Failed to clone openzeppelin-contracts-upgradeable");
