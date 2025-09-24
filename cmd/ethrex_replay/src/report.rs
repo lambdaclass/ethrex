@@ -214,8 +214,10 @@ impl Display for Report {
         if !git_info.is_empty() {
             writeln!(
                 f,
-                "Git: {}",
-                git_info.replace("\n*Git:* `", "").replace("`", "")
+                "Branch & Commit: {}",
+                git_info
+                    .replace("\n*Branch & Commit:* `", "")
+                    .replace("`", "")
             )?;
         }
         if let Ok(execution_duration) = &self.execution_result {
@@ -367,7 +369,7 @@ fn git_info_slack_message() -> String {
     let commit = get_current_git_commit();
 
     match (branch, commit) {
-        (Some(b), Some(c)) => format!("\n*Git:* `{b}` (`{c}`)"),
+        (Some(b), Some(c)) => format!("\n*Branch & Commit:* `{b}` (`{c}`)"),
         _ => String::new(),
     }
 }
