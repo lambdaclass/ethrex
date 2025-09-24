@@ -667,6 +667,11 @@ impl FullBlockSyncState {
             .cloned()
             .ok_or(SyncError::InvalidRangeReceived)?;
 
+        let block_batch_hashes = block_batch
+            .iter()
+            .map(|block| block.hash())
+            .collect::<Vec<_>>();
+
         // Run the batch
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
@@ -680,12 +685,25 @@ impl FullBlockSyncState {
                 warn!("Failed to add block during FullSync: {err}");
                 // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
                 if let ChainError::InvalidBlock(_) = err {
-                    self.store
-                        .set_latest_valid_ancestor(
-                            batch_failure.failed_block_hash,
-                            batch_failure.last_valid_hash,
-                        )
-                        .await?;
+                    let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
+                    if let Some(index) = block_batch_hashes
+                        .iter()
+                        .position(|x| x == &batch_failure.failed_block_hash)
+                    {
+                        block_hashes_with_invalid_ancestor = block_batch_hashes[index..].to_vec();
+                    }
+
+                    for hash in block_hashes_with_invalid_ancestor {
+                        self.store
+                            .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
+                            .await?;
+                    }
+                    // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
+                    for header in &self.current_headers {
+                        self.store
+                            .set_latest_valid_ancestor(header.hash(), batch_failure.last_valid_hash)
+                            .await?;
+                    }
                 }
             }
             return Err(err.into());
