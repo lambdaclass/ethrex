@@ -4,15 +4,18 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches �
 
 ## Client Compatibility
 
-| Client     | `ethrex-replay block`         | method                           |
-| ---------- | ----------------------------- | ------------------------------   |
-| reth       | ✅                            | debug_executionWitness (fast)    |
-| geth       | ✅                            | eth_getProof (slow)              |
-| nethermind | 🏗️                            |                                  |
-| ethrex     | ✅                            | debug_executionWitness (fast)    |
-| erigon     | 🔜                            |                                  |
+| Client     | `ethrex-replay block`         | notes                                            |
+| ---------- | ----------------------------- | ------------------------------------------------ |
+| reth       | ✅                            | `debug_executionWitness`                         |
+| geth       | ✅                            | `eth_getProof`                                   |
+| nethermind | ✅                            | `eth_getProof`                                   |
+| ethrex     | ✅                            | `debug_executionWitness`                         |
+| erigon     | ❌                            | V3 supports `eth_getProof` only for latest block |
 
-Disclaimer: Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using zkVMs (with the `--no-zkvm` flag) it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a **full node** using `eth_getProof` if for some reason execution were to take longer than 25 minutes it would probably fail because the node may have pruned it's state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.
+We support any other client that responds correctly to `eth_getProof` or `debug_executionWitness` endpoints.
+
+Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using these it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a **full node** using `eth_getProof` if for some reason execution were to take longer than 25 minutes it would probably fail because the node may have pruned it's state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.
+
 
 ## Getting Started
 
