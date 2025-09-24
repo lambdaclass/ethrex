@@ -285,7 +285,7 @@ async fn heal_state_trie(
                 spawned_rt::tasks::block_on(async move {
                     // TODO: replace put batch with the async version
                     let trie_db = store
-                        .open_state_trie(*EMPTY_TRIE_HASH)
+                        .open_direct_state_trie(*EMPTY_TRIE_HASH)
                         .expect("Store should open");
                     let db = trie_db.db();
                     db.put_batch(to_write)

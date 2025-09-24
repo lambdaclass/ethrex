@@ -3,7 +3,7 @@ use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
 use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
-use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
 #[derive(Debug)]
 struct TrieLayer {
@@ -22,6 +22,9 @@ impl TrieWrapperInner {
     pub fn get(&self, mut state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         while let Some(layer) = self.layers.get(&state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
+                if value.is_empty() {
+                    return None;
+                }
                 return Some(value.clone());
             }
             state_root = layer.parent;
@@ -33,7 +36,7 @@ impl TrieWrapperInner {
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
-            if counter > 128 {
+            if counter > 10 {
                 return Some(state_root);
             }
         }
@@ -108,11 +111,14 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let Some(last_pair) = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty()) else {
-            return Ok(());
+        let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
+        let new_state_root = match last_pair {
+            Some((_, noderlp)) => {
+                let root_node = Node::decode(&noderlp)?;
+                root_node.compute_hash().finalize()
+            }
+            None => *EMPTY_TRIE_HASH,
         };
-        let root_node = Node::decode(&last_pair.1)?;
-        let new_state_root = root_node.compute_hash().finalize();
         let mut inner = self.inner.write().map_err(|_| TrieError::LockError)?;
         inner.put_batch(
             self.state_root,

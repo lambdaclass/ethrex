@@ -1161,6 +1161,24 @@ impl StoreEngine for Store {
         Ok(Trie::open(wrap_db, state_root))
     }
 
+    fn open_direct_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        let db = Box::new(RocksDBTrieDB::new(
+            self.db.clone(),
+            CF_TRIE_NODES,
+            Some(hashed_address),
+        )?);
+        Ok(Trie::open(db, storage_root))
+    }
+
+    fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        Ok(Trie::open(db, state_root))
+    }
+
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
@@ -1449,24 +1467,20 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        _storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        todo!();
-        /*
         let mut batch_ops = Vec::new();
 
         for (address_hash, nodes) in storage_trie_nodes {
             for (node_hash, node_data) in nodes {
-                // Create composite key: address_hash + node_hash
-                let mut key = Vec::with_capacity(64);
-                key.extend_from_slice(address_hash.as_bytes());
-                key.extend_from_slice(node_hash.as_ref());
-                batch_ops.push((CF_STORAGE_TRIES_NODES.to_string(), key, node_data));
+                let key = apply_prefix(Some(address_hash), node_hash)
+                    .as_ref()
+                    .to_vec();
+                batch_ops.push((CF_TRIE_NODES.to_string(), key, node_data));
             }
         }
 
         self.write_batch_async(batch_ops).await
-        */
     }
 
     async fn write_account_code_batch(

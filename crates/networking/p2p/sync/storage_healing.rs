@@ -520,14 +520,10 @@ fn get_initial_downloads(
             .filter_map(|acc_path| {
                 let rlp = trie
                     .get(&acc_path.to_fixed_bytes().to_vec())
-                    .expect("We should be able to open the store")
-                    .expect("This account should exist in the trie");
+                    .expect("We should be able to open the store")?;
                 let account = AccountState::decode(&rlp).expect("We should have a valid account");
-                if account.storage_root == *EMPTY_TRIE_HASH {
-                    return None;
-                }
                 if store
-                    .open_storage_trie(*acc_path, account.storage_root, todo!())
+                    .open_direct_storage_trie(*acc_path, account.storage_root)
                     .expect("We should be able to open the store")
                     .root_node()
                     .expect("We should be able to read the store")
@@ -550,7 +546,7 @@ fn get_initial_downloads(
             .par_iter()
             .filter_map(|(acc_path, storage_root)| {
                 if store
-                    .open_storage_trie(*acc_path, *storage_root, todo!())
+                    .open_direct_storage_trie(*acc_path, *storage_root)
                     .expect("We should be able to open the store")
                     .root_node()
                     .expect("We should be able to read the store")
@@ -580,10 +576,9 @@ pub fn determine_missing_children(
     let mut count = 0;
     let node = node_response.node.clone();
     let trie = store
-        .open_storage_trie(
+        .open_direct_storage_trie(
             H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
-            *EMPTY_TRIE_HASH,
-            todo!(),
+            *EMPTY_TRIE_HASH
         )
         .inspect_err(|_| {
             error!("Malformed data when opening the storage trie in determine missing children")

@@ -1135,6 +1135,14 @@ impl Store {
         self.engine.open_locked_state_trie(state_root)
     }
 
+    pub fn open_direct_storage_trie(&self, addr: H256, root: H256) -> Result<Trie, StoreError> {
+        self.engine.open_direct_storage_trie(addr, root)
+    }
+
+    pub fn open_direct_state_trie(&self, root: H256) -> Result<Trie, StoreError> {
+        self.engine.open_direct_state_trie(root)
+    }
+
     /// Obtain a storage trie from the given address and storage_root.
     /// Doesn't check if the account is stored
     pub fn open_storage_trie(

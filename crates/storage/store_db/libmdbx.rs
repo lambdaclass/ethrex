@@ -125,6 +125,14 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    fn open_direct_storage_trie(&self, _: H256, _: H256) -> Result<Trie, StoreError> {
+        todo!()
+    }
+
+    fn open_direct_state_trie(&self, _: H256) -> Result<Trie, StoreError> {
+        todo!()
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {

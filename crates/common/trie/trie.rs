@@ -197,12 +197,8 @@ impl Trie {
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
     /// the cached nodes.
     pub fn commit(&mut self) -> Result<(), TrieError> {
-        if self.root.is_valid() {
-            let mut acc = Vec::new();
-            self.root.commit(Nibbles::default(), &mut acc);
-            acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
-            self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
-        }
+        let acc = self.commit_without_storing();
+        self.db.put_batch(acc)?;
 
         Ok(())
     }
@@ -213,8 +209,8 @@ impl Trie {
         let mut acc = Vec::new();
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc);
-            acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
         }
+        acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
 
         acc
     }

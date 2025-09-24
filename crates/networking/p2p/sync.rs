@@ -922,7 +922,7 @@ impl Syncer {
                 let store_clone = store.clone();
                 let current_state_root =
                     tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                        let mut trie = store_clone.open_state_trie(computed_state_root)?;
+                        let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
 
                         for (account_hash, account) in account_states_snapshot {
                             METRICS
@@ -1128,11 +1128,11 @@ impl Syncer {
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
 
         info!("Adding leaves...");
-        let trie = store.open_state_trie(pivot_header.state_root)?;
+        let trie = store.open_direct_state_trie(pivot_header.state_root)?;
         let db = trie.db();
         let mut nodes_to_write = Vec::new();
         store
-            .open_state_trie(pivot_header.state_root)?
+            .open_direct_state_trie(pivot_header.state_root)?
             .into_iter()
             .try_for_each(|(path, node)| -> Result<(), SyncError> {
                 let Node::Leaf(node) = node else {
@@ -1140,18 +1140,16 @@ impl Syncer {
                 };
 
                 let account_state = AccountState::decode(&node.value)?;
-                let storage_trie = store.open_storage_trie(
+                let storage_trie = store.open_direct_storage_trie(
                     H256::from_slice(&path.to_bytes()),
                     account_state.storage_root,
-                    todo!(),
                 )?;
                 let storage_db = storage_trie.db();
                 let mut storages_to_write = Vec::new();
                 store
-                    .open_storage_trie(
+                    .open_direct_storage_trie(
                         H256::from_slice(&path.to_bytes()),
-                        account_state.storage_root,
-                        todo!(),
+                        account_state.storage_root
                     )?
                     .into_iter()
                     .try_for_each(|(path, node)| -> Result<(), SyncError> {
@@ -1289,7 +1287,7 @@ fn compute_storage_roots(
         Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
     };
 
-    let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root, todo!())?;
+    let mut storage_trie = store.open_direct_storage_trie(account_hash, account_storage_root)?;
 
     for (hashed_key, value) in key_value_pairs {
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
