@@ -1323,6 +1323,8 @@ pub enum SyncError {
     NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
+    #[error("Couldn't create a thread")]
+    ThreadCreationError,
     #[error("Called update_pivot outside snapsync mode")]
     NotInSnapSync,
     #[error("Peer handler error: {0}")]
@@ -1690,8 +1692,8 @@ async fn insert_storage_into_rocksdb(
             joinset
                 .extract_if(.., |handle| handle.is_finished())
                 .map(|handle| handle.join())
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| SyncError::NotInSnapSync)?; //this needs to be a no new thread
+                .collect::<Result<Result<Vec<_>, _>, _>>()
+                .map_err(|_| SyncError::ThreadCreationError)??; //this needs to be a no new thread
         }
         Ok(())
     })
