@@ -1090,7 +1090,7 @@ async fn block_is_safe(client: &EthClient, block_number: u64) -> Result<bool, Et
         .map(|x| U256::low_u64(&x))?
         .checked_sub(client.config.safe_block_delay)
     {
-        Ok(block_number >= safe_block)
+        Ok(block_number <= safe_block)
     } else {
         Ok(false)
     }
