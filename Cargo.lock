@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "archive_sync"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "clap 4.5.47",
  "clap_complete",
@@ -3370,7 +3370,7 @@ dependencies = [
 
 [[package]]
 name = "ef_tests-blockchain"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "datatest-stable",
@@ -3391,7 +3391,7 @@ dependencies = [
 
 [[package]]
 name = "ef_tests-state"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "alloy-rlp",
  "bytes",
@@ -3419,7 +3419,7 @@ dependencies = [
 
 [[package]]
 name = "ef_tests-statev2"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "alloy-rlp",
  "bytes",
@@ -4016,7 +4016,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4067,7 +4067,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "cfg-if 1.0.3",
@@ -4088,7 +4088,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "c-kzg",
@@ -4117,7 +4117,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -4129,11 +4129,11 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 
 [[package]]
 name = "ethrex-dev"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "envy",
@@ -4153,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "aligned-sdk",
  "anyhow",
@@ -4213,7 +4213,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4232,7 +4232,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "axum 0.8.4",
  "bytes",
@@ -4262,7 +4262,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -4296,7 +4296,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "axum 0.8.4",
  "ethrex-common",
@@ -4311,7 +4311,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "aes",
  "async-trait",
@@ -4351,7 +4351,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4387,7 +4387,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-replay"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "again",
  "bytes",
@@ -4449,7 +4449,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4463,7 +4463,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "axum 0.8.4",
  "axum-extra",
@@ -4503,7 +4503,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4529,7 +4529,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "thiserror 2.0.16",
  "tracing",
@@ -4537,7 +4537,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4562,7 +4562,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4582,7 +4582,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4610,7 +4610,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bincode",
  "bytes",
@@ -5139,7 +5139,7 @@ dependencies = [
 
 [[package]]
 name = "genesis-tool"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "ethrex-common",
  "serde_json",
@@ -5338,7 +5338,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
@@ -5621,7 +5621,7 @@ checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
 name = "hive_report"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6984,7 +6984,7 @@ checksum = "f5e54036fe321fd421e10d732f155734c4e4afd610dd556d9a82833ab3ee0bed"
 
 [[package]]
 name = "load_test"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "clap 4.5.47",
  "ethereum-types 0.15.1",
@@ -7004,7 +7004,7 @@ dependencies = [
 
 [[package]]
 name = "loc"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "clap 4.5.47",
  "clap_complete",
@@ -9715,7 +9715,7 @@ dependencies = [
 
 [[package]]
 name = "revm_comparison"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
