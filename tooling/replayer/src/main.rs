@@ -304,9 +304,11 @@ async fn replay_latest_block(
         tracing::info!("Replaying block https://{network}.etherscan.io/block/{latest_block}",);
     }
 
-    let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(latest_block))
+    let rpc_block = eth_client
+        .get_block_by_number(BlockIdentifier::Number(latest_block), true)
         .await?;
+
+    let block = rpc_block.try_into().unwrap();
 
     let start = SystemTime::now();
 

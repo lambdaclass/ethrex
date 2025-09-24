@@ -172,10 +172,12 @@ async fn fetch_rangedata_from_client(
     let block_retrieval_start_time = SystemTime::now();
 
     for block_number in from..=to {
-        let block = eth_client
-            .get_raw_block(BlockIdentifier::Number(block_number))
+        let rpc_block = eth_client
+            .get_block_by_number(BlockIdentifier::Number(block_number), true)
             .await
             .wrap_err(format!("failed to fetch block {block_number}"))?;
+
+        let block = rpc_block.try_into().unwrap();
         blocks.push(block);
     }
 
