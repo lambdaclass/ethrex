@@ -524,7 +524,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
             // Fill storage trie with dummy branch nodes that have the hash of the missing nodes
             // This is useful for eth_getProofs when we want to restructure the trie after removing a node whose sibling isn't known
-            // We assume the sibling is a branch node becuase we already covered the cases in which it's a Leaf or Extension node by injecting nodes in the witness.
+            // We assume the sibling is a branch node because we already covered the cases in which it's a Leaf or Extension node by injecting nodes in the witness.
             // For more info read: https://github.com/kkrt-labs/zk-pig/blob/v0.8.0/docs/modified-mpt.md
             {
                 let mut storage_nodes = storage_trie.lock().unwrap();
