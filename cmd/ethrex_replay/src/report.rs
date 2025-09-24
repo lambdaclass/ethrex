@@ -102,19 +102,6 @@ impl Report {
                             number = self.block.header.number,
                             gas = self.block.header.gas_used,
                             txs = self.block.body.transactions.len(),
-                            maybe_execution_result = if self.proving_result.is_some() {
-                                format!(
-                                    "\n*Execution Result:* {}",
-                                    match &self.execution_result {
-                                        Ok(_) => "Succeeded".to_string(),
-                                        Err(err) => format!("⚠️ Failed with {err}"),
-                                    }
-                                )
-                            } else if let Err(err) = &self.execution_result {
-                                format!("\n*Execution Error:* {err}")
-                            } else {
-                                "".to_string()
-                            },
                             maybe_proving_result = if let Some(Err(err)) = &self.proving_result {
                                 format!("\n*Proving Error:* {err}")
                             } else {
@@ -124,6 +111,19 @@ impl Report {
                             maybe_cpu = hardware_info_slack_message("CPU"),
                             maybe_ram = hardware_info_slack_message("RAM"),
                             maybe_git_info = git_info_slack_message(),
+                            maybe_execution_result = if self.proving_result.is_some() {
+                                format!(
+                                    "\n*Execution:* {}",
+                                    match &self.execution_result {
+                                        Ok(_) => "Succeeded".to_string(),
+                                        Err(err) => format!("⚠️ Failed with {err}"),
+                                    }
+                                )
+                            } else if let Err(err) = &self.execution_result {
+                                format!("\n*Execution:* Failed with {err}")
+                            } else {
+                                "".to_string()
+                            },
                             maybe_execution_time =
                                 if let Ok(execution_duration) = &self.execution_result {
                                     format!(
