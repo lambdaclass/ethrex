@@ -497,6 +497,9 @@ impl ChainConfig {
             self.osaka_time,
             self.bpo1_time,
             self.bpo2_time,
+            self.bpo3_time,
+            self.bpo4_time,
+            self.bpo5_time,
             self.verkle_time,
         ]
         .into_iter()
