@@ -14,7 +14,6 @@ use tokio::task::{JoinError, JoinHandle};
 
 #[derive(Parser, Clone)]
 #[clap(group = clap::ArgGroup::new("rpc_urls").multiple(true).required(true))]
-#[clap(group = clap::ArgGroup::new("modes").required(true))]
 pub struct Options {
     #[command(flatten)]
     pub replayer: EthrexReplayOptions,
