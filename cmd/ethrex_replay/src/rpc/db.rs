@@ -30,8 +30,9 @@ use std::sync::Mutex;
 
 use super::{Account, NodeRLP};
 
-const RPC_RATE_LIMIT: usize = 15; // Max amount of concurrent requests at once.
-const RATE_LIMIT: Duration = Duration::from_millis(100); // 10rps
+// 10 Requests Per second max cap. It's a conservative number that every Free tier of RPC Providers supports.
+const RPC_RATE_LIMIT: usize = 10;
+const RATE_LIMIT: Duration = Duration::from_millis(100);
 
 /// Structure for a database that fetches data from an RPC endpoint on demand.
 /// Caches already fetched data to minimize RPC calls.
@@ -161,6 +162,7 @@ impl RpcDB {
         for chunk in index.chunks(RPC_RATE_LIMIT) {
             let start = Instant::now();
 
+            // Call to `eth_getProof` for each account in the chunk
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
@@ -184,7 +186,6 @@ impl RpcDB {
 
             fetched.extend(fetched_chunk);
 
-            // logging
             if index.len() == 1 {
                 let address = chunk.first().unwrap().0;
                 debug!("fetched account {address}");
@@ -193,7 +194,7 @@ impl RpcDB {
                 debug!("fetched {} accounts of {}", counter, index.len());
             }
 
-            // Compute the cooldown needed to honor the per-request rate
+            // Cooldown depends on chunk size.
             let chunk_size = chunk.len() as u32;
             let target_gap = RATE_LIMIT * chunk_size;
             let elapsed = start.elapsed();
