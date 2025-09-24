@@ -1,5 +1,5 @@
 use crate::{
-    CommitterConfig, EthConfig, SequencerConfig,
+    CommitterConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::CommitterError,
@@ -36,7 +36,7 @@ use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::eth::{EthClient, Overrides},
+    clients::eth::{EthClient, EthConfig, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
@@ -132,20 +132,7 @@ impl L1Committer {
         based: bool,
         sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
-        let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.clone(),
-            ethrex_rpc::clients::eth::EthConfig {
-                max_number_of_retries: eth_config.max_number_of_retries,
-                backoff_factor: eth_config.backoff_factor,
-                min_retry_delay: eth_config.min_retry_delay,
-                max_retry_delay: eth_config.max_retry_delay,
-                maximum_allowed_max_fee_per_gas: Some(eth_config.maximum_allowed_max_fee_per_gas),
-                maximum_allowed_max_fee_per_blob_gas: Some(
-                    eth_config.maximum_allowed_max_fee_per_blob_gas,
-                ),
-                safe_block_delay: eth_config.safe_block_delay,
-            },
-        )?;
+        let eth_client = EthClient::new_with_config(eth_config.clone())?;
         let last_committed_batch =
             get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)
                 .await?;

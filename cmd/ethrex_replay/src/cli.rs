@@ -86,7 +86,7 @@ pub enum EthrexReplayCommand {
         #[arg(help = "Ending block. (Inclusive)")]
         end: u64,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
+        rpc_url: Url,
         #[arg(
             long,
             help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
@@ -352,7 +352,7 @@ impl EthrexReplayCommand {
                     ));
                 }
 
-                let eth_client = EthClient::new(&rpc_url)?;
+                let eth_client = EthClient::new(rpc_url)?;
 
                 let cache = get_rangedata(eth_client, network, start, end).await?;
 
@@ -420,7 +420,7 @@ impl EthrexReplayCommand {
 }
 
 async fn setup(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)> {
-    let eth_client = EthClient::new(opts.rpc_url.as_str())?;
+    let eth_client = EthClient::new(opts.rpc_url.clone())?;
     let chain_id = eth_client.get_chain_id().await?.as_u64();
     let network = network_from_chain_id(chain_id);
     Ok((eth_client, network))
@@ -1105,7 +1105,7 @@ pub async fn produce_custom_l2_block(
 
 #[cfg(not(feature = "l2"))]
 async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
-    let eth_client = EthClient::new(rpc_url.as_str())?;
+    let eth_client = EthClient::new(rpc_url)?;
 
     let latest_block = eth_client.get_block_number().await?;
 

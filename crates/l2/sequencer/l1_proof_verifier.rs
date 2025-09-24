@@ -14,15 +14,17 @@ use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_verified_batch, get_sp1_vk};
 use ethrex_rpc::{
     EthClient,
-    clients::{EthClientError, eth::errors::EstimateGasError},
+    clients::{
+        EthClientError,
+        eth::{EthConfig, errors::EstimateGasError},
+    },
 };
 use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
 use tracing::{error, info, warn};
 
 use crate::{
-    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    sequencer::errors::ProofVerifierError,
+    CommitterConfig, ProofCoordinatorConfig, SequencerConfig, sequencer::errors::ProofVerifierError,
 };
 
 use super::{
@@ -68,20 +70,7 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
     ) -> Result<Self, ProofVerifierError> {
-        let eth_client = EthClient::new_with_config(
-            eth_cfg.rpc_url.clone(),
-            ethrex_rpc::clients::eth::EthConfig {
-                max_number_of_retries: eth_cfg.max_number_of_retries,
-                backoff_factor: eth_cfg.backoff_factor,
-                min_retry_delay: eth_cfg.min_retry_delay,
-                max_retry_delay: eth_cfg.max_retry_delay,
-                maximum_allowed_max_fee_per_gas: Some(eth_cfg.maximum_allowed_max_fee_per_gas),
-                maximum_allowed_max_fee_per_blob_gas: Some(
-                    eth_cfg.maximum_allowed_max_fee_per_blob_gas,
-                ),
-                safe_block_delay: eth_cfg.safe_block_delay,
-            },
-        )?;
+        let eth_client = EthClient::new_with_config(eth_cfg.clone())?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
         let sp1_vk = get_sp1_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;
@@ -298,7 +287,7 @@ impl L1ProofVerifier {
         &self,
         verification_data: &AggregationModeVerificationData,
     ) -> Result<ProofStatus, ProofVerifierError> {
-        for rpc_url in &self.eth_client.urls {
+        for rpc_url in &self.eth_client.config.urls {
             for beacon_url in &self.beacon_urls {
                 match aligned_check_proof_verification(
                     verification_data,

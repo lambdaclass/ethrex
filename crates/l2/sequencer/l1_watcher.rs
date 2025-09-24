@@ -1,6 +1,6 @@
 use super::utils::random_duration;
 use crate::based::sequencer_state::{SequencerState, SequencerStatus};
-use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
+use crate::{L1WatcherConfig, SequencerConfig};
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
@@ -11,6 +11,7 @@ use ethrex_l2_sdk::{
     build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
 };
 use ethrex_rpc::clients::EthClientError;
+use ethrex_rpc::clients::eth::EthConfig;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -18,6 +19,7 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use keccak_hash::keccak;
+use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
@@ -74,8 +76,12 @@ impl L1Watcher {
         watcher_config: &L1WatcherConfig,
         sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
-        let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        let l2_client = EthClient::new("http://localhost:1729")?;
+        let eth_client = EthClient::new_with_multiple_urls(eth_config.urls.clone())?;
+        let l2_client = EthClient::new(Url::parse("http://localhost:1729").map_err(|_| {
+            L1WatcherError::EthClientError(EthClientError::ParseUrlError(
+                "http://localhost:1729".to_string(),
+            ))
+        })?)?;
         let last_block_fetched = U256::zero();
         Ok(Self {
             store,
