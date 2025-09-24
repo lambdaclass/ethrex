@@ -1421,7 +1421,8 @@ impl PeerHandler {
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
                             // accounts_done.push(current_account_hashes[remaining_start]);
-                            let old_intervals = accounts_done
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
                                 .get_mut(&current_account_hashes[remaining_start])
                                 .unwrap();
                             for (old_start, end) in old_intervals {
@@ -1433,7 +1434,8 @@ impl PeerHandler {
                                 .healed_accounts
                                 .insert(current_account_hashes[start_index]);
                         } else {
-                            let old_intervals = accounts_done
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
                                 .get_mut(&current_account_hashes[remaining_start])
                                 .unwrap();
                             old_intervals.remove(
@@ -1442,6 +1444,10 @@ impl PeerHandler {
                                     .position(|(_old_start, end)| end == &hash_end)
                                     .unwrap(),
                             );
+                            if old_intervals.is_empty() {
+                                accounts_done
+                                    .insert(current_account_hashes[remaining_start], vec![]);
+                            }
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
@@ -1489,8 +1495,11 @@ impl PeerHandler {
                                 task_count += 1;
                             }
                         } else {
-                            accounts_done.insert(current_account_hashes[remaining_start], vec![]);
-                            let intervals = accounts_done
+                            account_storage_roots
+                                .accounts_with_storage_root
+                                .insert(current_account_hashes[remaining_start], (None, vec![]));
+                            let (_, intervals) = account_storage_roots
+                                .accounts_with_storage_root
                                 .get_mut(&current_account_hashes[remaining_start])
                                 .unwrap();
 
