@@ -85,9 +85,7 @@ impl TryFrom<&Path> for Genesis {
             warn!("Invalid fork, only post-merge networks are supported.");
         }
 
-        if genesis.config.bpo1_time.is_some() && genesis.config.blob_schedule.bpo1.is_none()
-            || genesis.config.bpo2_time.is_some() && genesis.config.blob_schedule.bpo2.is_none()
-            || genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
+        if genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
             || genesis.config.bpo4_time.is_some() && genesis.config.blob_schedule.bpo4.is_none()
             || genesis.config.bpo5_time.is_some() && genesis.config.blob_schedule.bpo5.is_none()
         {
@@ -130,10 +128,10 @@ pub struct BlobSchedule {
     pub prague: ForkBlobSchedule,
     #[serde(default = "default_osaka_schedule")]
     pub osaka: ForkBlobSchedule,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bpo1: Option<ForkBlobSchedule>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bpo2: Option<ForkBlobSchedule>,
+    #[serde(default = "default_bpo1_schedule")]
+    pub bpo1: ForkBlobSchedule,
+    #[serde(default = "default_bpo2_schedule")]
+    pub bpo2: ForkBlobSchedule,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpo3: Option<ForkBlobSchedule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,8 +146,8 @@ impl Default for BlobSchedule {
             cancun: default_cancun_schedule(),
             prague: default_prague_schedule(),
             osaka: default_osaka_schedule(),
-            bpo1: None,
-            bpo2: None,
+            bpo1: default_bpo1_schedule(),
+            bpo2: default_bpo2_schedule(),
             bpo3: None,
             bpo4: None,
             bpo5: None,
@@ -181,6 +179,21 @@ fn default_osaka_schedule() -> ForkBlobSchedule {
     }
 }
 
+fn default_bpo1_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 10,
+        max: 15,
+        base_fee_update_fraction: 8346193,
+    }
+}
+
+fn default_bpo2_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 14,
+        max: 21,
+        base_fee_update_fraction: 11684671,
+    }
+}
 /// Blockchain settings defined per block
 #[allow(unused)]
 #[derive(
@@ -290,6 +303,11 @@ pub enum Fork {
     Cancun = 17,
     Prague = 18,
     Osaka = 19,
+    BPO1 = 20,
+    BPO2 = 21,
+    BPO3 = 22,
+    BPO4 = 23,
+    BPO5 = 24,
 }
 
 impl From<Fork> for &str {
@@ -315,6 +333,11 @@ impl From<Fork> for &str {
             Fork::Cancun => "Cancun",
             Fork::Prague => "Prague",
             Fork::Osaka => "Osaka",
+            Fork::BPO1 => "BPO1",
+            Fork::BPO2 => "BPO2",
+            Fork::BPO3 => "BPO3",
+            Fork::BPO4 => "BPO4",
+            Fork::BPO5 => "BPO5",
         }
     }
 }
@@ -419,9 +442,9 @@ impl ChainConfig {
         } else if self.is_bpo3_activated(block_timestamp) {
             Some(self.blob_schedule.bpo3.unwrap_or_default())
         } else if self.is_bpo2_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2.unwrap_or_default())
+            Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo1.unwrap_or_default())
+            Some(self.blob_schedule.bpo1)
         } else if self.is_osaka_activated(block_timestamp) {
             Some(self.blob_schedule.osaka)
         } else if self.is_prague_activated(block_timestamp) {
@@ -471,6 +494,9 @@ impl ChainConfig {
             self.shanghai_time,
             self.cancun_time,
             self.prague_time,
+            self.osaka_time,
+            self.bpo1_time,
+            self.bpo2_time,
             self.verkle_time,
         ]
         .into_iter()
