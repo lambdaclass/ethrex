@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758700633178,
+  "lastUpdate": 1758702520071,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33244,6 +33244,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004464540940766551,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5dbdb33e57ad44f9ea012145fefb1330658824c3",
+          "message": "feat(replay): replay use add block instead of stateless execution (#4396)\n\n**Motivation**\n\n- Use ethrex replay with `add_block` so we can measure the exact same\nthing that we measure in normal runs.\n\n**Description**\n\nIf we want a samply of `add_block` we can do this:\n`cargo build --profile release-with-debug -p ethrex-replay`\n`samply record target/release-with-debug/ethrex-replay block --rpc-url\n'http://65.109.97.102:8545' --execute --no-zkvm`\n\nIf searching for `add_block` in samply we will see something like this:\n<img width=\"1869\" height=\"936\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/dd128dc2-422c-4c04-bf9c-8eded8838621\"\n/>\n\n\nWe had to add feature flag replay so that this functionality works with\nreth nodes. Otherwise it only works with ethrex nodes that behave the\nsame as us and therefore require the exact same trie nodes and codes.",
+          "timestamp": "2025-09-23T13:21:47Z",
+          "tree_id": "988e5abc48da66cad1fd6d1068471feacfc212c0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5dbdb33e57ad44f9ea012145fefb1330658824c3"
+        },
+        "date": 1758702519127,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004472332460732985,
             "unit": "Mgas/s"
           }
         ]
