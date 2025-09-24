@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758739648655,
+  "lastUpdate": 1758740311653,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33568,6 +33568,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0044490390625,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "87ec6cdb8952e510e656b31aac6e8c7dec102992",
+          "message": "fix(l1): fixed edge case for missing accounts in state trie in storage healing (#4606)\n\n**Motivation**\n\nThe storage healing algorithm was assuming that missing accounts in the\nstate trie were a bug. Due to an edge case some accounts can be deleted\nfrom state trie. As such, the code now filters healed accounts that\ndon't exist in the trie.\n\n**Description**\n\n- Changed storage healing `get_initial_downloads` to filter healed\naccounts that aren't present in the trie.\n- Changed p2p logging to include header hash",
+          "timestamp": "2025-09-23T18:24:17Z",
+          "tree_id": "5eea0a647d13ffc4a77908323b4b09ef10c9e6b7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/87ec6cdb8952e510e656b31aac6e8c7dec102992"
+        },
+        "date": 1758740288188,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015358984117470782,
             "unit": "Mgas/s"
           }
         ]
