@@ -10,8 +10,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
+/// RocksDB backend
 #[derive(Debug)]
 pub struct RocksDBBackend {
+    /// Optimistric transaction database
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
 }
 
@@ -20,24 +22,15 @@ impl StorageBackend for RocksDBBackend {
     where
         Self: Sized,
     {
+        // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        // Basic optimizations
         opts.set_max_open_files(-1);
         opts.set_max_background_jobs(8);
 
-        // Write optimizations
-        opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
-        opts.set_max_write_buffer_number(4);
-        opts.set_min_write_buffer_number_to_merge(2);
-
-        // WAL optimizations
-        opts.set_use_fsync(false); // Use fdatasync instead of fsync
-        opts.set_enable_pipelined_write(true);
-        opts.set_allow_concurrent_memtable_write(true);
-
+        // Open all column families
         let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
             .unwrap_or_else(|_| vec!["default".to_string()]);
 
@@ -118,9 +111,6 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
-        // Create a self-contained snapshot that can live independently
-        // We use Box::leak because RocksDB's Snapshot needs 'static references to the DB
-        // This is necessary for long-lived trie operations in snap sync
         let db = Box::leak(Box::new(self.db.clone()));
         let lock = db.snapshot();
         let cf = db
@@ -131,8 +121,11 @@ impl StorageBackend for RocksDBBackend {
     }
 }
 
+/// Read-only transaction for RocksDB
 pub struct RocksDBRoTx<'a> {
+    /// Transaction
     tx: Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
+    /// Hashmap of column families
     cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
@@ -177,7 +170,9 @@ impl<'a> StorageRoTx for RocksDBRoTx<'a> {
     }
 }
 
+/// Prefix iterator for RocksDB
 pub struct RocksDBPrefixIter {
+    /// Vector of prefix results
     results: std::vec::IntoIter<PrefixResult>,
 }
 
@@ -189,9 +184,13 @@ impl Iterator for RocksDBPrefixIter {
     }
 }
 
+/// Read-write transaction for RocksDB
 pub struct RocksDBRwTx<'a> {
+    /// Reference to database
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    /// Transaction
     tx: Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
+    /// Hashmap of column families
     cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
@@ -237,6 +236,9 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
 }
 
 impl<'a> StorageRwTx for RocksDBRwTx<'a> {
+    /// Stores multiple key-value pairs in different tables using [`WriteBatchWithTransaction`].
+    /// This struct needs [`OptimisticTransactionDB`] to write the changes to the database.
+    /// This method doesn't need to [`commit()`](StorageRwTx::commit) the transaction because it is done internally.
     fn put_batch(&self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
         let mut write_batch = WriteBatchWithTransaction::<true>::default();
         for (table, key, value) in batch {
@@ -273,12 +275,14 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
     }
 }
 
+/// Locked snapshot for RocksDB
+/// This is used for batch read operations in snap sync
 pub struct RocksDBLocked {
     /// Reference to database
     db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Snapshot/locked transaction
     lock: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
-    /// Column family handle  
+    /// Column family handle
     cf: Arc<rocksdb::BoundColumnFamily<'static>>,
 }
 

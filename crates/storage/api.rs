@@ -48,7 +48,7 @@ pub struct TableOptions {
     pub dupsort: bool,
 }
 
-/// This trait provides the minimal set of operations required from a database backend.
+/// This trait provides a minimal set of operations required from a database backend.
 /// Implementations should focus on providing efficient access to the underlying storage
 /// without implementing business logic.
 pub trait StorageBackend: Debug + Send + Sync {
@@ -77,7 +77,7 @@ pub trait StorageBackend: Debug + Send + Sync {
 }
 
 /// Read-only transaction interface.
-/// Provides methods to read data from the database within a consistent snapshot.
+/// Provides methods to read data from the database
 pub trait StorageRoTx {
     /// Retrieves a value by key from the specified table.
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
