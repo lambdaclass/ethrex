@@ -12,6 +12,7 @@ use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::seq::SliceRandom;
@@ -1279,6 +1280,7 @@ impl PeerHandler {
         account_storages_snapshots_dir: &Path,
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
+        store: Store,
     ) -> Result<u64, PeerHandlerError> {
         *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
         debug!("Starting request_storage_ranges function");
@@ -1593,7 +1595,17 @@ impl PeerHandler {
                     .iter()
                     .skip(task.start_index)
                     .take(task.end_index - task.start_index)
-                    .map(|(hash, (root, _))| (*hash, *root))
+                    .map(|(hash, (root, _))| match root {
+                        Some(root) => (*hash, *root),
+                        None => (
+                            *hash,
+                            store
+                                .get_account_state_by_acc_hash(pivot_header.hash(), *hash)
+                                .unwrap()
+                                .unwrap()
+                                .storage_root,
+                        ),
+                    })
                     .unzip();
 
             if task_count - completed_tasks < 30 {

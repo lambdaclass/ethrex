@@ -188,7 +188,7 @@ async fn heal_state_trie(
                                 .accounts_with_storage_root
                                 .get_mut(&account_hash);
                             if let Some((old_root, _)) = old_value {
-                                *old_root = account.storage_root;
+                                *old_root = None;
                             }
                             // storage_accounts
                             //     .accounts_with_storage_root

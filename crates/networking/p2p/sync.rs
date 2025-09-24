@@ -905,7 +905,7 @@ impl Syncer {
                         .zip(account_states.iter())
                         .filter_map(|(hash, state)| {
                             (state.storage_root != *EMPTY_TRIE_HASH)
-                                .then_some((*hash, (state.storage_root, vec![])))
+                                .then_some((*hash, (Some(state.storage_root), vec![])))
                         }),
                 );
 
@@ -999,6 +999,7 @@ impl Syncer {
                         account_storages_snapshots_dir.as_ref(),
                         chunk_index,
                         &mut pivot_header,
+                        store.clone(),
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
@@ -1343,7 +1344,7 @@ pub struct AccountStorageRoots {
     /// The accounts that have not been healed are guaranteed to have the original storage root
     /// we can read this storage root
     // pub accounts_with_storage_root: BTreeMap<H256, H256>,
-    pub accounts_with_storage_root: BTreeMap<H256, (H256, Vec<(H256, H256)>)>,
+    pub accounts_with_storage_root: BTreeMap<H256, (Option<H256>, Vec<(H256, H256)>)>,
     /// If an account has been healed, it may return to a previous state, so we just store the account
     /// in a hashset
     pub healed_accounts: HashSet<H256>,
