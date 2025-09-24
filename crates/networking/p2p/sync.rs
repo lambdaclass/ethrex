@@ -56,8 +56,6 @@ const BYTECODE_CHUNK_SIZE: usize = 50_000;
 /// that are unlikely to be re-orged.
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
-const DUMMY_MAX_MEMPOOL_SIZE: usize = 10_000;
-
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
@@ -129,7 +127,6 @@ impl Syncer {
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
-                DUMMY_MAX_MEMPOOL_SIZE,
             )),
             datadir: ".".into(),
         }

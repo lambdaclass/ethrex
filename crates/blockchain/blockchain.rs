@@ -48,6 +48,7 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
+const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -110,10 +111,10 @@ impl Blockchain {
         }
     }
 
-    pub fn default_with_store(store: Store, max_mempool_size: usize) -> Self {
+    pub fn default_with_store(store: Store) -> Self {
         Self {
             storage: store,
-            mempool: Mempool::new(max_mempool_size),
+            mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
