@@ -17,9 +17,13 @@ use ethrex_common::{
 };
 use ethrex_storage::error::StoreError;
 use std::collections::HashSet;
+use tracing::warn;
 
 // Max number of transactions in the mempool
 const MEMPOOL_MAX_SIZE: usize = 10000; //TODO: Define
+
+// Max number of transactions to let the mempool order queue grow before pruning it
+const MEMPOOL_PRUNE_THRESHOLD: usize = MEMPOOL_MAX_SIZE + MEMPOOL_MAX_SIZE / 2;
 
 #[derive(Debug, Default)]
 struct MempoolInner {
@@ -57,6 +61,11 @@ impl Mempool {
         while inner.transaction_pool.len() >= MEMPOOL_MAX_SIZE {
             if let Some(oldest_hash) = inner.txs_order.pop_front() {
                 self.remove_transaction_with_lock(&oldest_hash, inner)?;
+            } else {
+                warn!(
+                    "Mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
+                );
+                break;
             }
         }
 
@@ -75,7 +84,7 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
 
         // Prune the order queue if it has grown too much
-        if inner.txs_order.len() > MEMPOOL_MAX_SIZE + MEMPOOL_MAX_SIZE / 2 {
+        if inner.txs_order.len() > MEMPOOL_PRUNE_THRESHOLD {
             let mut new_txs_order = VecDeque::with_capacity(MEMPOOL_MAX_SIZE * 2);
             for tx in inner.txs_order.iter() {
                 if inner.transaction_pool.contains_key(tx) {
