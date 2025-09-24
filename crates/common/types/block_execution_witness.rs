@@ -9,16 +9,20 @@ use crate::{
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
 };
+use alloy_primitives::B256;
+use alloy_primitives::map::B256Map;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{NodeRLP, Trie};
+use ethrex_trie::NodeRLP;
 use keccak_hash::keccak;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha3::{Digest, Keccak256};
+
+use risc0_ethereum_trie::CachedTrie as Trie;
 
 /// State produced by the guest program execution inside the zkVM. It is
 /// essentially built from the `ExecutionWitness`.
@@ -31,7 +35,9 @@ pub struct GuestProgramState {
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
     /// It is used to rebuild the state trie and storage tries.
-    pub nodes_hashed: BTreeMap<H256, NodeRLP>,
+    // pub nodes_hashed: BTreeMap<H256, NodeRLP>,
+    pub nodes_hashed: B256Map<NodeRLP>,
+    pub root_alloy: B256,
     /// Map of code hashes to their corresponding bytecode.
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
@@ -144,7 +150,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .into_iter()
             .map(|node| {
                 let node = node.to_vec();
-                (keccak(&node), node)
+                (B256::from_slice(keccak(&node).as_bytes()), node)
             })
             .collect();
 
@@ -155,6 +161,8 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .map(|code| (keccak(&code), code))
             .collect();
 
+        let root_alloy = B256::from_slice(parent_header.state_root.as_bytes());
+
         let mut guest_program_state = GuestProgramState {
             codes_hashed,
             state_trie: None,
@@ -164,6 +172,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             first_block_number: value.first_block_number,
             chain_config: value.chain_config,
             nodes_hashed,
+            root_alloy,
             account_hashes_by_address: BTreeMap::new(),
         };
 
@@ -185,10 +194,8 @@ impl GuestProgramState {
             return Ok(());
         }
 
-        let state_trie = Trie::from_nodes(self.parent_block_header.state_root, &self.nodes_hashed)
-            .map_err(|e| {
-                GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
-            })?;
+        let state_trie = Trie::from_prehashed_nodes(self.root_alloy, &self.nodes_hashed)
+            .expect("failed to create state trie");
 
         self.state_trie = Some(state_trie);
 
@@ -204,11 +211,14 @@ impl GuestProgramState {
             .entry(*address)
             .or_insert_with(|| hash_address(address));
 
-        let account_state_rlp = self.state_trie.as_ref()?.get(account_hash).ok()??;
+        let account_state_rlp = self.state_trie.as_ref()?.get(account_hash)?;
 
-        let account_state = AccountState::decode(&account_state_rlp).ok()?;
+        let account_state = AccountState::decode(account_state_rlp).ok()?;
 
-        Trie::from_nodes(account_state.storage_root, &self.nodes_hashed).ok()
+        let root = B256::from_slice(account_state.storage_root.as_bytes());
+        let storage_trie = Trie::from_prehashed_nodes(root, &self.nodes_hashed)
+            .expect("failed to create storage trie");
+        Some(storage_trie)
     }
 
     /// Helper function to apply account updates to the execution witness
@@ -233,18 +243,14 @@ impl GuestProgramState {
 
             if update.removed {
                 // Remove account from trie
-                state_trie
-                    .remove(hashed_address)
-                    .expect("failed to remove from trie");
+                state_trie.remove(hashed_address);
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
-                let mut account_state = match state_trie
-                    .get(hashed_address)
-                    .expect("failed to get account state from trie")
-                {
-                    Some(encoded_state) => AccountState::decode(&encoded_state)
-                        .expect("failed to decode account state"),
+                let mut account_state = match state_trie.get(&hashed_address) {
+                    Some(encoded_state) => {
+                        AccountState::decode(encoded_state).expect("failed to decode account state")
+                    }
                     None => AccountState::default(),
                 };
                 if let Some(info) = &update.info {
@@ -260,7 +266,7 @@ impl GuestProgramState {
                 if !update.added_storage.is_empty() {
                     let storage_trie = storage_tries
                         .entry(update.address)
-                        .or_insert_with(Trie::empty_in_memory);
+                        .or_insert_with(Trie::default);
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -273,23 +279,17 @@ impl GuestProgramState {
                         .partition(|(_k, v)| v.is_zero());
 
                     for (hashed_key, storage_value) in inserts {
-                        storage_trie
-                            .insert(hashed_key, storage_value.encode_to_vec())
-                            .expect("failed to insert in trie");
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())
                     }
 
                     for (hashed_key, _) in deletes {
-                        storage_trie
-                            .remove(&hashed_key)
-                            .expect("failed to remove key");
+                        storage_trie.remove(&hashed_key);
                     }
 
-                    account_state.storage_root = storage_trie.hash_no_commit();
+                    account_state.storage_root = H256(storage_trie.hash().0);
                 }
 
-                state_trie
-                    .insert(hashed_address.clone(), account_state.encode_to_vec())
-                    .expect("failed to insert into storage");
+                state_trie.insert(hashed_address.clone(), account_state.encode_to_vec())
             }
         }
         Ok(())
@@ -297,15 +297,15 @@ impl GuestProgramState {
 
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
-    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
+    pub fn state_trie_root(&mut self) -> Result<H256, GuestProgramStateError> {
         let state_trie = self
             .state_trie
-            .as_ref()
+            .as_mut()
             .ok_or(GuestProgramStateError::RebuildTrie(
                 "Tried to get state trie root before rebuilding tries".to_string(),
             ))?;
 
-        Ok(state_trie.hash_no_commit())
+        Ok(H256(state_trie.hash().0))
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
@@ -374,10 +374,10 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        let Ok(Some(encoded_state)) = state_trie.get(hashed_address) else {
+        let Some(encoded_state) = state_trie.get(hashed_address) else {
             return Ok(None);
         };
-        let state = AccountState::decode(&encoded_state).map_err(|_| {
+        let state = AccountState::decode(encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
@@ -427,11 +427,8 @@ impl GuestProgramState {
             self.storage_tries.entry(address).or_insert(storage_trie)
         };
         let hashed_key = hash_key(&key);
-        if let Some(encoded_key) = storage_trie
-            .get(&hashed_key)
-            .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
-        {
-            U256::decode(&encoded_key)
+        if let Some(encoded_key) = storage_trie.get(&hashed_key) {
+            U256::decode(encoded_key)
                 .map_err(|_| {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
