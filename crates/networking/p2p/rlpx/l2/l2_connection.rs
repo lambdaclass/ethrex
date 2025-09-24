@@ -364,7 +364,7 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
         }
         established
             .blockchain
-            .add_block(&block)
+            .add_block(&block, None)
             .await
             .inspect_err(|e| {
                 log_peer_error(

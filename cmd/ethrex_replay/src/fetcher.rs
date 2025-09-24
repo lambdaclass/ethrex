@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime};
 
+use ethrex_common::Address;
 use ethrex_common::types::ChainConfig;
 use ethrex_config::networks::Network;
 use ethrex_levm::vm::VMType;
@@ -25,6 +26,7 @@ pub async fn get_blockdata(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
+    fee_vault: Option<Address>,
 ) -> eyre::Result<Cache> {
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
@@ -117,7 +119,7 @@ pub async fn get_blockdata(
                 requested_block_number - 1
             );
             let rpc_db = rpc_db
-                .to_execution_witness(&block)
+                .to_execution_witness(&block, fee_vault)
                 .wrap_err("failed to build execution db")?;
             info!(
                 "Finished building execution witness for block {}",
@@ -250,6 +252,7 @@ pub async fn get_batchdata(
     rollup_client: EthClient,
     network: Network,
     batch_number: u64,
+    fee_vault: Option<Address>,
 ) -> eyre::Result<Cache> {
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
@@ -284,6 +287,7 @@ pub async fn get_batchdata(
             .proofs
             .first()
             .unwrap_or(&[0_u8; 48]),
+        fee_vault,
     });
 
     cache.write_cache(&file_name)?;

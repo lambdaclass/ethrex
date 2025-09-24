@@ -69,6 +69,8 @@ pub enum EthClientError {
     GenericTransactionError(#[from] GenericTransactionError),
     #[error("Failed to parse hex string: {0}")]
     FromStrRadixError(#[from] FromStrRadixErr),
+    #[error("ethrex_getFeeVaultAddress request error: {0}")]
+    GetFeeVaultAddressError(#[from] GetFeeVaultAddressError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -297,6 +299,14 @@ pub enum TxPoolContentError {
 // TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetFeeVaultAddressError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]

@@ -269,7 +269,7 @@ impl BlockFetcher {
 
     async fn store_batch(&mut self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
-            self.blockchain.add_block(block).await?;
+            self.blockchain.add_block(block, None).await?;
 
             let block_hash = block.hash();
 

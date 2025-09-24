@@ -637,7 +637,7 @@ async fn try_execute_payload(
     // Execute and store the block
     info!(%block_hash, %block_number, "Executing payload");
 
-    match context.blockchain.add_block(block).await {
+    match context.blockchain.add_block(block, None).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             context.syncer.sync_to_head(block_hash);

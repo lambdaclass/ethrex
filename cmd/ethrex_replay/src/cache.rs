@@ -1,3 +1,4 @@
+use ethrex_common::Address;
 use ethrex_common::types::Block;
 use ethrex_common::types::ChainConfig;
 use ethrex_common::types::blobs_bundle;
@@ -19,6 +20,7 @@ pub struct L2Fields {
     pub blob_commitment: blobs_bundle::Commitment,
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
+    pub fee_vault: Option<Address>,
 }
 /// Structure holding input data needed to execute or prove blocks.
 /// Optional fields are included only when relevant (e.g. L2 or custom chain).

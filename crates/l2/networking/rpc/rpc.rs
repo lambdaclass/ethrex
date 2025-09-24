@@ -1,4 +1,5 @@
 use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
+use crate::l2::fee_vault::GetFeeVaultAddress;
 use crate::l2::l1_message::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;

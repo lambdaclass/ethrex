@@ -1,4 +1,5 @@
 use crate::l2::batch::RpcBatch;
+use ethrex_common::Address;
 use ethrex_l2_common::l1_messages::L1MessageProof;
 use ethrex_rpc::{
     EthClient,
@@ -6,7 +7,7 @@ use ethrex_rpc::{
         EthClientError,
         eth::{
             RpcResponse,
-            errors::{GetBatchByNumberError, GetMessageProofError},
+            errors::{GetBatchByNumberError, GetFeeVaultAddressError, GetMessageProofError},
         },
     },
     utils::RpcRequest,

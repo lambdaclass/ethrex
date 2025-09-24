@@ -146,7 +146,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
 
-    let result = blockchain.add_block(&block).await;
+    let result = blockchain.add_block(&block, None).await;
 
     if result.is_err() && test_case.post.expected_exceptions.is_none() {
         return Err(RunnerError::Custom(
