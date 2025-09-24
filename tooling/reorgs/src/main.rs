@@ -38,7 +38,7 @@ async fn main() {
 }
 
 async fn get_ethrex_version(cmd_path: &Path) -> String {
-    let version_output = Command::new(&cmd_path)
+    let version_output = Command::new(cmd_path)
         .arg("--version")
         .output()
         .expect("failed to get ethrex version");
