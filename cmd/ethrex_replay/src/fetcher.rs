@@ -143,7 +143,7 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    Ok(Cache::new(vec![block], witness_rpc, Some(network)))
+    Ok(Cache::new(vec![block], witness_rpc, chain_config))
 }
 
 async fn fetch_rangedata_from_client(
@@ -175,7 +175,7 @@ async fn fetch_rangedata_from_client(
         let block = eth_client
             .get_raw_block(BlockIdentifier::Number(block_number))
             .await
-            .wrap_err("failed to fetch block")?;
+            .wrap_err(format!("failed to fetch block {block_number}"))?;
         blocks.push(block);
     }
 
@@ -212,14 +212,12 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let network = Network::try_from(chain_config.chain_id)
-        .map_err(|e| eyre::Error::msg(format!("Failed to determine network from chain ID: {e}")))?;
-
-    let cache = Cache::new(blocks, witness_rpc, Some(network));
+    let cache = Cache::new(blocks, witness_rpc, chain_config);
 
     Ok(cache)
 }
 
+#[cfg(not(feature = "l2"))]
 pub async fn get_rangedata(
     eth_client: EthClient,
     network: Network,
@@ -253,7 +251,7 @@ pub async fn get_batchdata(
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
     let file_name = get_batch_cache_file_name(batch_number);
-    if let Ok(cache) = Cache::load_cache(&file_name) {
+    if let Ok(cache) = Cache::load(&file_name) {
         info!("Getting batch data from cache");
         return Ok(cache);
     }
@@ -285,7 +283,7 @@ pub async fn get_batchdata(
             .unwrap_or(&[0_u8; 48]),
     });
 
-    cache.write_cache(&file_name)?;
+    cache.write()?;
 
     Ok(cache)
 }
