@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758727465889,
+  "lastUpdate": 1758732893933,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16315,6 +16315,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91625278134,
             "range": "± 707001828",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "beb31d8f564c723a226e6d29fd5e09eddd9b8fe8",
+          "message": "chore(l1, l2): use version, authors, documentation and edition fields from the root cargo toml for all crates (#4633)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Pablo Deymonnaz <pdeymon@fi.uba.ar>",
+          "timestamp": "2025-09-24T16:08:20Z",
+          "tree_id": "024c48bb3df679f2e58e9fb73e2a6ffa5fd56d39",
+          "url": "https://github.com/lambdaclass/ethrex/commit/beb31d8f564c723a226e6d29fd5e09eddd9b8fe8"
+        },
+        "date": 1758732864840,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 88203199127,
+            "range": "± 264663307",
             "unit": "ns/iter"
           }
         ]
