@@ -54,7 +54,7 @@ impl Mempool {
     /// Remove the oldest transaction in the pool
     fn remove_oldest_transaction(&self, inner: &mut MempoolInner) -> Result<(), StoreError> {
         // Remove elements from the order queue until one is present in the pool
-        while inner.transaction_pool.len() > MEMPOOL_MAX_SIZE {
+        while inner.transaction_pool.len() >= MEMPOOL_MAX_SIZE {
             if let Some(oldest_hash) = inner.txs_order.pop_front() {
                 self.remove_transaction_with_lock(&oldest_hash, inner)?;
             }
