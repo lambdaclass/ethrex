@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758753464755,
+  "lastUpdate": 1758754440457,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16465,6 +16465,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90719776812,
             "range": "± 446608091",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "65c96855242a0ec0d9c89b30b5a04034fd5b23d4",
+          "message": "fix(replay): use get block by number instead of get raw block (#4634)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nIf the node that we are using as an RPC doesn't expose debug endpoints\nethrex replayer won't work because it asks for the raw block. The\nprogram got stuck and we didn't know why, we now know.\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-24T22:05:33Z",
+          "tree_id": "e118cd07ef7ad1d169ba13c8e957c0ddd3fbc62e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/65c96855242a0ec0d9c89b30b5a04034fd5b23d4"
+        },
+        "date": 1758754419002,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90550591740,
+            "range": "± 1100329463",
             "unit": "ns/iter"
           }
         ]
