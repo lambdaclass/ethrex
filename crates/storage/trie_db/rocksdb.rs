@@ -1,4 +1,5 @@
 use ethrex_common::H256;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
@@ -73,6 +74,23 @@ impl TrieDB for RocksDBTrieDB {
         for (key, value) in key_values {
             let db_key = self.make_key(key);
             batch.put_cf(&cf, db_key, value);
+        }
+
+        self.db
+            .write(batch)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
+    }
+
+    fn put_batch_no_alloc(&self, key_values: Vec<ethrex_trie::Node>) -> Result<(), TrieError> {
+        let cf = self.cf_handle()?;
+        let mut batch = rocksdb::WriteBatch::default();
+        let mut buffer = vec![0_u8; 300];
+
+        for node in key_values {
+            let db_key = self.make_key(node.compute_hash());
+            buffer.clear();
+            node.encode(&mut buffer);
+            batch.put_cf(&cf, db_key, &buffer);
         }
 
         self.db
