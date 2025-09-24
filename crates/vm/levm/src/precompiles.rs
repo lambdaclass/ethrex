@@ -391,18 +391,15 @@ pub fn ecrecover_sp1(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> 
     let (raw_v, raw_sig) = tail.split_at(WORD);
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let v = match u8::try_from(u256_from_big_endian(raw_v)) {
-        Ok(v @ (27 | 28)) => v,
+    let mut recid_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(27) => 0,
+        Ok(28) => 1,
         _ => return Ok(Bytes::new()),
     };
 
-    #[allow(clippy::arithmetic_side_effects, reason = "v ∈ {27, 28}")]
-    let mut recid_byte = v - 27;
-
     // Parse signature (r||s). If malformed → empty return.
-    let mut sig = match Signature::from_slice(raw_sig) {
-        Ok(s) => s,
-        Err(_) => return Ok(Bytes::new()),
+    let Ok(mut sig) = Signature::from_slice(raw_sig) else {
+        return Ok(Bytes::new());
     };
 
     // k256 enforces canonical low-S for recovery.
@@ -413,15 +410,13 @@ pub fn ecrecover_sp1(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> 
     }
 
     // Recovery id from the adjusted byte.
-    let recid = match RecoveryId::from_byte(recid_byte) {
-        Some(id) => id,
-        None => return Ok(Bytes::new()),
+    let Some(recid) = RecoveryId::from_byte(recid_byte) else {
+        return Ok(Bytes::new());
     };
 
     // Recover the verifying key from the prehash (32-byte digest).
-    let vk = match VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) {
-        Ok(k) => k,
-        Err(_) => return Ok(Bytes::new()),
+    let Ok(vk) = VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
+        return Ok(Bytes::new());
     };
 
     // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
