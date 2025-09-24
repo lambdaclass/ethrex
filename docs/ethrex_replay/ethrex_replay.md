@@ -17,7 +17,7 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches �
 | nethermind | ✅                            | `eth_getProof` (hoodi is unstable)               |
 | ethrex     | ✅                            | `debug_executionWitness`                         |
 | erigon     | ❌                            | V3 supports `eth_getProof` only for latest block |
-| besu       | ❌                            | Doesn't return proof for non existing accounts   |
+| besu       | ❌                            | Doesn't return proof for non-existing accounts   |
 
 We support any other client that responds correctly to `eth_getProof` or `debug_executionWitness` endpoints.
 
