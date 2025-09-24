@@ -1,7 +1,9 @@
 [package]
-version = "0.1.0"
 name = "zkvm-sp1-program"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [workspace]
 
