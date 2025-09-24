@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::atomic::Ordering,
@@ -1302,10 +1302,11 @@ impl PeerHandler {
             });
         }
 
-        // 2) request the chunks from peers
-        let mut all_account_storages =
-            vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
-
+        let all_account_hashes: Vec<H256> = account_storage_roots
+            .accounts_with_storage_root
+            .iter()
+            .map(|(addr, _)| *addr)
+            .collect();
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<StorageTaskResult>(1000);
@@ -1319,24 +1320,23 @@ impl PeerHandler {
 
         // TODO: in a refactor, delete this replace with a structure that can handle removes
         let mut accounts_done: Vec<H256> = Vec::new();
-        let current_account_hashes = account_storage_roots
-            .accounts_with_storage_root
-            .iter()
-            .map(|a| *a.0)
-            .collect::<Vec<_>>();
+        // Maps hashed address to storage root and vector of hashed storage keys and keys
+        let mut current_account_storages: BTreeMap<H256, (H256, Vec<(H256, U256)>)> =
+            BTreeMap::new();
 
         debug!("Starting request_storage_ranges loop");
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > RANGE_FILE_CHUNK_SIZE
+            if current_account_storages
+                .values()
+                .map(|(_, storages)| storages.len())
+                .sum::<usize>()
+                * 64
+                > RANGE_FILE_CHUNK_SIZE
             {
-                let current_account_storages = std::mem::take(&mut all_account_storages);
-                all_account_storages =
-                    vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
-
-                let snapshot = current_account_hashes
-                    .clone()
+                let current_account_storages = std::mem::take(&mut current_account_storages);
+                let snapshot = current_account_storages
                     .into_iter()
-                    .zip(current_account_storages)
+                    .map(|(hashed_address, (_, storages))| (hashed_address, storages))
                     .collect::<Vec<_>>()
                     .encode_to_vec();
 
@@ -1384,7 +1384,7 @@ impl PeerHandler {
 
                 self.peer_table.free_peer(peer_id).await;
 
-                for account in &current_account_hashes[start_index..remaining_start] {
+                for account in &all_account_hashes[start_index..remaining_start] {
                     accounts_done.push(*account);
                 }
 
@@ -1411,10 +1411,10 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
-                            accounts_done.push(current_account_hashes[remaining_start]);
+                            accounts_done.push(all_account_hashes[remaining_start]);
                             account_storage_roots
                                 .healed_accounts
-                                .insert(current_account_hashes[start_index]);
+                                .insert(all_account_hashes[start_index]);
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
@@ -1498,11 +1498,23 @@ impl PeerHandler {
                     tasks_queue_not_started.len()
                 );
                 if account_storages.len() == 1 {
+                    let address = all_account_hashes[start_index];
                     // We downloaded a big storage account
-                    all_account_storages[start_index].extend(account_storages.remove(0));
+                    current_account_storages
+                        .entry(address)
+                        .or_insert_with(|| {
+                            (
+                                account_storage_roots.accounts_with_storage_root[&address],
+                                Vec::new(),
+                            )
+                        })
+                        .1
+                        .extend(account_storages.remove(0));
                 } else {
                     for (i, storage) in account_storages.into_iter().enumerate() {
-                        all_account_storages[start_index + i] = storage;
+                        let address = all_account_hashes[start_index + i];
+                        let root_hash = account_storage_roots.accounts_with_storage_root[&address];
+                        current_account_storages.insert(address, (root_hash, storage));
                     }
                 }
             }
@@ -1559,16 +1571,9 @@ impl PeerHandler {
         }
 
         {
-            let current_account_hashes = account_storage_roots
-                .accounts_with_storage_root
-                .iter()
-                .map(|a| *a.0)
-                .collect::<Vec<_>>();
-            let current_account_storages = std::mem::take(&mut all_account_storages);
-
-            let snapshot = current_account_hashes
+            let snapshot = current_account_storages
                 .into_iter()
-                .zip(current_account_storages)
+                .map(|(addr, (_, storages))| (addr, storages))
                 .collect::<Vec<_>>()
                 .encode_to_vec();
 
