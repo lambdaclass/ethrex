@@ -2,7 +2,8 @@ use std::{fs::File, io::Read, path::PathBuf, process::Stdio, time::Duration};
 
 use ethrex::{cli::Options, initializers::get_network};
 use ethrex_common::{
-    Bytes, H160, H256, U256,
+    Address, Bytes, H160, H256, U256,
+    evm::calculate_create_address,
     types::{
         Block, EIP1559Transaction, Genesis, Transaction, TxKind, requests::compute_requests_hash,
     },
@@ -333,9 +334,90 @@ impl Node {
             .unwrap();
     }
 
+    pub async fn send_call(&self, signer: &Signer, contract: H160, data: Bytes) {
+        info!(node = self.index, sender=%signer.address(), %contract, "Sending contract call");
+        let chain_id = self
+            .rpc_client
+            .get_chain_id()
+            .await
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let sender_address = signer.address();
+        let nonce = self
+            .rpc_client
+            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+            .await
+            .unwrap();
+        let tx = EIP1559Transaction {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000_000_000,
+            gas_limit: 50_000,
+            to: TxKind::Call(contract),
+            data,
+            ..Default::default()
+        };
+        let mut tx = Transaction::EIP1559Transaction(tx);
+        tx.sign_inplace(signer).await.unwrap();
+        let encoded_tx = tx.encode_canonical_to_vec();
+        self.rpc_client
+            .send_raw_transaction(&encoded_tx)
+            .await
+            .unwrap();
+    }
+
+    pub async fn send_contract_deploy(
+        &self,
+        signer: &Signer,
+        contract_deploy_bytecode: Bytes,
+    ) -> Address {
+        info!(node = self.index, sender=%signer.address(), "Deploying contract");
+        let chain_id = self
+            .rpc_client
+            .get_chain_id()
+            .await
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let sender_address = signer.address();
+        let nonce = self
+            .rpc_client
+            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+            .await
+            .unwrap();
+        let tx = EIP1559Transaction {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000_000_000,
+            gas_limit: 100_000,
+            to: TxKind::Create,
+            data: contract_deploy_bytecode,
+            ..Default::default()
+        };
+        let mut tx = Transaction::EIP1559Transaction(tx);
+        tx.sign_inplace(signer).await.unwrap();
+        let encoded_tx = tx.encode_canonical_to_vec();
+        self.rpc_client
+            .send_raw_transaction(&encoded_tx)
+            .await
+            .unwrap();
+
+        calculate_create_address(sender_address, nonce)
+    }
+
     pub async fn get_balance(&self, address: H160) -> U256 {
         self.rpc_client
             .get_balance(address, Default::default())
+            .await
+            .unwrap()
+    }
+
+    pub async fn get_storage_at(&self, address: H160, key: U256) -> U256 {
+        self.rpc_client
+            .get_storage_at(address, key, Default::default())
             .await
             .unwrap()
     }
