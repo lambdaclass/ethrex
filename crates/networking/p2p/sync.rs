@@ -1609,6 +1609,7 @@ async fn insert_storage_into_rocksdb(
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
     use rayon::iter::IntoParallelRefIterator;
     use rocksdb::DBCommon;
+    use scoped_threadpool::Pool;
 
     struct RocksDBIterator<'a> {
         iter: rocksdb::DBRawIterator<'a>,
@@ -1658,12 +1659,13 @@ async fn insert_storage_into_rocksdb(
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
 
-    std::thread::scope(|s| {
-        let mut joinset = Vec::new();
+    // Create a threadpool holding 4 threads
+    let mut pool = Pool::new(16);
+    pool.scoped(|s| {
         for account_hash in accounts_with_storage {
             let store_clone = store.clone();
             let mut iter = db.raw_iterator();
-            let handle = s.spawn(move || {
+            s.execute(move || {
                 let trie = store_clone
                     .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
                     .expect("Should be able to open trie");
@@ -1686,14 +1688,7 @@ async fn insert_storage_into_rocksdb(
                 })
                 .map_err(SyncError::TrieGenerationError);
                 METRICS.storage_tries_state_roots_computed.inc();
-                result
-            });
-            joinset.push(handle);
-            joinset
-                .extract_if(.., |handle| handle.is_finished())
-                .map(|handle| handle.join())
-                .collect::<Result<Result<Vec<_>, _>, _>>()
-                .map_err(|_| SyncError::ThreadCreationError)??; //this needs to be a no new thread
+            })
         }
         Ok(())
     })

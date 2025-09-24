@@ -34,6 +34,7 @@ cfg-if.workspace = true
 rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
+scoped_threadpool = "0.1.9"
 tokio-stream = "0.1.17"
 sha3 = "0.10.8"
 
