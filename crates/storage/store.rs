@@ -16,12 +16,12 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest, Keccak256};
-use std::fmt::Debug;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
     sync::Arc,
 };
+use std::{fmt::Debug, sync::RwLock};
 use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -52,11 +52,11 @@ pub struct UpdateBatch {
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
-    pub storage_updates: StorageUpdates,
+    pub storage_updates: StorageTrieNodes,
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
-pub type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
 
 // Hash utility functions
 pub fn hash_address(address: &ethereum_types::Address) -> Vec<u8> {
@@ -77,8 +77,8 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 #[derive(Debug, Clone)]
 pub struct Store {
     pub engine: Arc<StoreEngine>,
-    pub chain_config: Arc<std::sync::RwLock<ChainConfig>>,
-    pub latest_block_header: Arc<std::sync::RwLock<BlockHeader>>,
+    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 impl Store {
@@ -1292,7 +1292,7 @@ impl Store {
 
     pub async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: StorageUpdates,
+        storage_trie_nodes: StorageTrieNodes,
     ) -> Result<(), StoreError> {
         self.engine
             .write_storage_trie_nodes_batch(storage_trie_nodes)

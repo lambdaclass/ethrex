@@ -14,7 +14,7 @@ use crate::{
     api::StorageBackend,
     error::StoreError,
     rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
-    store::StorageUpdates,
+    store::StorageTrieNodes,
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
 };
@@ -1077,7 +1077,7 @@ impl StoreEngine {
 
     pub async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: StorageUpdates,
+        storage_trie_nodes: StorageTrieNodes,
     ) -> Result<(), StoreError> {
         let mut batch_items = Vec::new();
         for (address_hash, nodes) in storage_trie_nodes {

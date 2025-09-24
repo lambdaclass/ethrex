@@ -521,8 +521,6 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         rw_tx.put_batch(state_batch)?;
         rw_tx.commit()?;
 
-        drop(nodes);
-
         // - Set up storage trie nodes
         let addresses: Vec<Address> = witness
             .keys
