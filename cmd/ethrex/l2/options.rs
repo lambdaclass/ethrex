@@ -391,8 +391,7 @@ pub struct BlockProducerOptions {
         long = "block-producer.fee-vault-address",
         value_name = "ADDRESS",
         env = "ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS",
-        help_heading = "Block producer options",
-        required_unless_present = "dev"
+        help_heading = "Block producer options"
     )]
     pub fee_vault_address: Option<Address>,
     #[arg(
