@@ -79,7 +79,7 @@ jobs:
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_COMMITTER_COMMIT_TIME=30000 \
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
-          ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+          ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           docker compose up --build --detach --no-deps ethrex_l2
 
       - name: Run test
