@@ -382,9 +382,6 @@ impl EthrexReplayCommand {
 
                 let (eth_client, network) = setup(&opts).await?;
 
-                #[cfg(not(feature = "l2"))]
-                let fee_vault = None;
-                #[cfg(feature = "l2")]
                 let fee_vault = get_fee_vault_address(&eth_client).await?;
 
                 let cache = get_batchdata(eth_client, network, batch, fee_vault).await?;
@@ -600,9 +597,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
     info!("Executing block {} on {}", block.header.number, network);
     let start_time = Instant::now();
-    blockchain
-        .add_block(&block, cache.l2_fields.and_then(|f| f.fee_vault))
-        .await?;
+    blockchain.add_block(&block).await?;
     let duration = start_time.elapsed();
     info!("add_block execution time: {:.2?}", duration);
 
@@ -962,7 +957,7 @@ pub async fn produce_l1_block(
             err => ethrex_rpc::RpcErr::Internal(err.to_string()),
         })?;
 
-    blockchain.add_block(&block, None).await?;
+    blockchain.add_block(&block).await?;
 
     let new_block_hash = block.hash();
 

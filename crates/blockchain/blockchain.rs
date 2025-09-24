@@ -408,13 +408,9 @@ impl Blockchain {
             .map_err(|e| e.into())
     }
 
-    pub async fn add_block(
-        &self,
-        block: &Block,
-        fee_vault: Option<Address>,
-    ) -> Result<(), ChainError> {
+    pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(block, fee_vault).await?;
+        let (res, updates) = self.execute_block(block, None).await?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root

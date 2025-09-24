@@ -440,7 +440,7 @@ impl Syncer {
         if sync_head_found {
             let mut last_valid_hash = H256::default();
             for block in blocks {
-                blockchain.add_block(&block, None).await.map_err(|e| {
+                blockchain.add_block(&block).await.map_err(|e| {
                     (
                         e,
                         Some(BatchBlockProcessingFailure {
