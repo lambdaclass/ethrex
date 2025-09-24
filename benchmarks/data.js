@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758754440457,
+  "lastUpdate": 1758756146677,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33800,6 +33800,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00444132842287695,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "011748f154343d390ffd3696edd13c7560cf4aff",
+          "message": "feat(replay): support public L2 networks blocks/batches replay (#4548)\n\n**Motivation**\n\nWe want to run `ethrex_replay` on ethrex L2 chains. This contains the\nminimal changes to support them.\n\n**Description**\n\n- Add conditional use of crates and functions under the `l2` feature\nflag to solve lint problems.\n- Add the required L2 fields when running under the `l2` feature flag.\n- Add new network enum type `L2Chain`.\n  - This is for replay only for now.\n- Contains the `chain_id` and the genesis is an empty one but with the\n`chain_id` setted.\n\n**How to test**\n\nYo will need an L2 `RPC_URL` running ethrex\n\nExecute a block:\n```\ncargo r -r -p ethrex-replay --features l2 -- l2 block --block <N> --execute --rpc-url <RPC_URL>\n```\n\nExecute a batch:\n```\ncargo r -r -p ethrex-replay --features l2 -- l2 batch --batch <N> --execute --rpc-url <RPC_URL>\n```\n\nProve a block:\n```\ncargo r -r -p ethrex-replay --features l2 -- l2 block --block <N> --prove --rpc-url <RPC_URL>\n```\n\nProve a batch:\n```\ncargo r -r -p ethrex-replay --features l2 -- l2 batch --batch <N> --prove --rpc-url <RPC_URL>\n```\n\nCloses #4403",
+          "timestamp": "2025-09-24T12:46:02Z",
+          "tree_id": "b203a079e1c1d987e3f2464f8eb29e30ea62feab",
+          "url": "https://github.com/lambdaclass/ethrex/commit/011748f154343d390ffd3696edd13c7560cf4aff"
+        },
+        "date": 1758756122726,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00451121618852459,
             "unit": "Mgas/s"
           }
         ]
