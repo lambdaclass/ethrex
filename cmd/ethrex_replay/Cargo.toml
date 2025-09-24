@@ -5,18 +5,6 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 
-[profile.dev]
-debug = 2
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-
-[profile.release-with-debug]
-inherits = "release"
-debug = 2
-
 [dependencies]
 ethrex-config.workspace = true
 ethrex-storage.workspace = true
