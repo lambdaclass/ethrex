@@ -308,7 +308,7 @@ async fn replay_latest_block(
         .get_block_by_number(BlockIdentifier::Number(latest_block), true)
         .await?;
 
-    let block = rpc_block.try_into().unwrap();
+    let block = rpc_block.try_into().expect("RPCBlock should be hydrated");
 
     let start = SystemTime::now();
 

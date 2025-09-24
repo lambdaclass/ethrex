@@ -177,7 +177,10 @@ async fn fetch_rangedata_from_client(
             .await
             .wrap_err(format!("failed to fetch block {block_number}"))?;
 
-        let block = rpc_block.try_into().unwrap();
+        let block = rpc_block
+            .try_into()
+            .map_err(|e| eyre::eyre!("{}", e))
+            .wrap_err("Failed to convert from rpc block to block")?;
         blocks.push(block);
     }
 
