@@ -47,6 +47,8 @@ spinoff = "0.8.0"
 [features]
 default = []
 c-kzg = ["ethrex-common/c-kzg"]
+kzg-rs = ["ethrex-common/kzg-rs"]
+openvm-kzg = ["ethrex-common/openvm-kzg"]
 ethereum_foundation_tests = []
 debug = []
 
