@@ -148,7 +148,7 @@ impl L1Watcher {
 
         // last_block_fetched could be greater than latest_block_to_check:
         // - Right after deploying the contract as latest_block_fetched is set to the block where the contract is deployed
-        // - If the node is stopped and l1_block_delay is changed
+        // - If the node is stopped and safe_block_delay is changed
         if self.last_block_fetched > latest_block_to_check {
             warn!("Last block fetched is greater than latest safe block");
             return Ok(vec![]);
