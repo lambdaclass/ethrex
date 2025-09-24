@@ -5,7 +5,7 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
-use ethrex_common::{Address, BigEndianHash, H256, U256};
+use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -114,15 +114,16 @@ impl RpcHandler for GetStorageAtRequest {
         if params.len() != 3 {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         };
+        let storage_slot_u256 = serde_utils::u256::deser_hex_or_dec_str(params[1].clone())?;
         Ok(GetStorageAtRequest {
             address: serde_json::from_value(params[0].clone())?,
-            storage_slot: serde_json::from_value(params[1].clone())?,
+            storage_slot: H256::from_uint(&storage_slot_u256),
             block: BlockIdentifierOrHash::parse(params[2].clone(), 2)?,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!(
-            "Requested storage sot {} of account {} at block {}",
+            "Requested storage slot {} of account {} at block {}",
             self.storage_slot, self.address, self.block
         );
 
