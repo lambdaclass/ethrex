@@ -562,9 +562,9 @@ mod tests {
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
-            "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
-            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
-            "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "cancun": { "baseFeeUpdateFraction": 3338477, "max": 6, "target": 3 },
+            "prague": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6 },
+            "osaka": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6 },
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",
@@ -702,5 +702,126 @@ mod tests {
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
         assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    #[tokio::test]
+    async fn eth_config_request_cancun_with_prague_scheduled() {
+        let body = r#"{"jsonrpc":"2.0", "method":"eth_config", "params":[], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let storage = Store::new_from_genesis(
+            "temp.db",
+            EngineType::InMemory,
+            "../../../cmd/ethrex/networks/hoodi/genesis.json",
+        )
+        .await
+        .expect("Failed to create test DB");
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context).await;
+        let rpc_response = rpc_response(request.id, result).unwrap();
+        let json = serde_json::json!({
+            "id": 1,
+            "jsonrpc": "2.0",
+            "result": {
+                "current": {
+                    "activationTime": 0,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 3338477,
+                        "max": 6,
+                        "target": 3
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0xbef71d30",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02"
+                    }
+                },
+                "next": {
+                    "activationTime": 1742999832,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 5007716,
+                        "max": 9,
+                        "target": 6
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0x0929e24e",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
+                        "BLS12_G1MSM": "0x000000000000000000000000000000000000000c",
+                        "BLS12_G2ADD": "0x000000000000000000000000000000000000000d",
+                        "BLS12_G2MSM": "0x000000000000000000000000000000000000000e",
+                        "BLS12_MAP_FP2_TO_G2": "0x0000000000000000000000000000000000000011",
+                        "BLS12_MAP_FP_TO_G1": "0x0000000000000000000000000000000000000010",
+                        "BLS12_PAIRING_CHECK": "0x000000000000000000000000000000000000000f",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+                        "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                        "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                        "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS": "0x00000961ef480eb55e80d19ad83579a64c007002"
+                    }
+                },
+                "last": {
+                    "activationTime": 1742999832,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 5007716,
+                        "max": 9,
+                        "target": 6
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0x0929e24e",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
+                        "BLS12_G1MSM": "0x000000000000000000000000000000000000000c",
+                        "BLS12_G2ADD": "0x000000000000000000000000000000000000000d",
+                        "BLS12_G2MSM": "0x000000000000000000000000000000000000000e",
+                        "BLS12_MAP_FP2_TO_G2": "0x0000000000000000000000000000000000000011",
+                        "BLS12_MAP_FP_TO_G1": "0x0000000000000000000000000000000000000010",
+                        "BLS12_PAIRING_CHECK": "0x000000000000000000000000000000000000000f",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+                        "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                        "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                        "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS": "0x00000961ef480eb55e80d19ad83579a64c007002"
+                    }
+                },
+            }
+        });
+        let expected_response = to_rpc_response_success_value(&json.to_string());
+        assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 }
