@@ -319,7 +319,7 @@ jobs:
           cd crates/l2
           make init-l1-docker;
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_TDX_DEPLOY=true \
+          ETHREX_L2_TDX=true \
           ETHREX_TDX_DEV_MODE=true \
           make deploy-l1
 

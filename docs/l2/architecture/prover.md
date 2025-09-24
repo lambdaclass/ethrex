@@ -127,13 +127,13 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       // Set to true to randomize the salt.
       ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
       // Set to true if you want SP1 proofs to be required
-      ETHREX_DEPLOYER_SP1=true
+      ETHREX_L2_SP1=true
       // Check the if the verification contract is present on your preferred network. Don't define this if you want it to be deployed automatically.
-      ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
+      ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS=<address>
       // Set to true if you want proofs to be required
-      ETHREX_DEPLOYER_RISC0=true
+      ETHREX_L2_RISC0=true
       // Check the if the contract is present on your preferred network. You shall deploy it manually if not.
-      ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
+      ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS=<address>
       // Set to any L1 endpoint.
       ETHREX_ETH_RPC_URL=<url>
       ```
@@ -178,7 +178,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       ```bash
       bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
       ```
-  1.  if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
+  1.  if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS=<address>` env. variable.
       if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
 
 ## Configuration

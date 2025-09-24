@@ -65,7 +65,7 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_SP1=true \
+          ETHREX_L2_SP1=true \
           docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work

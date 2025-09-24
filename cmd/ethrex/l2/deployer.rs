@@ -197,7 +197,8 @@ pub struct DeployerOptions {
         long = "sp1.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS",
-        help_heading = "Deployer options"
+        help_heading = "Deployer options",
+        help = "If no verifier address is provided, contract deployer will deploy the SP1 verifier"
     )]
     pub sp1_verifier_address: Option<Address>,
     #[arg(
@@ -214,7 +215,8 @@ pub struct DeployerOptions {
         long = "tdx.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS",
-        help_heading = "Deployer options"
+        help_heading = "Deployer options",
+        help = "If no verifier address is provided, contract deployer will deploy the TDX verifier"
     )]
     pub tdx_verifier_address: Option<Address>,
     #[arg(
@@ -1077,13 +1079,13 @@ fn write_contract_addresses_to_env(
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER={:#x}",
+        "ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS={:#x}",
         contract_addresses.sp1_verifier_address
     )?;
 
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={:#x}",
+        "ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS={:#x}",
         contract_addresses.risc0_verifier_address
     )?;
     writeln!(
@@ -1093,7 +1095,7 @@ fn write_contract_addresses_to_env(
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={:#x}",
+        "ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS={:#x}",
         contract_addresses.tdx_verifier_address
     )?;
     // TDX aux contracts, qpl-tool depends on exact env var naming
