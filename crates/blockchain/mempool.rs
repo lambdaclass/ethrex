@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::RwLock,
 };
 
@@ -27,13 +27,13 @@ struct MempoolInner {
     transaction_pool: HashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: HashMap<H256, BlobsBundle>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
-    txs_order: Vec<H256>,
+    txs_order: VecDeque<H256>,
 }
 
 impl MempoolInner {
     fn new() -> Self {
         MempoolInner {
-            txs_order: Vec::with_capacity(MEMPOOL_MAX_SIZE),
+            txs_order: VecDeque::with_capacity(MEMPOOL_MAX_SIZE * 2),
             ..Default::default()
         }
     }
@@ -53,8 +53,11 @@ impl Mempool {
 
     /// Remove the oldest transaction in the pool
     fn remove_oldest_transaction(&self, inner: &mut MempoolInner) -> Result<(), StoreError> {
-        if let Some(&oldest_hash) = inner.txs_order.first() {
-            self.remove_transaction_with_lock(&oldest_hash, inner)?;
+        // Remove elements from the order queue until one is present in the pool
+        while inner.transaction_pool.len() > MEMPOOL_MAX_SIZE {
+            if let Some(oldest_hash) = inner.txs_order.pop_front() {
+                self.remove_transaction_with_lock(&oldest_hash, inner)?;
+            }
         }
 
         Ok(())
@@ -70,10 +73,23 @@ impl Mempool {
             .inner
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
+
+        // Prune the order queue if it has grown too much
+        if inner.txs_order.len() > MEMPOOL_MAX_SIZE + MEMPOOL_MAX_SIZE / 2 {
+            let mut new_txs_order = VecDeque::with_capacity(MEMPOOL_MAX_SIZE * 2);
+            for tx in inner.txs_order.iter() {
+                if inner.transaction_pool.contains_key(tx) {
+                    new_txs_order.push_back(*tx);
+                }
+            }
+            inner.txs_order = new_txs_order;
+        }
+
         if inner.transaction_pool.len() >= MEMPOOL_MAX_SIZE {
             self.remove_oldest_transaction(&mut inner)?;
         }
-        inner.txs_order.push(hash);
+
+        inner.txs_order.push_back(hash);
         inner
             .txs_by_sender_nonce
             .insert((transaction.sender(), transaction.nonce()), hash);
@@ -160,7 +176,6 @@ impl Mempool {
             inner.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
             inner.transaction_pool.remove(hash);
             inner.broadcast_pool.remove(hash);
-            inner.txs_order.retain(|h| h != hash);
         };
 
         Ok(())
