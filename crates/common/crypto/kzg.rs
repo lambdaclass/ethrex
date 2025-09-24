@@ -16,7 +16,7 @@ pub enum KzgError {
     CKzg(#[from] c_kzg::Error),
     #[cfg(feature = "kzg-rs")]
     #[error("kzg-rs error: {0}")]
-    KzgRs(#[from] kzg_rs::KzgError),
+    KzgRs(kzg_rs::KzgError),
     #[cfg(feature = "openvm-kzg")]
     #[error("openvm-kzg error: {0}")]
     OpenvmKzg(openvm_kzg::KzgError),
