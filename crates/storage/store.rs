@@ -32,8 +32,6 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
@@ -97,8 +95,6 @@ impl Store {
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(std::sync::RwLock::new(BlockHeader::default())),
             },
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => todo!("LIBMDBX not implemented yet"),
             EngineType::InMemory => Self {
                 engine: Arc::new(StoreEngine::new(Arc::new(InMemoryBackend::open(path)?))?),
                 chain_config: Default::default(),

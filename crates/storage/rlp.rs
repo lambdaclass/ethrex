@@ -7,8 +7,6 @@ use ethrex_common::{
     types::{Block, BlockBody, BlockHash, BlockHeader, Receipt},
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-#[cfg(feature = "libmdbx")]
-use libmdbx::orm::{Decodable, Encodable};
 
 // Account types
 pub type AccountCodeHashRLP = Rlp<H256>;
@@ -48,21 +46,5 @@ impl<T> Rlp<T> {
 
     pub fn bytes(&self) -> &Vec<u8> {
         &self.0
-    }
-}
-
-#[cfg(feature = "libmdbx")]
-impl<T: Send + Sync> Decodable for Rlp<T> {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(Rlp(b.to_vec(), Default::default()))
-    }
-}
-
-#[cfg(feature = "libmdbx")]
-impl<T: Send + Sync> Encodable for Rlp<T> {
-    type Encoded = Vec<u8>;
-
-    fn encode(self) -> Self::Encoded {
-        self.0
     }
 }

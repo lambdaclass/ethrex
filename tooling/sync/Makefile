@@ -89,7 +89,7 @@ endif
 
 
 flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flamegraph on the network given by NETWORK.
-	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "rocksdb sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
@@ -172,7 +172,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT)
 
 start-ethrex: ## Start ethrex for the network given by NETWORK.
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "rocksdb sync-test metrics" --bin ethrex -- \
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \

@@ -103,10 +103,8 @@ pub fn open_store(datadir: &Path) -> Store {
         cfg_if::cfg_if! {
             if #[cfg(feature = "rocksdb")] {
                 let engine_type = EngineType::RocksDB;
-            } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
             } else {
-                error!("No database specified. The feature flag `rocksdb` or `libmdbx` should've been set while building.");
+                error!("No database specified. You're using an invalid feature flag for the database engine.");
                 panic!("Specify the desired database engine.");
             }
         };

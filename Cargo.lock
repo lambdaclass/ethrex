@@ -1406,24 +1406,6 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.71.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
-dependencies = [
- "bitflags 2.9.4",
- "cexpr",
- "clang-sys",
- "itertools 0.13.0",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash 2.1.1",
- "shlex",
- "syn 2.0.106",
-]
-
-[[package]]
-name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
@@ -4549,7 +4531,6 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
- "libmdbx",
  "rocksdb",
  "serde",
  "serde_json",
@@ -4595,7 +4576,6 @@ dependencies = [
  "hex",
  "hex-literal",
  "lazy_static",
- "libmdbx",
  "proptest",
  "rand 0.8.5",
  "rocksdb",
@@ -6155,12 +6135,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "impls"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a46645bbd70538861a90d0f26c31537cdf1e44aae99a794fb75a664b70951bc"
-
-[[package]]
 name = "include_bytes_aligned"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6753,27 +6727,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
-name = "libmdbx"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63a680ffe20d9f3cd4b0bf2587c01b837ac2a12976ff984838b27830366ccc92"
-dependencies = [
- "anyhow",
- "arrayref",
- "arrayvec",
- "bitflags 2.9.4",
- "derive_more 1.0.0",
- "impls",
- "indexmap 2.11.0",
- "libc",
- "mdbx-sys",
- "parking_lot 0.12.4",
- "sealed",
- "tempfile",
- "thiserror 2.0.16",
-]
-
-[[package]]
 name = "libredox"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7268,17 +7221,6 @@ checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
 dependencies = [
  "cfg-if 1.0.3",
  "digest 0.10.7",
-]
-
-[[package]]
-name = "mdbx-sys"
-version = "12.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "970abf35a0fde64c0c72971908bcd2fe0350d7da27d8dd0f02b4a00705d21c5d"
-dependencies = [
- "bindgen 0.71.1",
- "cc",
- "libc",
 ]
 
 [[package]]
@@ -10793,17 +10735,6 @@ name = "sdd"
 version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
-
-[[package]]
-name = "sealed"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f968c5ea23d555e670b449c1c5e7b2fc399fdaec1d304a17cd48e288abc107"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.106",
-]
 
 [[package]]
 name = "sec1"

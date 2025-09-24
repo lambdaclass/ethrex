@@ -376,15 +376,8 @@ impl Command {
                 coinbase,
             } => {
                 cfg_if::cfg_if! {
-                    if #[cfg(feature = "libmdbx")] {
-                        let store_type = EngineType::Libmdbx;
-                    }
-                };
-                cfg_if::cfg_if! {
                     if #[cfg(feature = "rocksdb")] {
                         let store_type = EngineType::RocksDB;
-                    } else {
-                        eyre::bail!("Expected rocksdb or libmdbx store engine");
                     }
                 };
                 cfg_if::cfg_if! {
