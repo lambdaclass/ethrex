@@ -543,26 +543,26 @@ fn get_initial_downloads(
             })
             .collect::<VecDeque<_>>(),
     );
-    initial_requests.extend(
-        account_paths
-            .accounts_with_storage_root
-            .par_iter()
-            .filter_map(|(acc_path, (storage_root, _))| {
-                if store
-                    .contains_storage_node(*acc_path, *storage_root)
-                    .expect("We should be able to open the store")
-                {
-                    return None;
-                }
-                Some(NodeRequest {
-                    acc_path: Nibbles::from_bytes(&acc_path.0),
-                    storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
-                    parent: Nibbles::default(),
-                    hash: *storage_root,
-                })
-            })
-            .collect::<VecDeque<_>>(),
-    );
+    // initial_requests.extend(
+    //     account_paths
+    //         .accounts_with_storage_root
+    //         .par_iter()
+    //         .filter_map(|(acc_path, (storage_root, _))| {
+    //             if store
+    //                 .contains_storage_node(*acc_path, *storage_root)
+    //                 .expect("We should be able to open the store")
+    //             {
+    //                 return None;
+    //             }
+    //             Some(NodeRequest {
+    //                 acc_path: Nibbles::from_bytes(&acc_path.0),
+    //                 storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
+    //                 parent: Nibbles::default(),
+    //                 hash: *storage_root,
+    //             })
+    //         })
+    //         .collect::<VecDeque<_>>(),
+    // );
     initial_requests
 }
 
