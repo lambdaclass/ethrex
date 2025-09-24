@@ -108,6 +108,14 @@ pub struct Options {
         help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
+        help = "Maximum size of the mempool in number of transactions",
+        long = "mempool.maxsize",
+        default_value_t = 10_000,
+        value_name = "MEMPOOL_MAX_SIZE",
+        help_heading = "Node options"
+    )]
+    pub mempool_max_size: usize,
+    #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
         value_name = "ADDRESS",
@@ -167,13 +175,6 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
-    #[arg(
-        help = "Maximum size of the mempool in number of transactions",
-        long = "mempool.maxsize",
-        default_value_t = 10_000,
-        value_name = "MEMPOOL_MAX_SIZE"
-    )]
-    pub mempool_max_size: usize,
 }
 
 impl Options {
