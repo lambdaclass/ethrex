@@ -1,7 +1,9 @@
 [package]
 name = "revm_comparison"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [lib]
 name = "revm_comparison"
