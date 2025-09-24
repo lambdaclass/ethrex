@@ -50,8 +50,9 @@ pub type NodeRLP = Vec<u8>;
 pub type TrieNode = (NodeHash, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
+#[derive(Clone)]
 pub struct Trie {
-    db: Box<dyn TrieDB>,
+    db: Arc<dyn TrieDB>,
     pub root: NodeRef,
 }
 
@@ -63,7 +64,7 @@ impl Default for Trie {
 
 impl Trie {
     /// Creates a new Trie from a clean DB
-    pub fn new(db: Box<dyn TrieDB>) -> Self {
+    pub fn new(db: Arc<dyn TrieDB>) -> Self {
         Self {
             db,
             root: NodeRef::default(),
@@ -71,7 +72,7 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
+    pub fn open(db: Arc<dyn TrieDB>, root: H256) -> Self {
         Self {
             db,
             root: if root != *EMPTY_TRIE_HASH {
@@ -250,7 +251,7 @@ impl Trie {
     }
 
     pub fn empty_in_memory() -> Self {
-        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
+        Self::new(Arc::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
             BTreeMap::new(),
         )))))
     }
@@ -318,7 +319,7 @@ impl Trie {
         root_hash: H256,
         state_nodes: &BTreeMap<H256, NodeRLP>,
     ) -> Result<Self, TrieError> {
-        let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
+        let mut trie = Trie::new(Arc::new(InMemoryTrieDB::default()));
         let root = Self::get_embedded_root(state_nodes, root_hash)?;
         trie.root = root;
 
@@ -354,7 +355,7 @@ impl Trie {
             }
         }
 
-        Trie::new(Box::new(NullTrieDB))
+        Trie::new(Arc::new(NullTrieDB))
     }
 
     /// Obtain the encoded node given its path.
@@ -440,7 +441,7 @@ impl Trie {
         let hmap: BTreeMap<NodeHash, Vec<u8>> = BTreeMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
-        Trie::new(Box::new(db))
+        Trie::new(Arc::new(db))
     }
 }
 

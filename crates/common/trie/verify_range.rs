@@ -6,7 +6,7 @@ use sha3::{Digest, Keccak256};
 use crate::{
     ProofTrie, Trie, TrieError, ValueRLP,
     nibbles::Nibbles,
-    node::{Node, NodeRef},
+    node::{LeafNode, Node, NodeRef},
     node_hash::NodeHash,
 };
 

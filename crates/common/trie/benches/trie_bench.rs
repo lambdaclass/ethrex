@@ -22,7 +22,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Trie");
 
     group.bench_function("ethrex-trie insert 1k", |b| {
-        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+        let mut trie = EthrexTrie::new(Arc::new(EthrexMemDB::new_empty()));
         b.iter(|| {
             for i in 0..keys_1k.len() {
                 black_box(&mut trie)
@@ -37,7 +37,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
     });
 
     group.bench_function("ethrex-trie insert 10k", |b| {
-        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+        let mut trie = EthrexTrie::new(Arc::new(EthrexMemDB::new_empty()));
 
         b.iter(|| {
             for i in 0..keys_10k.len() {

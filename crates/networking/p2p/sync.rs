@@ -23,8 +23,11 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
+use ethrex_trie::node::BranchNode;
 use ethrex_trie::{NodeHash, Trie, TrieError};
-use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, ParallelBridge, ParallelIterator,
+};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -1235,7 +1238,7 @@ fn compute_storage_roots(
     maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
     account_hash: H256,
-    key_value_pairs: Vec<(H256, U256)>,
+    mut key_value_pairs: Vec<(H256, U256)>,
     pivot_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
     let account_storage_root = match maybe_big_account_storage_state_roots
@@ -1249,15 +1252,50 @@ fn compute_storage_roots(
 
     let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root)?;
 
-    for (hashed_key, value) in key_value_pairs {
-        if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
-            warn!(
-                "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
-            );
+    let (computed_storage_root, changes) = if key_value_pairs.len() < 100000 {
+        for (hashed_key, value) in key_value_pairs {
+            if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
+                warn!(
+                    "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                );
+            }
         }
-    }
 
-    let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
+        storage_trie.collect_changes_since_last_hash()
+    } else {
+        key_value_pairs.sort_by_key(|(slot, _)| *slot);
+        let mut subtries: Vec<_> = (0..16).into_par_iter().with_max_len(1).map(|i| {
+            let mut storage_trie = storage_trie.clone();
+            let (lo, hi) = (
+                key_value_pairs.partition_point(|(slot, _)| slot.0[0] >> 4 < i),
+                key_value_pairs.partition_point(|(slot, _)| slot.0[0] >> 4 <= i),
+            );
+            let kvs = &key_value_pairs[lo..hi];
+            for (hashed_key, value) in kvs {
+                if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
+                    warn!(
+                        "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                    );
+                }
+            }
+
+            storage_trie.collect_changes_since_last_hash()
+        })
+        .collect();
+        // FIXME: assumes branch first real child, non empty subtries
+        subtries.iter_mut().for_each(|(_, nodes)| {
+            nodes.pop().expect("");
+        });
+        let choices = std::array::from_fn(|i| subtries[i].1.last().expect("").0.into());
+        let root_node = BranchNode::new(choices);
+        let root_hash = root_node.compute_hash();
+        let changes = subtries
+            .into_iter()
+            .flat_map(|(_, nodes)| nodes.into_iter())
+            .chain(std::iter::once((root_hash, root_node.encode_to_vec())))
+            .collect();
+        (root_hash.finalize(), changes)
+    };
 
     let account_state = store
         .get_account_state_by_acc_hash(pivot_hash, account_hash)?

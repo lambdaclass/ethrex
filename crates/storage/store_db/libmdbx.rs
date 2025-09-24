@@ -569,7 +569,7 @@ impl StoreEngine for Store {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
+        let db = Arc::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
             hashed_address.0,
         ));
@@ -577,12 +577,12 @@ impl StoreEngine for Store {
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
+        let db = Arc::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
         Ok(Trie::open(db, state_root))
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(
+        let db = Arc::new(
             LibmdbxLockedTrieDB::<StateTrieNodes>::new(self.db.clone())
                 .map_err(StoreError::Trie)?,
         );
@@ -594,7 +594,7 @@ impl StoreEngine for Store {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(
+        let db = Arc::new(
             LibmdbxLockedDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
                 self.db.clone(),
                 hashed_address.0,

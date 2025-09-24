@@ -404,13 +404,13 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
         let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
+        let db = Arc::new(InMemoryTrieDB::new(trie_backend.clone()));
         Ok(Trie::open(db, storage_root))
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_backend = self.inner()?.state_trie_nodes.clone();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        let db = Arc::new(InMemoryTrieDB::new(trie_backend));
         Ok(Trie::open(db, state_root))
     }
 

@@ -1112,7 +1112,7 @@ impl StoreEngine for Store {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(
+        let db = Arc::new(RocksDBTrieDB::new(
             self.db.clone(),
             CF_STORAGE_TRIES_NODES,
             Some(hashed_address),
@@ -1121,7 +1121,7 @@ impl StoreEngine for Store {
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(
+        let db = Arc::new(RocksDBTrieDB::new(
             self.db.clone(),
             CF_STATE_TRIE_NODES,
             None,
@@ -1131,7 +1131,7 @@ impl StoreEngine for Store {
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = RocksDBLockedTrieDB::new(self.db.clone(), CF_STATE_TRIE_NODES, None)?;
-        Ok(Trie::open(Box::new(db), state_root))
+        Ok(Trie::open(Arc::new(db), state_root))
     }
 
     fn open_locked_storage_trie(
@@ -1144,7 +1144,7 @@ impl StoreEngine for Store {
             CF_STORAGE_TRIES_NODES,
             Some(hashed_address),
         )?;
-        Ok(Trie::open(Box::new(db), storage_root))
+        Ok(Trie::open(Arc::new(db), storage_root))
     }
 
     async fn forkchoice_update(

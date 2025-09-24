@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 use crate::{
     PathRLP, Trie, TrieDB, TrieError, ValueRLP,
@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub struct TrieIterator {
-    db: Box<dyn TrieDB>,
+    db: Arc<dyn TrieDB>,
     // The stack contains the current traversed path and the next node to be traversed.
     // It proactively stacks all children of a branch after consuming it to reduce accesses to the database.
     // The stack is really used as a convoluted FIFO, so elements are added in the reverse order they will be popped.
