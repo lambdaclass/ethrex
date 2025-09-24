@@ -1,4 +1,4 @@
-use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
+use std::{cmp::max, fmt::Display, sync::Arc};
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use ethrex_blockchain::{
@@ -19,14 +19,11 @@ use ethrex_storage::{EngineType, Store};
 use reqwest::Url;
 use tracing::info;
 
-use crate::bench::run_and_measure;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
+use crate::report::Report;
 use crate::run::{exec, prove, run_tx};
-use crate::{
-    block_run_report::{BlockRunReport, ReplayerMode},
-    cache::Cache,
-};
+use crate::{cache::Cache, slack::try_send_report_to_slack};
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
 };
@@ -35,13 +32,6 @@ use ethrex_config::networks::{
 use crate::fetcher::get_batchdata;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
-
-#[cfg(feature = "sp1")]
-pub const BACKEND: Backend = Backend::SP1;
-#[cfg(all(feature = "risc0", not(feature = "sp1")))]
-pub const BACKEND: Backend = Backend::RISC0;
-#[cfg(not(any(feature = "sp1", feature = "risc0")))]
-pub const BACKEND: Backend = Backend::Exec;
 
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
@@ -123,27 +113,92 @@ pub enum CustomSubcommand {
 }
 
 #[derive(Parser, Clone)]
-#[clap(group = ArgGroup::new("replay_mode").required(true))]
+pub struct CommonOptions {
+    #[arg(long, value_enum, help_heading = "Replay Options")]
+    pub zkvm: Option<ZKVM>,
+    #[arg(long, value_enum, default_value_t = Resource::default(), help_heading = "Replay Options")]
+    pub resource: Resource,
+    #[arg(long, value_enum, default_value_t = Action::default(), help_heading = "Replay Options")]
+    pub action: Action,
+}
+
+#[derive(Parser, Clone)]
 #[clap(group = ArgGroup::new("data_source").required(true))]
 pub struct EthrexReplayOptions {
-    #[arg(long, group = "replay_mode")]
-    pub execute: bool,
-    #[arg(long, group = "replay_mode")]
-    pub prove: bool,
-    #[arg(long, group = "data_source")]
+    #[command(flatten)]
+    pub common: CommonOptions,
+    #[arg(long, group = "data_source", help_heading = "Replay Options")]
     pub rpc_url: Url,
-    #[arg(long, group = "data_source")]
+    #[arg(long, group = "data_source", help_heading = "Replay Options")]
     pub cached: bool,
-    #[arg(long, required = false)]
-    pub bench: bool,
-    #[arg(long, required = false)]
+    #[arg(long, required = false, help_heading = "Replay Options")]
     pub to_csv: bool,
-    #[arg(
-        long,
-        help = "Block cache level: off, failed, on (default: on)",
-        default_value = "on"
-    )]
+    #[arg(long, default_value = "on", help_heading = "Replay Options")]
     pub cache_level: CacheLevel,
+    #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
+    pub slack_webhook_url: Option<Url>,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ZKVM {
+    Jolt,
+    Nexus,
+    OpenVM,
+    Pico,
+    Risc0,
+    SP1,
+    Ziren,
+    Zisk,
+}
+
+impl Display for ZKVM {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ZKVM::Jolt => "Jolt",
+            ZKVM::Nexus => "Nexus",
+            ZKVM::OpenVM => "OpenVM",
+            ZKVM::Pico => "Pico",
+            ZKVM::Risc0 => "RISC0",
+            ZKVM::SP1 => "SP1",
+            ZKVM::Ziren => "Ziren",
+            ZKVM::Zisk => "ZisK",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum, Default)]
+pub enum Resource {
+    #[default]
+    CPU,
+    GPU,
+}
+
+impl Display for Resource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Resource::CPU => "CPU",
+            Resource::GPU => "GPU",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum, PartialEq, Eq, Default)]
+pub enum Action {
+    #[default]
+    Execute,
+    Prove,
+}
+
+impl Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Action::Execute => "Execute",
+            Action::Prove => "Prove",
+        };
+        write!(f, "{s}")
+    }
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Default)]
@@ -156,7 +211,10 @@ pub enum CacheLevel {
 
 #[derive(Parser)]
 pub struct BlockOptions {
-    #[arg(long, help = "Block to use. Uses the latest if not specified.")]
+    #[arg(
+        help = "Block to use. Uses the latest if not specified.",
+        help_heading = "Command Options"
+    )]
     pub block: Option<u64>,
     #[command(flatten)]
     pub opts: EthrexReplayOptions,
@@ -166,11 +224,20 @@ pub struct BlockOptions {
 #[derive(Parser)]
 #[command(group(ArgGroup::new("block_list").required(true).args(["blocks", "from"])))]
 pub struct BlocksOptions {
-    #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"])]
+    #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"], help_heading = "Command Options")]
     blocks: Vec<u64>,
-    #[arg(long, help = "Starting block. (Inclusive)")]
+    #[arg(
+        long,
+        help = "Starting block. (Inclusive)",
+        help_heading = "Command Options"
+    )]
     from: Option<u64>,
-    #[arg(long, help = "Ending block. (Inclusive)", requires = "from")]
+    #[arg(
+        long,
+        help = "Ending block. (Inclusive)",
+        requires = "from",
+        help_heading = "Command Options"
+    )]
     to: Option<u64>,
     #[command(flatten)]
     opts: EthrexReplayOptions,
@@ -178,7 +245,7 @@ pub struct BlocksOptions {
 
 #[derive(Parser)]
 pub struct TransactionOpts {
-    #[arg(long, help = "Transaction hash.")]
+    #[arg(help = "Transaction hash.", help_heading = "Command Options")]
     tx_hash: H256,
     #[command(flatten)]
     opts: EthrexReplayOptions,
@@ -187,7 +254,7 @@ pub struct TransactionOpts {
 #[cfg(feature = "l2")]
 #[derive(Parser)]
 pub struct BatchOptions {
-    #[arg(long, help = "Batch number to use.")]
+    #[arg(long, help = "Batch number to use.", help_heading = "Command Options")]
     batch: u64,
     #[command(flatten)]
     opts: EthrexReplayOptions,
@@ -195,16 +262,20 @@ pub struct BatchOptions {
 
 #[derive(Parser)]
 pub struct CustomBlockOptions {
-    #[arg(long, help = "Whether to prove the block instead of executing it.")]
-    prove: bool,
+    #[command(flatten)]
+    common: CommonOptions,
 }
 
 #[derive(Parser)]
 pub struct CustomBatchOptions {
-    #[arg(long, help = "Number of blocks to include in the batch.")]
+    #[arg(
+        long,
+        help = "Number of blocks to include in the batch.",
+        help_heading = "Command Options"
+    )]
     n_blocks: u64,
-    #[arg(long, help = "Whether to prove the batch instead of executing it.")]
-    prove: bool,
+    #[command(flatten)]
+    common: CommonOptions,
 }
 
 impl EthrexReplayCommand {
@@ -228,7 +299,11 @@ impl EthrexReplayCommand {
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!(
                         "{} block {}/{}: {block_number}",
-                        if opts.execute { "Executing" } else { "Proving" },
+                        if opts.common.action == Action::Execute {
+                            "Executing"
+                        } else {
+                            "Proving"
+                        },
                         i + 1,
                         blocks.len()
                     );
@@ -277,11 +352,11 @@ impl EthrexReplayCommand {
                 info!("Blocks data cached successfully.");
             }
             #[cfg(not(feature = "l2"))]
-            Self::Custom(CustomSubcommand::Block(CustomBlockOptions { prove })) => {
+            Self::Custom(CustomSubcommand::Block(CustomBlockOptions { common })) => {
                 Box::pin(async move {
                     Self::Custom(CustomSubcommand::Batch(CustomBatchOptions {
                         n_blocks: 1,
-                        prove,
+                        common,
                     }))
                     .run()
                     .await
@@ -289,29 +364,27 @@ impl EthrexReplayCommand {
                 .await?;
             }
             #[cfg(not(feature = "l2"))]
-            Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, prove })) => {
+            Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, common })) => {
                 let opts = EthrexReplayOptions {
-                    execute: !prove,
-                    prove,
                     rpc_url: Url::parse("http://localhost:8545")?,
                     cached: false,
-                    bench: false,
                     to_csv: false,
                     cache_level: CacheLevel::default(),
+                    common: common.clone(),
+                    slack_webhook_url: None,
                 };
 
-                let elapsed = replay_custom_l1_blocks(max(1, n_blocks), &opts).await?;
+                let elapsed = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
 
-                if prove {
-                    println!(
-                        "Successfully proved {} in {elapsed:.2} seconds.",
-                        if n_blocks > 1 { "batch" } else { "block" }
-                    );
-                } else {
-                    println!(
+                match common.action {
+                    Action::Execute => println!(
                         "Successfully executed {} in {elapsed:.2} seconds.",
                         if n_blocks > 1 { "batch" } else { "block" }
-                    );
+                    ),
+                    Action::Prove => println!(
+                        "Successfully proved {} in {elapsed:.2} seconds.",
+                        if n_blocks > 1 { "batch" } else { "block" }
+                    ),
                 }
             }
             #[cfg(not(feature = "l2"))]
@@ -402,18 +475,6 @@ async fn setup(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)>
     Ok((eth_client, network))
 }
 
-async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
-    let gas_used = get_total_gas_used(&cache.blocks);
-
-    if opts.execute {
-        exec(BACKEND, cache).await?;
-    } else {
-        prove(BACKEND, cache).await?;
-    }
-
-    Ok(gas_used)
-}
-
 async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
     if tx_opts.opts.cached {
         unimplemented!("cached mode is not implemented yet");
@@ -476,24 +537,29 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
-    let start = SystemTime::now();
+    // Always execute
+    let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
 
-    let block_run_result = run_and_measure(replay(cache.clone(), &opts), opts.bench).await;
+    let proving_result = if opts.common.action == Action::Prove {
+        // Only prove if requested
+        Some(prove(backend(&opts.common.zkvm)?, cache.clone()).await)
+    } else {
+        None
+    };
 
-    // We save this because block_run_result (Result<u64, Report>) is not clonable.
-    let block_run_failed = block_run_result.is_err();
-
-    let replayer_mode = replayer_mode(opts.execute)?;
-
-    let block_run_report = BlockRunReport::new_for(
+    let report = Report::new_for(
+        opts.common.zkvm,
+        opts.common.resource,
+        opts.common.action,
         block,
-        network.clone(),
-        block_run_result,
-        replayer_mode.clone(),
-        start.elapsed()?,
+        network,
+        execution_result,
+        proving_result,
     );
 
-    block_run_report.log();
+    println!("{report}");
+
+    try_send_report_to_slack(&report, opts.slack_webhook_url).await?;
 
     // Apply cache level rules
     match opts.cache_level {
@@ -501,7 +567,8 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         CacheLevel::On => {}
         // Only save the cache if the block run failed
         CacheLevel::Failed => {
-            if !block_run_failed {
+            if report.execution_result.is_err() || report.proving_result.is_some_and(|r| r.is_err())
+            {
                 cache.delete()?;
             }
         }
@@ -509,22 +576,28 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         CacheLevel::Off => cache.delete()?,
     }
 
-    if opts.to_csv {
-        let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
-
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(file_name)?;
-
-        file.write_all(block_run_report.to_csv().as_bytes())?;
-
-        file.write_all(b"\n")?;
-
-        file.flush()?;
-    }
-
     Ok(())
+}
+
+pub fn backend(zkvm: &Option<ZKVM>) -> eyre::Result<Backend> {
+    match zkvm {
+        Some(ZKVM::SP1) => {
+            #[cfg(feature = "sp1")]
+            return Ok(Backend::SP1);
+            #[cfg(not(feature = "sp1"))]
+            return Err(eyre::Error::msg("SP1 feature not enabled"));
+        }
+        Some(ZKVM::Risc0) => {
+            #[cfg(feature = "risc0")]
+            return Ok(Backend::RISC0);
+            #[cfg(not(feature = "risc0"))]
+            return Err(eyre::Error::msg("RISC0 feature not enabled"));
+        }
+        Some(_other) => Err(eyre::Error::msg(
+            "Only SP1 and RISC0 backends are supported currently",
+        )),
+        None => Ok(Backend::Exec),
+    }
 }
 
 pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
@@ -541,30 +614,6 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
             }
         }
     }
-}
-
-pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
-    if execute {
-        #[cfg(feature = "sp1")]
-        return Ok(ReplayerMode::ExecuteSP1);
-        #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return Ok(ReplayerMode::ExecuteRISC0);
-        #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return Ok(ReplayerMode::Execute);
-    } else {
-        #[cfg(feature = "sp1")]
-        return Ok(ReplayerMode::ProveSP1);
-        #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return Ok(ReplayerMode::ProveRISC0);
-        #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return Err(eyre::Error::msg(
-            "proving mode is not supported without SP1 or RISC0 features",
-        ));
-    }
-}
-
-fn get_total_gas_used(blocks: &[Block]) -> f64 {
-    blocks.iter().map(|b| b.header.gas_used).sum::<u64>() as f64
 }
 
 fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
@@ -639,8 +688,8 @@ fn print_receipt(receipt: Receipt) {
 
 pub async fn replay_custom_l1_blocks(
     n_blocks: u64,
-    opts: &EthrexReplayOptions,
-) -> eyre::Result<f64> {
+    opts: EthrexReplayOptions,
+) -> eyre::Result<Report> {
     let network = Network::LocalDevnet;
 
     let genesis = network.get_genesis()?;
@@ -671,16 +720,31 @@ pub async fn replay_custom_l1_blocks(
     let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        Some(network),
+        Some(network.clone()),
     );
 
-    let start = SystemTime::now();
+    let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
 
-    run_and_measure(replay(cache, opts), false).await?;
+    let proving_result = if opts.common.action == Action::Prove {
+        // Only prove if requested
+        Some(prove(backend(&opts.common.zkvm)?, cache.clone()).await)
+    } else {
+        None
+    };
 
-    let elapsed = start.elapsed()?.as_secs_f64();
+    let report = Report::new_for(
+        opts.common.zkvm,
+        opts.common.resource,
+        opts.common.action,
+        cache.blocks.first().cloned().ok_or_else(|| {
+            eyre::Error::msg("no block found in the cache, this should never happen")
+        })?,
+        network,
+        execution_result,
+        proving_result,
+    );
 
-    Ok(elapsed)
+    Ok(report)
 }
 
 pub async fn produce_l1_blocks(
