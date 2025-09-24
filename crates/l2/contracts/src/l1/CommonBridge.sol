@@ -403,6 +403,16 @@ contract CommonBridge is
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) public override nonReentrant whenNotPaused {
+        require(
+            tokenL1 != ETH_TOKEN,
+            "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
+        );
+
+        require(
+            tokenL1 != NATIVE_TOKEN_L1_ADDRESS,
+            "CommonBridge: attempted to withdraw the native token as if it were ERC20, use claimWithdrawal() instead"
+        );
+
         _claimWithdrawal(
             tokenL1,
             tokenL2,
@@ -411,10 +421,7 @@ contract CommonBridge is
             withdrawalMessageId,
             withdrawalProof
         );
-        require(
-            tokenL1 != ETH_TOKEN,
-            "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
-        );
+
         IERC20(tokenL1).safeTransfer(msg.sender, claimedAmount);
     }
 
