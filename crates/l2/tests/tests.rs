@@ -1503,14 +1503,14 @@ async fn test_n_withdraws(
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let mut base_fees = U256::zero();
+    let mut priority_fees = U256::zero();
     for receipt in receipts {
-        base_fees += get_fees_details_l2(&receipt, l2_client).await.priority_fees;
+        priority_fees += get_fees_details_l2(&receipt, l2_client).await.priority_fees;
     }
 
     assert_eq!(
         coinbase_balance_after_withdrawal,
-        coinbase_balance_before_withdrawal + base_fees,
+        coinbase_balance_before_withdrawal + priority_fees,
         "Coinbase balance didn't increase as expected after withdrawal"
     );
 
