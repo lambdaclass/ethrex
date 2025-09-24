@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainType, error::ChainError};
+use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_p2p::types::Node;
@@ -336,7 +336,9 @@ impl Subcommand {
                     &opts.datadir,
                     genesis,
                     blockchain_type,
-                    opts.mempool_max_size,
+                    BlockchainOptions {
+                        max_mempool_size: opts.mempool_max_size,
+                    },
                 )
                 .await?;
             }
@@ -386,12 +388,12 @@ pub async fn import_blocks(
     datadir: &Path,
     genesis: Genesis,
     blockchain_type: BlockchainType,
-    max_mempool_size: usize,
+    blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
-    let blockchain = init_blockchain(store.clone(), blockchain_type, false, max_mempool_size);
+    let blockchain = init_blockchain(store.clone(), blockchain_type, false, blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.

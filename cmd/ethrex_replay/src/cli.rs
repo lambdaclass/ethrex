@@ -63,8 +63,6 @@ pub const BACKEND: Backend = Backend::RISC0;
 #[cfg(not(any(feature = "sp1", feature = "risc0")))]
 pub const BACKEND: Backend = Backend::Exec;
 
-const MAX_MEMPOOL_SIZE: usize = 100_000;
-
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
 pub struct EthrexReplayCLI {
@@ -834,7 +832,7 @@ pub async fn replay_custom_l1_blocks(
         store.clone(),
         BlockchainType::L1,
         false,
-        MAX_MEMPOOL_SIZE,
+        ethrex_blockchain::BlockchainOptions::default(),
     ));
 
     let blocks = produce_l1_blocks(

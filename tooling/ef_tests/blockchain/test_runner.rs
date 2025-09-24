@@ -6,7 +6,7 @@ use crate::{
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainOptions, BlockchainType,
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
@@ -23,8 +23,6 @@ use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
 use guest_program::input::ProgramInput;
 use regex::Regex;
-
-const MAX_MEMPOOL_SIZE_TEST: usize = 10_000;
 
 pub fn parse_and_execute(
     path: &Path,
@@ -111,7 +109,7 @@ pub async fn run_ef_test(
         store.clone(),
         BlockchainType::L1,
         false,
-        MAX_MEMPOOL_SIZE_TEST,
+        BlockchainOptions::default(),
     );
 
     // Early return if the exception is in the rlp decoding of the block

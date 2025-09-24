@@ -77,6 +77,19 @@ pub struct Blockchain {
 }
 
 #[derive(Debug, Clone)]
+pub struct BlockchainOptions {
+    pub max_mempool_size: usize,
+}
+
+impl Default for BlockchainOptions {
+    fn default() -> Self {
+        Self {
+            max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
@@ -99,11 +112,11 @@ impl Blockchain {
         store: Store,
         blockchain_type: BlockchainType,
         perf_logs_enabled: bool,
-        max_mempool_size: usize,
+        blockchain_opts: BlockchainOptions,
     ) -> Self {
         Self {
             storage: store,
-            mempool: Mempool::new(max_mempool_size),
+            mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
             payloads: Arc::new(TokioMutex::new(Vec::new())),
