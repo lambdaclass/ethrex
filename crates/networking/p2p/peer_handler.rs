@@ -1502,7 +1502,9 @@ impl PeerHandler {
                     all_account_storages[start_index].extend(account_storages.remove(0));
                 } else {
                     for (i, storage) in account_storages.into_iter().enumerate() {
-                        all_account_storages[start_index + i] = storage;
+                        if storage.len() <= 2 {
+                            all_account_storages[start_index + i] = storage;
+                        }
                     }
                 }
             }

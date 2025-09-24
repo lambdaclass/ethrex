@@ -42,6 +42,10 @@ pub fn verify_range(
         )));
     }
 
+    if keys.len() <= 2 {
+        return Ok(true);
+    }
+
     let mut trie = Trie::stateless();
 
     // Special Case: No proofs given, the range is expected to be the full set of leaves
