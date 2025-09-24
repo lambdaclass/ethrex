@@ -301,18 +301,25 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // Use the ethrex implementation of ecrecover
     // Switch to the sp1 implementation of ecrecover when we are in SP1 environment
-    
-    // TODO: change this when we have a way to detect SP1 environment
-    if cfg!(feature = "sp1") {
-        ecrecover_sp1(calldata, gas_remaining, _fork)
-    } else {
+
+    #[cfg(feature = "c-kzg")]
+    {
         ecrecover_ethrex(calldata, gas_remaining, _fork)
+    }
+
+    #[cfg(feature = "kzg-rs")]
+    {
+        ecrecover_sp1(calldata, gas_remaining, _fork)
     }
 }
 
 /// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
 /// Given a hash, a Signature and a recovery Id, returns the public key recovered by secp256k1
-pub fn ecrecover_ethrex(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecrecover_ethrex(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
     use secp256k1::{
         Message,
         ecdsa::{RecoverableSignature, RecoveryId},
@@ -366,7 +373,6 @@ pub fn ecrecover_ethrex(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) 
     Ok(Bytes::from(output.to_vec()))
 }
 
-
 /// ## ECRECOVER precompile.
 /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
 ///
@@ -376,9 +382,13 @@ pub fn ecrecover_ethrex(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) 
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-pub fn ecrecover_sp1(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecrecover_sp1(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-    
+
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;

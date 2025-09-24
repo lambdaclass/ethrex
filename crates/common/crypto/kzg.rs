@@ -97,7 +97,6 @@ pub fn verify_blob_kzg_proof(
     {
         unimplemented!("There's no implementation of blob verification for openvm-kzg yet.");
     }
-
 }
 
 /// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
