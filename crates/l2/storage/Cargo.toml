@@ -2,6 +2,8 @@
 name = "ethrex-storage-rollup"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 
 [dependencies]

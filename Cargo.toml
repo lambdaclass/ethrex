@@ -41,6 +41,11 @@ default-members = ["cmd/ethrex"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = ["LambdaClass"]
+documentation = "https://docs.ethrex.xyz"
+
+[profile.dev]
+debug = 2
 
 [profile.release]
 opt-level = 3

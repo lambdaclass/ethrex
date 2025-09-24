@@ -1,19 +1,9 @@
 [package]
 name = "ethrex-replay"
-version = "0.1.0"
-edition = "2024"
-
-[profile.dev]
-debug = 2
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-
-[profile.release-with-debug]
-inherits = "release"
-debug = 2
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-config.workspace = true

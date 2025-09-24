@@ -2,6 +2,8 @@
 name = "ethrex-prover"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 serde_json.workspace = true
