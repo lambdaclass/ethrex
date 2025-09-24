@@ -224,7 +224,7 @@ async fn replay_execution(
 ) -> Result<(), EthClientError> {
     tracing::info!("Starting execution replayer for network: {network} with RPC URL: {rpc_url}");
 
-    let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
+    let eth_client = EthClient::new(rpc_url.clone()).unwrap();
 
     loop {
         let elapsed = replay_latest_block(
@@ -258,7 +258,7 @@ async fn replay_proving(
             } else {
                 continue;
             };
-            let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
+            let eth_client = EthClient::new(rpc_url.clone()).unwrap();
 
             replay_latest_block(
                 replayer_mode.clone(),
@@ -382,7 +382,7 @@ async fn replay_latest_block(
 }
 
 async fn revalidate_rpc(rpc_url: Url) -> Result<(), EthClientError> {
-    let eth_client = EthClient::new(rpc_url.as_str()).unwrap();
+    let eth_client = EthClient::new(rpc_url).unwrap();
 
     loop {
         let mut interval = tokio::time::interval(Duration::from_secs(10));

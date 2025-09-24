@@ -5,8 +5,8 @@ use crate::{
 use clap::Parser;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::{
-    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
-    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
+    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, L1WatcherConfig,
+    ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::{
         configs::{AdminConfig, AlignedConfig, MonitorConfig},
         utils::resolve_aligned_network,
@@ -15,7 +15,7 @@ use ethrex_l2::{
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
 use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
-    BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
+    BACKOFF_FACTOR, EthConfig, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
@@ -176,15 +176,17 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 validium: opts.validium,
             },
             eth: EthConfig {
-                rpc_url: opts.eth_opts.rpc_url,
+                urls: opts.eth_opts.rpc_url,
                 max_number_of_retries: opts.eth_opts.max_number_of_retries,
                 backoff_factor: opts.eth_opts.backoff_factor,
                 min_retry_delay: opts.eth_opts.min_retry_delay,
                 max_retry_delay: opts.eth_opts.max_retry_delay,
-                maximum_allowed_max_fee_per_gas: opts.eth_opts.maximum_allowed_max_fee_per_gas,
-                maximum_allowed_max_fee_per_blob_gas: opts
-                    .eth_opts
-                    .maximum_allowed_max_fee_per_blob_gas,
+                maximum_allowed_max_fee_per_gas: Some(
+                    opts.eth_opts.maximum_allowed_max_fee_per_gas,
+                ),
+                maximum_allowed_max_fee_per_blob_gas: Some(
+                    opts.eth_opts.maximum_allowed_max_fee_per_blob_gas,
+                ),
                 safe_block_delay: opts.eth_opts.safe_block_delay,
             },
             l1_watcher: L1WatcherConfig {
@@ -253,7 +255,7 @@ pub struct EthOptions {
         help_heading = "Eth options",
         num_args = 1..
     )]
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -316,7 +318,7 @@ pub struct EthOptions {
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
-            rpc_url: vec!["http://localhost:8545".to_string()],
+            rpc_url: vec![Url::parse("http://localhost:8545").expect("Failed to parse L1 RPC URL")],
             maximum_allowed_max_fee_per_gas: 10000000000,
             maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,

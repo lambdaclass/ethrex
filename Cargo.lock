@@ -7000,6 +7000,7 @@ dependencies = [
  "keccak-hash",
  "secp256k1",
  "tokio",
+ "url",
 ]
 
 [[package]]

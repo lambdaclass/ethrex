@@ -22,7 +22,7 @@ use ethrex_l2_sdk::{
 };
 use ethrex_rpc::{
     EthClient,
-    clients::Overrides,
+    clients::{Overrides, eth::EthConfig},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;
@@ -39,6 +39,7 @@ use secp256k1::SecretKey;
 use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
 };
+use url::Url;
 
 #[derive(Parser)]
 pub struct DeployerOptions {
@@ -48,7 +49,7 @@ pub struct DeployerOptions {
         env = "ETHREX_ETH_RPC_URL",
         help_heading = "Eth options"
     )]
-    pub rpc_url: String,
+    pub rpc_url: Url,
     #[arg(
         long,
         default_value = "10000000000",
@@ -329,7 +330,7 @@ pub struct DeployerOptions {
 impl Default for DeployerOptions {
     fn default() -> Self {
         Self {
-            rpc_url: "http://localhost:8545".to_string(),
+            rpc_url: Url::parse("http://localhost:8545").expect("Failed to parse L1 RPC URL"),
             maximum_allowed_max_fee_per_gas: 10_000_000_000,
             maximum_allowed_max_fee_per_blob_gas: 10_000_000_000,
             max_number_of_retries: 10,
@@ -509,18 +510,16 @@ pub async fn deploy_l1_contracts(
     info!("Starting deployer binary");
     let signer: Signer = LocalSigner::new(opts.private_key).into();
 
-    let eth_client = EthClient::new_with_config(
-        vec![opts.rpc_url.clone()],
-        ethrex_rpc::clients::eth::EthConfig {
-            max_number_of_retries: opts.max_number_of_retries,
-            backoff_factor: opts.backoff_factor,
-            min_retry_delay: opts.min_retry_delay,
-            max_retry_delay: opts.max_retry_delay,
-            maximum_allowed_max_fee_per_gas: Some(opts.maximum_allowed_max_fee_per_gas),
-            maximum_allowed_max_fee_per_blob_gas: Some(opts.maximum_allowed_max_fee_per_blob_gas),
-            safe_block_delay: 0,
-        },
-    )?;
+    let eth_client = EthClient::new_with_config(EthConfig {
+        urls: vec![opts.rpc_url.clone()],
+        max_number_of_retries: opts.max_number_of_retries,
+        backoff_factor: opts.backoff_factor,
+        min_retry_delay: opts.min_retry_delay,
+        max_retry_delay: opts.max_retry_delay,
+        maximum_allowed_max_fee_per_gas: Some(opts.maximum_allowed_max_fee_per_gas),
+        maximum_allowed_max_fee_per_blob_gas: Some(opts.maximum_allowed_max_fee_per_blob_gas),
+        safe_block_delay: 0,
+    })?;
 
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
 
@@ -683,7 +682,7 @@ fn deploy_tdx_contracts(
     Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
-        .env("RPC_URL", &opts.rpc_url)
+        .env("RPC_URL", opts.rpc_url.as_str())
         .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())

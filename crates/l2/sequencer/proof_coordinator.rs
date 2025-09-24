@@ -1,9 +1,7 @@
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
-use crate::{
-    BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-};
+use crate::{BlockProducerConfig, CommitterConfig, ProofCoordinatorConfig, SequencerConfig};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
@@ -14,7 +12,7 @@ use ethrex_common::{
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_metrics::metrics;
-use ethrex_rpc::clients::eth::EthClient;
+use ethrex_rpc::clients::eth::{EthClient, EthConfig};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
@@ -197,24 +195,11 @@ impl ProofCoordinator {
         blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofCoordinatorError> {
-        let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.clone(),
-            ethrex_rpc::clients::eth::EthConfig {
-                max_number_of_retries: eth_config.max_number_of_retries,
-                backoff_factor: eth_config.backoff_factor,
-                min_retry_delay: eth_config.min_retry_delay,
-                max_retry_delay: eth_config.max_retry_delay,
-                maximum_allowed_max_fee_per_gas: Some(eth_config.maximum_allowed_max_fee_per_gas),
-                maximum_allowed_max_fee_per_blob_gas: Some(
-                    eth_config.maximum_allowed_max_fee_per_blob_gas,
-                ),
-                safe_block_delay: eth_config.safe_block_delay,
-            },
-        )?;
+        let eth_client = EthClient::new_with_config(eth_config.clone())?;
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
         let rpc_url = eth_config
-            .rpc_url
+            .urls
             .first()
             .ok_or(ProofCoordinatorError::Custom(
                 "no rpc urls present!".to_string(),

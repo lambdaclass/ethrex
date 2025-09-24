@@ -12,7 +12,10 @@ use ethrex_metrics::l2::metrics::METRICS;
 use ethrex_metrics::metrics;
 use ethrex_rpc::{
     EthClient,
-    clients::{EthClientError, eth::errors::EstimateGasError},
+    clients::{
+        EthClientError,
+        eth::{EthConfig, errors::EstimateGasError},
+    },
 };
 use ethrex_storage_rollup::StoreRollup;
 use serde::Serialize;
@@ -27,7 +30,7 @@ use super::{
 };
 
 use crate::{
-    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+    CommitterConfig, ProofCoordinatorConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::errors::ProofSenderError,
 };
@@ -99,20 +102,7 @@ impl L1ProofSender {
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
-        let eth_client = EthClient::new_with_config(
-            eth_cfg.rpc_url.clone(),
-            ethrex_rpc::clients::eth::EthConfig {
-                max_number_of_retries: eth_cfg.max_number_of_retries,
-                backoff_factor: eth_cfg.backoff_factor,
-                min_retry_delay: eth_cfg.min_retry_delay,
-                max_retry_delay: eth_cfg.max_retry_delay,
-                maximum_allowed_max_fee_per_gas: Some(eth_cfg.maximum_allowed_max_fee_per_gas),
-                maximum_allowed_max_fee_per_blob_gas: Some(
-                    eth_cfg.maximum_allowed_max_fee_per_blob_gas,
-                ),
-                safe_block_delay: eth_cfg.safe_block_delay,
-            },
-        )?;
+        let eth_client = EthClient::new_with_config(eth_cfg.clone())?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::UnexpectedError("Failed to convert chain ID to U256".to_owned())
         })?;
@@ -286,7 +276,7 @@ impl L1ProofSender {
 
     /// Performs a call to aligned SDK estimate_fee function with retries over all RPC URLs.
     async fn estimate_fee(&mut self) -> Result<ethers::types::U256, ProofSenderError> {
-        for rpc_url in &self.eth_client.urls {
+        for rpc_url in &self.eth_client.config.urls {
             if let Ok(estimation) =
                 aligned_estimate_fee(rpc_url.as_str(), self.fee_estimate.clone()).await
             {

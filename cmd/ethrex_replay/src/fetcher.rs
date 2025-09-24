@@ -103,7 +103,7 @@ pub async fn get_blockdata(
                 requested_block_number - 1
             );
             let rpc_db = RpcDB::with_cache(
-                eth_client.urls.first().unwrap().as_str(),
+                eth_client.config.urls.first().unwrap().as_str(),
                 chain_config,
                 (requested_block_number - 1).try_into()?,
                 &block,
