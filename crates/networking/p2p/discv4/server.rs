@@ -14,7 +14,7 @@ use crate::{
         unmap_ipv4in6_address,
     },
 };
-use ethrex_common::{H512, U256};
+use ethrex_common::H512;
 use futures::{SinkExt as _, StreamExt, stream::SplitSink};
 use keccak_hash::H256;
 use rand::rngs::OsRng;
@@ -26,7 +26,7 @@ use spawned_concurrency::{
         spawn_listener,
     },
 };
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
@@ -610,37 +610,6 @@ impl Discv4Message {
     pub fn get_node_id(&self) -> H256 {
         node_id(&self.sender_public_key)
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum ConnectionHandlerOutMessage {
-    Done,
-}
-
-/// Returns the nodes closest to the given `node_id`.
-pub fn get_closest_nodes(node_id: H256, table: BTreeMap<H256, Contact>) -> Vec<Node> {
-    let mut nodes: Vec<(Node, usize)> = vec![];
-
-    for (contact_id, contact) in &table {
-        let distance = distance(&node_id, contact_id);
-        if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
-            nodes.push((contact.node.clone(), distance));
-        } else {
-            for (i, (_, dis)) in &mut nodes.iter().enumerate() {
-                if distance < *dis {
-                    nodes[i] = (contact.node.clone(), distance);
-                    break;
-                }
-            }
-        }
-    }
-    nodes.into_iter().map(|(node, _distance)| node).collect()
-}
-
-pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
-    let xor = node_id_1 ^ node_id_2;
-    let distance = U256::from_big_endian(xor.as_bytes());
-    distance.bits().saturating_sub(1)
 }
 
 // TODO: Reimplement tests removed during snap sync refactor

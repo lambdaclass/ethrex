@@ -1064,9 +1064,9 @@ impl GenServer for PeerTable {
                 self.peers.remove(&node_id);
             }
             CastMessage::SetUnwanted { node_id } => {
-                if let Some(contact) = self.contacts.get_mut(&node_id) {
-                    contact.unwanted = true;
-                }
+                self.contacts
+                    .entry(node_id)
+                    .and_modify(|contact| contact.unwanted = true);
             }
             CastMessage::MarkInUse { node_id } => {
                 self.peers
