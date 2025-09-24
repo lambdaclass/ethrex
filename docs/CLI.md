@@ -122,6 +122,8 @@ Commands:
   blobs-saver   Launch a server that listens for Blobs submissions and saves them offline.
   reconstruct   Reconstructs the L2 state from L1 blobs.
   revert-batch  Reverts unverified batches.
+  pause         Pause L1 contracts
+  unpause       Unpause L1 contracts
   deploy        Deploy in L1 all contracts needed by an L2.
   help          Print this message or the help of the given subcommand(s)
 
@@ -147,7 +149,7 @@ Node options:
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
 
           [env: ETHREX_DATADIR=]
-          [default: /home/runner/.local/share/ethrex]
+          [default: "/Users/manu/Library/Application Support/ethrex"]
 
       --force
           Delete the database without confirmation.
@@ -181,8 +183,9 @@ P2P options:
 
       --p2p.enabled
 
+
       --p2p.port <PORT>
-          TCP port for P2P.
+          TCP port for P2P protocol.
 
           [default: 30303]
 
@@ -196,7 +199,7 @@ RPC options:
           Listening address for the http rpc server.
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: localhost]
+          [default: 0.0.0.0]
 
       --http.port <PORT>
           Listening port for the http rpc server.
@@ -207,7 +210,7 @@ RPC options:
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
 
-          [default: localhost]
+          [default: 127.0.0.1]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
@@ -249,6 +252,12 @@ Eth options:
           [env: ETHREX_MAX_RETRY_DELAY=]
           [default: 1800]
 
+      --eth.safe-block-delay <BLOCKS>
+          Number of blocks to wait before considering an L1 block safe.
+
+          [env: ETHREX_SAFE_BLOCK_DELAY=]
+          [default: 10]
+
 L1 Watcher options:
       --l1.bridge-address <ADDRESS>
           [env: ETHREX_WATCHER_BRIDGE_ADDRESS=]
@@ -257,17 +266,11 @@ L1 Watcher options:
           How often the L1 watcher checks for new blocks in milliseconds.
 
           [env: ETHREX_WATCHER_WATCH_INTERVAL=]
-          [default: 1000]
+          [default: 12000]
 
       --watcher.max-block-step <UINT64>
           [env: ETHREX_WATCHER_MAX_BLOCK_STEP=]
           [default: 5000]
-
-      --watcher.block-delay <UINT64>
-          Number of blocks the L1 watcher waits before trusting an L1 block.
-
-          [env: ETHREX_WATCHER_BLOCK_DELAY=]
-          [default: 10]
 
 Block producer options:
       --block-producer.block-time <UINT64>
@@ -278,6 +281,12 @@ Block producer options:
 
       --block-producer.coinbase-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS=]
+
+      --block-producer.block-gas-limit <UINT64>
+          Maximum gas limit for the L2 blocks.
+
+          [env: ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT=]
+          [default: 30000000]
 
 Proposer options:
       --elasticity-multiplier <UINT64>
@@ -308,6 +317,16 @@ L1 Committer options:
 
           [env: ETHREX_COMMITTER_COMMIT_TIME=]
           [default: 60000]
+
+      --committer.batch-gas-limit <UINT64>
+          Maximum gas limit for the batch
+
+          [env: ETHREX_COMMITTER_BATCH_GAS_LIMIT=]
+
+      --committer.first-wake-up-time <UINT64>
+          Time to wait before the sequencer seals a batch when started. After committing the first batch, `committer.commit-time` will be used.
+
+          [env: ETHREX_COMMITTER_FIRST_WAKE_UP_TIME=]
 
       --committer.arbitrary-base-blob-gas-price <UINT64>
           [env: ETHREX_COMMITTER_ARBITRARY_BASE_BLOB_GAS_PRICE=]
@@ -349,9 +368,6 @@ Proof coordinator options:
 
           [env: ETHREX_PROOF_COORDINATOR_SEND_INTERVAL=]
           [default: 5000]
-
-      --proof-coordinator.dev-mode
-          [env: ETHREX_PROOF_COORDINATOR_DEV_MODE=]
 
 Based options:
       --state-updater.sequencer-registry <ADDRESS>
@@ -401,6 +417,15 @@ Aligned options:
           Path to the SP1 elf. This is used for proof verification.
 
           [env: ETHREX_ALIGNED_SP1_ELF_PATH=]
+
+Admin server options:
+      --admin-server.addr <IP_ADDRESS>
+          [env: ETHREX_ADMIN_SERVER_LISTEN_ADDRESS=]
+          [default: 127.0.0.1]
+
+      --admin-server.port <UINT16>
+          [env: ETHREX_ADMIN_SERVER_LISTEN_PORT=]
+          [default: 5555]
 
 L2 options:
       --validium
