@@ -1283,7 +1283,7 @@ impl PeerHandler {
         *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
         debug!("Starting request_storage_ranges function");
         // 1) split the range in chunks of same length
-        let chunk_size = 300;
+        let chunk_size = 1600;
         let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
 
         // list of tasks to be executed
