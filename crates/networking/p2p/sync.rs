@@ -1657,9 +1657,11 @@ async fn insert_storage_into_rocksdb(
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
 
     accounts_with_storage.into_par_iter().for_each(|account_hash| {
+        info!("Opening Trie");
         let trie = store
             .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
             .expect("Should be able to open trie");
+        info!("Creating Iter Trie");
         let mut iter = db.raw_iterator();
         let mut initial_key = account_hash.as_bytes().to_vec();
         initial_key.extend([0_u8; 32]);
@@ -1669,6 +1671,7 @@ async fn insert_storage_into_rocksdb(
             limit: account_hash,
         };
 
+        info!("Starting Sorted");
         let result = trie_from_sorted_accounts_wrap(
             trie.db(),
             &mut iter,
@@ -1679,6 +1682,7 @@ async fn insert_storage_into_rocksdb(
             );
         })
         .map_err(SyncError::TrieGenerationError);
+        info!("Increasing Counter");
         METRICS.storage_tries_state_roots_computed.inc();
     });
     Ok(())
