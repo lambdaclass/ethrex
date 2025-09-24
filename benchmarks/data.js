@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758720912387,
+  "lastUpdate": 1758722826587,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33419,6 +33419,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015592616367508367,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "52646071+Peponks9@users.noreply.github.com",
+            "name": "josé v",
+            "username": "Peponks9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "83dbbb1d36a005513de0eeadbbce1341c05e8c8f",
+          "message": "chore(l1): replace `Result<T, String>` with `Result<T, NodeError>` (#4591)\n\n**Motivation**\n\nThis PR addresses issue #4167 by replacing non-standard `Result<T,\nString>` with `Result<T, Error>` in the networking types module. The\ngoal is to improve error handling with a structured error type for\nbetter debugging, type safety, and adherence to Rust best practices.\n\n**Description**\n\n- Introduced a new `NodeError` enum in `crates/networking/p2p/types.rs`\nwith variants for specific error cases (e.g., `InvalidFormat`,\n`ParseError`, `RLPDecodeError`).\n- Updated `Result<T, String>` to `Result<T, NodeError>` in `FromStr` for\n`Node`, and methods like `from_enode_url`, `from_enr_url`, `enr_url`,\n`from_node`, `update_seq`, `set_fork_id`, and `sign_record`.\n\n**Tests**\n- All tests in `ethrex-p2p` pass 52/52.\n\nCloses #4167",
+          "timestamp": "2025-09-23T14:45:52Z",
+          "tree_id": "f04faaf59b509cf6da61ae3dd3b83cf787a19550",
+          "url": "https://github.com/lambdaclass/ethrex/commit/83dbbb1d36a005513de0eeadbbce1341c05e8c8f"
+        },
+        "date": 1758722825734,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0044490390625,
             "unit": "Mgas/s"
           }
         ]
