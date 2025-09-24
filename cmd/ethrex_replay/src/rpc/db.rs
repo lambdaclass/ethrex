@@ -188,10 +188,10 @@ impl RpcDB {
 
             if index.len() == 1 {
                 let address = chunk.first().unwrap().0;
-                info!("fetched account {address}");
+                debug!("fetched account {address}");
             } else {
                 counter += chunk.len();
-                info!("fetched {} accounts of {}", counter, index.len());
+                debug!("fetched {} accounts of {}", counter, index.len());
             }
 
             // Cooldown depends on chunk size.

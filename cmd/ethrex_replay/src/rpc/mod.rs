@@ -16,7 +16,6 @@ use serde_json::json;
 
 use lazy_static::lazy_static;
 use sha3::Digest;
-use tracing::info;
 
 pub mod db;
 
@@ -97,13 +96,7 @@ pub async fn get_account(
            }
     );
 
-    let pretty = serde_json::to_string_pretty(request).unwrap();
-
-    info!("before eth_getProof request:\n{pretty}");
-
     let response = CLIENT.post(rpc_url).json(request).send().await?;
-
-    info!("after eth_getProof request:\n{pretty}");
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
