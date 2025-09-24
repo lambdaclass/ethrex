@@ -162,6 +162,7 @@ impl RpcDB {
         for chunk in index.chunks(RPC_RATE_LIMIT) {
             let start = Instant::now();
 
+            // Call to `eth_getProof` for each account in the chunk
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
                     *address,
