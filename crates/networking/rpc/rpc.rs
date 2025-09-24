@@ -535,9 +535,9 @@ mod tests {
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
-    use std::fs::File;
     use std::io::BufReader;
     use std::str::FromStr;
+    use std::{fs::File, path::Path};
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -709,7 +709,7 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0", "method":"eth_config", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         let storage = Store::new_from_genesis(
-            "temp.db",
+            Path::new("temp.db"),
             EngineType::InMemory,
             "../../../cmd/ethrex/networks/hoodi/genesis.json",
         )
