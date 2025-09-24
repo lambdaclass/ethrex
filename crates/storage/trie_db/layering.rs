@@ -22,9 +22,6 @@ impl TrieWrapperInner {
     pub fn get(&self, mut state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         while let Some(layer) = self.layers.get(&state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
-                if value.is_empty() {
-                    return None;
-                }
                 return Some(value.clone());
             }
             state_root = layer.parent;
