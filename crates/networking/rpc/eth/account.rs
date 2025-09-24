@@ -260,3 +260,45 @@ impl RpcHandler for GetProofRequest {
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_get_storage_at_request_parse_hex_slot() {
+        let params = Some(vec![
+            json!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+            // Storage slot can be provided as hex string
+            json!("0x1"),
+            json!("latest"),
+        ]);
+        let request = GetStorageAtRequest::parse(&params).unwrap();
+
+        let expected_address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .parse()
+            .unwrap();
+        assert_eq!(request.address, expected_address);
+        assert_eq!(request.storage_slot, H256::from_uint(&U256::from(1u64)));
+        assert_eq!(request.block, BlockTag::Latest);
+    }
+
+    #[test]
+    fn test_get_storage_at_request_parse_number_slot() {
+        let params = Some(vec![
+            json!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+            // Storage slot can be provided as number
+            json!("1"),
+            json!("latest"),
+        ]);
+        let request = GetStorageAtRequest::parse(&params).unwrap();
+
+        let expected_address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .parse()
+            .unwrap();
+        assert_eq!(request.address, expected_address);
+        assert_eq!(request.storage_slot, H256::from_uint(&U256::from(1u64)));
+        assert_eq!(request.block, BlockTag::Latest);
+    }
+}
