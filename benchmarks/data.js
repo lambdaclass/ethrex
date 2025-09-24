@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758749850928,
+  "lastUpdate": 1758750558701,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16405,6 +16405,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 88599624461,
             "range": "± 171647185",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f68c0015ff7357eda09ba582c516f5d5e14e9b89",
+          "message": "fix(l1): remove \"background_threads\" feature in jemallocator (#4636)\n\n**Motivation**\n\nAny `ethrex` binary run in macOS starts by printing the message:\n\n```text\n<jemalloc>: option background_thread currently supports pthread only\n```\n\nThis is confusing, especially since the node appears to work as normal.\n\n**Description**\n\nThis PR removes the \"background_threads\" feature, which isn't supported\non macOS, it seems. It still enables it for linux, however.",
+          "timestamp": "2025-09-24T20:58:35Z",
+          "tree_id": "770950e05c865b671516f5d6eb2fc123791739af",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f68c0015ff7357eda09ba582c516f5d5e14e9b89"
+        },
+        "date": 1758750537889,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89017776910,
+            "range": "± 314873948",
             "unit": "ns/iter"
           }
         ]
