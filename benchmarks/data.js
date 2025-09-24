@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758686946370,
+  "lastUpdate": 1758698737035,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33194,6 +33194,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015405148782687106,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "5f35198eb560f5e0ecc3456b78bd2a0d398c9eb8",
+          "message": "feat(replay): support public L2 networks blocks/batches replay",
+          "timestamp": "2025-09-23T14:43:36Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4548/commits/5f35198eb560f5e0ecc3456b78bd2a0d398c9eb8"
+        },
+        "date": 1758698735547,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004581630593132154,
             "unit": "Mgas/s"
           }
         ]
