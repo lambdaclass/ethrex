@@ -19,7 +19,6 @@ pub fn git_clone(
     repository_url: &str,
     outdir: &str,
     branch: Option<&str>,
-    commit: Option<&str>,
     submodules: bool,
 ) -> Result<ExitStatus, GitError> {
     info!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning or updating git repository");
@@ -116,31 +115,6 @@ pub fn git_clone(
             )));
         }
 
-        // If a specific commit is provided, checkout to it
-        if let Some(commit) = commit {
-            let commit_status = Command::new("git")
-                .current_dir(outdir)
-                .arg("checkout")
-                .arg(commit)
-                .spawn()
-                .map_err(|err| {
-                    GitError::DependencyError(format!(
-                        "Failed to spawn git checkout to commit: {err}"
-                    ))
-                })?
-                .wait()
-                .map_err(|err| {
-                    GitError::DependencyError(format!(
-                        "Failed to wait for git checkout to commit: {err}"
-                    ))
-                })?;
-            if !commit_status.success() {
-                return Err(GitError::DependencyError(format!(
-                    "git checkout to commit {commit} failed for {outdir}, try deleting the repo folder"
-                )));
-            }
-        }
-
         // Update submodules
         if submodules {
             let submodule_status = Command::new("git")
@@ -183,33 +157,11 @@ pub fn git_clone(
             git_clone_cmd.arg("--recurse-submodules");
         }
 
-        let child = git_clone_cmd
+        git_clone_cmd
             .arg(outdir)
             .spawn()
             .map_err(|err| GitError::DependencyError(format!("Failed to spawn git: {err}")))?
             .wait()
-            .map_err(|err| GitError::DependencyError(format!("Failed to wait for git: {err}")));
-
-        if let Some(commit) = commit {
-            // checkout to commit
-            let commit_status = Command::new("git")
-                .current_dir(outdir)
-                .arg("checkout")
-                .arg(commit)
-                .spawn()
-                .map_err(|err| {
-                    GitError::DependencyError(format!(
-                        "Failed to spawn git checkout to commit: {err}"
-                    ))
-                })?
-                .wait()
-                .map_err(|err| {
-                    GitError::DependencyError(format!(
-                        "Failed to wait for git checkout to commit: {err}"
-                    ))
-                });
-            return commit_status;
-        }
-        child
+            .map_err(|err| GitError::DependencyError(format!("Failed to wait for git: {err}")))
     }
 }
