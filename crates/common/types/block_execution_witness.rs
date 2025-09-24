@@ -12,7 +12,7 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{NodeHash, NodeRLP, Trie};
+use ethrex_trie::{NodeRLP, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -184,13 +184,10 @@ impl GuestProgramState {
             return Ok(());
         }
 
-        let state_trie = Trie::from_nodes(
-            NodeHash::Hashed(self.parent_block_header.state_root),
-            &self.nodes_hashed,
-        )
-        .map_err(|e| {
-            GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
-        })?;
+        let state_trie = Trie::from_nodes(self.parent_block_header.state_root, &self.nodes_hashed)
+            .map_err(|e| {
+                GuestProgramStateError::RebuildTrie(format!("Failed to build state trie {e}"))
+            })?;
 
         self.state_trie = Some(state_trie);
 
@@ -210,11 +207,7 @@ impl GuestProgramState {
 
         let account_state = AccountState::decode(&account_state_rlp).ok()?;
 
-        Trie::from_nodes(
-            NodeHash::Hashed(account_state.storage_root),
-            &self.nodes_hashed,
-        )
-        .ok()
+        Trie::from_nodes(account_state.storage_root, &self.nodes_hashed).ok()
     }
 
     /// Helper function to apply account updates to the execution witness

@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -689,12 +690,12 @@ struct Args {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        default_value_t = default_datadir(),
+        default_value = default_datadir().into_os_string(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: PathBuf,
     #[arg(
         long = "ipc_path",
         value_name = "IPC_PATH",
@@ -734,8 +735,8 @@ pub async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
-    let data_dir = init_datadir(&args.datadir);
-    let store = open_store(&data_dir);
+    init_datadir(&args.datadir);
+    let store = open_store(&args.datadir);
     archive_sync(
         args.ipc_path,
         args.block_number,

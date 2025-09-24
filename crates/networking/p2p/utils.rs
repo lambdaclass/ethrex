@@ -1,5 +1,6 @@
 use std::{
     net::IpAddr,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -57,29 +58,35 @@ pub fn unmap_ipv4in6_address(addr: IpAddr) -> IpAddr {
     addr
 }
 
-pub fn get_account_storages_snapshots_dir(datadir: &String) -> String {
-    format!("{datadir}/account_storages_snapshots")
+pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {
+    datadir.join("account_storages_snapshots")
 }
 
-pub fn get_account_state_snapshots_dir(datadir: &String) -> String {
-    format!("{datadir}/account_state_snapshots")
+pub fn get_account_state_snapshots_dir(datadir: &Path) -> PathBuf {
+    datadir.join("account_state_snapshots")
 }
 
-pub fn get_account_state_snapshot_file(directory: String, chunk_index: u64) -> String {
-    format!("{directory}/account_state_chunk.rlp.{chunk_index}")
+pub fn get_account_state_snapshot_file(directory: &Path, chunk_index: u64) -> PathBuf {
+    directory.join(format!("account_state_chunk.rlp.{chunk_index}"))
 }
 
-pub fn get_account_storages_snapshot_file(directory: String, chunk_index: u64) -> String {
-    format!("{directory}/account_storages_chunk.rlp.{chunk_index}")
+pub fn get_account_storages_snapshot_file(directory: &Path, chunk_index: u64) -> PathBuf {
+    directory.join(format!("account_storages_chunk.rlp.{chunk_index}"))
 }
 
-pub fn dump_to_file(path: String, contents: Vec<u8>) -> Result<(), DumpError> {
-    std::fs::write(&path, &contents)
-        .inspect_err(|err| {
-            tracing::error!("Failed to write snapshot to path {}. Error: {}", &path, err)
-        })
+pub fn get_code_hashes_snapshots_dir(datadir: &Path) -> PathBuf {
+    datadir.join("bytecode_hashes_snapshots")
+}
+
+pub fn get_code_hashes_snapshot_file(directory: &Path, chunk_index: u64) -> PathBuf {
+    directory.join(format!("bytecode_hashes_chunk.rlp.{chunk_index}"))
+}
+
+pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
+    std::fs::write(path, &contents)
+        .inspect_err(|err| tracing::error!(%err, ?path, "Failed to dump snapshot to file"))
         .map_err(|err| DumpError {
-            path,
+            path: path.to_path_buf(),
             contents,
             error: err.kind(),
         })

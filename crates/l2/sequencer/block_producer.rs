@@ -16,7 +16,7 @@ use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
-use payload_builder::build_payload;
+pub use payload_builder::build_payload;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,

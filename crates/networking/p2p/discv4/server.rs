@@ -452,12 +452,28 @@ impl DiscoveryServer {
             return;
         }
 
-        let neighbors = get_closest_nodes(node_id, table.clone());
+        let cloned_table = table.clone();
 
         drop(table);
 
-        // we are sending the neighbors in 2 different messages to avoid exceeding the
-        // maximum packet size
+        let Ok(neighbors) =
+            tokio::task::spawn_blocking(move || get_closest_nodes(node_id, cloned_table))
+                .await
+                .inspect_err(|err| {
+                    debug!(
+                        received = "FindNode",
+                        to = %format!("{sender_public_key:#x}"),
+                        err = ?err,
+                        "Error getting closest nodes"
+                    )
+                })
+        else {
+            return;
+        };
+        // A single node encodes to at most 89B, so 8 of them are at most 712B plus
+        // recursive length and expiration time, well within bound of 1280B per packet.
+        // Sending all in one packet would exceed bounds with the nodes only, weighing
+        // up to 1424B.
         for chunk in neighbors.chunks(8) {
             let _ = self
                 .send_neighbors(chunk.to_vec(), &node)
