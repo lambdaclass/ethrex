@@ -14,19 +14,19 @@ pub fn get_referenced_hashes(
         match node {
             Node::Branch(node) => {
                 for choice in &node.choices {
-                    let NodeRef::Hash(hash) = *choice else {
-                        unreachable!()
-                    };
-
-                    referenced_hashes.insert(hash);
+                    if let NodeRef::Hash(hash) = *choice {
+                        referenced_hashes.insert(hash);
+                    } else {
+                        return Err(eyre::eyre!("Branch node contains non-hash reference"));
+                    }
                 }
             }
             Node::Extension(node) => {
-                let NodeRef::Hash(hash) = node.child else {
-                    unreachable!()
-                };
-
-                referenced_hashes.insert(hash);
+                if let NodeRef::Hash(hash) = node.child {
+                    referenced_hashes.insert(hash);
+                } else {
+                    return Err(eyre::eyre!("Extension node contains non-hash reference"));
+                }
             }
             Node::Leaf(_node) => {}
         }
