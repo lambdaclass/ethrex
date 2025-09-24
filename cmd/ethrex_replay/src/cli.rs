@@ -392,19 +392,21 @@ impl EthrexReplayCommand {
             }
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, common })) => {
+                let action = common.action.clone();
+
                 let opts = EthrexReplayOptions {
                     rpc_url: Url::parse("http://localhost:8545")?,
                     cached: false,
                     to_csv: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
-                    common: common.clone(),
+                    common,
                     slack_webhook_url: None,
                 };
 
                 let elapsed = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
 
-                match common.action {
+                match action {
                     Action::Execute => println!(
                         "Successfully executed {} in {elapsed:.2} seconds.",
                         if n_blocks > 1 { "batch" } else { "block" }
@@ -450,17 +452,33 @@ impl EthrexReplayCommand {
 
                 let cache = get_batchdata(eth_client, network, batch).await?;
 
-                run_and_measure(replay(cache, &opts), opts.bench).await?;
+                let backend = backend(&opts.common.zkvm)?;
+
+                let execution_result = exec(backend, cache.clone()).await;
+
+                let proving_result = match opts.common.action {
+                    Action::Execute => None,
+                    Action::Prove => Some(prove(backend, cache).await),
+                };
+
+                println!("Batch {batch} execution result: {execution_result:?}");
+
+                if let Some(proving_result) = proving_result {
+                    println!("Batch {batch} proving result: {proving_result:?}");
+                }
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Block(block_opts)) => replay_block(block_opts).await?,
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Block(CustomBlockOptions {
-                prove,
+                common,
             }))) => {
                 Box::pin(async move {
                     Self::L2(L2Subcommand::Custom(CustomSubcommand::Batch(
-                        CustomBatchOptions { n_blocks: 1, prove },
+                        CustomBatchOptions {
+                            n_blocks: 1,
+                            common,
+                        },
                     )))
                     .run()
                     .await
@@ -470,25 +488,29 @@ impl EthrexReplayCommand {
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Batch(CustomBatchOptions {
                 n_blocks,
-                prove,
+                common,
             }))) => {
+                let action = common.action.clone();
+
                 let opts = EthrexReplayOptions {
-                    execute: !prove,
-                    prove,
+                    common,
                     rpc_url: Url::parse("http://localhost:8545")?,
                     cached: false,
-                    bench: false,
                     to_csv: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
+                    slack_webhook_url: None,
                 };
 
-                let elapsed = replay_custom_l2_blocks(max(1, n_blocks), &opts).await?;
+                let elapsed = replay_custom_l2_blocks(max(1, n_blocks), opts).await?;
 
-                if prove {
-                    println!("Successfully proved L2 batch in {elapsed:.2} seconds.");
-                } else {
-                    println!("Successfully executed L2 batch in {elapsed:.2} seconds.");
+                match action {
+                    Action::Prove => println!(
+                        "Successfully proved L2 batch of {n_blocks} blocks in {elapsed:.2} seconds."
+                    ),
+                    Action::Execute => println!(
+                        "Successfully executed L2 batch of {n_blocks} blocks in {elapsed:.2} seconds."
+                    ),
                 }
             }
         }
@@ -1005,8 +1027,8 @@ use ethrex_vm::BlockExecutionResult;
 #[cfg(feature = "l2")]
 pub async fn replay_custom_l2_blocks(
     n_blocks: u64,
-    opts: &EthrexReplayOptions,
-) -> eyre::Result<f64> {
+    opts: EthrexReplayOptions,
+) -> eyre::Result<Report> {
     let network = Network::LocalDevnetL2;
 
     let genesis = network.get_genesis()?;
@@ -1049,13 +1071,28 @@ pub async fn replay_custom_l2_blocks(
         genesis.config,
     );
 
-    let start = SystemTime::now();
+    let backend = backend(&opts.common.zkvm)?;
 
-    run_and_measure(replay(cache, opts), false).await?;
+    let execution_result = exec(backend, cache.clone()).await;
 
-    let elapsed = start.elapsed()?.as_secs_f64();
+    let proving_result = match opts.common.action {
+        Action::Execute => None,
+        Action::Prove => Some(prove(backend, cache.clone()).await),
+    };
 
-    Ok(elapsed)
+    let report = Report::new_for(
+        opts.common.zkvm,
+        opts.common.resource,
+        opts.common.action,
+        cache.blocks.first().cloned().ok_or_else(|| {
+            eyre::Error::msg("no block found in the cache, this should never happen")
+        })?,
+        network,
+        execution_result,
+        proving_result,
+    );
+
+    Ok(report)
 }
 
 #[cfg(feature = "l2")]
