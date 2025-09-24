@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758747928012,
+  "lastUpdate": 1758749850928,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33685,6 +33685,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015849341252699785,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "f2429248856f1b94449ac6275ffdea876609a877",
+          "message": "fix(l2): add script to read address from deployer in docker compose",
+          "timestamp": "2025-09-24T18:54:54Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4624/commits/f2429248856f1b94449ac6275ffdea876609a877"
+        },
+        "date": 1758749850060,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00444132842287695,
             "unit": "Mgas/s"
           }
         ]
