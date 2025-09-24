@@ -775,7 +775,7 @@ mod tests {
         let (config, header) = build_basic_config_and_header(false, false);
 
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store, MEMPOOL_MAX_SIZE_TEST);
+        let blockchain = Blockchain::default_with_store(store);
 
         let tx = EIP1559Transaction {
             nonce: 3,
