@@ -76,7 +76,15 @@ impl L1ProofVerifier {
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofVerifierError> {
-        let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+        let eth_client = EthClient::new_with_config(
+            eth_cfg.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_cfg.max_number_of_retries,
+            eth_cfg.backoff_factor,
+            eth_cfg.min_retry_delay,
+            eth_cfg.max_retry_delay,
+            Some(eth_cfg.maximum_allowed_max_fee_per_gas),
+            Some(eth_cfg.maximum_allowed_max_fee_per_blob_gas),
+        )?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
         let sp1_vk = get_sp1_vk(&eth_client, committer_cfg.on_chain_proposer_address).await?;

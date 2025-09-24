@@ -97,7 +97,15 @@ impl L1ProofSender {
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
-        let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+        let eth_client = EthClient::new_with_config(
+            eth_cfg.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_cfg.max_number_of_retries,
+            eth_cfg.backoff_factor,
+            eth_cfg.min_retry_delay,
+            eth_cfg.max_retry_delay,
+            Some(eth_cfg.maximum_allowed_max_fee_per_gas),
+            Some(eth_cfg.maximum_allowed_max_fee_per_blob_gas),
+        )?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::UnexpectedError("Failed to convert chain ID to U256".to_owned())
         })?;
