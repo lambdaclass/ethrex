@@ -48,7 +48,11 @@ spinoff = "0.8.0"
 
 [features]
 default = []
+
+# TODO: rename to "ethrex" or "no-prover"
 c-kzg = ["ethrex-common/c-kzg"]
+
+# TODO: rename to "sp1"
 kzg-rs = ["ethrex-common/kzg-rs"]
 openvm-kzg = ["ethrex-common/openvm-kzg"]
 ethereum_foundation_tests = []
