@@ -10,7 +10,7 @@ build = "build.rs"
 ethrex-config.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
-ethrex-common = { workspace = true, optional = true }
+ethrex-common.workspace = true
 ethrex-p2p.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true

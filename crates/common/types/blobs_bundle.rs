@@ -228,15 +228,6 @@ pub enum BlobsBundleError {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "c-kzg")]
-    use super::MAX_BLOB_COUNT_ELECTRA;
-    #[cfg(feature = "c-kzg")]
-    use crate::H256;
-    #[cfg(feature = "c-kzg")]
-    use crate::types::BYTES_PER_BLOB;
-    #[cfg(feature = "c-kzg")]
-    use crate::types::{BlobsBundle, BlobsBundleError};
-
     mod shared {
         #[cfg(feature = "c-kzg")]
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
@@ -258,8 +249,8 @@ mod tests {
             })
             .collect();
 
-        let blobs_bundle =
-            BlobsBundle::create_from_blobs(&blobs).expect("Failed to create blobs bundle");
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
+            .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
@@ -287,8 +278,8 @@ mod tests {
     #[cfg(feature = "c-kzg")]
     fn transaction_with_invalid_proofs_should_fail() {
         // blob data taken from: https://etherscan.io/tx/0x02a623925c05c540a7633ffa4eb78474df826497faa81035c4168695656801a2#blobs, but with 0 size blobs
-        let blobs_bundle = BlobsBundle {
-            blobs: vec![[0; BYTES_PER_BLOB], [0; BYTES_PER_BLOB]],
+        let blobs_bundle = crate::types::BlobsBundle {
+            blobs: vec![[0; crate::types::BYTES_PER_BLOB], [0; crate::types::BYTES_PER_BLOB]],
             commitments: vec!["b90289aabe0fcfb8db20a76b863ba90912d1d4d040cb7a156427d1c8cd5825b4d95eaeb221124782cc216960a3d01ec5",
                               "91189a03ce1fe1225fc5de41d502c3911c2b19596f9011ea5fca4bf311424e5f853c9c46fe026038036c766197af96a0"]
                               .into_iter()
@@ -322,15 +313,15 @@ mod tests {
             .into_iter()
             .map(|b| {
                 let bytes = hex::decode(b).expect("Invalid hex string");
-                H256::from_slice(&bytes)
+                crate::H256::from_slice(&bytes)
             })
-            .collect::<Vec<H256>>(),
+            .collect::<Vec<crate::H256>>(),
             ..Default::default()
         };
 
         assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
-            Err(BlobsBundleError::BlobToCommitmentAndProofError)
+            Err(crate::types::BlobsBundleError::BlobToCommitmentAndProofError)
         ));
     }
 
@@ -338,8 +329,8 @@ mod tests {
     #[cfg(feature = "c-kzg")]
     fn transaction_with_incorrect_blobs_should_fail() {
         // blob data taken from: https://etherscan.io/tx/0x02a623925c05c540a7633ffa4eb78474df826497faa81035c4168695656801a2#blobs
-        let blobs_bundle = BlobsBundle {
-            blobs: vec![[0; BYTES_PER_BLOB], [0; BYTES_PER_BLOB]],
+        let blobs_bundle = crate::types::BlobsBundle {
+            blobs: vec![[0; crate::types::BYTES_PER_BLOB], [0; crate::types::BYTES_PER_BLOB]],
             commitments: vec!["dead89aabe0fcfb8db20a76b863ba90912d1d4d040cb7a156427d1c8cd5825b4d95eaeb221124782cc216960a3d01ec5",
                               "91189a03ce1fe1225fc5de41d502c3911c2b19596f9011ea5fca4bf311424e5f853c9c46fe026038036c766197af96a0"]
                               .into_iter()
@@ -373,15 +364,15 @@ mod tests {
             .into_iter()
             .map(|b| {
                 let bytes = hex::decode(b).expect("Invalid hex string");
-                H256::from_slice(&bytes)
+                crate::H256::from_slice(&bytes)
             })
-            .collect::<Vec<H256>>(),
+            .collect::<Vec<crate::H256>>(),
             ..Default::default()
         };
 
         assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
-            Err(BlobsBundleError::BlobVersionedHashesError)
+            Err(crate::types::BlobsBundleError::BlobVersionedHashesError)
         ));
     }
 
@@ -390,10 +381,11 @@ mod tests {
     fn transaction_with_too_many_blobs_should_fail() {
         let blob = crate::types::blobs_bundle::blob_from_bytes("Im a Blob".as_bytes().into())
             .expect("Failed to create blob");
-        let blobs = std::iter::repeat_n(blob, MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
+        let blobs =
+            std::iter::repeat_n(blob, super::MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
 
-        let blobs_bundle =
-            BlobsBundle::create_from_blobs(&blobs).expect("Failed to create blobs bundle");
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
+            .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
@@ -413,7 +405,7 @@ mod tests {
 
         assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
-            Err(BlobsBundleError::MaxBlobsExceeded)
+            Err(crate::types::BlobsBundleError::MaxBlobsExceeded)
         ));
     }
 }
