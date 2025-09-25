@@ -32,7 +32,6 @@ impl Mempool {
         Mempool {
             txs_order: RwLock::new(Vec::with_capacity(max_mempool_size)),
             transaction_pool: RwLock::new(HashMap::with_capacity(max_mempool_size)),
-            blobs_bundle_pool: Mutex::new(HashMap::with_capacity(max_mempool_size)),
             max_mempool_size,
             ..Default::default()
         }
