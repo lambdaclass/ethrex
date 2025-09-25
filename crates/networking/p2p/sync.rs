@@ -1060,16 +1060,21 @@ impl Syncer {
                         .flat_map(|(accounts, storages)| {
                             accounts
                                 .into_par_iter()
+                                // FIXME: we probably want to make storages an Arc
                                 .map(move |account| (account, storages.clone()))
                         })
                         .map(|(account, storages)| {
-                            compute_storage_roots(
+                            let start = Instant::now();
+                            let changes = compute_storage_roots(
                                 maybe_big_account_storage_state_roots_clone.clone(),
                                 store.clone(),
                                 account,
                                 storages.clone(),
                                 pivot_hash_moved,
-                            )
+                            );
+                            let duration = Instant::now() - start;
+                            debug!(duration = duration.as_micros(), "Computed Storage Root");
+                            changes
                         })
                         .collect::<Result<Vec<_>, SyncError>>()
                 })

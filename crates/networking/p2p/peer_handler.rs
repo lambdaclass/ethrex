@@ -14,7 +14,6 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use futures::SinkExt;
 use rand::seq::SliceRandom;
 
 use crate::{
@@ -1536,7 +1535,7 @@ impl PeerHandler {
                         .extend(account_storages.remove(0));
                 } else {
                     for (i, storage) in account_storages.into_iter().enumerate() {
-                        let (root_hash, accounts) = &accounts_by_root_hash[start_index];
+                        let (root_hash, accounts) = &accounts_by_root_hash[start_index + i];
                         current_account_storages.insert(*root_hash, (accounts.clone(), storage));
                     }
                 }
