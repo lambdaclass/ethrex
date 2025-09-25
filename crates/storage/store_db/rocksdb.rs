@@ -487,7 +487,11 @@ impl StoreEngine for Store {
             if let Some(root) = trie.get_commitable(parent_state_root) {
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
-                    batch.put_cf(&cf_trie_nodes, key, value);
+                    if value.is_empty() {
+                        batch.delete_cf(&cf_trie_nodes, key);
+                    } else {
+                        batch.put_cf(&cf_trie_nodes, key, value);
+                    }
                 }
             }
             trie.put_batch(
