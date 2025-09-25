@@ -202,8 +202,8 @@ pub enum Command {
         #[arg(
             long,
             value_parser = parse_private_key,
-            env = "SEQUENCER_PRIVATE_KEY", 
-            help = "The private key of the sequencer", 
+            env = "SEQUENCER_PRIVATE_KEY",
+            help = "The private key of the sequencer",
             help_heading  = "Sequencer account options",
             group = "sequencer_signing",
         )]
@@ -289,7 +289,7 @@ impl Command {
             } => {
                 create_dir_all(datadir.clone())?;
 
-                let eth_client = EthClient::new(l1_eth_rpc.as_str())?;
+                let eth_client = EthClient::new(l1_eth_rpc)?;
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality
@@ -671,7 +671,7 @@ pub struct ContractCallOptions {
 
 impl ContractCallOptions {
     async fn call_contract(&self, selector: &str, params: Vec<Value>) -> eyre::Result<()> {
-        let client = EthClient::new(self.rpc_url.as_str())?;
+        let client = EthClient::new(self.rpc_url.clone())?;
         let signer = parse_signer(
             self.private_key,
             self.remote_signer_url.clone(),

@@ -1,5 +1,5 @@
 use crate::{
-    CommitterConfig, EthConfig, SequencerConfig,
+    CommitterConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::CommitterError,
@@ -36,7 +36,7 @@ use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::eth::{EthClient, Overrides},
+    clients::eth::{EthClient, EthConfig, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
@@ -132,15 +132,7 @@ impl L1Committer {
         based: bool,
         sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
-        let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
-            eth_config.max_number_of_retries,
-            eth_config.backoff_factor,
-            eth_config.min_retry_delay,
-            eth_config.max_retry_delay,
-            Some(eth_config.maximum_allowed_max_fee_per_gas),
-            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
-        )?;
+        let eth_client = EthClient::new_with_config(eth_config.clone())?;
         let last_committed_batch =
             get_last_committed_batch(&eth_client, committer_config.on_chain_proposer_address)
                 .await?;
@@ -638,28 +630,24 @@ impl L1Committer {
             .map_err(CommitterError::from)?
         };
 
-        let commit_tx_hash =
+        let receipt =
             send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer).await?;
 
         metrics!(
-            let commit_tx_receipt = self
-                .eth_client
-                .get_transaction_receipt(commit_tx_hash)
-                .await?
-                .ok_or(CommitterError::UnexpectedError("no commit tx receipt".to_string()))?;
-            let commit_gas_used = commit_tx_receipt.tx_info.gas_used.try_into()?;
+            let commit_gas_used = receipt.tx_info.gas_used.try_into()?;
             METRICS.set_batch_commitment_gas(batch.number, commit_gas_used)?;
             if !self.validium {
-                let blob_gas_used = commit_tx_receipt.tx_info.blob_gas_used
+                let blob_gas_used = receipt.tx_info.blob_gas_used
                     .ok_or(CommitterError::UnexpectedError("no blob in rollup mode".to_string()))?
                     .try_into()?;
                 METRICS.set_batch_commitment_blob_gas(batch.number, blob_gas_used)?;
             }
         );
 
-        info!("Commitment sent: {commit_tx_hash:#x}");
+        let tx_hash = receipt.tx_info.transaction_hash;
+        info!(?tx_hash, "Commitment sent");
 
-        Ok(commit_tx_hash)
+        Ok(tx_hash)
     }
 
     fn stop_committer(&mut self) -> CallResponse<Self> {

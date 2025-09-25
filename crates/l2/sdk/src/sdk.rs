@@ -547,8 +547,10 @@ async fn create2_deploy(
     )
     .await?;
 
-    let deploy_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer).await?;
+    let deploy_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, deploy_tx, deployer)
+        .await?
+        .tx_info
+        .transaction_hash;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
 
@@ -602,7 +604,10 @@ pub async fn initialize_contract(
     .await?;
 
     let initialize_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, initialize_tx, initializer).await?;
+        send_tx_bump_gas_exponential_backoff(eth_client, initialize_tx, initializer)
+            .await?
+            .tx_info
+            .transaction_hash;
 
     Ok(initialize_tx_hash)
 }
@@ -690,11 +695,11 @@ pub async fn send_tx_bump_gas_exponential_backoff(
     client: &EthClient,
     mut tx: GenericTransaction,
     signer: &Signer,
-) -> Result<H256, EthClientError> {
+) -> Result<RpcReceipt, EthClientError> {
     let mut number_of_retries = 0;
 
-    'outer: while number_of_retries < client.max_number_of_retries {
-        if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
+    'outer: while number_of_retries < client.config.max_number_of_retries {
+        if let Some(max_fee_per_gas) = client.config.maximum_allowed_max_fee_per_gas {
             let (Some(tx_max_fee), Some(tx_max_priority_fee)) =
                 (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
             else {
@@ -720,7 +725,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
 
         // Check blob gas fees only for EIP4844 transactions
         if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-            if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
+            if let Some(max_fee_per_blob_gas) = client.config.maximum_allowed_max_fee_per_blob_gas {
                 if *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
                     *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
                     warn!(
@@ -734,7 +739,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             .inspect_err(|e| {
                 error!(
                     "Error sending generic transaction {e} attempts [{number_of_retries}/{}]",
-                    client.max_number_of_retries
+                    client.config.max_number_of_retries
                 );
             })
         else {
@@ -746,7 +751,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
         if number_of_retries > 0 {
             warn!(
                 "Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}",
-                client.max_number_of_retries
+                client.config.max_number_of_retries
             );
         }
 
@@ -756,9 +761,10 @@ pub async fn send_tx_bump_gas_exponential_backoff(
 
         #[allow(clippy::as_conversions)]
         let attempts_to_wait_in_seconds = client
+            .config
             .backoff_factor
             .pow(number_of_retries as u32)
-            .clamp(client.min_retry_delay, client.max_retry_delay);
+            .clamp(client.config.min_retry_delay, client.config.max_retry_delay);
         while receipt.is_none() {
             if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                 // We waited long enough for the receipt but did not find it, bump gas
@@ -779,7 +785,20 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             receipt = client.get_transaction_receipt(tx_hash).await?;
         }
 
-        return Ok(tx_hash);
+        let Some(receipt_info) = receipt else {
+            return Err(EthClientError::InternalError(
+                "Receipt is None. This is a bug.".to_string(),
+            ));
+        };
+
+        while !block_is_safe(client, receipt_info.block_info.block_number).await? {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                WAIT_TIME_FOR_RECEIPT_SECONDS,
+            ))
+            .await;
+        }
+
+        return Ok(receipt_info);
     }
 
     Err(EthClientError::TimeoutError)
@@ -1056,4 +1075,23 @@ async fn _call_bytes32_variable(
         .map_err(|_| EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned()))?;
 
     Ok(arr)
+}
+
+/// Check if a block number is considered safe based on the safe_block_delay configuration.
+/// If safe_block_delay is 0, all blocks are considered safe.
+async fn block_is_safe(client: &EthClient, block_number: u64) -> Result<bool, EthClientError> {
+    if client.config.safe_block_delay == 0 {
+        return Ok(true);
+    }
+
+    if let Some(safe_block) = client
+        .get_block_number()
+        .await
+        .map(|x| U256::low_u64(&x))?
+        .checked_sub(client.config.safe_block_delay)
+    {
+        Ok(block_number <= safe_block)
+    } else {
+        Ok(false)
+    }
 }

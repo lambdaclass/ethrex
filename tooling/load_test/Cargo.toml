@@ -20,3 +20,4 @@ eyre.workspace = true
 keccak-hash.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures = "0.3"
+url.workspace = true

@@ -1,6 +1,7 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, U256};
 use ethrex_l2_rpc::signer::Signer;
+use ethrex_rpc::clients::eth::EthConfig;
 use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::IpAddr;
@@ -39,22 +40,10 @@ pub struct CommitterConfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct EthConfig {
-    pub rpc_url: Vec<String>,
-    pub maximum_allowed_max_fee_per_gas: u64,
-    pub maximum_allowed_max_fee_per_blob_gas: u64,
-    pub max_number_of_retries: u64,
-    pub backoff_factor: u64,
-    pub min_retry_delay: u64,
-    pub max_retry_delay: u64,
-}
-
-#[derive(Clone, Debug)]
 pub struct L1WatcherConfig {
     pub bridge_address: Address,
     pub check_interval_ms: u64,
     pub max_block_step: U256,
-    pub watcher_block_delay: u64,
 }
 
 #[derive(Clone, Debug)]

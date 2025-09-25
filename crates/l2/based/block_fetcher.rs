@@ -103,7 +103,7 @@ impl BlockFetcher {
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
     ) -> Result<Self, BlockFetcherError> {
-        let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
+        let eth_client = EthClient::new_with_multiple_urls(cfg.eth.urls.clone())?;
         let last_l1_block_fetched =
             get_last_fetched_l1_block(&eth_client, cfg.l1_watcher.bridge_address)
                 .await?

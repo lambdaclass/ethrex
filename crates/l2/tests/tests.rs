@@ -29,6 +29,7 @@ use ethrex_rpc::{
 };
 use hex::FromHexError;
 use keccak_hash::keccak;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::{
     fs::{File, read_to_string},
@@ -1800,13 +1801,17 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
 }
 
 fn l1_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(DEFAULT_L1_RPC.to_string()))
-        .unwrap()
+    let url =
+        Url::parse(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(DEFAULT_L1_RPC.to_string()))
+            .expect("Invalid L1 RPC URL");
+    EthClient::new(url).unwrap()
 }
 
 fn l2_client() -> EthClient {
-    EthClient::new(&std::env::var("INTEGRATION_TEST_L2_RPC").unwrap_or(DEFAULT_L2_RPC.to_string()))
-        .unwrap()
+    let url =
+        Url::parse(&std::env::var("INTEGRATION_TEST_L1_RPC").unwrap_or(DEFAULT_L2_RPC.to_string()))
+            .expect("Invalid L1 RPC URL");
+    EthClient::new(url).unwrap()
 }
 
 fn fees_vault() -> Address {

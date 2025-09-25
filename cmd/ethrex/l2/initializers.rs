@@ -24,6 +24,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry, reload};
 use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
+use url::Url;
 
 use crate::cli::Options as L1Options;
 use crate::initializers::{
@@ -261,10 +262,11 @@ pub async fn init_l2(
         l2_sequencer_cfg,
         cancellation_token.clone(),
         #[cfg(feature = "metrics")]
-        format!(
+        Url::parse(&format!(
             "http://{}:{}",
             opts.node_opts.http_addr, opts.node_opts.http_port
-        ),
+        ))
+        .expect("Invalid L2 RPC URL"),
     )
     .into_future();
 
