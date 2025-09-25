@@ -28,7 +28,7 @@ Currently ethrex replay only works against ethrex nodes with the `debug_executio
 ## Supported Clients
 
 > ✅: supported.
-> ⚠️: supported, but flacky.
+> ⚠️: supported, but flaky.
 > 🔜: to be supported.
 
 | Client     | Hoodi | Sepolia | Mainnet | Public ethrex L2s |
