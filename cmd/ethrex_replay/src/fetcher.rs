@@ -8,7 +8,7 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::GetWitnessError},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use eyre::WrapErr;
+use eyre::{OptionExt, WrapErr};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -103,7 +103,11 @@ pub async fn get_blockdata(
                 requested_block_number - 1
             );
             let rpc_db = RpcDB::with_cache(
-                eth_client.urls.first().unwrap().as_str(),
+                eth_client
+                    .urls
+                    .first()
+                    .ok_or_eyre("No RPC URLs configured")?
+                    .as_str(),
                 chain_config,
                 (requested_block_number - 1).try_into()?,
                 &block,
