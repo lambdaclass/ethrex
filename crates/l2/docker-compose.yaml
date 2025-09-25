@@ -19,8 +19,8 @@ services:
     volumes:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts
-      # - ../../cmd/.env:${DOCKER_ETHREX_WORKDIR}/.env
       - env:/env/
+      - ../../cmd:/host-cmd
       - ../../fixtures/genesis/l1-dev.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
@@ -58,7 +58,7 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - touch /env/.env; exec ./ethrex "$0" "$@"
+      - touch /env/.env; exec ./ethrex "$0" "$@"; cp /env/.env /host-cmd/.env
     command: >
       l2
       deploy
@@ -105,6 +105,8 @@ services:
       --no-monitor
     depends_on:
       contract_deployer:
+        condition: service_completed_successfully
+      copy_env_to_host:
         condition: service_completed_successfully
 
   # After contract deployment, copy the generated .env file with contract addresses to the host machine
