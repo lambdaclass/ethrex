@@ -16,6 +16,7 @@ use serde_json::json;
 
 use lazy_static::lazy_static;
 use sha3::Digest;
+use tracing::info;
 
 pub mod db;
 
@@ -98,7 +99,7 @@ pub async fn get_account(
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     #[serde(rename_all = "camelCase")]
     struct AccountProof {
         balance: String,
@@ -109,7 +110,7 @@ pub async fn get_account(
         account_proof: Vec<String>,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     struct StorageProof {
         key: String,
         value: String,
@@ -124,6 +125,32 @@ pub async fn get_account(
         storage_proof,
         account_proof,
     } = get_result(response.json::<serde_json::Value>().await?)?;
+
+    let mut output = String::new();
+    output.push_str(&format!(
+        "eth_getProof request: {}\n",
+        serde_json::to_string_pretty(request)?
+    ));
+    output.push_str("AccountProof:\n");
+    output.push_str(&format!("  balance: {}\n", balance));
+    output.push_str(&format!("  code_hash: {}\n", code_hash));
+    output.push_str(&format!("  nonce: {}\n", nonce));
+    output.push_str(&format!("  storage_hash: {}\n", storage_hash));
+    output.push_str("  account_proof:\n");
+    for (i, proof) in account_proof.iter().enumerate() {
+        output.push_str(&format!("    [{}]: {}\n", i, proof));
+    }
+    output.push_str("  storage_proof:\n");
+    for (i, sp) in storage_proof.iter().enumerate() {
+        output.push_str(&format!("    [{}]:\n", i));
+        output.push_str(&format!("      key: {}\n", sp.key));
+        output.push_str(&format!("      value: {}\n", sp.value));
+        output.push_str("      proof:\n");
+        for (j, p) in sp.proof.iter().enumerate() {
+            output.push_str(&format!("        [{}]: {}\n", j, p));
+        }
+    }
+    info!("{}", output);
 
     let account_proof = account_proof
         .into_iter()
