@@ -1292,7 +1292,7 @@ impl PeerHandler {
                 .push(*account);
         }
         let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
-        accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| accounts.len());
+        accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
         let chunk_size = 300;
         let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
