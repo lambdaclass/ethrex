@@ -4,13 +4,13 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, Signature,
     types::{Block, batch::Batch},
 };
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
-use keccak_hash::keccak;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::{ops::Deref as _, sync::Arc};
 

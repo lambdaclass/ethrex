@@ -6,7 +6,7 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
-use ethrex_common::utils::u256_from_big_endian_const;
+use ethrex_common::utils::{keccak, u256_from_big_endian_const};
 use ethrex_common::{
     Address, H160, H256, U256, serde_utils::bool, types::Fork, utils::u256_from_big_endian,
 };
@@ -447,7 +447,7 @@ pub fn ecrecover_sp1(
     let xy = &mut uncompressed[1..65];
 
     // keccak256(X||Y).
-    keccak256(xy);
+    let xy = keccak(xy);
 
     // Address is the last 20 bytes of the hash.
     let mut out = [0u8; 32];
