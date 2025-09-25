@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758825112467,
+  "lastUpdate": 1758826388026,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16645,6 +16645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89914459493,
             "range": "± 163093176",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bc1d7814eb8453c7eade02967aa9d46c97520340",
+          "message": "chore(l1): format elapsed time in snap sync slack message (#4649)\n\n**Examples**\n\n<img width=\"1166\" height=\"920\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/45d7cc13-2338-4bb3-a3ad-64035e336570\"\n/>\n\n<img width=\"516\" height=\"168\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/6fa0f3a9-d885-488f-b1d3-bdd6532355d7\"\n/>",
+          "timestamp": "2025-09-25T17:59:16Z",
+          "tree_id": "af2408c5a95252ea099016b46b79ba63cc899c9c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bc1d7814eb8453c7eade02967aa9d46c97520340"
+        },
+        "date": 1758826366427,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 88950232449,
+            "range": "± 694406396",
             "unit": "ns/iter"
           }
         ]
