@@ -15,15 +15,30 @@ use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
-use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
+use ethrex_levm::constants::{
+    BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, SYS_CALL_GAS_LIMIT,
+    TX_BASE_COST,
+};
 
-use revm::db::AccountStatus;
-use revm::db::states::bundle_state::BundleRetention;
+use helpers::infer_generic_tx_type;
+use revm::context::ContextTr;
+use revm::context::either::Either;
+use revm::database::AccountStatus;
+use revm::database::states::bundle_state::BundleRetention;
 
 use revm::{
-    DatabaseCommit, Evm,
-    primitives::{B256, BlobExcessGasAndPrice, BlockEnv, TxEnv},
+    DatabaseCommit,
+    context::{TxEnv, block::BlockEnv},
+    context_interface::{
+        block::blob::BlobExcessGasAndPrice,
+        transaction::{
+            AccessList as RevmAccessList, AccessListItem, Authorization as RevmAuthorization,
+            SignedAuthorization,
+        },
+    },
+    primitives::B256,
 };
+use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
 use ethrex_common::{
@@ -35,9 +50,8 @@ use ethrex_common::{
 };
 use revm_primitives::Bytes;
 use revm_primitives::{
-    AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
-    Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
-    TxKind as RevmTxKind, U256 as RevmU256, ruint::Uint,
+    Address as RevmAddress, FixedBytes, TxKind as RevmTxKind, U256 as RevmU256, hardfork::SpecId,
+    ruint::Uint,
 };
 use std::cmp::min;
 
@@ -340,24 +354,25 @@ pub fn run_without_commit(
 ) -> Result<ExecutionResult, EvmError> {
     adjust_disabled_base_fee(
         &mut block_env,
-        tx_env.gas_price,
-        tx_env.max_fee_per_blob_gas,
+        RevmU256::from_be_slice(&tx_env.gas_price.to_be_bytes()),
+        Some(RevmU256::from_be_slice(
+            &tx_env.max_fee_per_blob_gas.to_be_bytes(),
+        )),
     );
     let chain_config = state.inner.database.get_chain_config()?;
     #[allow(unused_mut)]
-    let mut evm_builder = Evm::builder()
-        .with_block_env(block_env)
-        .with_tx_env(tx_env)
-        .with_spec_id(spec_id)
-        .modify_cfg_env(|env| {
-            env.disable_base_fee = true;
-            env.disable_block_gas_limit = true;
-            env.chain_id = chain_config.chain_id;
-        });
-    let tx_result = {
-        let mut evm = evm_builder.with_db(&mut state.inner).build();
-        evm.transact().map_err(EvmError::from)?
-    };
+    let mut evm_context = revm::context::Context::mainnet()
+        .with_block(block_env)
+        .with_db(&mut state.inner);
+    evm_context.modify_cfg(|cfg| {
+        cfg.spec = spec_id;
+        cfg.disable_base_fee = true;
+        cfg.disable_block_gas_limit = true;
+        cfg.chain_id = chain_config.chain_id;
+    });
+    let mut evm = evm_context.build_mainnet();
+
+    let tx_result = { evm.transact(tx_env).map_err(EvmError::from)? };
     Ok(tx_result.result.into())
 }
 
@@ -372,14 +387,15 @@ fn run_evm(
     let tx_result = {
         let chain_spec = state.database.get_chain_config()?;
         #[allow(unused_mut)]
-        let mut evm_builder = Evm::builder()
-            .with_block_env(block_env)
-            .with_tx_env(tx_env)
-            .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-            .with_spec_id(spec_id);
-
-        let mut evm = evm_builder.with_db(state).build();
-        evm.transact_commit().map_err(EvmError::from)?
+        let mut evm_context = revm::context::Context::mainnet()
+            .with_block(block_env)
+            .with_db(state);
+        evm_context.modify_cfg(|cfg| {
+            cfg.spec = spec_id;
+            cfg.chain_id = chain_spec.chain_id;
+        });
+        let mut evm = evm_context.build_mainnet();
+        evm.transact_commit(tx_env).map_err(EvmError::from)?
     };
     Ok(tx_result.into())
 }
@@ -387,15 +403,19 @@ fn run_evm(
 pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
     BlockEnv {
         number: RevmU256::from(header.number),
-        coinbase: RevmAddress(header.coinbase.0.into()),
+        beneficiary: RevmAddress(header.coinbase.0.into()),
         timestamp: RevmU256::from(header.timestamp),
-        gas_limit: RevmU256::from(header.gas_limit),
-        basefee: RevmU256::from(header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE)),
+        gas_limit: header.gas_limit,
+        basefee: header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
         difficulty: RevmU256::from_limbs(header.difficulty.0),
         prevrandao: Some(header.prev_randao.as_fixed_bytes().into()),
         blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(
             header.excess_blob_gas.unwrap_or_default(),
-            spec_id >= SpecId::PRAGUE,
+            if spec_id >= SpecId::PRAGUE {
+                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+            } else {
+                BLOB_BASE_FEE_UPDATE_FRACTION
+            },
         )),
     }
 }
@@ -403,70 +423,75 @@ pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
 // Used for the L2
 pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
-    let max_fee_per_blob_gas = tx
-        .max_fee_per_blob_gas()
-        .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: RevmAddress(sender.0.into()),
         gas_limit: tx.gas_limit(),
-        gas_price: RevmU256::from(tx.gas_price()),
-        transact_to: match tx.to() {
-            TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
-            TxKind::Create => RevmTxKind::Create,
-        },
+        gas_price: tx.gas_price() as u128,
         value: RevmU256::from_limbs(tx.value().0),
         data: match tx {
             Transaction::PrivilegedL2Transaction(_tx) => DEPOSIT_MAGIC_DATA.into(),
             _ => tx.data().clone().into(),
         },
-        nonce: Some(tx.nonce()),
+        nonce: tx.nonce(),
         chain_id: tx.chain_id(),
-        access_list: tx
-            .access_list()
-            .iter()
-            .map(|(addr, list)| {
-                let (address, storage_keys) = (
-                    RevmAddress(addr.0.into()),
-                    list.iter()
-                        .map(|a| FixedBytes::from_slice(a.as_bytes()))
-                        .collect(),
-                );
-                AccessListItem {
-                    address,
-                    storage_keys,
-                }
-            })
-            .collect(),
-        gas_priority_fee: tx.max_priority_fee().map(RevmU256::from),
+        access_list: RevmAccessList(
+            tx.access_list()
+                .iter()
+                .map(|(addr, list)| {
+                    let (address, storage_keys) = (
+                        RevmAddress(addr.0.into()),
+                        list.iter()
+                            .map(|a| FixedBytes::from_slice(a.as_bytes()))
+                            .collect(),
+                    );
+                    AccessListItem {
+                        address,
+                        storage_keys,
+                    }
+                })
+                .collect(),
+        ),
+        gas_priority_fee: tx.max_priority_fee().map(Into::<u128>::into),
         blob_hashes: tx
             .blob_versioned_hashes()
             .into_iter()
             .map(|hash| B256::from(hash.0))
             .collect(),
-        max_fee_per_blob_gas,
+        max_fee_per_blob_gas: tx
+            .max_fee_per_blob_gas()
+            .unwrap_or_default()
+            .try_into()
+            .unwrap_or_default(),
         // EIP7702
         // https://eips.ethereum.org/EIPS/eip-7702
         // The latest version of revm(19.3.0) is needed to run with the latest changes.
         // NOTE:
         // - rust 1.82.X is needed
         // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
-        authorization_list: tx.authorization_list().map(|list| {
-            list.iter()
-                .map(|auth_t| {
-                    SignedAuthorization::new_unchecked(
-                        RevmAuthorization {
-                            chain_id: RevmU256::from_limbs(auth_t.chain_id.0),
-                            address: RevmAddress(auth_t.address.0.into()),
-                            nonce: auth_t.nonce,
-                        },
-                        auth_t.y_parity.as_u32() as u8,
-                        RevmU256::from_le_bytes(auth_t.r_signature.to_little_endian()),
-                        RevmU256::from_le_bytes(auth_t.s_signature.to_little_endian()),
-                    )
-                })
-                .collect::<Vec<SignedAuthorization>>()
-                .into()
-        }),
+        authorization_list: tx
+            .authorization_list()
+            .map(|list| {
+                list.iter()
+                    .map(|auth_t| {
+                        Either::Left(SignedAuthorization::new_unchecked(
+                            RevmAuthorization {
+                                chain_id: RevmU256::from_limbs(auth_t.chain_id.0),
+                                address: RevmAddress(auth_t.address.0.into()),
+                                nonce: auth_t.nonce,
+                            },
+                            auth_t.y_parity.as_u32() as u8,
+                            RevmU256::from_le_bytes(auth_t.r_signature.to_little_endian()),
+                            RevmU256::from_le_bytes(auth_t.s_signature.to_little_endian()),
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        tx_type: tx.tx_type() as u8,
+        kind: match tx.to() {
+            TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
+            TxKind::Create => RevmTxKind::Create,
+        },
     }
 }
 
@@ -477,84 +502,95 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
         caller: RevmAddress(tx.from.0.into()),
         gas_limit: tx.gas.unwrap_or(u64::MAX), // Ensure tx doesn't fail due to gas limit
         gas_price,
-        transact_to: match tx.to {
+        kind: match tx.to {
             TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
             TxKind::Create => RevmTxKind::Create,
         },
         value: RevmU256::from_limbs(tx.value.0),
         data: tx.input.clone().into(),
-        nonce: tx.nonce,
+        nonce: tx.nonce.unwrap_or_default(),
         chain_id: tx.chain_id,
-        access_list: tx
-            .access_list
-            .iter()
-            .map(|list| {
-                let (address, storage_keys) = (
-                    RevmAddress::from_slice(list.address.as_bytes()),
-                    list.storage_keys
-                        .iter()
-                        .map(|a| FixedBytes::from_slice(a.as_bytes()))
-                        .collect(),
-                );
-                AccessListItem {
-                    address,
-                    storage_keys,
-                }
-            })
-            .collect(),
-        gas_priority_fee: tx.max_priority_fee_per_gas.map(RevmU256::from),
+        access_list: RevmAccessList(
+            tx.access_list
+                .iter()
+                .map(|list| {
+                    let (address, storage_keys) = (
+                        RevmAddress::from_slice(list.address.as_bytes()),
+                        list.storage_keys
+                            .iter()
+                            .map(|a| FixedBytes::from_slice(a.as_bytes()))
+                            .collect(),
+                    );
+                    AccessListItem {
+                        address,
+                        storage_keys,
+                    }
+                })
+                .collect(),
+        ),
+        gas_priority_fee: tx.max_priority_fee_per_gas.map(Into::<u128>::into),
         blob_hashes: tx
             .blob_versioned_hashes
             .iter()
             .map(|hash| B256::from(hash.0))
             .collect(),
-        max_fee_per_blob_gas: tx.max_fee_per_blob_gas.map(|x| RevmU256::from_limbs(x.0)),
+        max_fee_per_blob_gas: tx
+            .max_fee_per_blob_gas
+            .unwrap_or_default()
+            .try_into()
+            .unwrap_or_default(),
         // EIP7702
         // https://eips.ethereum.org/EIPS/eip-7702
         // The latest version of revm(19.3.0) is needed to run with the latest changes.
         // NOTE:
         // - rust 1.82.X is needed
         // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
-        authorization_list: tx.authorization_list.clone().map(|list| {
-            list.into_iter()
-                .map(|auth_t| {
-                    SignedAuthorization::new_unchecked(
-                        RevmAuthorization {
-                            chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
-                            address: RevmAddress(auth_t.address.0.into()),
-                            nonce: auth_t.nonce,
-                        },
-                        auth_t.y_parity.as_u32() as u8,
-                        RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
-                        RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
-                    )
-                })
-                .collect::<Vec<SignedAuthorization>>()
-                .into()
-        }),
+        authorization_list: tx
+            .authorization_list
+            .clone()
+            .map(|list| {
+                list.into_iter()
+                    .map(|auth_t| {
+                        Either::Left(SignedAuthorization::new_unchecked(
+                            RevmAuthorization {
+                                chain_id: RevmU256::from_le_bytes(
+                                    auth_t.chain_id.to_little_endian(),
+                                ),
+                                address: RevmAddress(auth_t.address.0.into()),
+                                nonce: auth_t.nonce,
+                            },
+                            auth_t.y_parity.as_u32() as u8,
+                            RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
+                            RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        tx_type: infer_generic_tx_type(tx) as u8,
     }
 }
 
 // Creates an AccessListInspector that will collect the accesses used by the evm execution
 pub(crate) fn access_list_inspector(tx_env: &TxEnv) -> Result<AccessListInspector, EvmError> {
     // Access list provided by the transaction
-    let current_access_list = RevmAccessList(tx_env.access_list.clone());
+    let current_access_list = tx_env.access_list.clone();
     // Addresses accessed when using precompiles
     Ok(AccessListInspector::new(current_access_list))
 }
 
 /// Calculating gas_price according to EIP-1559 rules
 /// See https://github.com/ethereum/go-ethereum/blob/7ee9a6e89f59cee21b5852f5f6ffa2bcfc05a25f/internal/ethapi/transaction_args.go#L430
-fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> Uint<256, 4> {
+fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> u128 {
     if tx.gas_price != 0 {
         // Legacy gas field was specified, use it
-        RevmU256::from(tx.gas_price)
+        tx.gas_price as u128
     } else {
         // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
-        RevmU256::from(min(
-            tx.max_priority_fee_per_gas.unwrap_or(0) + basefee,
-            tx.max_fee_per_gas.unwrap_or(0),
-        ))
+        min(
+            tx.max_priority_fee_per_gas.unwrap_or(0) as u128 + basefee as u128,
+            tx.max_fee_per_gas.unwrap_or(0) as u128,
+        )
     }
 }
 
@@ -567,7 +603,7 @@ fn adjust_disabled_base_fee(
     tx_blob_gas_price: Option<Uint<256, 4>>,
 ) {
     if tx_gas_price == RevmU256::from(0) {
-        block_env.basefee = RevmU256::from(0);
+        block_env.basefee = 0;
     }
     if tx_blob_gas_price.is_some_and(|v| v == RevmU256::from(0)) {
         block_env.blob_excess_gas_and_price = None;
@@ -585,7 +621,7 @@ pub(crate) fn generic_system_contract_revm(
     let spec_id = spec_id(&state.database.get_chain_config()?, block_header.timestamp);
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
-        transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
+        kind: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
         gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
@@ -593,22 +629,22 @@ pub(crate) fn generic_system_contract_revm(
         ..Default::default()
     };
     let mut block_env = block_env(block_header, spec_id);
-    block_env.basefee = RevmU256::ZERO;
-    block_env.gas_limit = RevmU256::from(u64::MAX); // System calls, have no constraint on the block's gas limit.
+    block_env.basefee = 0;
+    block_env.gas_limit = u64::MAX; // System calls, have no constraint on the block's gas limit.
 
-    let mut evm = Evm::builder()
-        .with_db(state)
-        .with_block_env(block_env)
-        .with_tx_env(tx_env)
-        .with_spec_id(spec_id)
-        .build();
+    let mut evm_context = revm::context::Context::mainnet()
+        .with_block(block_env)
+        .with_db(state);
+    evm_context.modify_cfg(|cfg| {
+        cfg.spec = spec_id;
+    });
+    let mut evm = evm_context.build_mainnet();
 
-    let transaction_result = evm.transact()?;
+    let transaction_result = evm.transact(tx_env)?;
     let mut result_state = transaction_result.state;
     result_state.remove(SYSTEM_ADDRESS.as_ref());
-    result_state.remove(&evm.block().coinbase);
-
-    evm.context.evm.db.commit(result_state);
+    result_state.remove(&evm.block.beneficiary);
+    evm.db_mut().commit(result_state);
 
     Ok(transaction_result.result.into())
 }

@@ -239,6 +239,10 @@ impl RpcHandler for GetTransactionByHashRequest {
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
+        debug!(
+            "Requested transaction with hash: {:#x}",
+            self.transaction_hash,
+        );
         let transaction = if let Some((block_number, block_hash, index)) = storage
             .get_transaction_location(self.transaction_hash)
             .await?

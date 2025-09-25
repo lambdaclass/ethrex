@@ -2,6 +2,8 @@
 name = "ethrex-prover"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 serde_json.workspace = true
@@ -36,8 +38,8 @@ ethrex-sdk.workspace = true
 
 guest_program = { path = "./src/guest_program", default-features = false }
 
-risc0-zkvm = { version = "=2.3.1", optional = true }
-risc0-zkp = { version = "=2.0.2", optional = true }
+risc0-zkvm = { version = "=3.0.3", optional = true }
+risc0-zkp = { version = "=3.0.2", optional = true }
 
 sp1-sdk = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }

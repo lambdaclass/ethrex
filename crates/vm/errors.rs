@@ -1,5 +1,5 @@
 #[cfg(feature = "revm")]
-use revm::primitives::result::EVMError as RevmError;
+use revm::context_interface::result::EVMError as RevmError;
 #[cfg(feature = "revm")]
 use std::fmt::Display;
 
@@ -34,7 +34,6 @@ impl<E: Display> From<RevmError<E>> for EvmError {
             RevmError::Header(err) => EvmError::Header(err.to_string()),
             RevmError::Database(err) => EvmError::DB(err.to_string()),
             RevmError::Custom(err) => EvmError::Custom(err),
-            RevmError::Precompile(err) => EvmError::Precompile(err),
         }
     }
 }

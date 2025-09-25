@@ -45,7 +45,8 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
 
     //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
     //EIPs should be added as strings in the format 'eip-XXXX'
-    let fusaka_eips_to_test: Vec<&str> = vec!["eip-7594", "eip-7939", "eip-7883"];
+    let fusaka_eips_to_test: Vec<&str> =
+        vec!["eip-7594", "eip-7939", "eip-7918", "eip-7892", "eip-7883"];
 
     for test in tests {
         let test_eip = test._info.clone().reference_spec.unwrap_or_default();
@@ -109,9 +110,9 @@ pub async fn run_test(
 
         print!(
             "\rTotal tests ran: {} - Total passed: {} - Total failed: {}",
-            format!("{}", total_run).blue(),
-            format!("{}", passing_tests).green(),
-            format!("{}", failing_tests).red()
+            format!("{total_run}").blue(),
+            format!("{passing_tests}").green(),
+            format!("{failing_tests}").red()
         );
     }
     add_test_to_report((test, failing_test_cases))?;

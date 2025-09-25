@@ -654,7 +654,8 @@ fn get_block_from_payload(
     requests_hash: Option<H256>,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
-    info!("Received new payload with block hash: {block_hash:#x}");
+    let block_number = payload.block_number;
+    info!(%block_hash, %block_number, "Received new payload");
 
     payload
         .clone()
@@ -678,6 +679,7 @@ async fn try_execute_payload(
     latest_valid_hash: H256,
 ) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
+    let block_number = block.header.number;
     let storage = &context.storage;
     // Return the valid message directly if we have it.
     if storage.get_block_by_hash(block_hash).await?.is_some() {
@@ -685,7 +687,7 @@ async fn try_execute_payload(
     }
 
     // Execute and store the block
-    info!("Executing payload with block hash: {block_hash:#x}");
+    info!(%block_hash, %block_number, "Executing payload");
 
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {

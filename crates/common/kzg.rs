@@ -44,11 +44,11 @@ pub fn verify_blob_kzg_proof(
     }
     #[cfg(feature = "c-kzg")]
     {
-        c_kzg::KzgProof::verify_blob_kzg_proof(
+        c_kzg::KzgSettings::verify_blob_kzg_proof(
+            c_kzg::ethereum_kzg_settings(8),
             &blob.into(),
             &commitment.into(),
             &proof.into(),
-            c_kzg::ethereum_kzg_settings(),
         )
         .map_err(KzgError::from)
     }
@@ -74,12 +74,12 @@ pub fn verify_kzg_proof(
     }
     #[cfg(feature = "c-kzg")]
     {
-        c_kzg::KzgProof::verify_kzg_proof(
+        c_kzg::KzgSettings::verify_kzg_proof(
+            c_kzg::ethereum_kzg_settings(8),
             &commitment_bytes.into(),
             &z.into(),
             &y.into(),
             &proof_bytes.into(),
-            c_kzg::ethereum_kzg_settings(),
         )
         .map_err(KzgError::from)
     }
@@ -90,13 +90,13 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
     let blob: c_kzg::Blob = (*blob).into();
 
     let commitment =
-        c_kzg::KzgCommitment::blob_to_kzg_commitment(&blob, c_kzg::ethereum_kzg_settings())?;
+        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(8), &blob)?;
     let commitment_bytes = commitment.to_bytes();
 
-    let proof = c_kzg::KzgProof::compute_blob_kzg_proof(
+    let proof = c_kzg::KzgSettings::compute_blob_kzg_proof(
+        c_kzg::ethereum_kzg_settings(8),
         &blob,
         &commitment_bytes,
-        c_kzg::ethereum_kzg_settings(),
     )?;
 
     let proof_bytes = proof.to_bytes();

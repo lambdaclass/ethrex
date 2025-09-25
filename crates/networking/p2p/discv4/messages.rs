@@ -15,8 +15,9 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
+use std::{convert::Into, io::ErrorKind};
 
-#[derive(Debug, PartialEq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum PacketDecodeErr {
     #[error("RLP decoding error")]
     RLPDecodeError(#[from] RLPDecodeError),
@@ -26,6 +27,16 @@ pub enum PacketDecodeErr {
     HashMismatch,
     #[error("Invalid signature")]
     InvalidSignature,
+    #[error("Discv4 decoding error: {0}")]
+    Discv4DecodingError(String),
+    #[error("Io Error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
+impl From<PacketDecodeErr> for std::io::Error {
+    fn from(error: PacketDecodeErr) -> Self {
+        std::io::Error::new(ErrorKind::InvalidData, error.to_string())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +73,7 @@ impl Packet {
 
         let digest: [u8; 32] = Keccak256::digest(encoded_msg).into();
 
-        let rid = RecoveryId::from_i32(signature_bytes[64].into())
+        let rid = RecoveryId::try_from(signature_bytes[64] as i32)
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
 
         let peer_pk = secp256k1::SECP256K1
@@ -149,7 +160,7 @@ impl Message {
             .serialize_compact();
 
         data[..signature_size - 1].copy_from_slice(&signature);
-        data[signature_size - 1] = recovery_id.to_i32() as u8;
+        data[signature_size - 1] = Into::<i32>::into(recovery_id) as u8;
 
         let hash = Keccak256::digest(&data[..]);
         buf.put_slice(&hash);
@@ -1044,7 +1055,10 @@ mod tests {
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
-        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+        assert!(matches!(
+            decoded_packet.err().unwrap(),
+            PacketDecodeErr::InvalidSignature
+        ));
     }
 
     #[test]
@@ -1080,6 +1094,9 @@ mod tests {
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
-        assert!(decoded_packet.err().unwrap() == PacketDecodeErr::InvalidSignature);
+        assert!(matches!(
+            decoded_packet.err().unwrap(),
+            PacketDecodeErr::InvalidSignature
+        ));
     }
 }

@@ -1,19 +1,23 @@
 use std::collections::HashSet;
 
-use ethrex_common::tracing::{CallLog, CallTrace, CallTraceFrame, CallType};
-use ethrex_common::types::{BlockHeader, Transaction};
-use ethrex_common::{Address, H256, U256, types::Block};
-use revm::{Evm, inspector_handle_register};
-use revm_inspectors::tracing::{
-    CallTraceArena, TracingInspectorConfig,
-    types::{CallKind, CallLog as RevmCallLog, CallTraceNode},
-};
-use revm_primitives::{BlockEnv, ExecutionResult as RevmExecutionResult, SpecId, TxEnv};
-
 use crate::{
     EvmError,
     backends::revm::{helpers::spec_id, run_evm},
 };
+use ethrex_common::tracing::{CallLog, CallTrace, CallTraceFrame, CallType};
+use ethrex_common::types::{BlockHeader, Transaction};
+use ethrex_common::{Address, H256, U256, types::Block};
+use revm::{ExecuteCommitEvm, MainBuilder, MainContext};
+use revm::{
+    context::{BlockEnv, TxEnv},
+    context_interface::result::ExecutionResult as RevmExecutionResult,
+};
+use revm_inspectors::tracing::TracingInspector;
+use revm_inspectors::tracing::{
+    CallTraceArena, TracingInspectorConfig,
+    types::{CallKind, CallLog as RevmCallLog, CallTraceNode},
+};
+use revm_primitives::hardfork::SpecId;
 
 use super::{REVM, block_env, db::EvmState, tx_env};
 
@@ -98,18 +102,17 @@ fn run_evm_with_call_tracer(
             record_logs: with_log,
             ..Default::default()
         };
-        let evm_builder = Evm::builder()
-            .with_block_env(block_env)
-            .with_tx_env(tx_env)
-            .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-            .with_spec_id(spec_id)
-            .with_external_context(revm_inspectors::tracing::TracingInspector::new(config));
-        let mut evm = evm_builder
-            .with_db(&mut state.inner)
-            .append_handler_register(inspector_handle_register)
-            .build();
-        let res = evm.transact_commit()?;
-        let trace = evm.into_context().external.into_traces();
+        let inspector = TracingInspector::new(config);
+        let mut evm_context = revm::context::Context::mainnet()
+            .with_block(block_env)
+            .with_db(&mut state.inner);
+        evm_context.modify_cfg(|cfg| {
+            cfg.spec = spec_id;
+            cfg.chain_id = chain_spec.chain_id;
+        });
+        let mut evm = evm_context.build_mainnet_with_inspector(inspector);
+        let res = evm.transact_commit(tx_env)?;
+        let trace = evm.inspector.into_traces();
         (trace, res)
     };
     let revert_reason_or_error = result_to_err_or_revert_string(result);
@@ -201,12 +204,10 @@ fn map_call(
         output: revm_call.trace.output.0.clone(),
         error: revm_call
             .status()
-            .is_error()
-            .then(|| revert_reason_or_error.clone()),
+            .and_then(|status| status.is_error().then(|| revert_reason_or_error.clone())),
         revert_reason: revm_call
             .status()
-            .is_revert()
-            .then(|| revert_reason_or_error.clone()),
+            .and_then(|status| status.is_revert().then(|| revert_reason_or_error.clone())),
         calls: subcalls,
         logs: revm_call
             .logs
@@ -225,7 +226,6 @@ fn map_call_type(revm_call_type: CallKind) -> CallType {
         CallKind::AuthCall => CallType::CALL, //TODO: check this
         CallKind::Create => CallType::CREATE,
         CallKind::Create2 => CallType::CREATE2,
-        CallKind::EOFCreate => CallType::CREATE, //TODO: check this
     }
 }
 

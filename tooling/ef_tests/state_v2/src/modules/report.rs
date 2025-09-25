@@ -46,7 +46,7 @@ pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostChe
     report.write_all(content.as_bytes()).unwrap();
 
     for check_result in failing_test_cases {
-        let content = format!("\n{}", check_result);
+        let content = format!("\n{check_result}");
         report.write_all(content.as_bytes()).unwrap();
     }
     let dividing_line = "-----------------------------------------------------\n\n".to_string();
@@ -64,8 +64,7 @@ impl fmt::Display for PostCheckResult {
             let (expected_root, actual_root) = root_mismatch;
             writeln!(
                 f,
-                "  ERR - ROOT MISMATCH:\n    Expected root: {:?}\n    Actual   root: {:?}",
-                expected_root, actual_root
+                "  ERR - ROOT MISMATCH:\n    Expected root: {expected_root:?}\n    Actual   root: {actual_root:?}"
             )?;
         }
 
@@ -73,8 +72,7 @@ impl fmt::Display for PostCheckResult {
             let (expected_exception, actual_exception) = exception_diff;
             writeln!(
                 f,
-                "  ERR - EXCEPTION MISMATCH:\n    Expected exception: {:?}\n    Actual   exception: {:?}",
-                expected_exception, actual_exception
+                "  ERR - EXCEPTION MISMATCH:\n    Expected exception: {expected_exception:?}\n    Actual   exception: {actual_exception:?}"
             )?;
         }
 
@@ -82,8 +80,7 @@ impl fmt::Display for PostCheckResult {
             let (expected_log_hash, actual_log_hash) = logs_mismatch;
             writeln!(
                 f,
-                "  ERR - LOGS MISMATCH:\n    Expected logs hash: {:?}\n    Actual   logs hash: {:?}",
-                expected_log_hash, actual_log_hash
+                "  ERR - LOGS MISMATCH:\n    Expected logs hash: {expected_log_hash:?}\n    Actual   logs hash: {actual_log_hash:?}"
             )?;
         }
 
@@ -104,16 +101,14 @@ impl fmt::Display for PostCheckResult {
                     };
                     writeln!(
                         f,
-                        "     Expected balance: {:?}\n     Actual   balance: {:?}\n     Difference: {}{:?}\n",
-                        expected_balance, actual_balance, difference_sign, net_difference
+                        "     Expected balance: {expected_balance:?}\n     Actual   balance: {actual_balance:?}\n     Difference: {difference_sign}{net_difference:?}\n"
                     )?;
                 }
                 if let Some(nonce_diff) = acc_mismatch.nonce_diff {
                     let (expected_nonce, actual_nonce) = nonce_diff;
                     writeln!(
                         f,
-                        "     Expected nonce: {:?}\n     Actual   nonce: {:?}\n",
-                        expected_nonce, actual_nonce
+                        "     Expected nonce: {expected_nonce:?}\n     Actual   nonce: {actual_nonce:?}\n"
                     )?;
                 }
                 if let Some(code_diff) = acc_mismatch.code_diff {
@@ -130,8 +125,7 @@ impl fmt::Display for PostCheckResult {
                     let (expected_storage, actual_storage) = storage_diff;
                     writeln!(
                         f,
-                        "     Expected storage: {:?}\n     Actual   storage: {:?}",
-                        expected_storage, actual_storage
+                        "     Expected storage: {expected_storage:?}\n     Actual   storage: {actual_storage:?}"
                     )?;
                 }
             }

@@ -3,6 +3,8 @@ use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
+#[cfg(feature = "rocksdb")]
+use crate::store_db::rocksdb::Store as RocksDBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -18,12 +20,12 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::fmt::Debug;
 use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
+use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -33,19 +35,20 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<dyn StoreEngine>,
-    chain_config: Arc<RwLock<ChainConfig>>,
-    latest_block_header: Arc<RwLock<BlockHeader>>,
+    pub engine: Arc<dyn StoreEngine>,
+    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
     #[cfg(feature = "libmdbx")]
     Libmdbx,
+    #[cfg(feature = "rocksdb")]
+    RocksDB,
 }
 
 pub struct UpdateBatch {
@@ -75,9 +78,16 @@ impl Store {
         self.engine.apply_updates(update_batch).await
     }
 
-    pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
-        info!(engine = ?engine_type, path = %path, "Opening storage engine");
+    pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
+        let path = path.as_ref();
+        info!(engine = ?engine_type, ?path, "Opening storage engine");
         let store = match engine_type {
+            #[cfg(feature = "rocksdb")]
+            EngineType::RocksDB => Self {
+                engine: Arc::new(RocksDBStore::new(path)?),
+                chain_config: Default::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+            },
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
@@ -95,7 +105,7 @@ impl Store {
     }
 
     pub async fn new_from_genesis(
-        store_path: &str,
+        store_path: &Path,
         engine_type: EngineType,
         genesis_path: &str,
     ) -> Result<Self, StoreError> {
@@ -129,9 +139,11 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
+
         let account_state = AccountState::decode(&encoded_state)?;
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
@@ -189,14 +201,16 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        let latest = self
-            .latest_block_header
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        if block_hash == latest.hash() {
-            return Ok(Some(latest));
+        {
+            let latest = self
+                .latest_block_header
+                .read()
+                .map_err(|_| StoreError::LockError)?;
+            if block_hash == latest.hash() {
+                return Ok(Some(latest.clone()));
+            }
         }
+
         self.engine.get_block_header_by_hash(block_hash)
     }
 
@@ -929,18 +943,48 @@ impl Store {
 
     // Returns an iterator across all accounts in the state trie given by the state_root
     // Does not check that the state_root is valid
+    pub fn iter_accounts_from(
+        &self,
+        state_root: H256,
+        starting_address: H256,
+    ) -> Result<impl Iterator<Item = (H256, AccountState)>, StoreError> {
+        let mut iter = self.engine.open_locked_state_trie(state_root)?.into_iter();
+        iter.advance(starting_address.0.to_vec())?;
+        Ok(iter.content().map_while(|(path, value)| {
+            Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
+        }))
+    }
+
+    // Returns an iterator across all accounts in the state trie given by the state_root
+    // Does not check that the state_root is valid
     pub fn iter_accounts(
         &self,
         state_root: H256,
     ) -> Result<impl Iterator<Item = (H256, AccountState)>, StoreError> {
-        Ok(self
+        self.iter_accounts_from(state_root, H256::zero())
+    }
+
+    // Returns an iterator across all accounts in the state trie given by the state_root
+    // Does not check that the state_root is valid
+    pub fn iter_storage_from(
+        &self,
+        state_root: H256,
+        hashed_address: H256,
+        starting_slot: H256,
+    ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
+        let state_trie = self.engine.open_locked_state_trie(state_root)?;
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
+        let mut iter = self
             .engine
-            .open_locked_state_trie(state_root)?
-            .into_iter()
-            .content()
-            .map_while(|(path, value)| {
-                Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
-            }))
+            .open_locked_storage_trie(hashed_address, storage_root)?
+            .into_iter();
+        iter.advance(starting_slot.0.to_vec())?;
+        Ok(Some(iter.content().map_while(|(path, value)| {
+            Some((H256::from_slice(&path), U256::decode(&value).ok()?))
+        })))
     }
 
     // Returns an iterator across all accounts in the state trie given by the state_root
@@ -950,20 +994,7 @@ impl Store {
         state_root: H256,
         hashed_address: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
-        let state_trie = self.engine.open_locked_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
-            return Ok(None);
-        };
-        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
-        Ok(Some(
-            self.engine
-                .open_locked_storage_trie(hashed_address, storage_root)?
-                .into_iter()
-                .content()
-                .map_while(|(path, value)| {
-                    Some((H256::from_slice(&path), U256::decode(&value).ok()?))
-                }),
-        ))
+        self.iter_storage_from(state_root, hashed_address, H256::zero())
     }
 
     pub fn get_account_range_proof(
@@ -1165,30 +1196,6 @@ impl Store {
         self.engine.get_state_heal_paths().await
     }
 
-    /// Write a storage batch into the current storage snapshot
-    pub async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
-            .await
-    }
-
-    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
-    pub async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
-            .await
-    }
-
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     pub async fn set_state_trie_rebuild_checkpoint(
         &self,
@@ -1224,15 +1231,6 @@ impl Store {
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.engine.clear_snap_state().await
-    }
-
-    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
-    pub async fn read_storage_snapshot(
-        &self,
-        account_hash: H256,
-        start: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        self.engine.read_storage_snapshot(account_hash, start).await
     }
 
     /// Fetches the latest valid ancestor for a block that was previously marked as invalid
@@ -1335,6 +1333,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
+
 fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
@@ -1374,6 +1373,12 @@ mod tests {
         test_store_suite(EngineType::Libmdbx).await;
     }
 
+    #[cfg(feature = "rocksdb")]
+    #[tokio::test]
+    async fn test_rocksdb_store() {
+        test_store_suite(EngineType::RocksDB).await;
+    }
+
     // Creates an empty store, runs the test and then removes the store (if needed)
     async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
     where
@@ -1404,6 +1409,77 @@ mod tests {
         run_test(test_store_block_tags, engine_type).await;
         run_test(test_chain_config_storage, engine_type).await;
         run_test(test_genesis_block, engine_type).await;
+        run_test(test_iter_accounts, engine_type).await;
+        run_test(test_iter_storage, engine_type).await;
+    }
+
+    async fn test_iter_accounts(store: Store) {
+        let mut accounts: Vec<_> = (0u64..1_000)
+            .map(|i| {
+                (
+                    H256(Keccak256::digest(i.to_be_bytes()).into()),
+                    AccountState {
+                        nonce: 2 * i,
+                        balance: U256::from(3 * i),
+                        code_hash: *EMPTY_KECCACK_HASH,
+                        storage_root: *EMPTY_TRIE_HASH,
+                    },
+                )
+            })
+            .collect();
+        accounts.sort_by_key(|a| a.0);
+        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        for (address, state) in &accounts {
+            trie.insert(address.0.to_vec(), state.encode_to_vec())
+                .unwrap();
+        }
+        let state_root = trie.hash().unwrap();
+        let pivot = H256::random();
+        let pos = accounts.partition_point(|(key, _)| key < &pivot);
+        let account_iter = store.iter_accounts_from(state_root, pivot).unwrap();
+        for (expected, actual) in std::iter::zip(accounts.drain(pos..), account_iter) {
+            assert_eq!(expected, actual);
+        }
+    }
+
+    async fn test_iter_storage(store: Store) {
+        let address = H256(Keccak256::digest(12345u64.to_be_bytes()).into());
+        let mut slots: Vec<_> = (0u64..1_000)
+            .map(|i| {
+                (
+                    H256(Keccak256::digest(i.to_be_bytes()).into()),
+                    U256::from(2 * i),
+                )
+            })
+            .collect();
+        slots.sort_by_key(|a| a.0);
+        let mut trie = store.open_storage_trie(address, *EMPTY_TRIE_HASH).unwrap();
+        for (slot, value) in &slots {
+            trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
+        }
+        let storage_root = trie.hash().unwrap();
+        let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        trie.insert(
+            address.0.to_vec(),
+            AccountState {
+                nonce: 1,
+                balance: U256::zero(),
+                storage_root,
+                code_hash: *EMPTY_KECCACK_HASH,
+            }
+            .encode_to_vec(),
+        )
+        .unwrap();
+        let state_root = trie.hash().unwrap();
+        let pivot = H256::random();
+        let pos = slots.partition_point(|(key, _)| key < &pivot);
+        let storage_iter = store
+            .iter_storage_from(state_root, address, pivot)
+            .unwrap()
+            .unwrap();
+        for (expected, actual) in std::iter::zip(slots.drain(pos..), storage_iter) {
+            assert_eq!(expected, actual);
+        }
     }
 
     async fn test_genesis_block(store: Store) {

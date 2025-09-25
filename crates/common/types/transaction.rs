@@ -1281,7 +1281,7 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
     let signature_bytes = signature.to_fixed_bytes();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes[..64],
-        RecoveryId::from_i32(signature_bytes[64] as i32)?, // cannot fail
+        RecoveryId::try_from(signature_bytes[64] as i32)?, // cannot fail
     )?;
     // Recover public key
     let public = secp256k1::SECP256K1

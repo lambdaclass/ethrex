@@ -1,7 +1,9 @@
 [package]
 name = "ethrex-vm"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
@@ -20,21 +22,22 @@ cfg-if.workspace = true
 tracing.workspace = true
 serde.workspace = true
 sha3.workspace = true
+rkyv.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"
 
 ethereum-types.workspace = true
 
-revm = { version = "19.0.0", features = [
+revm = { version = "29.0.0", features = [
     "serde",
     "std",
     "serde-json",
     "optional_no_base_fee",
     "optional_block_gas_limit",
 ], default-features = false, optional = true }
-revm-inspectors = { version = "0.15.0", optional = true }
-revm-primitives = { version = "15.2.0", features = [
+revm-inspectors = { version = "0.29.2", optional = true }
+revm-primitives = { version = "20.2.1", features = [
     "std",
 ], default-features = false, optional = true }
 

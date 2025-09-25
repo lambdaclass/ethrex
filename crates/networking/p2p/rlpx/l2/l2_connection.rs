@@ -128,8 +128,7 @@ pub(crate) async fn handle_l2_broadcast(
         msg @ Message::L2(L2Message::BatchSealed(_)) => send(state, msg.clone()).await,
         msg @ Message::L2(L2Message::NewBlock(_)) => send(state, msg.clone()).await,
         _ => Err(RLPxError::BroadcastError(format!(
-            "Message {:?} is not a valid L2 message for broadcast",
-            l2_msg
+            "Message {l2_msg:?} is not a valid L2 message for broadcast"
         )))?,
     }
 }
@@ -171,8 +170,7 @@ pub(crate) fn broadcast_l2_message(state: &Established, l2_msg: Message) -> Resu
             Ok(())
         }
         _ => Err(RLPxError::BroadcastError(format!(
-            "Message {:?} is not a valid L2 message for broadcast",
-            l2_msg
+            "Message {l2_msg:?} is not a valid L2 message for broadcast"
         ))),
     }
 }
@@ -219,11 +217,12 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                             &l2_state.committer_key,
                         )
                         .serialize_compact();
-                    let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
-                        RLPxError::InternalError(format!(
-                            "Failed to convert recovery id to u8: {e}. This is a bug."
-                        ))
-                    })?;
+                    let recovery_id: u8 =
+                        Into::<i32>::into(recovery_id).try_into().map_err(|e| {
+                            RLPxError::InternalError(format!(
+                                "Failed to convert recovery id to u8: {e}. This is a bug."
+                            ))
+                        })?;
                     let mut sig = [0u8; 65];
                     sig[..64].copy_from_slice(&signature);
                     sig[64] = recovery_id;
@@ -274,13 +273,18 @@ async fn should_process_new_block(
 
     let block_hash = msg.block.hash();
 
-    let recovered_lead_sequencer = recover_address(msg.signature, block_hash).map_err(|e| {
-        log_peer_error(
-            &established.node,
-            &format!("Failed to recover lead sequencer: {e}"),
-        );
-        RLPxError::CryptographyError(e.to_string())
-    })?;
+    let msg_signature = msg.signature;
+    let recovered_lead_sequencer =
+        tokio::task::spawn_blocking(move || recover_address(msg_signature, block_hash))
+            .await
+            .map_err(|_| RLPxError::InternalError("Recover Address task failed".to_string()))?
+            .map_err(|e| {
+                log_peer_error(
+                    &established.node,
+                    &format!("Failed to recover lead sequencer: {e}"),
+                );
+                RLPxError::CryptographyError(e.to_string())
+            })?;
 
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);

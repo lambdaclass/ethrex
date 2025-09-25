@@ -83,7 +83,7 @@ pub async fn set_log_level(
     if let Some(handle) = log_filter_handler {
         handle
             .reload(filter)
-            .map_err(|e| RpcErr::Internal(format!("Failed to reload log filter: {}", e)))?;
+            .map_err(|e| RpcErr::Internal(format!("Failed to reload log filter: {e}")))?;
         Ok(Value::Bool(true))
     } else {
         Err(RpcErr::Internal(

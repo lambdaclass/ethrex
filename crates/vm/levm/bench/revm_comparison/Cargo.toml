@@ -1,7 +1,9 @@
 [package]
 name = "revm_comparison"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [lib]
 name = "revm_comparison"
@@ -16,7 +18,7 @@ ethrex-blockchain.workspace = true
 hex.workspace = true
 bytes.workspace = true
 
-revm = "9.0.0"
+revm = "29.0.0"
 sha3 = "0.10.8"
 
 [[bin]]

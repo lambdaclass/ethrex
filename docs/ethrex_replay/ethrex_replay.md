@@ -41,7 +41,8 @@ Currently ethrex replay only works against ethrex nodes with the `debug_executio
 
 ```sh
 curl -L https://risczero.com/install | bash
-rzup install cargo-risczero 2.3.1
+rzup install cargo-risczero 3.0.3
+rzup install risc0-groth16
 rzup install rust
 ```
 
@@ -226,13 +227,24 @@ ethrex-replay block-composition --start-block <START_BLOCK> --end-block <END_BLO
 
 ### Run Samply
 
+#### On zkVMs
+
 > [!IMPORTANT]
 >
-> 1. The `ethrex-replay` binary must be built with the `profiling` feature enabled.
+> 1. For profiling zkVMs like SP1 the `ethrex-replay` binary must be built with the `profiling` feature enabled.
 > 2. The `TRACE_SAMPLE_RATE` environment variable controls the sampling rate (in milliseconds). Adjust it according to your needs.
 
 ```
 TRACE_FILE=output.json TRACE_SAMPLE_RATE=1000 ethrex-replay <COMMAND> [ARGS]
+```
+
+#### Execution without zkVMs
+
+We recommend building in release-with-debug mode so that the flamegraph is the most accurate.
+
+```bash
+cargo build -p ethrex-replay --profile release-with-debug
+samply record target/release-with-debug/ethrex-replay <COMMAND> [ARGS]
 ```
 
 ### Run Bytehound

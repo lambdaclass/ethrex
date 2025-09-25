@@ -12,12 +12,25 @@ use keccak_hash::keccak;
 use reqwest::{Client, StatusCode, Url};
 use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
+use serde::Serialize;
 use url::ParseError;
 
 #[derive(Clone, Debug)]
 pub enum Signer {
     Local(LocalSigner),
     Remote(RemoteSigner),
+}
+
+#[derive(Clone, Serialize, PartialEq, Default)]
+pub struct SignerHealth {
+    signer: String,
+    address: Address,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remote_signer_healthcheck: Option<serde_json::Value>,
 }
 
 impl Signer {
@@ -32,6 +45,23 @@ impl Signer {
         match self {
             Self::Local(signer) => signer.address,
             Self::Remote(signer) => signer.address,
+        }
+    }
+
+    pub async fn health(&self) -> SignerHealth {
+        match &self {
+            Signer::Local(local) => SignerHealth {
+                address: local.address,
+                signer: "local".to_string(),
+                ..Default::default()
+            },
+            Signer::Remote(remote) => SignerHealth {
+                address: remote.address,
+                public_key: Some(remote.public_key.to_string()),
+                signer: "remote".to_string(),
+                url: Some(remote.url.to_string()),
+                remote_signer_healthcheck: Some(remote.health().await),
+            },
         }
     }
 }
@@ -72,7 +102,13 @@ impl LocalSigner {
             .sign_ecdsa_recoverable(&msg, &self.private_key)
             .serialize_compact();
 
-        Signature::from_slice(&[signature.as_slice(), &[recovery_id.to_i32() as u8]].concat())
+        Signature::from_slice(
+            &[
+                signature.as_slice(),
+                &[Into::<i32>::into(recovery_id) as u8],
+            ]
+            .concat(),
+        )
     }
 }
 
@@ -127,6 +163,26 @@ impl RemoteSigner {
                 "Unknown error {}",
                 response.status().as_str(),
             ))),
+        }
+    }
+
+    async fn health(&self) -> serde_json::Value {
+        let Ok(url) = self.url.join("/healthcheck") else {
+            return serde_json::Value::String(format!("Failed to create url from {}", self.url));
+        };
+
+        let client = Client::new();
+        match client.get(url.clone()).send().await {
+            Err(e) => serde_json::Value::String(format!("GET {url} returned an error: {e}")),
+            Ok(ok) => match ok.status() {
+                StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE => ok
+                    .json::<serde_json::Value>()
+                    .await
+                    .unwrap_or_else(|e| serde_json::Value::String(e.to_string())),
+                status => {
+                    serde_json::Value::String(format!("GET {url} returned an error: {status}"))
+                }
+            },
         }
     }
 }

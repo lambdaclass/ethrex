@@ -27,7 +27,7 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
         for test_case in &test.test_cases {
             let res = run_test(test, test_case).await;
             if let Err(e) = res {
-                println!("Error: {:?}", e);
+                println!("Error: {e:?}");
             }
         }
     }

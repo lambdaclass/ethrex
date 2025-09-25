@@ -52,13 +52,13 @@ pub struct Options {
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
         help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        default_value_t = default_datadir(),
+        default_value = default_datadir().into_os_string(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: PathBuf,
     #[arg(
         long = "force",
         help = "Force remove the database",
@@ -109,7 +109,7 @@ pub struct Options {
     pub log_level: Level,
     #[arg(
         long = "http.addr",
-        default_value = "localhost",
+        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
         help_heading = "RPC options",
@@ -127,7 +127,7 @@ pub struct Options {
     pub http_port: String,
     #[arg(
         long = "authrpc.addr",
-        default_value = "localhost",
+        default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the authenticated rpc server.",
         help_heading = "RPC options"
@@ -173,7 +173,7 @@ impl Options {
     pub fn default_l1() -> Self {
         Self {
             network: Some(Network::LocalDevnet),
-            datadir: DB_ETHREX_DEV_L1.to_string(),
+            datadir: DB_ETHREX_DEV_L1.into(),
             dev: true,
             http_addr: "0.0.0.0".to_string(),
             http_port: "8545".to_string(),
@@ -191,7 +191,7 @@ impl Options {
     pub fn default_l2() -> Self {
         Self {
             network: Some(Network::LocalDevnetL2),
-            datadir: DB_ETHREX_DEV_L2.to_string(),
+            datadir: DB_ETHREX_DEV_L2.into(),
             metrics_port: "3702".into(),
             metrics_enabled: true,
             dev: true,
@@ -238,8 +238,8 @@ impl Default for Options {
 pub enum Subcommand {
     #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value_t = default_datadir(), required = false)]
-        datadir: String,
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = default_datadir().into_os_string(), required = false)]
+        datadir: PathBuf,
         #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,
     },
@@ -339,13 +339,12 @@ impl Subcommand {
     }
 }
 
-pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = init_datadir(datadir);
-    let path = Path::new(&data_dir);
+pub fn remove_db(datadir: &Path, force: bool) {
+    init_datadir(datadir);
 
-    if path.exists() {
+    if datadir.exists() {
         if force {
-            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+            std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
             info!("Database removed successfully.");
         } else {
             print!("Are you sure you want to remove the database? (y/n): ");
@@ -355,26 +354,26 @@ pub fn remove_db(datadir: &str, force: bool) {
             io::stdin().read_line(&mut input).unwrap();
 
             if input.trim().eq_ignore_ascii_case("y") {
-                std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+                std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
                 println!("Database removed successfully.");
             } else {
                 println!("Operation canceled.");
             }
         }
     } else {
-        warn!("Data directory does not exist: {}", data_dir);
+        warn!("Data directory does not exist: {datadir:?}");
     }
 }
 
 pub async fn import_blocks(
     path: &str,
-    data_dir: &str,
+    datadir: &Path,
     genesis: Genesis,
     blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
-    let data_dir = init_datadir(data_dir);
-    let store = init_store(&data_dir, genesis).await;
+    init_datadir(datadir);
+    let store = init_store(datadir, genesis).await;
     let blockchain = init_blockchain(store.clone(), blockchain_type, false);
     let path_metadata = metadata(path).expect("Failed to read path");
 
@@ -472,12 +471,12 @@ pub async fn import_blocks(
 
 pub async fn export_blocks(
     path: &str,
-    data_dir: &str,
+    datadir: &Path,
     first_number: Option<u64>,
     last_number: Option<u64>,
 ) {
-    let data_dir = init_datadir(data_dir);
-    let store = load_store(&data_dir).await;
+    init_datadir(datadir);
+    let store = load_store(datadir).await;
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {

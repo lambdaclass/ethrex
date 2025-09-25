@@ -1,13 +1,15 @@
 [package]
 name = "ethrex-rpc"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 axum.workspace = true
-tower-http = { version = "0.6.2", features = ["cors"] }
+tower-http.workspace = true
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 tokio = { workspace = true, features = ["full"] }
@@ -32,6 +34,7 @@ tokio-util = { workspace = true, features = ["codec"] }
 reqwest.workspace = true
 sha3 = "0.10.8"
 sha2.workspace = true
+jemalloc_pprof = { version = "0.8.0", optional = true, features = ["flamegraph", "symbolize"] }
 
 # Clients
 envy = "0.4.2"
@@ -50,3 +53,6 @@ path = "./lib.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
+
+[features]
+jemalloc_profiling = ["dep:jemalloc_pprof"]

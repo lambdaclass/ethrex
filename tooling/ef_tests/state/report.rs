@@ -10,7 +10,9 @@ use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
 use ethrex_vm::EvmError;
 use itertools::Itertools;
-use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};
+use revm::context_interface::result::{
+    EVMError as RevmError, ExecutionResult as RevmExecutionResult,
+};
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 use std::{
