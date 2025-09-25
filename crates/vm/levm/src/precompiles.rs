@@ -299,7 +299,7 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 }
 
 pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    // Use the ethrex implementation of ecrecover
+    // Use the ethrex implementation of ecrecover or the sp1 implementation.
     // Switch to the sp1 implementation of ecrecover when we are in SP1 environment
 
     #[cfg(feature = "c-kzg")]
@@ -337,15 +337,15 @@ pub fn ecrecover_ethrex(
         return Ok(Bytes::new());
     };
 
-    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+    let raw_v = calldata.get(32..64).ok_or(InternalError::Slicing)?;
 
-    // The Recovery identifier is expected to be 27 or 28, any other value is invalid
-    if !(v == U256::from(27) || v == U256::from(28)) {
-        return Ok(Bytes::new());
-    }
+    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
+    let recovery_id_from_rpc = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(27) => 0,
+        Ok(28) => 1,
+        _ => return Ok(Bytes::new()),
+    };
 
-    let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
-    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
     let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc.into()) else {
         return Ok(Bytes::new());
     };
