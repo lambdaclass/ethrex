@@ -2,7 +2,7 @@ pub mod db;
 pub mod error;
 pub mod logger;
 mod nibbles;
-mod node;
+pub mod node;
 mod node_hash;
 mod rlp;
 #[cfg(test)]
@@ -53,7 +53,7 @@ pub type TrieNode = (NodeHash, NodeRLP);
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
-    root: NodeRef,
+    pub root: NodeRef,
 }
 
 impl Default for Trie {
@@ -96,9 +96,9 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
-                    .map_err(TrieError::RLPDecode)?
-                    .get(self.db.as_ref(), Nibbles::from_bytes(path))?
+                let rlp = self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?;
+                let node = Node::decode(&rlp).map_err(TrieError::RLPDecode)?;
+                node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
             _ => None,
         })
@@ -256,31 +256,22 @@ impl Trie {
         )))))
     }
 
-    /// Builds a trie from a set of nodes with an InMemoryTrieDB as a backend.
-    ///
-    /// Note: This method will not ensure that all node references are valid. Invalid references
-    ///   will cause other methods (including, but not limited to `Trie::get`, `Trie::insert` and
-    ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
-    /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
-    ///   root node are considered dangling.
-    pub fn from_nodes(
-        root_hash: NodeHash,
-        state_nodes: &BTreeMap<H256, NodeRLP>,
-    ) -> Result<Self, TrieError> {
-        let root_rlp = state_nodes
-            .get(&root_hash.finalize())
+    /// Gets node with embedded references to child nodes, all in just one `Node`.
+    pub fn get_embedded_root(
+        all_nodes: &BTreeMap<H256, Vec<u8>>,
+        root_hash: H256,
+    ) -> Result<NodeRef, TrieError> {
+        let root_rlp = all_nodes
+            .get(&root_hash)
             .ok_or(TrieError::InconsistentTree)?;
 
-        fn inner(
+        fn get_embedded_node(
             all_nodes: &BTreeMap<H256, Vec<u8>>,
-            cur_node_hash: &NodeHash,
-            cur_node_rlp: &NodeRLP,
-            traversed_nodes: &mut BTreeMap<NodeHash, NodeRLP>,
+            cur_node_rlp: &[u8],
         ) -> Result<Node, TrieError> {
-            let node = Node::decode_raw(cur_node_rlp)?;
-            traversed_nodes.insert(*cur_node_hash, cur_node_rlp.to_vec());
+            let cur_node = Node::decode_raw(cur_node_rlp)?;
 
-            Ok(match node {
+            Ok(match cur_node {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
@@ -289,7 +280,7 @@ impl Trie {
 
                         if hash.is_valid() {
                             *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
+                                Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
                                 None => hash.into(),
                             };
                         }
@@ -303,7 +294,7 @@ impl Trie {
                     };
 
                     node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(rlp) => inner(all_nodes, &hash, rlp, traversed_nodes)?.into(),
+                        Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
                         None => hash.into(),
                     };
 
@@ -313,11 +304,23 @@ impl Trie {
             })
         }
 
-        let mut necessary_nodes = BTreeMap::new();
-        let root = inner(state_nodes, &root_hash, root_rlp, &mut necessary_nodes)?.into();
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(necessary_nodes))));
+        let root = get_embedded_node(all_nodes, root_rlp)?;
+        Ok(root.into())
+    }
 
-        let mut trie = Trie::new(in_memory_trie);
+    /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.
+    ///
+    /// Note: This method will not ensure that all node references are valid. Invalid references
+    ///   will cause other methods (including, but not limited to `Trie::get`, `Trie::insert` and
+    ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
+    /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
+    ///   root node are considered dangling.
+    pub fn from_nodes(
+        root_hash: H256,
+        state_nodes: &BTreeMap<H256, NodeRLP>,
+    ) -> Result<Self, TrieError> {
+        let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
+        let root = Self::get_embedded_root(state_nodes, root_hash)?;
         trie.root = root;
 
         Ok(trie)
