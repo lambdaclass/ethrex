@@ -132,6 +132,8 @@ pub enum MempoolError {
     RequestedPooledTxNotFound,
     #[error("Transaction sender is invalid {0}")]
     InvalidTxSender(#[from] secp256k1::Error),
+    #[error("Attempted to replace transaction with underpriced transaction")]
+    UnderpricedReplacement,
 }
 
 #[derive(Debug)]
