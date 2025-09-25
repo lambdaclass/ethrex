@@ -29,10 +29,10 @@ use crate::{
 const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
 // Amount of seconds after which we prune old entries from broadcasted_txs_per_peer (We should fine tune this)
-const PRUNE_WAIT_TIME_SECS: u64 = 300; // 5 minutes
+const PRUNE_WAIT_TIME_SECS: u64 = 60; // 1 minute
 
 // Amount of seconds between each prune
-const PRUNE_INTERVAL_SECS: u64 = 300; // 5 minutes
+const PRUNE_INTERVAL_SECS: u64 = 30; // 30 seconds
 
 // Amount of seconds between each broadcast
 const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
