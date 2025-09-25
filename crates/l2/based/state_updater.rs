@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{Address, types::Block};
@@ -6,10 +6,10 @@ use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
+use serde::Serialize;
 use spawned_concurrency::{
     error::GenServerError,
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info, warn};
 
@@ -41,6 +41,11 @@ pub enum StateUpdaterError {
 }
 
 #[derive(Clone)]
+pub enum CallMessage {
+    Health,
+}
+
+#[derive(Clone)]
 pub enum InMessage {
     UpdateState,
 }
@@ -48,6 +53,17 @@ pub enum InMessage {
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
+    Health(StateUpdaterHealth),
+}
+
+#[derive(Clone, Serialize, PartialEq)]
+pub struct StateUpdaterHealth {
+    pub eth_client_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub on_chain_proposer_address: Address,
+    pub sequencer_registry_address: Address,
+    pub sequencer_address: Address,
+    pub check_interval_ms: u64,
+    pub sequencer_state: String,
 }
 
 pub struct StateUpdater {
@@ -91,7 +107,7 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<(), StateUpdaterError> {
+    ) -> Result<GenServerHandle<Self>, StateUpdaterError> {
         let mut state_updater = Self::new(
             sequencer_cfg,
             sequencer_state,
@@ -103,7 +119,8 @@ impl StateUpdater {
         state_updater
             .cast(InMessage::UpdateState)
             .await
-            .map_err(StateUpdaterError::InternalError)
+            .map_err(StateUpdaterError::InternalError)?;
+        Ok(state_updater)
     }
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
@@ -238,13 +255,36 @@ impl StateUpdater {
 
         Ok(())
     }
+
+    async fn health(&self) -> CallResponse<Self> {
+        let eth_client_healthcheck = self.eth_client.test_urls().await;
+
+        CallResponse::Reply(OutMessage::Health(StateUpdaterHealth {
+            eth_client_healthcheck,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            sequencer_registry_address: self.sequencer_registry_address,
+            sequencer_address: self.sequencer_address,
+            check_interval_ms: self.check_interval_ms,
+            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+        }))
+    }
 }
 
 impl GenServer for StateUpdater {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = StateUpdaterError;
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            CallMessage::Health => self.health().await,
+        }
+    }
 
     async fn handle_cast(
         &mut self,
