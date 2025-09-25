@@ -210,6 +210,9 @@ impl Trie {
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc);
         }
+        if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
+            acc.push((Nibbles::default(), vec![RLP_NULL]))
+        }
         acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
 
         acc

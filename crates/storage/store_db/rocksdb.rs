@@ -366,7 +366,6 @@ impl Store {
         batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
-
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
@@ -1469,18 +1468,25 @@ impl StoreEngine for Store {
         &self,
         storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
+            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
+            })?;
 
-        for (address_hash, nodes) in storage_trie_nodes {
-            for (node_hash, node_data) in nodes {
-                let key = apply_prefix(Some(address_hash), node_hash)
-                    .as_ref()
-                    .to_vec();
-                batch_ops.push((CF_TRIE_NODES.to_string(), key, node_data));
+            for (address_hash, nodes) in storage_trie_nodes {
+                for (node_hash, node_data) in nodes {
+                    let key = apply_prefix(Some(address_hash), node_hash);
+                    batch.put_cf(&cf, key.as_ref(), node_data);
+                }
             }
-        }
 
-        self.write_batch_async(batch_ops).await
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     async fn write_account_code_batch(

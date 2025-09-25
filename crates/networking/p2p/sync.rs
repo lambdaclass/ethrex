@@ -932,7 +932,10 @@ impl Syncer {
                         }
                         *METRICS.current_step.blocking_lock() =
                             "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
-                        let current_state_root = trie.hash()?;
+                        let (current_state_root, mut changes) =
+                            trie.collect_changes_since_last_hash();
+                        changes.retain(|(path, _)| path.len() != 64);
+                        trie.db().put_batch(changes)?;
                         Ok(current_state_root)
                     })
                     .await??;
@@ -1149,7 +1152,7 @@ impl Syncer {
                 store
                     .open_direct_storage_trie(
                         H256::from_slice(&path.to_bytes()),
-                        account_state.storage_root
+                        account_state.storage_root,
                     )?
                     .into_iter()
                     .try_for_each(|(path, node)| -> Result<(), SyncError> {
@@ -1297,7 +1300,7 @@ fn compute_storage_roots(
         }
     }
 
-    let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
+    let (computed_storage_root, mut changes) = storage_trie.collect_changes_since_last_hash();
 
     let account_state = store
         .get_account_state_by_acc_hash(pivot_hash, account_hash)?
@@ -1310,6 +1313,7 @@ fn compute_storage_roots(
             .map_err(|_| SyncError::MaybeBigAccount)?
             .insert(account_hash, computed_storage_root);
     }
+    changes.retain(|(path, _)| path.len() != 64);
     Ok((account_hash, changes))
 }
 
