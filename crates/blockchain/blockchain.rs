@@ -73,7 +73,7 @@ pub struct Blockchain {
     /// Mapping from a payload id to either a complete payload or a payload build task
     /// We need to keep completed payloads around in case consensus requests them twice
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
-    /// If set, collected base fees will be sent to this address instead of being burned
+    /// (L2 only) If set, collected base fees will be sent to this address instead of being burned
     pub fee_vault: Option<Address>,
 }
 

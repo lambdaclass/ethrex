@@ -615,10 +615,11 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
         .await?
         .ok_or(eyre::Error::msg("error fetching transaction"))?;
 
-    #[cfg(not(feature = "l2"))]
-    let fee_vault = None;
-    #[cfg(feature = "l2")]
-    let fee_vault = get_fee_vault_address(&eth_client).await?;
+    let fee_vault = if cfg!(feature = "l2") {
+        get_fee_vault_address(&eth_client).await?
+    } else {
+        None
+    };
 
     let cache = get_blockdata(
         eth_client,
@@ -650,10 +651,11 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    #[cfg(not(feature = "l2"))]
-    let fee_vault = None;
-    #[cfg(feature = "l2")]
-    let fee_vault = get_fee_vault_address(&eth_client).await?;
+    let fee_vault = if cfg!(feature = "l2") {
+        get_fee_vault_address(&eth_client).await?
+    } else {
+        None
+    };
 
     let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?, fee_vault).await?;
 
