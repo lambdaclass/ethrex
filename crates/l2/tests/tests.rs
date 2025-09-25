@@ -268,7 +268,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
 
     println!("test_upgrade: Deploying CommonBridgeL2 contract");
-    let (deploy_address, deploy_base_fees) = test_deploy(
+    let (deploy_address, fees_details) = test_deploy(
         &l2_client,
         &bridge_code,
         &bridge_owner_private_key,
@@ -316,7 +316,7 @@ async fn test_upgrade(l1_client: EthClient, l2_client: EthClient) -> Result<Fees
         .await?;
     println!("test upgrade: upgraded {initial_impl:#x} -> {final_impl:#x}");
     assert_ne!(initial_impl, final_impl);
-    Ok(deploy_base_fees)
+    Ok(fees_details)
 }
 
 /// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
