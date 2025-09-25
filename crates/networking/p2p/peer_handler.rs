@@ -1337,6 +1337,7 @@ impl PeerHandler {
                     .clone()
                     .into_iter()
                     .zip(current_account_storages)
+                    .filter(|(_, storages)| !storages.is_empty())
                     .collect::<Vec<_>>()
                     .encode_to_vec();
 
@@ -1569,6 +1570,7 @@ impl PeerHandler {
             let snapshot = current_account_hashes
                 .into_iter()
                 .zip(current_account_storages)
+                .filter(|(_, storages)| !storages.is_empty())
                 .collect::<Vec<_>>()
                 .encode_to_vec();
 
