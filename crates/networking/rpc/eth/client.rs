@@ -137,19 +137,15 @@ async fn get_config_for_fork(
 ) -> Result<EthConfigObject, RpcErr> {
     let chain_config = context.storage.get_chain_config()?;
     let activation_time = chain_config.get_activation_timestamp_for_fork(fork);
+    let genesis_header = context
+        .storage
+        .get_block_by_number(0)
+        .await?
+        .expect("Failed to get genesis block. This should not happen.")
+        .header;
+    let block_number = context.storage.get_latest_block_number().await?;
     let fork_id = if let Some(timestamp) = activation_time {
-        ForkId::new(
-            chain_config,
-            context
-                .storage
-                .get_block_by_number(0)
-                .await?
-                .expect("Failed to get genesis block. This should not happen.")
-                .header,
-            timestamp,
-            0,
-        )
-        .fork_hash
+        ForkId::new(chain_config, genesis_header, timestamp, block_number).fork_hash
     } else {
         H32::zero()
     };
