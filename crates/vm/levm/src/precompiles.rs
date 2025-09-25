@@ -316,10 +316,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     {
         unimplemented!()
     }
-    
+
     #[cfg(not(any(feature = "c-kzg", feature = "kzg-rs", feature = "openvm-kzg")))]
     {
-        compile_error!("Either feature `c-kzg`, `kzg-rs` or `openvm-kzg` must be enabled to compile this crate.");
+        compile_error!(
+            "Either feature `c-kzg`, `kzg-rs` or `openvm-kzg` must be enabled to compile this crate."
+        );
     }
 }
 
