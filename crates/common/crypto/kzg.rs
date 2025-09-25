@@ -1,4 +1,13 @@
-use crate::types::{Blob, Commitment, Proof};
+// TODO: Currently, we cannot include the types crate independently of common because the crates are not yet split.
+// After issue #4596 ("Split types crate from common") is resolved, update this to import the types crate directly,
+// so that crypto/kzg.rs does not depend on common for type definitions.
+pub const BYTES_PER_FIELD_ELEMENT: usize = 32;
+pub const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
+pub const BYTES_PER_BLOB: usize = BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB;
+type Bytes48 = [u8; 48];
+type Blob = [u8; BYTES_PER_BLOB];
+type Commitment = Bytes48;
+type Proof = Bytes48;
 
 #[derive(thiserror::Error, Debug)]
 pub enum KzgError {
