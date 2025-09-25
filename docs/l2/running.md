@@ -25,15 +25,11 @@ First we need to set some environment variables.
 	--committer_l1_private_key <private-key> \
 	--proof_coordinator_l1_private_key \
 	--block-producer.coinbase-address <l2-coinbase-address> \
-	--block-producer.fee-vault-address <l2-fee-vault-address>
 ```
 
 For further configuration take a look at the [CLI document](../CLI.md#ethrex-l2)
 
 This will start an ethrex l2 sequencer with the RPC server listening at `http://localhost:1729` and the proof coordinator server listening at `http://localhost:3900`
-
-> **Note:** If `--block-producer.fee-vault-address` is set, the sequencer will send collected base fees to that address instead of burning them.  
-> Be cautious: if the fee vault address is the same as the coinbase address, the coinbase balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
 
 
 ## Starting a prover server
@@ -68,3 +64,6 @@ After starting the sequencer and prover, you can verify that your L2 node is run
   - Review the terminal output or log files for any errors or warnings.
 
 If all endpoints respond and there are no errors in the logs, your L2 node is running successfully.
+
+> [!NOTE]
+> For more information about the configuration options, see the [Configuration](./configuration.md) section.
