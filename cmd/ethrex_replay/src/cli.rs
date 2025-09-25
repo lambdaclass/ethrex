@@ -135,7 +135,12 @@ pub enum CustomSubcommand {
 
 #[derive(Parser, Clone)]
 pub struct CommonOptions {
-    #[arg(long, value_enum, help_heading = "Replay Options")]
+    #[arg(
+        long,
+        value_enum,
+        help_heading = "Replay Options",
+        conflicts_with = "no_zkvm"
+    )]
     pub zkvm: Option<ZKVM>,
     #[arg(long, value_enum, default_value_t = Resource::default(), help_heading = "Replay Options")]
     pub resource: Resource,
@@ -161,7 +166,8 @@ pub struct EthrexReplayOptions {
     #[arg(
         long,
         help = "Execute with `Blockchain::add_block`, without using zkvm as backend",
-        help_heading = "Replay Options"
+        help_heading = "Replay Options",
+        conflicts_with = "zkvm"
     )]
     pub no_zkvm: bool,
 }
