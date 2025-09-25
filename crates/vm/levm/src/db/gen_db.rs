@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
-use keccak_hash::H256;
-use keccak_hash::keccak;
+use ethrex_common::utils::keccak;
 
 use super::Database;
 use crate::account::LevmAccount;
@@ -386,12 +386,7 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<(U256, bool), InternalError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-        let storage_slot_was_cold = self
-            .substate
-            .accessed_storage_slots
-            .entry(address)
-            .or_default()
-            .insert(key);
+        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
 
         let storage_slot = self.get_storage_value(address, key)?;
 

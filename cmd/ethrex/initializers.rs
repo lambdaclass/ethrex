@@ -42,8 +42,7 @@ use tracing_subscriber::{
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
-        .from_env_lossy()
-        .add_directive(Directive::from(opts.log_level));
+        .from_env_lossy();
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
@@ -77,8 +76,8 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
-    let store = open_store(data_dir);
+pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
+    let store = open_store(datadir.as_ref());
     store
         .add_initial_state(genesis)
         .await
@@ -87,8 +86,8 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
 }
 
 /// Initializes a pre-existing Store
-pub async fn load_store(data_dir: &str) -> Store {
-    let store = open_store(data_dir);
+pub async fn load_store(datadir: &Path) -> Store {
+    let store = open_store(datadir);
     store
         .load_initial_state()
         .await
@@ -97,20 +96,21 @@ pub async fn load_store(data_dir: &str) -> Store {
 }
 
 /// Opens a pre-existing Store or creates a new one
-pub fn open_store(data_dir: &str) -> Store {
-    let path = PathBuf::from(data_dir);
-    if path.ends_with("memory") {
-        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+pub fn open_store(datadir: &Path) -> Store {
+    if datadir.ends_with("memory") {
+        Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
-            if #[cfg(feature = "libmdbx")] {
+            if #[cfg(feature = "rocksdb")] {
+                let engine_type = EngineType::RocksDB;
+            } else if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
             } else {
-                error!("No database specified. The feature flag `libmdbx` should've been set while building.");
+                error!("No database specified. The feature flag `rocksdb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
-        }
-        Store::new(data_dir, engine_type).expect("Failed to create Store")
+        };
+        Store::new(datadir, engine_type).expect("Failed to create Store")
     }
 }
 
@@ -129,7 +129,7 @@ pub fn init_blockchain(
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    peer_table: Kademlia,
+    peer_handler: PeerHandler,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -137,9 +137,9 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
-
+    init_datadir(&opts.datadir);
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
@@ -147,7 +147,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        init_datadir(&opts.datadir),
+        opts.datadir.clone(),
     )
     .await;
 
@@ -163,21 +163,21 @@ pub async fn init_rpc_api(
         peer_handler,
         get_client_version(),
         log_filter_handler,
+        gas_ceil,
     );
 
     tracker.spawn(rpc_api);
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
 pub async fn init_network(
     opts: &Options,
     network: &Network,
-    data_dir: &str,
+    datadir: &Path,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
-    peer_table: Kademlia,
+    peer_handler: PeerHandler,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
@@ -190,19 +190,21 @@ pub async fn init_network(
         );
     }
 
-    let bootnodes = get_bootnodes(opts, network, data_dir);
+    let bootnodes = get_bootnodes(opts, network, datadir);
 
     let context = P2PContext::new(
         local_p2p_node,
         local_node_record,
         tracker.clone(),
         signer,
-        peer_table.clone(),
+        peer_handler.peer_table.clone(),
         store,
         blockchain.clone(),
         get_client_version(),
         based_context,
-    );
+    )
+    .await
+    .expect("P2P context could not be created");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
@@ -210,7 +212,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_table.peers.clone(),
+        peer_handler.peer_table.peers.clone(),
     ));
 }
 
@@ -254,15 +256,14 @@ pub fn get_network(opts: &Options) -> Network {
     opts.network.clone().unwrap_or(default)
 }
 
-#[allow(dead_code)]
-pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
     bootnodes.extend(network.get_bootnodes());
 
     debug!("Loading known peers from config");
 
-    match read_node_config_file(data_dir) {
+    match read_node_config_file(datadir) {
         Ok(Some(ref mut config)) => bootnodes.append(&mut config.known_peers),
         Ok(None) => {} // No config file, nothing to do
         Err(e) => warn!("Could not read from peers file: {e}"),
@@ -275,9 +276,9 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
     bootnodes
 }
 
-pub fn get_signer(data_dir: &str) -> SecretKey {
+pub fn get_signer(datadir: &Path) -> SecretKey {
     // Get the signer from the default directory, create one if the key file is not present.
-    let key_path = Path::new(data_dir).join("node.key");
+    let key_path = datadir.join("node.key");
     match fs::read(key_path.clone()) {
         Ok(content) => SecretKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
@@ -323,11 +324,11 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
 }
 
 pub fn get_local_node_record(
-    data_dir: &str,
+    datadir: &Path,
     local_p2p_node: &Node,
     signer: &SecretKey,
 ) -> NodeRecord {
-    match read_node_config_file(data_dir) {
+    match read_node_config_file(datadir) {
         Ok(Some(ref mut config)) => {
             NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
                 .expect("Node record could not be created from local node")
@@ -374,31 +375,32 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(String, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
-    let data_dir = init_datadir(&opts.datadir);
+) -> eyre::Result<(PathBuf, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
+    let datadir = &opts.datadir;
+    init_datadir(datadir);
 
     let network = get_network(&opts);
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
-    let store = init_store(&data_dir, genesis).await;
+    let store = init_store(datadir, genesis).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
     let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
 
-    let signer = get_signer(&data_dir);
+    let signer = get_signer(datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
     let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &data_dir,
+        datadir,
         &local_p2p_node,
         &signer,
     )));
 
-    let peer_table = peer_table();
+    let peer_handler = PeerHandler::new(peer_table());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -407,7 +409,7 @@ pub async fn init_l1(
 
     init_rpc_api(
         &opts,
-        peer_table.clone(),
+        peer_handler.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
         store.clone(),
@@ -415,6 +417,8 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        // TODO (#4482): Make this configurable.
+        None,
     )
     .await;
 
@@ -429,11 +433,11 @@ pub async fn init_l1(
         init_network(
             &opts,
             &network,
-            &data_dir,
+            datadir,
             local_p2p_node,
             local_node_record.clone(),
             signer,
-            peer_table.clone(),
+            peer_handler.clone(),
             store.clone(),
             tracker.clone(),
             blockchain.clone(),
@@ -444,5 +448,10 @@ pub async fn init_l1(
         info!("P2P is disabled");
     }
 
-    Ok((data_dir, cancel_token, peer_table, local_node_record))
+    Ok((
+        datadir.clone(),
+        cancel_token,
+        peer_handler.peer_table,
+        local_node_record,
+    ))
 }

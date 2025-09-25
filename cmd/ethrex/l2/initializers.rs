@@ -1,10 +1,11 @@
 use std::fs::read_to_string;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
+use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::network::peer_table;
@@ -47,8 +48,11 @@ async fn init_rpc_api(
     tracker: TaskTracker,
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
+
+    init_datadir(&opts.datadir);
 
     // Create SyncManager
     let syncer = SyncManager::new(
@@ -57,7 +61,7 @@ async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        init_datadir(&opts.datadir),
+        opts.datadir.clone(),
     )
     .await;
 
@@ -76,6 +80,7 @@ async fn init_rpc_api(
         l2_opts.sponsor_private_key,
         rollup_store,
         log_filter_handler,
+        gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
     );
 
     tracker.spawn(rpc_api);
@@ -99,7 +104,7 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     addresses
 }
 
-pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
+pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rollup_storage_sql")] {
             let engine_type = EngineTypeRollup::SQL;
@@ -109,7 +114,7 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
         }
     }
     let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+        StoreRollup::new(datadir, engine_type).expect("Failed to create StoreRollup");
     rollup_store
         .init()
         .await
@@ -155,28 +160,29 @@ pub async fn init_l2(
     #[cfg(feature = "revm")]
     panic!("L2 doesn't support REVM");
 
-    let data_dir = init_datadir(&opts.node_opts.datadir);
-    let rollup_store_dir = data_dir.clone() + "/rollup_store";
+    let datadir = opts.node_opts.datadir.clone();
+    init_datadir(&opts.node_opts.datadir);
+    let rollup_store_dir = datadir.join("rollup_store");
 
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&data_dir, genesis).await;
+    let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
 
-    let signer = get_signer(&data_dir);
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
     let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &data_dir,
+        &datadir,
         &local_p2p_node,
         &signer,
     )));
 
-    let peer_table = peer_table();
+    let peer_handler = PeerHandler::new(peer_table());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -187,7 +193,7 @@ pub async fn init_l2(
     init_rpc_api(
         &opts.node_opts,
         &opts,
-        peer_table.clone(),
+        peer_handler.peer_table.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
         store.clone(),
@@ -196,6 +202,7 @@ pub async fn init_l2(
         tracker.clone(),
         rollup_store.clone(),
         log_filter_handler,
+        Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
     )
     .await;
 
@@ -217,11 +224,11 @@ pub async fn init_l2(
         init_network(
             &opts.node_opts,
             &network,
-            &data_dir,
+            &datadir,
             local_p2p_node,
             local_node_record.clone(),
             signer,
-            peer_table.clone(),
+            peer_handler.clone(),
             store.clone(),
             tracker,
             blockchain.clone(),
@@ -271,10 +278,14 @@ pub async fn init_l2(
         }
     }
     info!("Server shut down started...");
-    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    let node_config_path = datadir.join("node_config.json");
     info!(path = %node_config_path.display(), "Storing node config");
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+    let node_config = NodeConfigFile::new(
+        peer_handler.peer_table,
+        local_node_record.lock().await.clone(),
+    )
+    .await;
     store_node_config_file(node_config, node_config_path).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");

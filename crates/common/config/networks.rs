@@ -4,7 +4,8 @@ use std::{
     path::PathBuf,
 };
 
-use ethrex_common::types::{Genesis, GenesisError};
+use ethrex_common::types::{ChainConfig, Genesis, GenesisError};
+use serde::{Deserialize, Serialize};
 
 //TODO: Look for a better place to move these files
 const MAINNET_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/mainnet/bootnodes.json");
@@ -32,15 +33,17 @@ pub const HOLESKY_CHAIN_ID: u64 = 0x4268;
 pub const HOODI_CHAIN_ID: u64 = 0x88bb0;
 pub const SEPOLIA_CHAIN_ID: u64 = 0xAA36A7;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Network {
     PublicNetwork(PublicNetwork),
     LocalDevnet,
     LocalDevnetL2,
+    L2Chain(u64),
+    #[serde(skip)]
     GenesisPath(PathBuf),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PublicNetwork {
     Hoodi,
     Holesky,
@@ -57,6 +60,20 @@ impl From<&str> for Network {
             "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
             // Note that we don't allow to manually specify the local devnet genesis
             s => Network::GenesisPath(PathBuf::from(s)),
+        }
+    }
+}
+
+impl TryFrom<u64> for Network {
+    type Error = String;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
+            HOLESKY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
+            SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
+            HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
+            _ => Err(format!("Unknown chain ID: {}", value)),
         }
     }
 }
@@ -82,6 +99,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
+            Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
             Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
         }
     }
@@ -99,6 +117,14 @@ impl Network {
             }
             Network::LocalDevnet => Ok(serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS)?),
             Network::LocalDevnetL2 => Ok(serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)?),
+            Network::L2Chain(chain_id) => Ok(Genesis {
+                config: ChainConfig {
+                    chain_id: *chain_id,
+                    prague_time: Some(0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
             Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
         }
     }
@@ -126,7 +152,7 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use keccak_hash::H256;
+    use ethrex_common::H256;
 
     use super::*;
 

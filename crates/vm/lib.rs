@@ -11,4 +11,4 @@ pub use backends::{BlockExecutionResult, Evm};
 pub use db::{DynVmDatabase, VmDatabase};
 pub use errors::EvmError;
 pub use execution_result::ExecutionResult;
-pub use witness_db::ExecutionWitnessWrapper;
+pub use witness_db::GuestProgramStateWrapper;

@@ -1,38 +1,51 @@
 # Summary
-# Introduction
-- [Getting started](./getting-started/README.md)
-- [Installation](./getting-started/installation/installation.md)
-  - [Binary distribution](./getting-started/installation/binary_distribution.md)
-  - [Package manager](./getting-started/installation/package_manager.md)
-  - [Docker image](./getting-started/installation/docker_images.md)
-  - [Building from source](./getting-started/installation/building_from_source.md)
-- [Consensus Client](./getting-started/consensus_client.md)
-- [Roadmap](./getting-started/roadmap.md)
 
-# Ethrex for L1 networks
-- [Running a node](./l1/running.md)
-- [Fundamentals]()
+# Introduction
+
+- [Getting started](./getting-started/README.md)
+  - [Quickstart Ethereum Node](./getting-started/quickstart-l1.md)
+  - [Quickstart L2](./getting-started/quickstart-l2.md)
+  - [Hardware requirements]()
+  - [Installation](./getting-started/installation/README.md)
+    - [Binary distribution](./getting-started/installation/binary_distribution.md)
+    - [Package manager](./getting-started/installation/package_manager.md)
+    - [Docker image](./getting-started/installation/docker_images.md)
+    - [Building from source](./getting-started/installation/building_from_source.md)
+
+# Ethrex for Ethereum node operators
+
+- [Running a node](./l1/running/README.md)
+  - [Connecting to a consensus client](./l1/running/consensus_client.md)
+  - [Node startup](./l1/running/startup.md)
+  - [Configuration](./l1/running/configuration.md)
+  - [Monitoring and metrics](./l1/running/monitoring.md)
+- [Fundamentals](./l1/fundamentals/README.md)
   - [Metrics]()
   - [Logs]()
   - [Security]()
   - [Databases]()
-  - [Networking](./l1/fundamentals/networking/Network.md)
-    - [Snap sync](./l1/fundamentals/networking/Sync.md)
+  - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
   - [Pruning]()
 
-# Ethrex for L2 chain
-- [Getting started](./l2/README.md)
-- [Deploying a node](./l2/running.md)
-- [Guides](./l2/guides/README.md)
-    - [Depositing assets](./l2/guides/depositing.md)
-    - [Withdrawing assets](./l2/guides/withdrawing.md)
-- [Fundamentals](./l2/overview.md)
-  - [Components](./l2/fundamentals/components/components.md)
-    - [Sequencer](./l2/fundamentals/components/sequencer.md)
-    - [Prover](./l2/fundamentals/components/prover.md)
-    - [Aligned mode](./l2/fundamentals/components/aligned_mode.md)
-    - [TDX execution module](./l2/fundamentals/components/tdx.md)
+# Ethrex for L2 chains
+
+- [Introduction](./l2/introduction.md)
+- [Deploy an L2](./l2/deploy.md)
+- [Monitoring and metrics](./l2/monitoring.md)
+- [Admin server](./l2/admin.md)
+- [Architecture](./l2/architecture/README.md)
+  - [Overview](./l2/architecture/overview.md)
+  - [Sequencer](./l2/architecture/sequencer.md)
+  - [Prover](./l2/architecture/prover.md)
+  - [Aligned mode](./l2/architecture/aligned_mode.md)
+  - [TDX execution module](./l2/architecture/tdx.md)
+- [Interacting with the L2](./l2/interacting/README.md)
+  - [Deposit assets](./l2/interacting/deposit.md)
+  - [Withdraw assets](./l2/interacting/withdraw.md)
+  - [Connect a wallet](./l2/interacting/wallet.md)
+  - [Deploy a contract](./l2/interacting/deploy_contracts.md)
+- [Fundamentals](./l2/fundamentals/README.md)
   - [State diffs](./l2/fundamentals/state_diffs.md)
   - [Deposits](./l2/fundamentals/deposits.md)
   - [Withdrawals](./l2/fundamentals/withdrawals.md)
@@ -40,14 +53,12 @@
     - [OnChainOperator]()
     - [CommonBridge]()
     - [L1MessageSender]()
-- [Based]()
-  - [Based roadmap (draft)](./l2/based/roadmap.md)
-  - [Sequencer](./l2/based/sequencer.md)
-  - [contracts](./l2/based/contracts.md)
+  - [Based sequencing](./l2/fundamentals/based.md)
 
 # Ethrex for developers
+
 - [Getting started](./developers/README.md)
-- [Installing](./developers/installing.md)
+- [Building](./developers/installing.md)
 - [L1](./developers/l1/introduction.md)
   - [Ethrex as a local development node](./developers/l1/dev-mode.md)
   - [Importing blocks from a file](./developers/l1/importing-blocks.md)
@@ -63,9 +74,13 @@
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
-    - [Profiling zkvm execution with ethrex replay](./ethrex_replay/profiling.md)
+  - [Profiling zkvm execution with ethrex replay](./ethrex_replay/profiling.md)
 - [CLI reference](./CLI.md)
 - [Troubleshooting]()
+
+# Roadmap
+
+- [Roadmap](./roadmap.md)
 
 # Other resources
 

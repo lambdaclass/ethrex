@@ -2,12 +2,14 @@
 name = "ethrex-config"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-p2p.workspace = true
 ethrex-common.workspace = true
 serde_json.workspace = true
-keccak-hash.workspace = true
+serde.workspace = true
 hex.workspace = true
 
 [lib]

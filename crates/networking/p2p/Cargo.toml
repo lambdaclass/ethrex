@@ -1,7 +1,9 @@
 [package]
 name = "ethrex-p2p"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,9 +15,11 @@ ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-storage-rollup.workspace = true
 ethereum-types.workspace = true
+
+async-trait.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
-tokio-util = { workspace = true, features = ["codec"] }
+tokio-util = { workspace = true, features = ["codec", "net"] }
 bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
@@ -26,11 +30,10 @@ secp256k1.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
-keccak-hash.workspace = true
+futures.workspace = true
 prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
-futures = "0.3.31"
 sha3 = "0.10.8"
 
 serde_json = "1.0.117"

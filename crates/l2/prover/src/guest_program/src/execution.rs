@@ -1,12 +1,14 @@
 use crate::input::ProgramInput;
 use crate::output::ProgramOutput;
+
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
 use ethrex_common::types::AccountUpdate;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::{
-    block_execution_witness::ExecutionWitnessError, block_execution_witness::ExecutionWitnessResult,
+    block_execution_witness::GuestProgramState, block_execution_witness::GuestProgramStateError,
 };
 use ethrex_common::{Address, U256};
 use ethrex_common::{
@@ -15,8 +17,8 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
-use ethrex_vm::{Evm, EvmError, ExecutionWitnessWrapper, VmDatabase};
-use std::collections::HashMap;
+use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
+use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
 use ethrex_common::{
@@ -67,8 +69,10 @@ pub enum StatelessExecutionError {
     InvalidStateDiff,
     #[error("Batch has no blocks")]
     EmptyBatchError,
+    #[error("Invalid database")]
+    InvalidDatabase,
     #[error("Execution witness error: {0}")]
-    ExecutionWitness(#[from] ExecutionWitnessError),
+    GuestProgramState(#[from] GuestProgramStateError),
     #[error("Invalid initial state trie")]
     InvalidInitialStateTrie,
     #[error("Invalid final state trie")]
@@ -94,7 +98,7 @@ pub enum StatelessExecutionError {
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
-        db,
+        execution_witness,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,
@@ -102,13 +106,13 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blob_proof,
     } = input;
 
-    let chain_id = db.chain_config.chain_id;
+    let chain_id = execution_witness.chain_config.chain_id;
 
     if cfg!(feature = "l2") {
         #[cfg(feature = "l2")]
         return stateless_validation_l2(
             &blocks,
-            db,
+            execution_witness,
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
@@ -116,12 +120,12 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         );
     }
 
-    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id)
+    stateless_validation_l1(&blocks, execution_witness, elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
-    db: ExecutionWitnessResult,
+    execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -131,7 +135,8 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
+
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -150,25 +155,13 @@ pub fn stateless_validation_l1(
 #[cfg(feature = "l2")]
 pub fn stateless_validation_l2(
     blocks: &[Block],
-    db: ExecutionWitnessResult,
+    execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    use std::collections::BTreeMap;
-
-    let mut initial_db = ExecutionWitnessResult {
-        block_headers: db.block_headers.clone(),
-        chain_config: db.chain_config,
-        codes: db.codes.clone(),
-        state_trie: None,
-        storage_tries: BTreeMap::new(),
-        parent_block_header: db.parent_block_header.clone(),
-        state_nodes: db.state_nodes.clone(),
-        touched_account_storage_slots: BTreeMap::new(),
-        account_hashes_by_address: BTreeMap::new(), // This must be filled during stateless execution
-    };
+    let initial_db = execution_witness.clone();
 
     let StatelessResult {
         receipts,
@@ -178,10 +171,14 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+        nodes_hashed,
+        codes_hashed,
+        parent_block_header,
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
+
     let (l1messages_merkle_root, privileged_transactions_hash) =
         compute_l1messages_and_privileged_transactions_digests(
             &l1messages,
@@ -193,10 +190,25 @@ pub fn stateless_validation_l2(
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
-        initial_db
+        let mut guest_program_state = GuestProgramState {
+            codes_hashed,
+            parent_block_header,
+            first_block_number: initial_db.first_block_number,
+            chain_config: initial_db.chain_config,
+            nodes_hashed,
+            state_trie: None,
+            // The following fields are not needed for blob validation.
+            storage_tries: BTreeMap::new(),
+            block_headers: BTreeMap::new(),
+            account_hashes_by_address: BTreeMap::new(),
+        };
+
+        guest_program_state
             .rebuild_state_trie()
             .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
-        let wrapped_db = ExecutionWitnessWrapper::new(initial_db);
+
+        let wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
+
         let state_diff = prepare_state_diff(
             last_block_header,
             &wrapped_db,
@@ -204,6 +216,7 @@ pub fn stateless_validation_l2(
             &privileged_transactions,
             account_updates.values().cloned().collect(),
         )?;
+
         verify_blob(state_diff, blob_commitment, blob_proof)?
     } else {
         H256::zero()
@@ -229,17 +242,38 @@ struct StatelessResult {
     last_block_header: BlockHeader,
     last_block_hash: H256,
     non_privileged_count: U256,
+
+    // These fields are only used in L2 to validate state diff blobs.
+    // We return them to avoid recomputing when comparing the initial state
+    // with the final state after block execution.
+    #[cfg(feature = "l2")]
+    pub nodes_hashed: BTreeMap<H256, Vec<u8>>,
+    #[cfg(feature = "l2")]
+    pub codes_hashed: BTreeMap<H256, Vec<u8>>,
+    #[cfg(feature = "l2")]
+    pub parent_block_header: BlockHeader,
 }
 
 fn execute_stateless(
     blocks: &[Block],
-    mut db: ExecutionWitnessResult,
+    execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    db.rebuild_state_trie()
-        .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+    let guest_program_state: GuestProgramState = execution_witness
+        .try_into()
+        .map_err(StatelessExecutionError::GuestProgramState)?;
 
-    let mut wrapped_db = ExecutionWitnessWrapper::new(db);
+    // Cache these L2-specific state fields for later state diff blob validation
+    // to avoid expensive recomputation after the guest_program_state is moved
+    // to the wrapper
+    #[cfg(feature = "l2")]
+    let nodes_hashed = guest_program_state.nodes_hashed.clone();
+    #[cfg(feature = "l2")]
+    let codes_hashed = guest_program_state.codes_hashed.clone();
+    #[cfg(feature = "l2")]
+    let parent_block_header_clone = guest_program_state.parent_block_header.clone();
+
+    let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         StatelessExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
@@ -264,10 +298,10 @@ fn execute_stateless(
                 .header
                 .number,
         )
-        .map_err(StatelessExecutionError::ExecutionWitness)?;
+        .map_err(StatelessExecutionError::GuestProgramState)?;
     let initial_state_hash = wrapped_db
         .state_trie_root()
-        .map_err(StatelessExecutionError::ExecutionWitness)?;
+        .map_err(StatelessExecutionError::GuestProgramState)?;
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
     }
@@ -303,7 +337,7 @@ fn execute_stateless(
         // Update db for the next block
         wrapped_db
             .apply_account_updates(&account_updates)
-            .map_err(StatelessExecutionError::ExecutionWitness)?;
+            .map_err(StatelessExecutionError::GuestProgramState)?;
 
         // Update acc_account_updates
         for account in account_updates {
@@ -339,7 +373,7 @@ fn execute_stateless(
     let last_block_hash = last_block.header.hash();
     let final_state_hash = wrapped_db
         .state_trie_root()
-        .map_err(StatelessExecutionError::ExecutionWitness)?;
+        .map_err(StatelessExecutionError::GuestProgramState)?;
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
@@ -352,6 +386,12 @@ fn execute_stateless(
         last_block_header: last_block.header.clone(),
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
+        #[cfg(feature = "l2")]
+        nodes_hashed,
+        #[cfg(feature = "l2")]
+        codes_hashed,
+        #[cfg(feature = "l2")]
+        parent_block_header: parent_block_header_clone,
     })
 }
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage: notify_workflow_failure.sh <slack_webhook_url>
 # Expects the following env vars (provided by the caller workflow):
-#   REPO, WORKFLOW_NAME, CONCLUSION, RUN_HTML_URL, RUN_ID, HEAD_SHA, ACTOR
+#   REPO, WORKFLOW_NAME, CONCLUSION, RUN_HTML_URL, RUN_ID, HEAD_SHA
 
 SLACK_WEBHOOK_URL=${1:-}
 if [[ -z "${SLACK_WEBHOOK_URL}" ]]; then
@@ -17,7 +17,6 @@ CONCLUSION=${CONCLUSION:-}
 RUN_HTML_URL=${RUN_HTML_URL:-}
 RUN_ID=${RUN_ID:-}
 HEAD_SHA=${HEAD_SHA:-}
-ACTOR=${ACTOR:-}
 
 RUN_URL="$RUN_HTML_URL"
 if [[ -z "$RUN_URL" ]]; then
@@ -25,14 +24,15 @@ if [[ -z "$RUN_URL" ]]; then
 fi
 
 SHORT_SHA="${HEAD_SHA:0:8}"
+COMMIT_URL="https://github.com/${REPO}/commit/${HEAD_SHA}"
 
 # Construct the Slack payload using jq for safe JSON escaping
 PAYLOAD=$(jq -n \
   --arg repo "$REPO" \
   --arg workflow "$WORKFLOW_NAME" \
   --arg conclusion "$CONCLUSION" \
-  --arg actor "$ACTOR" \
   --arg sha "$SHORT_SHA" \
+  --arg commit_url "$COMMIT_URL" \
   --arg url "$RUN_URL" \
   '{
     blocks: [
@@ -46,11 +46,9 @@ PAYLOAD=$(jq -n \
       {
         type: "section",
         fields: [
-          { type: "mrkdwn", text: "*Repo*\n\($repo)" },
           { type: "mrkdwn", text: "*Workflow*\n\($workflow)" },
           { type: "mrkdwn", text: "*Conclusion*\n\($conclusion)" },
-          { type: "mrkdwn", text: "*Actor*\n\($actor)" },
-          { type: "mrkdwn", text: "*Commit*\n\($sha)" },
+          { type: "mrkdwn", text: "*Commit*\n<\($commit_url)|\($sha)>" },
           { type: "mrkdwn", text: "*Run*\n<\($url)|Open in GitHub>" }
         ]
       }
@@ -60,4 +58,3 @@ curl -sS --fail -X POST \
   -H 'Content-type: application/json' \
   --data "$PAYLOAD" \
   "$SLACK_WEBHOOK_URL" || echo "Failed to send Slack notification" >&2
-
