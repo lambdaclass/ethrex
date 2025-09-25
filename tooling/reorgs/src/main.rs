@@ -34,7 +34,7 @@ async fn main() {
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
 
     // TODO: this test is failing
-    // run_test(&cmd_path, test_many_blocks_reorg).await;
+    run_test(&cmd_path, test_many_blocks_reorg).await;
 }
 
 async fn get_ethrex_version(cmd_path: &Path) -> String {
@@ -146,7 +146,7 @@ async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
     assert_eq!(new_balance, initial_balance);
 }
 
-#[expect(unused)]
+// #[expect(unused)]
 async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
     let signer: Signer = LocalSigner::new(
@@ -190,12 +190,6 @@ async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
     let same_balance = node0.get_balance(recipient).await;
     assert_eq!(same_balance, initial_balance);
 
-    // Make an ETH transfer in the base chain
-    // NOTE: we do this to ensure both blocks are different
-    node1
-        .send_eth_transfer(&signer, recipient, transfer_amount)
-        .await;
-
     // Advance the base chain with multiple blocks only known to node1
     for _ in 0..10 {
         base_chain = node1.build_payload(base_chain).await;
@@ -207,7 +201,7 @@ async fn test_many_blocks_reorg(simulator: Arc<Mutex<Simulator>>) {
     let same_balance = node0.get_balance(recipient).await;
     assert_eq!(same_balance, initial_balance);
 
-    // Advance the side chain with one more block and another ETH transfer
+    // Advance the side chain with one more block and an ETH transfer
     node1
         .send_eth_transfer(&signer, recipient, transfer_amount)
         .await;

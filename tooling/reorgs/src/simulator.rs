@@ -224,7 +224,9 @@ impl Node {
 
     pub async fn build_payload(&self, mut chain: Chain) -> Chain {
         let fork_choice_state = chain.get_fork_choice_state();
-        let payload_attributes = chain.get_next_payload_attributes();
+        let mut payload_attributes = chain.get_next_payload_attributes();
+        // Set index as fee recipient to differentiate between nodes
+        payload_attributes.suggested_fee_recipient = H160::from_low_u64_be(self.index as u64);
         let head = fork_choice_state.head_block_hash;
 
         let parent_beacon_block_root = payload_attributes.parent_beacon_block_root;
@@ -384,13 +386,7 @@ impl Chain {
         // Generate dummy values by hashing multiple times
         let parent_beacon_block_root = keccak256(&head_hash.0);
         let prev_randao = keccak256(&parent_beacon_block_root.0);
-        // Address of 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e, a rich account
-        let suggested_fee_recipient = H160(
-            hex::decode("4417092B70a3E5f10Dc504d0947DD256B965fc62")
-                .unwrap()
-                .try_into()
-                .unwrap(),
-        );
+        let suggested_fee_recipient = Default::default();
         // TODO: add withdrawals
         let withdrawals = vec![];
         PayloadAttributesV3 {
