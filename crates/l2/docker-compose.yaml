@@ -20,7 +20,6 @@ services:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts
       - env:/env/
-      - ../../cmd:/host-cmd
       - ../../fixtures/genesis/l1-dev.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
