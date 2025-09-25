@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -49,7 +49,7 @@ jobs:
           large-packages: false
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -84,7 +84,7 @@ jobs:
     env:
       HIVE_COMMIT_HASH: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43 # commit from our fork
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup Hive
         run: |
           git clone --single-branch --branch update_dockerfile https://github.com/lambdaclass/hive
@@ -103,7 +103,7 @@ jobs:
     env:
       HIVE_COMMIT_HASH: 2d0e4fefb814d6815430c0f9e201fe8a045cf486
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup Hive
         run: |
           git clone --single-branch --branch master https://github.com/lambdaclass/hive
@@ -137,7 +137,7 @@ jobs:
           #   ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download etherex image artifact
         uses: actions/download-artifact@v4
@@ -201,7 +201,7 @@ jobs:
             ethrex_flags: "--syncmode snap"
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
