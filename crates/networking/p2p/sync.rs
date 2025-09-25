@@ -1043,7 +1043,7 @@ impl Syncer {
                 let snapshot_contents = std::fs::read(&snapshot_path)
                     .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
 
-                let account_storages_snapshot: Vec<(H256, (Vec<H256>, Vec<(H256, U256)>))> =
+                let account_storages_snapshot: Vec<(Vec<H256>, Vec<(H256, U256)>)> =
                     RLPDecode::decode(&snapshot_contents)
                         .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
@@ -1055,19 +1055,20 @@ impl Syncer {
                 let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
                     let store: Store = store_clone;
 
-                    // TODO: Here we are filtering again the account with empty storage because we are adding empty accounts on purpose (it was the easiest thing to do)
-                    // We need to fix this issue in request_storage_ranges and remove this filter.
                     account_storages_snapshot
                         .into_par_iter()
-                        .filter(|(_root_hash, (_accounts, storage))| !storage.is_empty())
-                        .map(|(root_hash, (accounts, key_value_pairs))| {
+                        .flat_map(|(accounts, storages)| {
+                            accounts
+                                .into_par_iter()
+                                .map(move |account| (account, storages.clone()))
+                        })
+                        .map(|(account, storages)| {
                             compute_storage_roots(
                                 maybe_big_account_storage_state_roots_clone.clone(),
                                 store.clone(),
-                                accounts[0],
-                                key_value_pairs,
+                                account,
+                                storages.clone(),
                                 pivot_hash_moved,
-                                root_hash,
                             )
                         })
                         .collect::<Result<Vec<_>, SyncError>>()
@@ -1238,7 +1239,6 @@ fn compute_storage_roots(
     account_hash: H256,
     key_value_pairs: Vec<(H256, U256)>,
     pivot_hash: H256,
-    expected_root_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
     let account_storage_root = match maybe_big_account_storage_state_roots
         .lock()
@@ -1261,7 +1261,10 @@ fn compute_storage_roots(
 
     let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
 
-    if computed_storage_root == expected_root_hash {
+    let account_state = store
+        .get_account_state_by_acc_hash(pivot_hash, account_hash)?
+        .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
+    if computed_storage_root == account_state.storage_root {
         METRICS.storage_tries_state_roots_computed.inc();
     } else {
         maybe_big_account_storage_state_roots
