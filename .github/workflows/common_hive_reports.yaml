@@ -138,7 +138,7 @@ jobs:
       artifact_name: results_${{ inputs.job_type }}.md
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
