@@ -85,13 +85,10 @@ impl Mempool {
 
         // Prune the order queue if it has grown too much
         if inner.txs_order.len() > MEMPOOL_PRUNE_THRESHOLD {
-            let mut new_txs_order = VecDeque::with_capacity(MEMPOOL_MAX_SIZE * 2);
-            for tx in inner.txs_order.iter() {
-                if inner.transaction_pool.contains_key(tx) {
-                    new_txs_order.push_back(*tx);
-                }
-            }
-            inner.txs_order = new_txs_order;
+            // NOTE: we do this to avoid borrow checker errors
+            let txpool = core::mem::take(&mut inner.transaction_pool);
+            inner.txs_order.retain(|tx| txpool.contains_key(tx));
+            inner.transaction_pool = txpool;
         }
 
         if inner.transaction_pool.len() >= MEMPOOL_MAX_SIZE {
