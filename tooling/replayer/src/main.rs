@@ -277,6 +277,8 @@ async fn replay_latest_block(
             to_csv: false,
             no_zkvm: opts.no_zkvm,
             cache_level: opts.cache_level.clone(),
+            // Setting this will send the message always, we opted to
+            // send it under different rules (see below in the code).
             slack_webhook_url: None,
             verbose: opts.verbose,
         },
@@ -303,6 +305,8 @@ async fn replay_latest_block(
                     to_csv: false,
                     no_zkvm: false,
                     cache_level: opts.cache_level.clone(),
+                    // Setting this will send the message always, we opted to
+                    // send it under different rules (see below in the code).
                     slack_webhook_url: None,
                     verbose: opts.verbose,
                 },
