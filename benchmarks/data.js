@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758828865065,
+  "lastUpdate": 1758831084421,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16735,6 +16735,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91027765048,
             "range": "± 929015461",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dc20e3ef3bdfa5768a2e71cc5bacca35bec0da56",
+          "message": "perf(l1): filter empty storages from snapshots (#4590)\n\nDuring snap sync, specifically when downloading storages, we were\naccidentally dumping all account addresses in every file, even when that\nfile had no storages for most of them.\nBy filtering, we reduce from 40GiB to 27GiB the auxiliary files in\nSepolia, and the sync goes from 3h10' to 3h2' in `ethrex-sync-3`, and\nfor mainnet in `ethrex-sync-2` we got from 185GiB to 40GiB and from 8h6'\nto 7h7'.",
+          "timestamp": "2025-09-25T19:19:18Z",
+          "tree_id": "e33e89bca3098675f390f89d54efe13ae707e021",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dc20e3ef3bdfa5768a2e71cc5bacca35bec0da56"
+        },
+        "date": 1758831063014,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89563151401,
+            "range": "± 274937069",
             "unit": "ns/iter"
           }
         ]
