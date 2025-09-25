@@ -19,10 +19,6 @@ use tokio::task::{JoinError, JoinHandle};
 pub struct Options {
     #[command(flatten)]
     pub common: CommonOptions,
-    #[arg(long, group = "data_source", help_heading = "Replay Options")]
-    pub rpc_url: Url,
-    #[arg(long, group = "data_source", help_heading = "Replay Options")]
-    pub cached: bool,
     #[arg(long, required = false, help_heading = "Replay Options")]
     pub to_csv: bool,
     #[arg(long, default_value = "on", help_heading = "Replay Options")]
