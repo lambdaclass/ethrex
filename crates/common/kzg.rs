@@ -34,7 +34,7 @@ pub fn verify_cell_kzg_proof_batch(
             cells.extend(c_kzg_settings.compute_cells(&(*blob).into())?.into_iter());
         }
         c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
-            &c_kzg_settings,
+            c_kzg_settings,
             &commitments
                 .iter()
                 .flat_map(|commitment| repeat_n((*commitment).into(), CELLS_PER_EXT_BLOB))
@@ -42,7 +42,7 @@ pub fn verify_cell_kzg_proof_batch(
             &Vec::from_iter((0..blobs.len()).flat_map(|_| 0..CELLS_PER_EXT_BLOB as u64)),
             &cells,
             &cell_proof
-                .into_iter()
+                .iter()
                 .map(|proof| (*proof).into())
                 .collect::<Vec<_>>(),
         )
