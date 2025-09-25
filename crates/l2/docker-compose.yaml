@@ -58,7 +58,7 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - touch /env/.env; exec ./ethrex "$0" "$@"; cp /env/.env /host-cmd/.env
+      - touch /env/.env; exec ./ethrex "$0" "$@"
     command: >
       l2
       deploy
@@ -87,10 +87,11 @@ services:
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - env:/env/
+      - ../../cmd:/host-cmd
     entrypoint:
       - /bin/bash
       - -c
-      - export $$(xargs < /env/.env); exec ./ethrex "$$0" "$$@"
+      - export $$(xargs < /env/.env); cp /env/.env /host-cmd/.env; exec ./ethrex "$$0" "$$@"
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
       l2
@@ -106,20 +107,20 @@ services:
     depends_on:
       contract_deployer:
         condition: service_completed_successfully
-      copy_env_to_host:
-        condition: service_completed_successfully
+      # copy_env_to_host:
+      #   condition: service_completed_successfully
 
-  # After contract deployment, copy the generated .env file with contract addresses to the host machine
-  # so that tests running outside Docker can access them.
-  copy_env_to_host:
-    image: busybox
-    depends_on:
-      contract_deployer:
-        condition: service_completed_successfully
-    volumes:
-      - env:/env:ro
-      - ../../cmd:/host-cmd
-    command: sh -c "cp /env/.env /host-cmd/.env"
+  # # After contract deployment, copy the generated .env file with contract addresses to the host machine
+  # # so that tests running outside Docker can access them.
+  # copy_env_to_host:
+  #   image: busybox
+  #   depends_on:
+  #     contract_deployer:
+  #       condition: service_completed_successfully
+  #   volumes:
+  #     - env:/env:ro
+  #     - ../../cmd:/host-cmd
+  #   command: sh -c "cp /env/.env /host-cmd/.env"
 
   ethrex_prover:
     container_name: ethrex_prover
