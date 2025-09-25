@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758768667883,
+  "lastUpdate": 1758796481768,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33941,6 +33941,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004534445932028837,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cfb805c6c70df1f6172f1982c9ed8952b7399d28",
+          "message": "chore(l1): fix memory spike when transitioning from snap to fullsync (#4630)\n\n**Motivation**\n\nWe were seeing spikes of more than 20GB of ram transitioning from\nsnapsync to full sync\n\n**Description**\n\nThis PR remove the call to `into_fullsync` during the end of snap sync.\nThat call was unnecessary, `into_fullsync` is used if we try to start a\nsnap sync and we detect we are close to the head (<64 blocks) we move\nthe headers to the fullsync state in that case, but in this one we\nalready finished snapsync so we just need to start fullsync from the\nlast known head.",
+          "timestamp": "2025-09-24T18:00:34Z",
+          "tree_id": "7232c44213e027cdfd16c3b7e7a266540bf32f3e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cfb805c6c70df1f6172f1982c9ed8952b7399d28"
+        },
+        "date": 1758796480386,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015786830405163143,
             "unit": "Mgas/s"
           }
         ]
