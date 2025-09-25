@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758813074241,
+  "lastUpdate": 1758814388823,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16495,6 +16495,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90550591740,
             "range": "± 1100329463",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "68beb0c114f2d43299e2264ec8c77f7ca6ac8710",
+          "message": "ci(l1,l2): free unused packages on github runners (#4647)\n\n**Motivation**\n\nThe CI is broken due to not having space left to run the jobs\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-25T14:40:33Z",
+          "tree_id": "119c291dd045aef130339565b28a1cab6dce7bb4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/68beb0c114f2d43299e2264ec8c77f7ca6ac8710"
+        },
+        "date": 1758814241749,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 87481088505,
+            "range": "± 174999943",
             "unit": "ns/iter"
           }
         ]
