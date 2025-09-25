@@ -1,11 +1,10 @@
 use std::marker::Send;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::Scope;
 
 pub struct ThreadPool<'scope> {
     task_queue_sender: Sender<Box<dyn 'scope + Send + FnOnce()>>, // Implictly our threads in the thread pool have the receiver
-    _phantom_data: std::marker::PhantomData<&'scope ()>,
 }
 
 impl<'scope> ThreadPool<'scope> {
@@ -26,10 +25,7 @@ impl<'scope> ThreadPool<'scope> {
             });
         }
 
-        ThreadPool {
-            task_queue_sender,
-            _phantom_data: std::marker::PhantomData,
-        }
+        ThreadPool { task_queue_sender }
     }
 
     pub fn execute(&self, task: Box<dyn 'scope + Send + FnOnce()>) {
