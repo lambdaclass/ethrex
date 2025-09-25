@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758831084421,
+  "lastUpdate": 1758836899459,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16765,6 +16765,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89563151401,
             "range": "± 274937069",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "252093b6229318ac257cd68b99f69b2ac301dba5",
+          "message": "fix(l1): preventing \"Address family not supported by protocol\" errors on discv4 (#4655)\n\n**Motivation**\n\nUsing `UdpFramed` to send messages was causing a problem when a message\nsend failed: A singe error was causing every other message send to fail.\n(See https://github.com/tokio-rs/tokio/issues/7648)\nIt was causing the log spam issue described in #4232 \n\n**Description**\n\nMoved back to use `UdpSocket` directly to send messages. It prevents the\n\"Address family not supported by protocol\" propagation of errors.\n\nAlso fixes some of the issues in #4232 (but still full IPv6 needs to be\nimplemented):\n- Comparing canonical IP addresses\n- Removes a custom implementation of `to_canonical()`",
+          "timestamp": "2025-09-25T20:54:18Z",
+          "tree_id": "0a69b44915d6b17c227d12213d19fb2ae424f1b5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/252093b6229318ac257cd68b99f69b2ac301dba5"
+        },
+        "date": 1758836878721,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90267691555,
+            "range": "± 166774649",
             "unit": "ns/iter"
           }
         ]
