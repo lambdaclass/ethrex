@@ -46,4 +46,3 @@ path = "./trie.rs"
 [[bench]]
 name = "trie_bench"
 harness = false
-
