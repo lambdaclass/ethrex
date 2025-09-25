@@ -262,7 +262,7 @@ impl GenServer for TxBroadcaster {
                 self.broadcasted_txs_per_peer.retain(|_, &mut timestamp| {
                     now.duration_since(timestamp) < Duration::from_secs(PRUNE_WAIT_TIME_SECS)
                 });
-                info!(before = before, after = self.broadcasted_txs_per_peer.len(), peer_id = %format!("{:#x}", peer_id), "Pruned old broadcasted transactions");
+                info!(before = before, after = self.broadcasted_txs_per_peer.len(), "Pruned old broadcasted transactions");
                 CastResponse::NoReply
             }
         }
