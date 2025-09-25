@@ -207,24 +207,55 @@ impl BranchNode {
     }
 
     /// Encodes the node
+    /// Assumptions:
+    /// - No value
+    /// - 32 byte choices
     pub fn encode_raw(&self) -> Vec<u8> {
-        // 16 items * 32 bytes, assuming branches don't have values
-        // in a state or storage trie
-        const RLP_ENCODED_SIZE: usize = 512;
+        // 16 items * 33 bytes, assuming branches don't have values
+        // in a state or storage trie.
+        // plus a 3 byte headroom for the first prefix and possibly payload len
+        const MAX_RLP_ENCODED_SIZE: usize = 528 + 3;
 
-        let mut buf = Vec::with_capacity(RLP_ENCODED_SIZE);
-        let mut encoder = Encoder::new_with_capacity(&mut buf, RLP_ENCODED_SIZE);
+        let mut buf = Vec::with_capacity(MAX_RLP_ENCODED_SIZE);
+        buf.extend([0x00; 3]);
+
+        let mut payload_len = 1;
         for child in self.choices.iter() {
             match child.compute_hash() {
-                NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
-                child @ NodeHash::Inline(raw) if raw.1 != 0 => {
-                    encoder = encoder.encode_raw(child.as_ref())
+                NodeHash::Hashed(hash) => {
+                    buf.push(0xa0);
+                    buf.extend(hash.0);
+                    payload_len += 33;
                 }
-                _ => encoder = encoder.encode_bytes(&[]),
+                NodeHash::Inline(raw) if raw.1 != 0 => {
+                    buf.push(0x80 + raw.1);
+                    buf.extend_from_slice(&raw.0[..raw.1 as usize]);
+                    payload_len += 1 + raw.1 as usize;
+                }
+                _ => {
+                    buf.push(0x80);
+                    payload_len += 1;
+                }
             }
         }
-        encoder = encoder.encode_bytes(&self.value);
-        encoder.finish();
+
+        // branch's value is empty
+        buf.push(0x80);
+
+        if payload_len < 56 {
+            buf[2] = 0xc0 + payload_len as u8;
+            buf.remove(0);
+            buf.remove(0);
+        } else if payload_len < u8::MAX as usize {
+            buf[1] = 0xf8;
+            buf[2] = payload_len as u8;
+            buf.remove(0);
+        } else {
+            buf[0] = 0xf9;
+            buf[1] = ((payload_len as u16) >> 8) as u8;
+            buf[2] = (payload_len & 0xff) as u8;
+        }
+
         buf
     }
 
