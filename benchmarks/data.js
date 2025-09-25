@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758814664012,
+  "lastUpdate": 1758817562749,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16525,6 +16525,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 87481088505,
             "range": "± 174999943",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "44d5c6c16db91d84cb2c201287eea6dfb53f3fa3",
+          "message": "chore(l1, l2): install protoc as a dependency for release workflows (#4646)\n\n**Motivation**\n\nOur last attempt at making a release failed because protobuf is now a\ndependency for building (see [this\naction](https://github.com/lambdaclass/ethrex/actions/runs/17991396735/job/51181982770)).\nThis should fix it.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-25T15:35:28Z",
+          "tree_id": "31737115014a18a85d0401a63f2ae83c9b22eea4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/44d5c6c16db91d84cb2c201287eea6dfb53f3fa3"
+        },
+        "date": 1758817541346,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 88676063423,
+            "range": "± 1041105222",
             "unit": "ns/iter"
           }
         ]
