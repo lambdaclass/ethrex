@@ -87,6 +87,13 @@ impl BlockProducer {
             elasticity_multiplier,
             block_gas_limit,
         } = config;
+
+        if coinbase_address == fee_vault_address {
+            warn!(
+                "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected."
+            );
+        }
+
         Self {
             store,
             blockchain,
