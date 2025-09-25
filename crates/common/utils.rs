@@ -1,6 +1,8 @@
+use crate::H256;
 use ethereum_types::U256;
 use hex::FromHexError;
-use keccak_hash::H256;
+use sha3::Digest;
+use sha3::Keccak256;
 
 /// Converts a big endian slice to a u256, faster than `u256::from_big_endian`.
 pub fn u256_from_big_endian(slice: &[u8]) -> U256 {
@@ -59,6 +61,10 @@ pub fn u256_to_h256(value: U256) -> H256 {
 pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
     let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
     hex::decode(trimmed)
+}
+
+pub fn keccak(data: impl AsRef<[u8]>) -> H256 {
+    H256(Keccak256::digest(data.as_ref()).into())
 }
 
 #[cfg(test)]
