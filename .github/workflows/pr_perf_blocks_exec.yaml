@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Populate cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache
         with:
           path: bin/ethrex-${{ matrix.branch }}
