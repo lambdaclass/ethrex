@@ -45,7 +45,7 @@ revm-primitives = { version = "15.2.0", features = [
 path = "./lib.rs"
 
 [features]
-default = []
+default = ["c-kzg"]
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 kzg-rs = ["ethrex-levm/kzg-rs", "ethrex-common/kzg-rs"]
 openvm-kzg = ["ethrex-levm/openvm-kzg", "ethrex-common/openvm-kzg"]

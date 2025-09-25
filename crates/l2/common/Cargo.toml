@@ -11,7 +11,7 @@ ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-ethrex-vm.workspace = true
+ethrex-vm = {workspace = true, default-features = false}
 bytes.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -30,5 +30,5 @@ panic = "deny"
 
 [features]
 default = ["secp256k1"]
-k256 = ["dep:k256", "ethrex-common/kzg-rs"]
-secp256k1 = ["dep:secp256k1", "ethrex-common/c-kzg"]
+k256 = ["dep:k256", "ethrex-common/kzg-rs", "ethrex-vm/kzg-rs"]
+secp256k1 = ["dep:secp256k1", "ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
