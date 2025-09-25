@@ -42,7 +42,7 @@ impl RLPxInitiator {
             context,
             initial_lookup_interval: Duration::from_secs(3),
             lookup_interval: Duration::from_secs(5 * 60),
-            target_peers: 50,
+            target_peers: 700,
             new_connections_per_lookup: 5000,
         }
     }

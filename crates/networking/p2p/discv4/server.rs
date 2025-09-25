@@ -52,7 +52,7 @@ const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_secs(5);
 const LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// The target number of RLPx connections to reach.
-const TARGET_PEERS: u64 = 100;
+const TARGET_PEERS: u64 = 700;
 /// The target number of contacts to maintain in the Kademlia table.
 const TARGET_CONTACTS: u64 = 100_000;
 
