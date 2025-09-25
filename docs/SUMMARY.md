@@ -74,7 +74,7 @@
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
-  - [Profiling zkvm execution with ethrex replay](./ethrex_replay/profiling.md)
+  - [FAQ](./ethrex_replay/faq.md)
 - [CLI reference](./CLI.md)
 - [Troubleshooting]()
 
