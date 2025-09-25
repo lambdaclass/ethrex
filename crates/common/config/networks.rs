@@ -152,7 +152,7 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use keccak_hash::H256;
+    use ethrex_common::H256;
 
     use super::*;
 

@@ -9,6 +9,7 @@ use crate::{
     utils::{self, default_datadir, init_datadir, parse_private_key},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -23,7 +24,6 @@ use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::StoreRollup;
 use eyre::OptionExt;
 use itertools::Itertools;
-use keccak_hash::keccak;
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
 use std::{

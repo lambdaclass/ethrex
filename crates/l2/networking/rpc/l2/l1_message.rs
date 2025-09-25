@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use keccak_hash::H256;
+use ethrex_common::H256;
 use serde_json::Value;
 use tracing::info;
 

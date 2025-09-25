@@ -5,9 +5,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ethrex_common::H256;
 use ethrex_common::{H512, U256};
 use futures::{SinkExt as _, StreamExt, stream::SplitSink};
-use keccak_hash::H256;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 use spawned_concurrency::{

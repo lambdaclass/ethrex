@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Signature};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     U256,
     types::{
@@ -8,7 +9,6 @@ use ethrex_common::{
     },
 };
 use ethrex_rlp::encode::PayloadRLPEncode;
-use keccak_hash::keccak;
 use reqwest::{Client, StatusCode, Url};
 use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};

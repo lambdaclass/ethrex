@@ -1,6 +1,6 @@
 use ethrex_blockchain::error::ChainError;
+use ethrex_common::H256;
 use ethrex_storage::error::StoreError;
-use keccak_hash::H256;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProverInputError {

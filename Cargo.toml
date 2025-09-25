@@ -105,7 +105,6 @@ secp256k1 = { version = "0.29.1", default-features = false, features = [
   "recovery",
   "rand",
 ] }
-keccak-hash = "0.11.0"
 axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
