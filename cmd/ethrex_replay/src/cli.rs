@@ -533,6 +533,10 @@ async fn setup(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)>
 }
 
 async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<Duration> {
+    let b = backend(&opts.common.zkvm)?;
+    if !matches!(b, Backend::Exec) {
+        eyre::bail!("Tried to execute without zkVM but backend was set to {b:?}");
+    }
     if opts.common.action == Action::Prove {
         eyre::bail!("Proving not enabled without backend");
     }
