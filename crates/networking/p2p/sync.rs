@@ -9,7 +9,7 @@ use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
-    get_code_hashes_snapshots_dir, get_rocksdb_temp_accounts_dir, get_rocksdb_temp_storage_dir,
+    get_code_hashes_snapshots_dir,
 };
 use crate::{
     metrics::METRICS,
@@ -24,17 +24,21 @@ use ethrex_common::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use ethrex_trie::{NodeHash, Trie, TrieError};
+use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+#[cfg(not(feature = "rocksdb"))]
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(not(feature = "rocksdb"))]
+use std::sync::Mutex;
 use std::time::SystemTime;
 use std::{
     array,
     cmp::min,
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -885,10 +889,10 @@ impl Syncer {
                         store.clone(),
                         &mut storage_accounts,
                         &account_state_snapshots_dir,
-                        &get_rocksdb_temp_accounts_dir(&self.datadir),
+                        &crate::utils::get_rocksdb_temp_accounts_dir(&self.datadir),
                         &mut code_hash_collector,
                     ).await?;
-                    let accounts_with_storage: BTreeSet<H256> = BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().into_iter().map(|k| *k));
+                    let accounts_with_storage = std::collections::BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
                 } else {
                     let computed_state_root = insert_accounts_into_db(
                         store.clone(),
@@ -989,7 +993,7 @@ impl Syncer {
                         store.clone(),
                         accounts_with_storage,
                         &account_storages_snapshots_dir,
-                        &get_rocksdb_temp_storage_dir(&self.datadir)
+                        &crate::utils::get_rocksdb_temp_storage_dir(&self.datadir)
                     ).await?;
                 } else {
                     let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
@@ -1155,8 +1159,10 @@ impl Syncer {
     }
 }
 
-type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
+#[cfg(not(feature = "rocksdb"))]
+type StorageRoots = (H256, Vec<(ethrex_trie::NodeHash, Vec<u8>)>);
 
+#[cfg(not(feature = "rocksdb"))]
 fn compute_storage_roots(
     maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
@@ -1434,6 +1440,7 @@ pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     is_valid
 }
 
+#[cfg(not(feature = "rocksdb"))]
 async fn insert_accounts_into_db(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
@@ -1493,6 +1500,7 @@ async fn insert_accounts_into_db(
     Ok(computed_state_root)
 }
 
+#[cfg(not(feature = "rocksdb"))]
 async fn insert_storages_into_db(
     store: Store,
     account_storages_snapshots_dir: &Path,
@@ -1575,6 +1583,16 @@ async fn insert_accounts_into_rocksdb(
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    for account in iter {
+        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
+        if account_state.code_hash != *EMPTY_KECCACK_HASH {
+            code_hash_collector.add(account_state.code_hash);
+            code_hash_collector.flush_if_needed().await?;
+        }
+    }
+
+    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     trie_from_sorted_accounts_wrap(
         trie.db(),
         &mut iter
@@ -1589,10 +1607,6 @@ async fn insert_accounts_into_rocksdb(
                         .accounts_with_storage_root
                         .insert(H256::from_slice(k), account_state.storage_root);
                 }
-                if account_state.code_hash != *EMPTY_KECCACK_HASH {
-                    code_hash_collector.add(account_state.code_hash);
-                    code_hash_collector.flush_if_needed();
-                }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
@@ -1602,14 +1616,11 @@ async fn insert_accounts_into_rocksdb(
 #[cfg(feature = "rocksdb")]
 async fn insert_storage_into_rocksdb(
     store: Store,
-    accounts_with_storage: BTreeSet<H256>,
+    accounts_with_storage: std::collections::BTreeSet<H256>,
     account_state_snapshots_dir: &Path,
     temp_db_dir: &Path,
 ) -> Result<(), SyncError> {
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
-    use rayon::iter::IntoParallelRefIterator;
-    use rocksdb::DBCommon;
-    use scoped_threadpool::Pool;
 
     struct RocksDBIterator<'a> {
         iter: rocksdb::DBRawIterator<'a>,
@@ -1659,9 +1670,8 @@ async fn insert_storage_into_rocksdb(
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
 
-    accounts_with_storage.into_par_iter().for_each(|account_hash| {
+    accounts_with_storage.into_par_iter().map(|account_hash| {
         let store_clone = store.clone();
-                use ethrex_trie::trie_sorted::trie_from_sorted_accounts;
                 let mut iter = db.raw_iterator();
 
                 let trie = store_clone
@@ -1686,6 +1696,7 @@ async fn insert_storage_into_rocksdb(
                 })
                 .map_err(SyncError::TrieGenerationError);
                 METRICS.storage_tries_state_roots_computed.inc();
-            });
+                result
+            }).collect::<Result<Vec<_>, _>>()?;
     Ok(())
 }

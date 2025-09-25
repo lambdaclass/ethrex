@@ -127,7 +127,7 @@ pub fn dump_accounts_to_file(
     cfg_if::cfg_if! {
         if #[cfg(feature = "rocksdb")] {
             dump_to_rocks_db(
-                path.clone(),
+                path,
                 accounts
                     .into_iter()
                     .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())
@@ -152,7 +152,7 @@ pub fn dump_storages_to_file(
     cfg_if::cfg_if! {
         if #[cfg(feature = "rocksdb")] {
             dump_to_rocks_db(
-                &path,
+                path,
                 storages
                     .into_iter()
                     .flat_map(|(hash, slots)| {

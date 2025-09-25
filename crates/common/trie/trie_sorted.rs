@@ -3,12 +3,7 @@ use crate::{
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use ethereum_types::H256;
-use ethrex_rlp::encode::RLPEncode;
-use rayon::{
-    Scope,
-    iter::{IntoParallelRefIterator, ParallelIterator},
-    scope,
-};
+use rayon::{Scope, scope};
 use tracing::debug;
 
 #[derive(Debug, Default, Clone)]
@@ -17,6 +12,9 @@ struct StackElement {
     element: BranchNode,
 }
 
+// The large size isn't a performance problem because we use a single instance of this
+// struct
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 enum CenterSideElement {
     Branch { node: BranchNode },
@@ -285,6 +283,7 @@ where
 #[cfg(test)]
 mod test {
     use ethereum_types::U256;
+    use ethrex_rlp::encode::RLPEncode;
 
     use crate::Trie;
 

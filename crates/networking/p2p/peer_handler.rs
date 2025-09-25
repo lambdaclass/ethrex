@@ -36,9 +36,9 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, BlockSyncState, SyncError, block_is_stale, update_pivot},
+    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
-        SendMessageError, dump_accounts_to_file, dump_storages_to_file, dump_to_file,
+        SendMessageError, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
     },
 };
