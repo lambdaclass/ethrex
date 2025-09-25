@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758798058176,
+  "lastUpdate": 1758801441536,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -33999,6 +33999,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00451121618852459,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "df39b4bbc817b18ba7bb7f6c717c03d4e74f4f46",
+          "message": "fix(l2): common bridge dependencies (#4637)\n\n**Motivation**\n\nReentrancyGuard was removed from the\n`openzeppelin/contracts-upgradable`. See\n[this](https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/commit/4a073ac393f1c1495391b810b2c7b6b96de28137#diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4ed)\n\nFor now we pin the commit to the one we were using until we decide what\nto do.\n\n**Description**\n\nAdd to the `git_clone` an optional commit to checkout\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: avilagaston9 <gaston.avila@lambdaclass.com>",
+          "timestamp": "2025-09-24T19:31:13Z",
+          "tree_id": "9af7ca03c95468fd4bfa1fc3cf89695e6823b478",
+          "url": "https://github.com/lambdaclass/ethrex/commit/df39b4bbc817b18ba7bb7f6c717c03d4e74f4f46"
+        },
+        "date": 1758801440709,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015860760086455331,
             "unit": "Mgas/s"
           }
         ]
