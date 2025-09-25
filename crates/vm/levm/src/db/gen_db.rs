@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
-use keccak_hash::H256;
-use keccak_hash::keccak;
+use ethrex_common::utils::keccak;
 
 use super::Database;
 use crate::account::LevmAccount;

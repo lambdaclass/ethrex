@@ -9,10 +9,10 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode,
-    MultiThreaded, Options, WriteBatch,
+    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
+    OptimisticTransactionDB, Options, WriteBatchWithTransaction,
 };
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, path::Path, sync::Arc};
 use tracing::info;
 
 use crate::{
@@ -103,16 +103,16 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
 pub struct Store {
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
 }
 
 impl Store {
-    pub fn new(path: &str) -> Result<Self, StoreError> {
+    pub fn new(path: &Path) -> Result<Self, StoreError> {
         let mut db_options = Options::default();
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache 
+        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache
 
         db_options.set_max_open_files(-1);
         db_options.set_max_file_opening_threads(16);
@@ -166,17 +166,18 @@ impl Store {
         ];
 
         // Get existing column families to know which ones to drop later
-        let existing_cfs = match DBWithThreadMode::<MultiThreaded>::list_cf(&db_options, path) {
-            Ok(cfs) => {
-                info!("Found existing column families: {:?}", cfs);
-                cfs
-            }
-            Err(_) => {
-                // Database doesn't exist yet
-                info!("Database doesn't exist, will create with expected column families");
-                vec!["default".to_string()]
-            }
-        };
+        let existing_cfs =
+            match OptimisticTransactionDB::<MultiThreaded>::list_cf(&db_options, path) {
+                Ok(cfs) => {
+                    info!("Found existing column families: {:?}", cfs);
+                    cfs
+                }
+                Err(_) => {
+                    // Database doesn't exist yet
+                    info!("Database doesn't exist, will create with expected column families");
+                    vec!["default".to_string()]
+                }
+            };
 
         // Create descriptors for ALL existing CFs + expected ones (RocksDB requires opening all existing CFs)
         let mut all_cfs_to_open = HashSet::new();
@@ -207,7 +208,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_cache(&cache);
@@ -219,7 +220,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_cache(&cache);
@@ -230,14 +231,14 @@ impl Store {
                 }
                 CF_STATE_TRIE_NODES | CF_STORAGE_TRIES_NODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB 
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter 
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB 
+                    block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_block_cache(&cache);
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     block_opts.set_cache_index_and_filter_blocks(true);
@@ -261,7 +262,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
@@ -273,7 +274,7 @@ impl Store {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             path,
             cf_descriptors,
@@ -366,7 +367,7 @@ impl Store {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
+            let mut batch = WriteBatchWithTransaction::default();
 
             for (cf_name, key, value) in batch_ops {
                 let cf = db.cf_handle(&cf_name).ok_or_else(|| {
@@ -463,7 +464,7 @@ impl StoreEngine for Store {
             )?;
 
             let _span = tracing::trace_span!("Block DB update").entered();
-            let mut batch = WriteBatch::default();
+            let mut batch = WriteBatchWithTransaction::default();
 
             for (node_hash, node_data) in update_batch.account_updates {
                 batch.put_cf(&cf_state, node_hash.as_ref(), node_data);
@@ -533,7 +534,7 @@ impl StoreEngine for Store {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
+            let mut batch = WriteBatchWithTransaction::default();
 
             let [cf_headers, cf_bodies, cf_block_numbers, cf_tx_locations] = open_cfs(
                 &db,
@@ -642,7 +643,7 @@ impl StoreEngine for Store {
     }
 
     async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        let mut batch = WriteBatch::default();
+        let mut batch = WriteBatchWithTransaction::default();
 
         let Some(hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(());
@@ -936,7 +937,7 @@ impl StoreEngine for Store {
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
             let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-            let mut batch = WriteBatch::default();
+            let mut batch = WriteBatchWithTransaction::default();
 
             while let Some(Ok((key, _))) = iter.next() {
                 batch.delete_cf(&cf, key);
@@ -1160,7 +1161,7 @@ impl StoreEngine for Store {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
+            let mut batch = WriteBatchWithTransaction::default();
 
             let [cf_canonical, cf_chain_data] =
                 open_cfs(&db, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
@@ -1435,7 +1436,7 @@ impl StoreEngine for Store {
 
 /// Open column families
 fn open_cfs<'a, const N: usize>(
-    db: &'a Arc<DBWithThreadMode<MultiThreaded>>,
+    db: &'a Arc<OptimisticTransactionDB<MultiThreaded>>,
     names: [&str; N],
 ) -> Result<[Arc<BoundColumnFamily<'a>>; N], StoreError> {
     let mut handles = Vec::with_capacity(N);

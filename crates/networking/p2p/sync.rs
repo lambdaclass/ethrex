@@ -1,12 +1,15 @@
+mod code_collector;
 mod state_healing;
 mod storage_healing;
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
+    get_code_hashes_snapshots_dir,
 };
 use crate::{
     metrics::METRICS,
@@ -48,7 +51,10 @@ const SECONDS_PER_BLOCK: u64 = 12;
 /// Bytecodes to downloader per batch
 const BYTECODE_CHUNK_SIZE: usize = 50_000;
 
-const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
+/// We assume this amount of slots are missing a block to adjust our timestamp
+/// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
+/// that are unlikely to be re-orged.
+const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -91,7 +97,7 @@ pub struct Syncer {
     blockchain: Arc<Blockchain>,
     /// This string indicates a folder where the snap algorithm will store temporary files that are
     /// used during the syncing process
-    datadir: String,
+    datadir: PathBuf,
 }
 
 impl Syncer {
@@ -100,7 +106,7 @@ impl Syncer {
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
-        datadir: String,
+        datadir: PathBuf,
     ) -> Self {
         Self {
             snap_enabled,
@@ -120,9 +126,9 @@ impl Syncer {
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
+                Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
             )),
-            datadir: ".".to_string(),
+            datadir: ".".into(),
         }
     }
 
@@ -301,10 +307,10 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, &mut block_sync_state).await?;
+            self.snap_sync(store.clone(), &mut block_sync_state).await?;
 
-            // Next sync will be full-sync
-            block_sync_state.into_fullsync().await?;
+            store.clear_snap_state().await?;
+
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -332,7 +338,7 @@ impl Syncer {
         loop {
             debug!("Sync Log 1: In Full Sync");
             debug!(
-                "Sync Log 3: State current headears len {}",
+                "Sync Log 3: State current headers len {}",
                 block_sync_state.current_headers.len()
             );
             debug!(
@@ -846,6 +852,12 @@ impl Syncer {
         let account_state_snapshots_dir = get_account_state_snapshots_dir(&self.datadir);
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
+        let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(&self.datadir);
+        std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
+
+        // Create collector to store code hashes in files
+        let mut code_hash_collector = CodeHashCollector::new(code_hashes_snapshot_dir.clone());
+
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
             // We start by downloading all of the leafs of the trie of accounts
@@ -857,7 +869,7 @@ impl Syncer {
                 .request_account_range(
                     H256::zero(),
                     H256::repeat_byte(0xff),
-                    account_state_snapshots_dir.clone(),
+                    account_state_snapshots_dir.as_ref(),
                     &mut pivot_header,
                     block_sync_state,
                 )
@@ -874,7 +886,7 @@ impl Syncer {
             {
                 *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
                 let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
+                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone(), err)
                 })?;
                 info!("Reading account file from entry {entry:?}");
                 let snapshot_path = entry.path();
@@ -898,6 +910,17 @@ impl Syncer {
                 );
 
                 info!("Inserting accounts into the state trie");
+
+                // Collect valid code hashes from current account snapshot
+                let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
+                    .iter()
+                    .filter_map(|(_, state)| {
+                        (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
+                    })
+                    .collect();
+
+                code_hash_collector.extend(code_hashes_from_snapshot);
+                code_hash_collector.flush_if_needed().await?;
 
                 let store_clone = store.clone();
                 let current_state_root =
@@ -957,6 +980,7 @@ impl Syncer {
                     calculate_staleness_timestamp(pivot_header.timestamp),
                     &mut state_leafs_healed,
                     &mut storage_accounts,
+                    &mut code_hash_collector,
                 )
                 .await?
                 {
@@ -972,7 +996,7 @@ impl Syncer {
                     .peers
                     .request_storage_ranges(
                         &mut storage_accounts,
-                        account_storages_snapshots_dir.clone(),
+                        account_storages_snapshots_dir.as_ref(),
                         chunk_index,
                         &mut pivot_header,
                     )
@@ -1010,7 +1034,7 @@ impl Syncer {
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
             {
                 let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
+                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone(), err)
                 })?;
                 info!("Reading account storage file from entry {entry:?}");
 
@@ -1082,6 +1106,7 @@ impl Syncer {
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_state_leafs_healed,
                 &mut storage_accounts,
+                &mut code_hash_collector,
             )
             .await?;
             if !healing_done {
@@ -1106,31 +1131,70 @@ impl Syncer {
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
         info!("Finished healing");
 
+        // Finish code hash collection
+        code_hash_collector.finish().await?;
+
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
-        let mut bytecode_iter = store
-            .iter_accounts(pivot_header.state_root)
-            .expect("we couldn't iterate over accounts")
-            .map(|(_, state)| state.code_hash)
-            .filter(|code_hash| *code_hash != *EMPTY_KECCACK_HASH);
-        for mut bytecode_hashes in std::iter::from_fn(|| bytecode_iter_fn(&mut bytecode_iter)) {
-            // Download bytecodes
-            bytecode_hashes.sort();
-            bytecode_hashes.dedup();
-            info!(
-                "Starting bytecode download of {} hashes",
-                bytecode_hashes.len()
-            );
+
+        let code_hashes_dir = get_code_hashes_snapshots_dir(&self.datadir);
+        let mut seen_code_hashes = HashSet::new();
+        let mut code_hashes_to_download = Vec::new();
+
+        info!("Starting download code hashes from peers");
+        for entry in std::fs::read_dir(&code_hashes_dir)
+            .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
+        {
+            let entry = entry.map_err(|_| SyncError::CorruptPath)?;
+            let snapshot_contents = std::fs::read(entry.path())
+                .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
+            let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
+
+            for hash in code_hashes {
+                // If we haven't seen the code hash yet, add it to the list of hashes to download
+                if seen_code_hashes.insert(hash) {
+                    code_hashes_to_download.push(hash);
+
+                    if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
+                        info!(
+                            "Starting bytecode download of {} hashes",
+                            code_hashes_to_download.len()
+                        );
+                        let bytecodes = self
+                            .peers
+                            .request_bytecodes(&code_hashes_to_download)
+                            .await
+                            .map_err(SyncError::PeerHandler)?
+                            .ok_or(SyncError::BytecodesNotFound)?;
+
+                        store
+                            .write_account_code_batch(
+                                code_hashes_to_download.drain(..).zip(bytecodes).collect(),
+                            )
+                            .await?;
+                    }
+                }
+            }
+        }
+
+        // Download remaining bytecodes if any
+        if !code_hashes_to_download.is_empty() {
             let bytecodes = self
                 .peers
-                .request_bytecodes(&bytecode_hashes)
+                .request_bytecodes(&code_hashes_to_download)
                 .await
                 .map_err(SyncError::PeerHandler)?
                 .ok_or(SyncError::BytecodesNotFound)?;
             store
-                .write_account_code_batch(bytecode_hashes.into_iter().zip(bytecodes).collect())
+                .write_account_code_batch(
+                    code_hashes_to_download.into_iter().zip(bytecodes).collect(),
+                )
                 .await?;
         }
+
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
+
+        debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
 
@@ -1261,6 +1325,7 @@ pub async fn update_pivot(
         } else {
             return Err(SyncError::NotInSnapSync);
         }
+        *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
     }
 }
@@ -1313,6 +1378,8 @@ pub enum SyncError {
     SnapshotReadError(PathBuf, std::io::Error),
     #[error("Failed to RLP decode account_state_snapshot from {0:?}")]
     SnapshotDecodeError(PathBuf),
+    #[error("Failed to RLP decode code_hashes_snapshot from {0:?}")]
+    CodeHashesSnapshotDecodeError(PathBuf),
     #[error("Failed to get account state for block {0:?} and account hash {1:?}")]
     AccountState(H256, H256),
     #[error("Failed to acquire lock on maybe_big_account_storage")]
@@ -1323,6 +1390,8 @@ pub enum SyncError {
     AccountStateSnapshotsDirNotFound,
     #[error("Failed to get account storages snapshots directory")]
     AccountStoragesSnapshotsDirNotFound,
+    #[error("Failed to get code hashes snapshots directory")]
+    CodeHashesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
     #[error("We aren't finding get_peer_channel_with_retry")]
@@ -1335,6 +1404,8 @@ pub enum SyncError {
     PeerHandler(#[from] PeerHandlerError),
     #[error("Corrupt Path")]
     CorruptPath,
+    #[error("Bytecode file error")]
+    BytecodeFileError,
 }
 
 impl<T> From<SendError<T>> for SyncError {
@@ -1403,10 +1474,27 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     is_valid
 }
 
-fn bytecode_iter_fn<T>(bytecode_iter: &mut T) -> Option<Vec<H256>>
-where
-    T: Iterator<Item = H256>,
-{
-    Some(bytecode_iter.by_ref().take(BYTECODE_CHUNK_SIZE).collect())
-        .filter(|chunk: &Vec<_>| !chunk.is_empty())
+pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
+    info!("Starting validate_bytecodes");
+    let mut is_valid = true;
+    for (account_hash, account_state) in store
+        .iter_accounts(state_root)
+        .expect("we couldn't iterate over accounts")
+    {
+        if account_state.code_hash != *EMPTY_KECCACK_HASH
+            && !store
+                .get_account_code(account_state.code_hash)
+                .is_ok_and(|code| code.is_some())
+        {
+            error!(
+                "Missing code hash {:x} for account {:x}",
+                account_state.code_hash, account_hash
+            );
+            is_valid = false
+        }
+    }
+    if !is_valid {
+        std::process::exit(-1);
+    }
+    is_valid
 }

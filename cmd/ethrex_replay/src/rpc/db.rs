@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::time::{Duration, Instant};
 
 use crate::rpc::{get_account, get_block, retry};
 
@@ -21,18 +22,17 @@ use ethrex_vm::backends::levm::LEVM;
 use eyre::Context;
 use futures_util::future::join_all;
 use sha3::{Digest, Keccak256};
-use tokio_utils::RateLimiter;
+use tokio::time::sleep;
 use tracing::{debug, info};
 
+use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::{Arc, LazyLock};
 
 use super::{Account, NodeRLP};
 
-const RPC_RATE_LIMIT: usize = 15;
-
-static RATE_LIMITER: LazyLock<RateLimiter> =
-    LazyLock::new(|| RateLimiter::new(std::time::Duration::from_secs(1)));
+// 10 Requests Per second max cap. It's a conservative number that every Free tier of RPC Providers supports.
+const RPC_RATE_LIMIT: usize = 10;
+const RATE_LIMIT: Duration = Duration::from_millis(100);
 
 /// Structure for a database that fetches data from an RPC endpoint on demand.
 /// Caches already fetched data to minimize RPC calls.
@@ -160,6 +160,8 @@ impl RpcDB {
 
         // Fetch accounts in chunks to respect rate limits of the RPC endpoint
         for chunk in index.chunks(RPC_RATE_LIMIT) {
+            let start = Instant::now();
+
             // Call to `eth_getProof` for each account in the chunk
             let futures = chunk.iter().map(|(address, storage_keys)| async move {
                 Ok((
@@ -177,9 +179,7 @@ impl RpcDB {
                 ))
             });
 
-            // Wait for all requests in the chunk to complete
-            let fetched_chunk = RATE_LIMITER
-                .throttle(|| async { join_all(futures).await })
+            let fetched_chunk = join_all(futures)
                 .await
                 .into_iter()
                 .collect::<eyre::Result<HashMap<_, _>>>()?;
@@ -192,6 +192,15 @@ impl RpcDB {
             } else {
                 counter += chunk.len();
                 debug!("fetched {} accounts of {}", counter, index.len());
+            }
+
+            // Cooldown depends on chunk size.
+            let chunk_size = chunk.len() as u32;
+            let target_gap = RATE_LIMIT * chunk_size;
+            let elapsed = start.elapsed();
+
+            if target_gap > elapsed {
+                sleep(target_gap - elapsed).await;
             }
         }
 
@@ -396,11 +405,13 @@ impl RpcDB {
             .collect();
         let keys: Vec<Bytes> = existing_accs
             .clone()
-            .flat_map(|(_, account)| {
-                account
-                    .storage
-                    .keys()
-                    .map(|value| Bytes::from(value.as_bytes().to_vec()))
+            .flat_map(|(address, account)| {
+                std::iter::once(Bytes::from(address.as_bytes().to_vec())).chain(
+                    account
+                        .storage
+                        .keys()
+                        .map(|value| Bytes::from(value.as_bytes().to_vec())),
+                )
             })
             .collect();
 
@@ -579,11 +590,13 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
     }
 
     let hash = if let Some(root) = proof.first() {
-        H256::from_slice(&Keccak256::digest(root))
+        let hash = H256::from_slice(&Keccak256::digest(root));
+        state_nodes.insert(hash, root.clone());
+        hash
     } else {
         *EMPTY_KECCACK_HASH
     };
-    let trie = Trie::from_nodes(hash.into(), &state_nodes).ok()?;
+    let trie = Trie::from_nodes(hash, &state_nodes).ok()?;
 
     // return some only if this is a proof of exclusion
     if trie.get(key).ok()?.is_none() {

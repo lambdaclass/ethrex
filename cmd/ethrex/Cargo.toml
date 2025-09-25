@@ -1,7 +1,9 @@
 [package]
 name = "ethrex"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -20,7 +22,7 @@ ethrex-l2.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-sdk.workspace = true
 ethrex-l2-rpc.workspace = true
-tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms", "background_threads"] }
+tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms"] }
 bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
@@ -38,7 +40,6 @@ local-ip-address = "0.6"
 tokio-util.workspace = true
 lazy_static.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
@@ -51,6 +52,9 @@ ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
 ethrex-prover = { workspace = true, features = ["l2"] }
 
+[target.'cfg(linux)'.dependencies]
+tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms", "background_threads"] }
+
 [[bin]]
 name = "ethrex"
 path = "./ethrex.rs"
@@ -61,7 +65,7 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "rollup_storage_sql", "dev", "metrics"]
+default = ["rocksdb", "c-kzg", "rollup_storage_sql", "dev", "metrics", "jemalloc"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [
   "ethrex-vm/c-kzg",
