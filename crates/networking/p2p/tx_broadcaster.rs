@@ -67,7 +67,7 @@ impl TxBroadcaster {
         let state = TxBroadcaster {
             kademlia,
             blockchain,
-            broadcasted_txs_per_peer: HashMap::with_capacity(17_000_000), // 17M entries target
+            broadcasted_txs_per_peer: HashMap::new(), // 17M entries target
             start: Instant::now(),
         };
 
