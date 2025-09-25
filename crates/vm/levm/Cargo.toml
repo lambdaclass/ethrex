@@ -47,7 +47,7 @@ colored = "2.1.0"
 spinoff = "0.8.0"
 
 [features]
-default = []
+default = ["c-kzg"]
 
 # TODO: rename to "ethrex" or "no-prover"
 c-kzg = ["ethrex-common/c-kzg"]
