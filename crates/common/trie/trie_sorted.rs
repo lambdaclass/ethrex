@@ -267,7 +267,9 @@ where
             .finalize()
     };
 
-    flush_nodes_to_write(nodes_to_write, db)?;
+    scope.execute(Box::new(move || {
+        let _ = flush_nodes_to_write(nodes_to_write, db);
+    }));
     Ok(hash)
 }
 
