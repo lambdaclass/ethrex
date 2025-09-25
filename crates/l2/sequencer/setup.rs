@@ -1,5 +1,6 @@
 use crate::sequencer::errors::ProofCoordinatorError;
 use ethrex_common::types::TxType;
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, Bytes};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::utils::get_address_from_secret_key;
@@ -7,7 +8,6 @@ use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::{build_generic_tx, send_tx_bump_gas_exponential_backoff};
 use ethrex_rpc::clients::{Overrides, eth::EthClient};
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::str::FromStr;
 

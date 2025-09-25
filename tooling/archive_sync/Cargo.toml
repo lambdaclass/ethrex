@@ -2,6 +2,8 @@
 name = "archive_sync"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 lazy_static.workspace = true
@@ -9,7 +11,6 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
-keccak-hash.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
