@@ -2,6 +2,8 @@
 name = "archive_sync"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 lazy_static.workspace = true

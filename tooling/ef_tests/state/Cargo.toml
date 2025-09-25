@@ -2,6 +2,8 @@
 name = "ef_tests-state"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-blockchain.workspace = true
