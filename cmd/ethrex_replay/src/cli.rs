@@ -859,7 +859,12 @@ pub async fn replay_custom_l1_blocks(
         store_inner
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L1, false));
+    let blockchain = Arc::new(Blockchain::new(
+        store.clone(),
+        BlockchainType::L1,
+        false,
+        None,
+    ));
 
     let blocks = produce_l1_blocks(
         blockchain.clone(),
@@ -870,9 +875,7 @@ pub async fn replay_custom_l1_blocks(
     )
     .await?;
 
-    let execution_witness = blockchain
-        .generate_witness_for_blocks(&blocks, None)
-        .await?;
+    let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
     let chain_config = execution_witness.chain_config;
 
     let cache = Cache::new(
@@ -1001,7 +1004,12 @@ pub async fn replay_custom_l2_blocks(
         rollup_store
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L2, false));
+    let blockchain = Arc::new(Blockchain::new(
+        store.clone(),
+        BlockchainType::L2,
+        false,
+        fee_vault,
+    ));
 
     let genesis_hash = genesis.get_block().hash();
 
@@ -1012,13 +1020,10 @@ pub async fn replay_custom_l2_blocks(
         genesis_hash,
         genesis.timestamp + 1,
         n_blocks,
-        fee_vault,
     )
     .await?;
 
-    let execution_witness = blockchain
-        .generate_witness_for_blocks(&blocks, fee_vault)
-        .await?;
+    let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
     let cache = Cache::new(
         blocks,
@@ -1044,7 +1049,6 @@ pub async fn produce_custom_l2_blocks(
     head_block_hash: H256,
     initial_timestamp: u64,
     n_blocks: u64,
-    fee_vault: Option<Address>,
 ) -> eyre::Result<Vec<Block>> {
     let mut blocks = Vec::new();
     let mut current_parent_hash = head_block_hash;
@@ -1059,7 +1063,6 @@ pub async fn produce_custom_l2_blocks(
             current_parent_hash,
             current_timestamp,
             &mut last_privilege_nonce,
-            fee_vault,
         )
         .await?;
         current_parent_hash = block.hash();
@@ -1078,7 +1081,6 @@ pub async fn produce_custom_l2_block(
     head_block_hash: H256,
     timestamp: u64,
     last_privilege_nonce: &mut Option<u64>,
-    fee_vault: Option<Address>,
 ) -> eyre::Result<Block> {
     let build_payload_args = BuildPayloadArgs {
         parent: head_block_hash,
@@ -1100,7 +1102,6 @@ pub async fn produce_custom_l2_block(
         store,
         last_privilege_nonce,
         DEFAULT_BUILDER_GAS_CEIL,
-        fee_vault,
     )
     .await?;
 

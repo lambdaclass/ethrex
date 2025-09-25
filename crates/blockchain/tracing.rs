@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use ethrex_common::{Address, H256, tracing::CallTrace, types::Block};
+use ethrex_common::{H256, tracing::CallTrace, types::Block};
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
 
@@ -19,7 +19,6 @@ impl Blockchain {
         timeout: Duration,
         only_top_call: bool,
         with_log: bool,
-        fee_vault: Option<Address>,
     ) -> Result<CallTrace, ChainError> {
         // Fetch the transaction's location and the block it is contained in
         let Some((_, block_hash, tx_index)) =
@@ -33,14 +32,14 @@ impl Blockchain {
         };
         // Obtain the block's parent state
         let mut vm = self
-            .rebuild_parent_state(block.header.parent_hash, reexec, fee_vault)
+            .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
         // Run the block until the transaction we want to trace
-        vm.rerun_block(&block, Some(tx_index), fee_vault)?;
+        vm.rerun_block(&block, Some(tx_index))?;
 
         // Trace the transaction
         timeout_trace_operation(timeout, move || {
-            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log, fee_vault)
+            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
         })
         .await
     }
@@ -56,14 +55,13 @@ impl Blockchain {
         timeout: Duration,
         only_top_call: bool,
         with_log: bool,
-        fee_vault: Option<Address>,
     ) -> Result<Vec<(H256, CallTrace)>, ChainError> {
         // Obtain the block's parent state
         let mut vm = self
-            .rebuild_parent_state(block.header.parent_hash, reexec, fee_vault)
+            .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
         // Run anything necessary before executing the block's transactions (system calls, etc)
-        vm.rerun_block(&block, Some(0), fee_vault)?;
+        vm.rerun_block(&block, Some(0))?;
         // Trace each transaction
         // We need to do this in order to pass ownership of block & evm to a blocking process without cloning
         let vm = Arc::new(Mutex::new(vm));
@@ -77,7 +75,7 @@ impl Blockchain {
             let call_trace = timeout_trace_operation(timeout, move || {
                 vm.lock()
                     .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
-                    .trace_tx_calls(block.as_ref(), index, only_top_call, with_log, fee_vault)
+                    .trace_tx_calls(block.as_ref(), index, only_top_call, with_log)
             })
             .await?;
             call_traces.push((tx_hash, call_trace));
@@ -91,7 +89,6 @@ impl Blockchain {
         &self,
         parent_hash: H256,
         reexec: u32,
-        fee_vault: Option<Address>,
     ) -> Result<Evm, ChainError> {
         // Check if we need to re-execute parent blocks
         let blocks_to_re_execute =
@@ -114,7 +111,7 @@ impl Blockchain {
         let mut vm = self.new_evm(vm_db)?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
-            vm.rerun_block(block, None, fee_vault)?;
+            vm.rerun_block(block, None)?;
         }
         Ok(vm)
     }

@@ -211,7 +211,6 @@ pub struct PayloadBuildContext {
     pub store: Store,
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
-    pub fee_vault: Option<Address>,
 }
 
 impl PayloadBuildContext {
@@ -235,7 +234,7 @@ impl PayloadBuildContext {
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
         let vm = match blockchain_type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
+            BlockchainType::L2 => Evm::new_for_l2(vm_db, fee_vault)?,
         };
 
         Ok(PayloadBuildContext {
@@ -251,7 +250,6 @@ impl PayloadBuildContext {
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
-            fee_vault,
         })
     }
 
@@ -668,7 +666,6 @@ pub fn apply_plain_transaction(
         &context.payload.header,
         &mut context.remaining_gas,
         head.tx.sender(),
-        context.fee_vault,
     )?;
     context.block_value += U256::from(gas_used) * head.tip;
     Ok(report)

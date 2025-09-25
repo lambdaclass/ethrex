@@ -113,7 +113,6 @@ impl RpcHandler for TraceTransactionRequest {
                         timeout,
                         config.only_top_call,
                         config.with_log,
-                        context.fee_vault,
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
@@ -171,7 +170,6 @@ impl RpcHandler for TraceBlockByNumberRequest {
                         timeout,
                         config.only_top_call,
                         config.with_log,
-                        context.fee_vault,
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;

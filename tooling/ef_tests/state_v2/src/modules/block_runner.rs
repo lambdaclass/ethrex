@@ -144,7 +144,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
+    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false, None);
 
     let result = blockchain.add_block(&block).await;
 

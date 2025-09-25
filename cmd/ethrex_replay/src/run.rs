@@ -111,16 +111,13 @@ pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<A
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
-        #[cfg(not(feature = "l2"))]
-        let mut vm = Evm::new_for_l1(wrapped_db.clone());
-        let (receipt, _) = vm.execute_tx(
-            tx,
-            &block.header,
-            &mut remaining_gas,
-            tx_sender,
+        let mut vm = Evm::new_for_l2(
+            wrapped_db.clone(),
             cache.l2_fields.clone().and_then(|f| f.fee_vault),
         )?;
+        #[cfg(not(feature = "l2"))]
+        let mut vm = Evm::new_for_l1(wrapped_db.clone());
+        let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
         wrapped_db.apply_account_updates(&account_updates)?;
         if tx.hash() == tx_hash {

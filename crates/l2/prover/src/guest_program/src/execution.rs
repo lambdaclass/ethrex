@@ -334,11 +334,11 @@ fn execute_stateless(
 
         // Execute block
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        let mut vm = Evm::new_for_l2(wrapped_db.clone(), fee_vault)?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let result = vm
-            .execute_block(block, fee_vault)
+            .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;
         let receipts = result.receipts;
         let account_updates = vm

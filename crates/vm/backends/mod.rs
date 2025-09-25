@@ -34,6 +34,8 @@ pub struct Evm {
     // For simplifying compilation we decided to include them both in revm and levm builds.
     pub db: GeneralizedDatabase,
     pub vm_type: VMType,
+    // Address where the base fee will be sent instead of burned. If None, base fees are burned.
+    pub fee_vault: Option<Address>,
 }
 
 impl core::fmt::Debug for Evm {
@@ -62,6 +64,7 @@ impl Evm {
                 state: evm_state(wrapped_db.clone()),
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
                 vm_type: VMType::L1,
+                fee_vault: None,
             }
         }
 
@@ -70,11 +73,15 @@ impl Evm {
             Evm {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
                 vm_type: VMType::L1,
+                fee_vault: None,
             }
         }
     }
 
-    pub fn new_for_l2(_db: impl VmDatabase + 'static) -> Result<Self, EvmError> {
+    pub fn new_for_l2(
+        _db: impl VmDatabase + 'static,
+        _fee_vault: Option<Address>,
+    ) -> Result<Self, EvmError> {
         #[cfg(feature = "revm")]
         {
             Err(EvmError::InvalidEVM(
@@ -89,6 +96,7 @@ impl Evm {
             let evm = Evm {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
                 vm_type: VMType::L2,
+                fee_vault: _fee_vault,
             };
 
             Ok(evm)
@@ -96,41 +104,49 @@ impl Evm {
     }
 
     pub fn new_from_db_for_l1(store: Arc<impl LevmDatabase + 'static>) -> Self {
-        Self::_new_from_db(store, VMType::L1)
+        Self::_new_from_db(store, VMType::L1, None)
     }
 
-    pub fn new_from_db_for_l2(store: Arc<impl LevmDatabase + 'static>) -> Self {
-        Self::_new_from_db(store, VMType::L2)
+    pub fn new_from_db_for_l2(
+        store: Arc<impl LevmDatabase + 'static>,
+        fee_vault: Option<Address>,
+    ) -> Self {
+        Self::_new_from_db(store, VMType::L2, fee_vault)
     }
 
     // Only used in non-REVM builds; in REVM builds this constructor is not supported.
     #[cfg(feature = "revm")]
-    fn _new_from_db(_store: Arc<impl LevmDatabase + 'static>, _vm_type: VMType) -> Self {
+    fn _new_from_db(
+        _store: Arc<impl LevmDatabase + 'static>,
+        _vm_type: VMType,
+        _fee_vault: Option<Address>,
+    ) -> Self {
         unreachable!("new_from_db is not supported when built with the `revm` feature")
     }
 
     #[cfg(not(feature = "revm"))]
-    fn _new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
+    fn _new_from_db(
+        store: Arc<impl LevmDatabase + 'static>,
+        vm_type: VMType,
+        fee_vault: Option<Address>,
+    ) -> Self {
         Evm {
             db: GeneralizedDatabase::new(store),
             vm_type,
+            fee_vault,
         }
     }
 
     #[instrument(level = "trace", name = "Block execution", skip_all)]
-    pub fn execute_block(
-        &mut self,
-        block: &Block,
-        fee_vault: Option<Address>,
-    ) -> Result<BlockExecutionResult, EvmError> {
+    pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         #[cfg(feature = "revm")]
         {
-            REVM::execute_block(block, &mut self.state, fee_vault)
+            REVM::execute_block(block, &mut self.state)
         }
 
         #[cfg(not(feature = "revm"))]
         {
-            LEVM::execute_block(block, &mut self.db, self.vm_type, fee_vault)
+            LEVM::execute_block(block, &mut self.db, self.vm_type, self.fee_vault)
         }
     }
 
@@ -143,7 +159,6 @@ impl Evm {
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
         sender: Address,
-        fee_vault: Option<Address>,
     ) -> Result<(Receipt, u64), EvmError> {
         #[cfg(feature = "revm")]
         {
@@ -154,7 +169,6 @@ impl Evm {
                 &mut self.state,
                 spec_id(&chain_config, block_header.timestamp),
                 sender,
-                fee_vault,
             )?;
 
             *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
@@ -177,7 +191,7 @@ impl Evm {
                 block_header,
                 &mut self.db,
                 self.vm_type,
-                fee_vault,
+                self.fee_vault,
             )?;
 
             *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
@@ -300,23 +314,16 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
         _fork: Fork,
-        fee_vault: Option<Address>,
     ) -> Result<ExecutionResult, EvmError> {
         #[cfg(feature = "revm")]
         {
             let spec_id = fork_to_spec_id(_fork);
-            self::revm::helpers::simulate_tx_from_generic(
-                tx,
-                header,
-                &mut self.state,
-                spec_id,
-                fee_vault,
-            )
+            self::revm::helpers::simulate_tx_from_generic(tx, header, &mut self.state, spec_id)
         }
 
         #[cfg(not(feature = "revm"))]
         {
-            LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, fee_vault)
+            LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, self.fee_vault)
         }
     }
 
@@ -325,23 +332,22 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
         _fork: Fork,
-        fee_vault: Option<Address>,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
         #[cfg(feature = "revm")]
         let result = {
             let spec_id = fork_to_spec_id(_fork);
-            self::revm::helpers::create_access_list(
-                tx,
-                header,
-                &mut self.state,
-                spec_id,
-                fee_vault,
-            )?
+            self::revm::helpers::create_access_list(tx, header, &mut self.state, spec_id)?
         };
 
         #[cfg(not(feature = "revm"))]
         let result = {
-            LEVM::create_access_list(tx.clone(), header, &mut self.db, self.vm_type, fee_vault)?
+            LEVM::create_access_list(
+                tx.clone(),
+                header,
+                &mut self.db,
+                self.vm_type,
+                self.fee_vault,
+            )?
         };
 
         match result {

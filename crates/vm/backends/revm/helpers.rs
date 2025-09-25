@@ -21,7 +21,6 @@ pub fn simulate_tx_from_generic(
     header: &BlockHeader,
     state: &mut EvmState,
     spec_id: SpecId,
-    _fee_vault: Option<Address>,
 ) -> Result<ExecutionResult, EvmError> {
     let block_env = block_env(header, spec_id);
     let tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
@@ -34,7 +33,6 @@ pub fn create_access_list(
     header: &BlockHeader,
     state: &mut EvmState,
     spec_id: SpecId,
-    _fee_vault: Option<Address>,
 ) -> Result<(ExecutionResult, AccessList), EvmError> {
     let mut tx_env = tx_env_from_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let block_env = block_env(header, spec_id);

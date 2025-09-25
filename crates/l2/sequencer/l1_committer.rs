@@ -103,7 +103,6 @@ pub struct L1Committer {
     last_committed_batch: u64,
     /// Cancellation token for the next inbound InMessage::Commit
     cancellation_token: Option<CancellationToken>,
-    fee_vault: Option<Address>,
 }
 
 #[derive(Clone, Serialize)]
@@ -132,7 +131,6 @@ impl L1Committer {
         rollup_store: StoreRollup,
         based: bool,
         sequencer_state: SequencerState,
-        fee_vault: Option<Address>,
     ) -> Result<Self, CommitterError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -165,7 +163,6 @@ impl L1Committer {
             last_committed_batch_timestamp: 0,
             last_committed_batch,
             cancellation_token: None,
-            fee_vault,
         })
     }
 
@@ -184,7 +181,6 @@ impl L1Committer {
             rollup_store.clone(),
             cfg.based.enabled,
             sequencer_state,
-            cfg.block_producer.fee_vault_address,
         )
         .await?;
         // NOTE: we spawn as blocking due to `generate_blobs_bundle` and
@@ -409,7 +405,7 @@ impl L1Committer {
                 let vm_db =
                     StoreVmDatabase::new(self.store.clone(), block_to_commit.header.parent_hash);
                 let mut vm = self.blockchain.new_evm(vm_db)?;
-                vm.execute_block(&block_to_commit, self.fee_vault)?;
+                vm.execute_block(&block_to_commit)?;
                 vm.get_state_transitions()?
             };
 

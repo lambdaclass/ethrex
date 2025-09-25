@@ -21,7 +21,7 @@ use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BlockProducerConfig, SequencerConfig,
@@ -56,7 +56,6 @@ pub struct BlockProducer {
     sequencer_state: SequencerState,
     block_time_ms: u64,
     coinbase_address: Address,
-    fee_vault_address: Option<Address>,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     // Needed to ensure privileged tx nonces are sequential
@@ -88,10 +87,12 @@ impl BlockProducer {
             block_gas_limit,
         } = config;
 
-        if coinbase_address == fee_vault_address {
-            warn!(
-                "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected."
-            );
+        if let Some(fee_vault) = fee_vault_address {
+            if fee_vault == coinbase_address {
+                warn!(
+                    "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
+                );
+            }
         }
 
         Self {
@@ -100,7 +101,6 @@ impl BlockProducer {
             sequencer_state,
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
-            fee_vault_address: *fee_vault_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
@@ -169,7 +169,6 @@ impl BlockProducer {
             &self.store,
             &mut self.last_privileged_nonce,
             self.block_gas_limit,
-            self.fee_vault_address,
         )
         .await?;
         info!(

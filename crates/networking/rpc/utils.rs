@@ -395,7 +395,6 @@ pub mod test_utils {
             "ethrex/test".to_string(),
             None,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -419,7 +418,6 @@ pub mod test_utils {
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
-            fee_vault: None,
         }
     }
 }

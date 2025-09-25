@@ -27,7 +27,6 @@ impl REVM {
         state: &mut EvmState,
         only_top_call: bool,
         with_log: bool,
-        _fee_vault: Option<Address>,
     ) -> Result<CallTrace, EvmError> {
         let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
         let block_env = block_env(block_header, spec_id);
@@ -48,7 +47,6 @@ impl REVM {
         block: &Block,
         state: &mut EvmState,
         stop_index: Option<usize>,
-        _fee_vault: Option<Address>,
     ) -> Result<(), EvmError> {
         let spec_id: SpecId = spec_id(&state.chain_config()?, block.header.timestamp);
         let block_env = block_env(&block.header, spec_id);

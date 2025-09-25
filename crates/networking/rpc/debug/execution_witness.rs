@@ -156,7 +156,7 @@ impl RpcHandler for ExecutionWitnessRequest {
 
         let execution_witness = context
             .blockchain
-            .generate_witness_for_blocks(&blocks, context.fee_vault)
+            .generate_witness_for_blocks(&blocks)
             .await
             .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
 

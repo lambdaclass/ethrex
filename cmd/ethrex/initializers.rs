@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::Genesis;
+use ethrex_common::{Address, types::Genesis};
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
@@ -118,12 +118,13 @@ pub fn init_blockchain(
     store: Store,
     blockchain_type: BlockchainType,
     perf_logs_enabled: bool,
+    fee_vault: Option<Address>,
 ) -> Arc<Blockchain> {
     #[cfg(feature = "revm")]
     info!("Initiating blockchain with revm");
     #[cfg(not(feature = "revm"))]
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
+    Blockchain::new(store, blockchain_type, perf_logs_enabled, fee_vault).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -164,7 +165,6 @@ pub async fn init_rpc_api(
         get_client_version(),
         log_filter_handler,
         gas_ceil,
-        None,
     );
 
     tracker.spawn(rpc_api);
@@ -389,7 +389,7 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
+    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true, None);
 
     let signer = get_signer(datadir);
 

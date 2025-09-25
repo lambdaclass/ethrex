@@ -184,7 +184,6 @@ pub struct ProofCoordinator {
     commit_hash: String,
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
-    fee_vault: Option<Address>,
 }
 
 impl ProofCoordinator {
@@ -234,7 +233,6 @@ impl ProofCoordinator {
             commit_hash: get_commit_hash(),
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
-            fee_vault: proposer_config.fee_vault_address,
         })
     }
 
@@ -470,7 +468,7 @@ impl ProofCoordinator {
 
         let witness = self
             .blockchain
-            .generate_witness_for_blocks(&blocks, self.fee_vault)
+            .generate_witness_for_blocks(&blocks)
             .await
             .map_err(ProofCoordinatorError::from)?;
 
@@ -504,7 +502,7 @@ impl ProofCoordinator {
             blob_commitment,
             #[cfg(feature = "l2")]
             blob_proof,
-            fee_vault: self.fee_vault,
+            fee_vault: self.blockchain.fee_vault,
         })
     }
 

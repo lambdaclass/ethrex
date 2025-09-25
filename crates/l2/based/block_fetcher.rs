@@ -359,7 +359,7 @@ impl BlockFetcher {
         for block in batch {
             let vm_db = StoreVmDatabase::new(self.store.clone(), block.header.parent_hash);
             let mut vm = self.blockchain.new_evm(vm_db)?;
-            vm.execute_block(block, None)
+            vm.execute_block(block)
                 .map_err(BlockFetcherError::EvmError)?;
             let account_updates = vm
                 .get_state_transitions()
