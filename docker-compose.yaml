@@ -45,7 +45,7 @@ services:
 
   ethrex:
     container_name: ethrex
-    image: "ghcr.io/lambdaclass/ethrex:main"
+    image: "ghcr.io/lambdaclass/ethrex:latest"
     pull_policy: always
     platform: linux/amd64
     ports:
