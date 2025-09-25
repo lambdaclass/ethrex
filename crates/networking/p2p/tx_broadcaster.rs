@@ -41,7 +41,11 @@ const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
 pub struct TxBroadcaster {
     kademlia: Kademlia,
     blockchain: Arc<Blockchain>,
-    broadcasted_txs_per_peer: HashMap<(H256, H256), u32>, // (peer_id,tx_hash) -> seconds since start
+    // (peer_idx, tx_hash) -> seconds since start; peer_idx is a compact u32 assigned per peer
+    broadcasted_txs_per_peer: HashMap<(u32, H256), u32>,
+    // Map peer_id (H256) to compact u32 index to shrink key size and avoid collisions
+    peer_indexer: HashMap<H256, u32>,
+    next_peer_idx: u32,
     start: Instant,
 }
 
@@ -68,6 +72,8 @@ impl TxBroadcaster {
             kademlia,
             blockchain,
             broadcasted_txs_per_peer: HashMap::new(), // 17M entries target
+            peer_indexer: HashMap::new(),
+            next_peer_idx: 0,
             start: Instant::now(),
         };
 
@@ -93,6 +99,19 @@ impl TxBroadcaster {
         self.start.elapsed().as_secs().min(u32::MAX as u64) as u32
     }
 
+    #[inline]
+    fn peer_index(&mut self, peer_id: H256) -> u32 {
+        if let Some(&idx) = self.peer_indexer.get(&peer_id) {
+            idx
+        } else {
+            let idx = self.next_peer_idx;
+            // In practice we won't exceed u32::MAX peers; wrap is acceptable but extremely unlikely
+            self.next_peer_idx = self.next_peer_idx.wrapping_add(1);
+            self.peer_indexer.insert(peer_id, idx);
+            idx
+        }
+    }
+
     fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
         info!(total = self.broadcasted_txs_per_peer.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id));
        
@@ -106,9 +125,10 @@ impl TxBroadcaster {
         }
 
         let now = self.now_secs();
+        let peer_idx = self.peer_index(peer_id);
         for tx in txs {
             self.broadcasted_txs_per_peer
-                .entry((peer_id, tx))
+                .entry((peer_idx, tx))
                 .insert_entry(now);
         }
     }
@@ -145,12 +165,13 @@ impl TxBroadcaster {
             shuffled_peers.split_at(peer_sqrt.ceil() as usize);
 
         for (peer_id, mut peer_channels, capabilities) in peers_to_send_full_txs.iter().cloned() {
+            let peer_idx = self.peer_index(peer_id);
             let txs_to_send = full_txs
                 .iter()
                 .filter(|tx| {
                     !self
                         .broadcasted_txs_per_peer
-                        .contains_key(&(peer_id, tx.hash()))
+                        .contains_key(&(peer_idx, tx.hash()))
                 })
                 .cloned()
                 .collect::<Vec<Transaction>>();
@@ -188,12 +209,13 @@ impl TxBroadcaster {
         peer_channels: &mut PeerChannels,
         peer_id: H256,
     ) -> Result<(), TxBroadcasterError> {
+        let peer_idx = self.peer_index(peer_id);
         let txs_to_send = txs
             .iter()
             .filter(|tx| {
                 !self
                     .broadcasted_txs_per_peer
-                    .contains_key(&(peer_id, tx.hash()))
+                    .contains_key(&(peer_idx, tx.hash()))
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
