@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758809700731,
+  "lastUpdate": 1758813074241,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -34144,6 +34144,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004525125385405961,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a454c4762f733b495b65025764f7c518dd850f32",
+          "message": "ci(l1): set --docker.output for running hive tests in ci (#4626)\n\n**Motivation**\n\nHive test _Invalid Missing Ancestor Syncing ReOrg, Transaction Nonce,\nEmptyTxs=False, CanonicalReOrg=True, Invalid P9 (Cancun)_ has been\ndetected as flaky in different prs\n([here](https://github.com/lambdaclass/ethrex/actions/runs/17778855183/job/50533720000?pr=4402)\nand\n[here](https://github.com/lambdaclass/ethrex/actions/runs/17919605582/job/50953659676?pr=4576))\nbut logs aren't specific on why the test failed. In this\n[pr](https://github.com/lambdaclass/ethrex/pull/4528) I had the test in\nquestion run several times but it never failed, so there was no way to\nfigure out why it is flaky. Having the ci show more specific logs should\nbe useful to have more information on flaky tests for any pr and any\ntest.\n\n**Description**\n\nSet `--docker.output` for running the hive tests on the ci.\n\nCloses no issue but it's related to #3105",
+          "timestamp": "2025-09-24T21:48:06Z",
+          "tree_id": "a10cd7c5740e0e77e59cdf8b0b0a4c34a7c5b18c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a454c4762f733b495b65025764f7c518dd850f32"
+        },
+        "date": 1758813072848,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015918101952277657,
             "unit": "Mgas/s"
           }
         ]
