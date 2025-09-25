@@ -1058,6 +1058,7 @@ impl Syncer {
                     account_storages_snapshot
                         .into_par_iter()
                         .flat_map(|(accounts, storages)| {
+                            let storages: Arc<[_]> = storages.into();
                             accounts
                                 .into_par_iter()
                                 // FIXME: we probably want to make storages an Arc
@@ -1065,15 +1066,20 @@ impl Syncer {
                         })
                         .map(|(account, storages)| {
                             let start = Instant::now();
+                            let n_keys = storages.len();
                             let changes = compute_storage_roots(
                                 maybe_big_account_storage_state_roots_clone.clone(),
                                 store.clone(),
                                 account,
-                                storages.clone(),
+                                &storages,
                                 pivot_hash_moved,
                             );
                             let duration = Instant::now() - start;
-                            debug!(duration = duration.as_micros(), "Computed Storage Root");
+                            debug!(
+                                duration = duration.as_micros(),
+                                keys = n_keys,
+                                "Computed Storage Root"
+                            );
                             changes
                         })
                         .collect::<Result<Vec<_>, SyncError>>()
@@ -1242,7 +1248,7 @@ fn compute_storage_roots(
     maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
     account_hash: H256,
-    key_value_pairs: Vec<(H256, U256)>,
+    key_value_pairs: &[(H256, U256)],
     pivot_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
     let account_storage_root = match maybe_big_account_storage_state_roots
