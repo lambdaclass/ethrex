@@ -1689,7 +1689,14 @@ async fn insert_storage_into_rocksdb(
         .collect::<Vec<(H256, Trie)>>();
 
     scope(|scope| {
-        let pool = Arc::new(ThreadPool::new(16, scope));
+        use std::num::NonZero;
+
+        let pool = Arc::new(ThreadPool::new(
+            std::thread::available_parallelism()
+                .map(|num| num.into())
+                .unwrap_or(8),
+            scope,
+        ));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
             let pool_clone = pool.clone();
             let mut iter = db.raw_iterator();
