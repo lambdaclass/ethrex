@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758827927857,
+  "lastUpdate": 1758828865065,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16705,6 +16705,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91964212751,
             "range": "± 322688299",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c5315cf07ca1745fbb6666ff53db889a8c4bde3",
+          "message": "fix(l1): use transactional database with RocksDB (#4599)\n\nRocksDB is non-transactional by default, meaning writes logically\ninterleave rather than behaving as a unit, which is prone to errors.\nThe optimistic transaction mode implements ACID behavior, with conflict\nresolution at commit time to improve parallelism.",
+          "timestamp": "2025-09-25T18:41:51Z",
+          "tree_id": "d2697ed3a6f7f3094ed4350852e9bb042f1aebff",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7c5315cf07ca1745fbb6666ff53db889a8c4bde3"
+        },
+        "date": 1758828843197,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 91027765048,
+            "range": "± 929015461",
             "unit": "ns/iter"
           }
         ]
