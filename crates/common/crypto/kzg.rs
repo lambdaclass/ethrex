@@ -49,7 +49,7 @@ impl From<openvm_kzg::KzgError> for KzgError {
 /// as defined by c-kzg-4844.
 ///
 /// Dispatches one of the enabled implementations following the hierarchy:
-/// c-kzg > kzg-rs
+/// c-kzg > kzg-rs > openvm-kzg
 ///
 /// Different implementations exist for different targets:
 /// - Host (any, usually c-kzg as it's more performant)
@@ -73,23 +73,23 @@ pub fn verify_blob_kzg_proof(
         );
         return Ok(false);
     }
-    #[cfg(feature = "kzg-rs")]
-    {
-        kzg_rs::KzgProof::verify_blob_kzg_proof(
-            kzg_rs::Blob(blob),
-            &kzg_rs::Bytes48(commitment),
-            &kzg_rs::Bytes48(proof),
-            &kzg_rs::get_kzg_settings(),
-        )
-        .map_err(KzgError::from)
-    }
     #[cfg(feature = "c-kzg")]
     {
-        c_kzg::KzgProof::verify_blob_kzg_proof(
+        return c_kzg::KzgProof::verify_blob_kzg_proof(
             &blob.into(),
             &commitment.into(),
             &proof.into(),
             c_kzg::ethereum_kzg_settings(),
+        )
+        .map_err(KzgError::from)
+    }
+    #[cfg(feature = "kzg-rs")]
+    {
+        return kzg_rs::KzgProof::verify_blob_kzg_proof(
+            kzg_rs::Blob(blob),
+            &kzg_rs::Bytes48(commitment),
+            &kzg_rs::Bytes48(proof),
+            &kzg_rs::get_kzg_settings(),
         )
         .map_err(KzgError::from)
     }
