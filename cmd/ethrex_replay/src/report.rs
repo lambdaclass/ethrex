@@ -64,7 +64,7 @@ impl Report {
             },
         }];
 
-        if let Network::PublicNetwork(_) = self.network {
+        if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
             // EthProofs only prove block numbers multiples of 100.
             if self.block.header.number % 100 == 0 && matches!(self.action, Action::Prove) {
                 slack_webhook_actions.push(eth_proofs_button);
