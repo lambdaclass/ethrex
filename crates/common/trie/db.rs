@@ -1,6 +1,7 @@
 use ethereum_types::H256;
+use ethrex_rlp::encode::RLPEncode;
 
-use crate::{NodeHash, NodeRLP, Trie, error::TrieError};
+use crate::{Node, NodeHash, NodeRLP, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
