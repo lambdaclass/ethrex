@@ -585,7 +585,9 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
     }
 
     let hash = if let Some(root) = proof.first() {
-        H256::from_slice(&Keccak256::digest(root))
+        let hash = H256::from_slice(&Keccak256::digest(root));
+        state_nodes.insert(hash, root.clone());
+        hash
     } else {
         *EMPTY_KECCACK_HASH
     };
