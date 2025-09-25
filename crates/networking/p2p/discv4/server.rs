@@ -36,7 +36,6 @@ use crate::{
     types::{Endpoint, Node, NodeRecord},
     utils::{
         get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
-        unmap_ipv4in6_address,
     },
 };
 
@@ -151,7 +150,7 @@ impl DiscoveryServer {
                 }
 
                 let node = Node::new(
-                    unmap_ipv4in6_address(from.ip()),
+                    from.ip().to_canonical(),
                     from.port(),
                     ping_message.from.tcp_port,
                     sender_public_key,
@@ -241,7 +240,7 @@ impl DiscoveryServer {
                 continue;
             }
 
-            if let Err(_) = self.send_find_node(&contact.node).await {
+            if self.send_find_node(&contact.node).await.is_err() {
                 contact.disposable = true;
                 METRICS.record_new_discarded_node().await;
             }
@@ -439,7 +438,7 @@ impl DiscoveryServer {
         // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
         // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
         // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-        if from.ip() != node.ip {
+        if from.ip().to_canonical() != node.ip {
             debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
             return;
         }
