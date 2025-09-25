@@ -335,9 +335,10 @@ impl Subcommand {
                     &path,
                     &opts.datadir,
                     genesis,
-                    blockchain_type,
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
+                        r#type: blockchain_type,
+                        ..Default::default()
                     },
                 )
                 .await?;
@@ -387,13 +388,12 @@ pub async fn import_blocks(
     path: &str,
     datadir: &Path,
     genesis: Genesis,
-    blockchain_type: BlockchainType,
     blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
-    let blockchain = init_blockchain(store.clone(), blockchain_type, false, blockchain_opts);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.

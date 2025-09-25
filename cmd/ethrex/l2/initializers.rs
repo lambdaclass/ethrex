@@ -172,10 +172,10 @@ pub async fn init_l2(
 
     let blockchain = init_blockchain(
         store.clone(),
-        BlockchainType::L2,
-        true,
         ethrex_blockchain::BlockchainOptions {
             max_mempool_size: opts.node_opts.mempool_max_size,
+            r#type: BlockchainType::L2,
+            perf_logs_enabled: true,
         },
     );
 

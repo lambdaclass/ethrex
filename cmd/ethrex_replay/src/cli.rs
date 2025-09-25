@@ -1,6 +1,6 @@
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
@@ -830,8 +830,6 @@ pub async fn replay_custom_l1_blocks(
 
     let blockchain = Arc::new(Blockchain::new(
         store.clone(),
-        BlockchainType::L1,
-        false,
         ethrex_blockchain::BlockchainOptions::default(),
     ));
 

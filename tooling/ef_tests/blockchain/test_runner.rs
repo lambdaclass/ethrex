@@ -6,7 +6,7 @@ use crate::{
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain, BlockchainOptions, BlockchainType,
+    Blockchain, BlockchainOptions,
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
@@ -105,12 +105,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(
-        store.clone(),
-        BlockchainType::L1,
-        false,
-        BlockchainOptions::default(),
-    );
+    let blockchain = Blockchain::new(store.clone(), BlockchainOptions::default());
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
