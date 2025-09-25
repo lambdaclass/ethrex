@@ -14,6 +14,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use futures::SinkExt;
 use rand::seq::SliceRandom;
 
 use crate::{
@@ -1283,8 +1284,32 @@ impl PeerHandler {
         *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
         debug!("Starting request_storage_ranges function");
         // 1) split the range in chunks of same length
+        let mut accounts_by_root_hash: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (account, root_hash) in &account_storage_roots.accounts_with_storage_root {
+            accounts_by_root_hash
+                .entry(*root_hash)
+                .or_default()
+                .push(*account);
+        }
+        let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
+        accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| accounts.len());
         let chunk_size = 300;
-        let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
+        let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
+
+        // TODO:
+        // To download repeated tries only once, we can group by root_hash so
+        // we download one address and then store N times (for simpler insertion/healing).
+        // Take care of doing it inside this function to avoid confusion between
+        // pivots.
+        // At a later time we might try to also store only once and insert for all.
+        // That should help at least to do less `compute_storage_roots`, but skipping
+        // that might be problematic for healing.
+        // We can also sort by decreasing number of repetitions, so we download
+        // and settle the most common first.
+        // AFTER: try to reduce memory usage from account filtering.
+        // It currently takes about 68B per account with storages, with ~25M of them,
+        // meaning 1.7GB. Possibly several copies of this.
+        // THEN: review storage formats, maybe play with memory mapped data.
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
@@ -1292,8 +1317,7 @@ impl PeerHandler {
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
-            let chunk_end = (chunk_start + chunk_size)
-                .min(account_storage_roots.accounts_with_storage_root.len());
+            let chunk_end = (chunk_start + chunk_size).min(accounts_by_root_hash.len());
             tasks_queue_not_started.push_back(StorageTask {
                 start_index: chunk_start,
                 end_index: chunk_end,
@@ -1302,11 +1326,11 @@ impl PeerHandler {
             });
         }
 
-        let all_account_hashes: Vec<H256> = account_storage_roots
-            .accounts_with_storage_root
-            .iter()
-            .map(|(addr, _)| *addr)
-            .collect();
+        // let all_account_hashes: Vec<H256> = account_storage_roots
+        //     .accounts_with_storage_root
+        //     .keys()
+        //     .copied()
+        //     .collect();
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<StorageTaskResult>(1000);
@@ -1320,23 +1344,23 @@ impl PeerHandler {
 
         // TODO: in a refactor, delete this replace with a structure that can handle removes
         let mut accounts_done: Vec<H256> = Vec::new();
-        // Maps hashed address to storage root and vector of hashed storage keys and keys
-        let mut current_account_storages: BTreeMap<H256, (H256, Vec<(H256, U256)>)> =
+        // Maps storage root to vector of hashed addresses matching that root and
+        // vector of hashed storage keys and storage values.
+        let mut current_account_storages: BTreeMap<H256, (Vec<H256>, Vec<(H256, U256)>)> =
             BTreeMap::new();
 
         debug!("Starting request_storage_ranges loop");
         loop {
             if current_account_storages
                 .values()
-                .map(|(_, storages)| storages.len())
+                .map(|(accounts, storages)| 32 * accounts.len() + 32 * storages.len())
                 .sum::<usize>()
-                * 64
                 > RANGE_FILE_CHUNK_SIZE
             {
                 let current_account_storages = std::mem::take(&mut current_account_storages);
                 let snapshot = current_account_storages
                     .into_iter()
-                    .map(|(hashed_address, (_, storages))| (hashed_address, storages))
+                    .map(|(_, (accounts, storages))| (accounts, storages))
                     .collect::<Vec<_>>()
                     .encode_to_vec();
 
@@ -1384,9 +1408,11 @@ impl PeerHandler {
 
                 self.peer_table.free_peer(peer_id).await;
 
-                for account in &all_account_hashes[start_index..remaining_start] {
-                    accounts_done.push(*account);
-                }
+                accounts_done.extend(
+                    accounts_by_root_hash[start_index..remaining_start]
+                        .iter()
+                        .flat_map(|(_, accounts)| accounts.iter().copied()),
+                );
 
                 if remaining_start < remaining_end {
                     debug!("Failed to download entire chunk from peer {peer_id}");
@@ -1411,10 +1437,11 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
-                            accounts_done.push(all_account_hashes[remaining_start]);
+                            accounts_done
+                                .extend(accounts_by_root_hash[remaining_start].1.iter().copied());
                             account_storage_roots
                                 .healed_accounts
-                                .insert(all_account_hashes[start_index]);
+                                .extend(accounts_by_root_hash[start_index].1.iter().copied());
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
@@ -1497,24 +1524,20 @@ impl PeerHandler {
                     "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
                     tasks_queue_not_started.len()
                 );
+                // THEN: update insert to read with the correct structure and reuse
+                // tries, only changing the prefix for insertion.
                 if account_storages.len() == 1 {
-                    let address = all_account_hashes[start_index];
+                    let (root_hash, accounts) = &accounts_by_root_hash[start_index];
                     // We downloaded a big storage account
                     current_account_storages
-                        .entry(address)
-                        .or_insert_with(|| {
-                            (
-                                account_storage_roots.accounts_with_storage_root[&address],
-                                Vec::new(),
-                            )
-                        })
+                        .entry(*root_hash)
+                        .or_insert_with(|| (accounts.clone(), Vec::new()))
                         .1
                         .extend(account_storages.remove(0));
                 } else {
                     for (i, storage) in account_storages.into_iter().enumerate() {
-                        let address = all_account_hashes[start_index + i];
-                        let root_hash = account_storage_roots.accounts_with_storage_root[&address];
-                        current_account_storages.insert(address, (root_hash, storage));
+                        let (root_hash, accounts) = &accounts_by_root_hash[start_index];
+                        current_account_storages.insert(*root_hash, (accounts.clone(), storage));
                     }
                 }
             }
@@ -1542,13 +1565,11 @@ impl PeerHandler {
 
             let tx = task_sender.clone();
 
+            // FIXME: this unzip is probably pointless and takes up unnecessary memory.
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
-                account_storage_roots
-                    .accounts_with_storage_root
+                accounts_by_root_hash[task.start_index..task.end_index]
                     .iter()
-                    .skip(task.start_index)
-                    .take(task.end_index - task.start_index)
-                    .map(|(hash, root)| (*hash, *root))
+                    .map(|(root, storages)| (storages[0], *root))
                     .unzip();
 
             if task_count - completed_tasks < 30 {
@@ -1573,7 +1594,7 @@ impl PeerHandler {
         {
             let snapshot = current_account_storages
                 .into_iter()
-                .map(|(addr, (_, storages))| (addr, storages))
+                .map(|(_, (accounts, storages))| (accounts, storages))
                 .collect::<Vec<_>>()
                 .encode_to_vec();
 
