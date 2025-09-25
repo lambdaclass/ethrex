@@ -152,11 +152,74 @@ impl Report {
 
     pub fn log(&self) {
         match (self.execution_result.as_ref(), self.proving_result.as_ref()) {
-            (Ok(_), Some(Ok(_))) | (Ok(_), None) => {
-                info!("{self}");
+            (Ok(execution_result), Some(Ok(_))) | (Ok(execution_result), None) => {
+                info!(
+                    "[{}] Block: {}, Gas: {}, #Txs: {}, Execution Time: {}{maybe_proving_time}{maybe_etherscan_url}{maybe_ethproofs_url}",
+                    self.network,
+                    self.block.header.number,
+                    self.block.header.gas_used,
+                    self.block.body.transactions.len(),
+                    format_duration(execution_result),
+                    maybe_proving_time = if let Some(Ok(proving_duration)) = &self.proving_result {
+                        format!(", Proving Time: {}", format_duration(proving_duration))
+                    } else {
+                        "".to_string()
+                    },
+                    maybe_etherscan_url =
+                        if !etherscan_url(&self.network, self.block.header.number).is_empty() {
+                            format!(
+                                "| {}",
+                                etherscan_url(&self.network, self.block.header.number)
+                            )
+                        } else {
+                            "".to_string()
+                        },
+                    maybe_ethproofs_url =
+                        if !ethproofs_url(&self.network, self.block.header.number).is_empty() {
+                            format!(
+                                " | {}",
+                                ethproofs_url(&self.network, self.block.header.number)
+                            )
+                        } else {
+                            "".to_string()
+                        }
+                );
             }
             (Ok(_), Some(Err(_))) | (Err(_), _) => {
-                error!("{self}");
+                error!(
+                    "[{}] Block: {}, Gas: {}, #Txs: {}, Execution Result: {}{maybe_proving_result}{maybe_etherscan_url}{maybe_ethproofs_url}",
+                    self.network,
+                    self.block.header.number,
+                    self.block.header.gas_used,
+                    self.block.body.transactions.len(),
+                    match &self.execution_result {
+                        Ok(_) => "Succeeded".to_string(),
+                        Err(err) => format!("⚠️ Failed with {err}"),
+                    },
+                    maybe_proving_result = if let Some(Err(err)) = &self.proving_result {
+                        format!(", Proving Error: {err}")
+                    } else {
+                        "".to_string()
+                    },
+                    maybe_etherscan_url =
+                        if !etherscan_url(&self.network, self.block.header.number).is_empty() {
+                            format!(
+                                "| {}",
+                                etherscan_url(&self.network, self.block.header.number)
+                            )
+                        } else {
+                            "".to_string()
+                        },
+                    maybe_ethproofs_url =
+                        if !ethproofs_url(&self.network, self.block.header.number).is_empty() {
+                            format!(
+                                " | {}",
+                                ethproofs_url(&self.network, self.block.header.number)
+                            )
+                        } else {
+                            "".to_string()
+                        }
+                );
             }
         }
     }
@@ -226,26 +289,18 @@ impl Display for Report {
         if let Some(Ok(proving_duration)) = &self.proving_result {
             writeln!(f, "Proving Time: {}", format_duration(proving_duration))?;
         }
-        // ethrescan link
-        if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+        if !etherscan_url(&self.network, self.block.header.number).is_empty() {
             writeln!(
                 f,
-                "Etherscan: https://etherscan.io/block/{}",
-                self.block.header.number
+                "Etherscan: {}",
+                etherscan_url(&self.network, self.block.header.number)
             )?;
-            // EthProofs only prove block numbers multiples of 100.
-            if self.block.header.number % 100 == 0 && matches!(self.action, Action::Prove) {
-                writeln!(
-                    f,
-                    "EthProofs: https://ethproofs.org/blocks/{}",
-                    self.block.header.number
-                )?;
-            }
-        } else {
+        }
+        if !ethproofs_url(&self.network, self.block.header.number).is_empty() {
             writeln!(
                 f,
-                "Etherscan: https://{}.etherscan.io/block/{}",
-                self.network, self.block.header.number
+                "EthProofs: {}",
+                ethproofs_url(&self.network, self.block.header.number)
             )?;
         }
         Ok(())
@@ -398,4 +453,26 @@ fn get_current_git_commit() -> Option<String> {
     } else {
         None
     }
+}
+
+fn etherscan_url(network: &Network, block_number: u64) -> String {
+    match network {
+        Network::PublicNetwork(PublicNetwork::Mainnet) => {
+            format!("https://etherscan.io/block/{block_number}")
+        }
+        Network::PublicNetwork(_) => format!("https://{network}.etherscan.io/block/{block_number}"),
+        _ => String::new(),
+    }
+}
+
+fn ethproofs_url(network: &Network, block_number: u64) -> String {
+    if block_number % 100 != 0 {
+        return String::new();
+    }
+
+    if network != &Network::PublicNetwork(PublicNetwork::Mainnet) {
+        return String::new();
+    }
+
+    format!("https://ethproofs.org/blocks/{}", block_number)
 }

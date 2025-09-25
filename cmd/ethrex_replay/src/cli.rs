@@ -170,6 +170,14 @@ pub struct EthrexReplayOptions {
         conflicts_with = "zkvm"
     )]
     pub no_zkvm: bool,
+    #[arg(
+        long,
+        short,
+        help = "Enable verbose logging",
+        help_heading = "Replay Options",
+        required = false
+    )]
+    pub verbose: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -406,6 +414,7 @@ impl EthrexReplayCommand {
                     cache_level: CacheLevel::default(),
                     common,
                     slack_webhook_url: None,
+                    verbose: false,
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -742,7 +751,11 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         proving_result,
     );
 
-    println!("{report}");
+    if opts.verbose {
+        println!("{report}");
+    } else {
+        report.log();
+    }
 
     try_send_report_to_slack(&report, opts.slack_webhook_url).await?;
 
