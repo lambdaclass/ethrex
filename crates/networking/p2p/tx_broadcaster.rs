@@ -66,7 +66,7 @@ impl TxBroadcaster {
         let state = TxBroadcaster {
             kademlia,
             blockchain,
-            broadcasted_txs_per_peer: HashMap::new(),
+            broadcasted_txs_per_peer: HashMap::with_capacity(32_000_000), // 32M entries target;
         };
 
         let server = state.clone().start();
@@ -92,8 +92,11 @@ impl TxBroadcaster {
         if txs.is_empty() {
             return;
         }
-        
-        // self.broadcasted_txs_per_peer.reserve(txs.len());
+
+        let len = txs.len();
+        if len > 1 {
+            self.broadcasted_txs_per_peer.reserve(len);
+        }
 
         let now = Instant::now();
         for tx in txs {
