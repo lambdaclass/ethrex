@@ -329,8 +329,6 @@ async fn replay_latest_block(
         proving_result,
     );
 
-    println!("{report}");
-
     if opts.common.action == Action::Prove
         || (opts.common.action == Action::Execute && execution_failed)
     {
