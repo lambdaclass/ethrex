@@ -2,6 +2,8 @@
 name = "ef_tests-state"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-blockchain.workspace = true
@@ -17,7 +19,6 @@ serde_json.workspace = true
 simd-json = "0.15.1"
 bytes.workspace = true
 hex.workspace = true
-keccak-hash.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
 thiserror.workspace = true

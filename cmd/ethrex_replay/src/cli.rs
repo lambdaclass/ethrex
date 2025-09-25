@@ -1,5 +1,3 @@
-use std::{cmp::max, io::Write, sync::Arc, time::SystemTime};
-
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use ethrex_blockchain::{
     Blockchain, BlockchainType,
@@ -8,21 +6,45 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address, H256,
-    types::{AccountUpdate, Block, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Receipt},
+    types::{
+        AccountState, AccountUpdate, Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL,
+        ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
+    },
 };
 use ethrex_prover_lib::backend::Backend;
-use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::{
-    debug::execution_witness::RpcExecutionWitness, types::block_identifier::BlockTag,
+    EthClient,
+    debug::execution_witness::{RpcExecutionWitness, execution_witness_from_rpc_chain_config},
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{
+    EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
+};
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::EngineTypeRollup;
+use ethrex_trie::{
+    InMemoryTrieDB, Node,
+    node::{BranchNode, LeafNode},
+};
 use reqwest::Url;
+#[cfg(feature = "l2")]
+use std::path::Path;
+use std::{
+    cmp::max,
+    io::Write,
+    sync::{Arc, RwLock},
+    time::{Instant, SystemTime},
+};
 use tracing::info;
 
-use crate::bench::run_and_measure;
-use crate::fetcher::{get_blockdata, get_rangedata};
+use crate::fetcher::get_blockdata;
+#[cfg(not(feature = "l2"))]
+use crate::fetcher::get_rangedata;
+#[cfg(not(feature = "l2"))]
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
+use crate::{bench::run_and_measure, helpers::get_referenced_hashes};
 use crate::{
     block_run_report::{BlockRunReport, ReplayerMode},
     cache::Cache,
@@ -134,6 +156,8 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source")]
     pub cached: bool,
+    #[arg(long, help = "Execute with `add_block`, without using zkvm as backend")]
+    pub no_zkvm: bool,
     #[arg(long, required = false)]
     pub bench: bool,
     #[arg(long, required = false)]
@@ -297,6 +321,7 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    no_zkvm: false,
                     cache_level: CacheLevel::default(),
                 };
 
@@ -378,6 +403,7 @@ impl EthrexReplayCommand {
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    no_zkvm: false,
                     cache_level: CacheLevel::default(),
                 };
 
@@ -410,6 +436,146 @@ async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
     } else {
         prove(BACKEND, cache).await?;
     }
+
+    Ok(gas_used)
+}
+
+async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
+    if opts.prove {
+        eyre::bail!("Proving not enabled without backend");
+    }
+    if cache.blocks.len() > 1 {
+        eyre::bail!("Cache for L1 witness should contain only one block.");
+    }
+
+    let start = Instant::now();
+    info!("Preparing Storage for execution without zkVM");
+
+    let chain_config = cache.get_chain_config()?;
+    let block = cache.blocks[0].clone();
+    let gas_used = block.header.gas_used as f64;
+
+    let witness = execution_witness_from_rpc_chain_config(
+        cache.witness.clone(),
+        chain_config,
+        cache.get_first_block_number()?,
+    )?;
+    let network = &cache.network;
+
+    let guest_program = GuestProgramState::try_from(witness.clone())?;
+
+    // This will contain all code hashes with the corresponding bytecode
+    // For the code hashes that we don't have we'll fill it with <CodeHash, Bytes::new()>
+    let mut all_codes_hashed = guest_program.codes_hashed.clone();
+
+    let in_memory_store = InMemoryStore::new();
+
+    // - Set up state trie nodes
+    let all_nodes = &guest_program.nodes_hashed;
+    let state_root_hash = guest_program.parent_block_header.state_root;
+
+    let state_trie_nodes = InMemoryTrieDB::from_nodes(state_root_hash, all_nodes)?.inner;
+    {
+        // We now have the state trie built and we want 2 things:
+        //   1. Add arbitrary Leaf nodes to the trie so that every reference in branch nodes point to an actual node.
+        //   2. Get all code hashes that exist in the accounts that we have so that if we don't have the code we set it to empty bytes.
+        // We do these things because sometimes the witness may be incomplete and in those cases we don't want failures for missing data.
+        // This only applies when we use the InMemoryDatabase and not when we use the ExecutionWitness as database, that's because in the latter failures are dismissed and we fall back to default values.
+        let mut state_nodes = state_trie_nodes.lock().unwrap();
+        let referenced_node_hashes = get_referenced_hashes(&state_nodes)?;
+
+        let dummy_leaf = Node::from(LeafNode::default()).encode_to_vec();
+        // Insert arbitrary leaf nodes to state trie.
+        for hash in referenced_node_hashes {
+            state_nodes.entry(hash).or_insert(dummy_leaf.clone());
+        }
+
+        drop(state_nodes);
+
+        let mut inner_store = in_memory_store.inner()?;
+
+        inner_store.state_trie_nodes = state_trie_nodes;
+
+        // - Set up storage trie nodes
+        let addresses: Vec<Address> = witness
+            .keys
+            .iter()
+            .filter(|k| k.len() == Address::len_bytes())
+            .map(|k| Address::from_slice(k))
+            .collect();
+
+        for address in &addresses {
+            let hashed_address = hash_address(address);
+
+            // Account state may not be in the state trie
+            let Some(account_state_rlp) = guest_program
+                .state_trie
+                .as_ref()
+                .unwrap()
+                .get(&hashed_address)?
+            else {
+                continue;
+            };
+
+            let account_state = AccountState::decode(&account_state_rlp)?;
+
+            // If code hash of account isn't present insert empty code so that if not found the execution doesn't break.
+            let code_hash = account_state.code_hash;
+            all_codes_hashed.entry(code_hash).or_insert(vec![]);
+
+            let storage_root = account_state.storage_root;
+            let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
+                Ok(trie) => trie.inner,
+                Err(_) => continue,
+            };
+
+            // Fill storage trie with dummy branch nodes that have the hash of the missing nodes
+            // This is useful for eth_getProofs when we want to restructure the trie after removing a node whose sibling isn't known
+            // We assume the sibling is a branch node because we already covered the cases in which it's a Leaf or Extension node by injecting nodes in the witness.
+            // For more info read: https://github.com/kkrt-labs/zk-pig/blob/v0.8.0/docs/modified-mpt.md
+            {
+                let mut storage_nodes = storage_trie.lock().unwrap();
+                let dummy_branch = Node::from(BranchNode::default()).encode_to_vec();
+
+                let referenced_storage_node_hashes = get_referenced_hashes(&storage_nodes)?;
+
+                for hash in referenced_storage_node_hashes {
+                    storage_nodes.entry(hash).or_insert(dummy_branch.clone());
+                }
+            }
+
+            inner_store
+                .storage_trie_nodes
+                .insert(H256::from_slice(&hashed_address), storage_trie);
+        }
+    }
+
+    // Set up store with preloaded database and the right chain config.
+    let store = Store {
+        engine: Arc::new(in_memory_store),
+        chain_config: Arc::new(RwLock::new(chain_config)),
+        latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+    };
+
+    // Add codes to DB
+    for (code_hash, code) in all_codes_hashed {
+        store.add_account_code(code_hash, code.into()).await?;
+    }
+
+    // Add block headers to DB
+    for (_n, header) in guest_program.block_headers.clone() {
+        store.add_block_header(header.hash(), header).await?;
+    }
+
+    let blockchain = Blockchain::default_with_store(store);
+
+    info!("Storage preparation finished in {:.2?}", start.elapsed());
+
+    info!("Executing block {} on {}", block.header.number, network);
+    let start_time = Instant::now();
+    blockchain.add_block(&block).await?;
+    let duration = start_time.elapsed();
+    info!("add_block execution time: {:.2?}", duration);
 
     Ok(gas_used)
 }
@@ -458,13 +624,6 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    #[cfg(feature = "l2")]
-    if network != Network::LocalDevnetL2 {
-        return Err(eyre::Error::msg(
-            "L2 mode is only supported on LocalDevnetL2 network",
-        ));
-    }
-
     let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
     // Always write the cache after fetching from RPC.
@@ -476,14 +635,18 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
+    let replayer_mode = replayer_mode(opts.execute, opts.no_zkvm)?;
+
     let start = SystemTime::now();
 
-    let block_run_result = run_and_measure(replay(cache.clone(), &opts), opts.bench).await;
+    let block_run_result = if opts.no_zkvm {
+        run_and_measure(replay_no_zkvm(cache.clone(), &opts), opts.bench).await
+    } else {
+        run_and_measure(replay(cache.clone(), &opts), opts.bench).await
+    };
 
     // We save this because block_run_result (Result<u64, Report>) is not clonable.
     let block_run_failed = block_run_result.is_err();
-
-    let replayer_mode = replayer_mode(opts.execute)?;
 
     let block_run_report = BlockRunReport::new_for(
         block,
@@ -535,7 +698,7 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
         SEPOLIA_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Sepolia),
         _ => {
             if cfg!(feature = "l2") {
-                Network::LocalDevnetL2
+                Network::L2Chain(chain_id)
             } else {
                 Network::LocalDevnet
             }
@@ -543,7 +706,16 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
     }
 }
 
-pub fn replayer_mode(execute: bool) -> eyre::Result<ReplayerMode> {
+pub fn replayer_mode(execute: bool, no_zkvm: bool) -> eyre::Result<ReplayerMode> {
+    if no_zkvm {
+        if cfg!(any(feature = "sp1", feature = "risc0")) {
+            return Err(eyre::Error::msg(
+                "no-zkvm mode is not supported with SP1 or RISC0 features enabled",
+            ));
+        } else {
+            return Ok(ReplayerMode::ExecuteNoZkvm);
+        }
+    }
     if execute {
         #[cfg(feature = "sp1")]
         return Ok(ReplayerMode::ExecuteSP1);
@@ -574,6 +746,7 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
     })
 }
 
+#[cfg(not(feature = "l2"))]
 async fn resolve_blocks(
     mut blocks: Vec<u64>,
     from: Option<u64>,
@@ -663,15 +836,12 @@ pub async fn replay_custom_l1_blocks(
     .await?;
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
-
-    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
+    let chain_config = execution_witness.chain_config;
 
     let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        Some(network),
+        chain_config,
     );
 
     let start = SystemTime::now();
@@ -759,8 +929,6 @@ pub async fn produce_l1_block(
 }
 
 #[cfg(feature = "l2")]
-use crate::cache::L2Fields;
-#[cfg(feature = "l2")]
 use ethrex_blockchain::validate_block;
 #[cfg(feature = "l2")]
 use ethrex_l2::sequencer::block_producer::build_payload;
@@ -785,9 +953,7 @@ pub async fn replay_custom_l2_blocks(
     };
 
     let rollup_store = {
-        use ethrex_storage_rollup::EngineTypeRollup;
-
-        let rollup_store = StoreRollup::new("./", EngineTypeRollup::InMemory)
+        let rollup_store = StoreRollup::new(Path::new("./"), EngineTypeRollup::InMemory)
             .expect("Failed to create StoreRollup");
         rollup_store
             .init()
@@ -812,20 +978,11 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
-
-    let mut cache = Cache::new(
+    let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        Some(network),
+        genesis.config,
     );
-
-    cache.l2_fields = Some(L2Fields {
-        blob_commitment: [0_u8; 48],
-        blob_proof: [0_u8; 48],
-    });
 
     let start = SystemTime::now();
 
@@ -848,6 +1005,7 @@ pub async fn produce_custom_l2_blocks(
     let mut blocks = Vec::new();
     let mut current_parent_hash = head_block_hash;
     let mut current_timestamp = initial_timestamp;
+    let mut last_privilege_nonce = None;
 
     for _ in 0..n_blocks {
         let block = produce_custom_l2_block(
@@ -856,6 +1014,7 @@ pub async fn produce_custom_l2_blocks(
             rollup_store,
             current_parent_hash,
             current_timestamp,
+            &mut last_privilege_nonce,
         )
         .await?;
         current_parent_hash = block.hash();
@@ -873,6 +1032,7 @@ pub async fn produce_custom_l2_block(
     rollup_store: &StoreRollup,
     head_block_hash: H256,
     timestamp: u64,
+    last_privilege_nonce: &mut Option<u64>,
 ) -> eyre::Result<Block> {
     let build_payload_args = BuildPayloadArgs {
         parent: head_block_hash,
@@ -883,12 +1043,19 @@ pub async fn produce_custom_l2_block(
         beacon_root: Some(H256::zero()),
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
     let payload = create_payload(&build_payload_args, store)?;
 
-    let payload_build_result =
-        build_payload(blockchain.clone(), payload, store, rollup_store).await?;
+    let payload_build_result = build_payload(
+        blockchain.clone(),
+        payload,
+        store,
+        last_privilege_nonce,
+        DEFAULT_BUILDER_GAS_CEIL,
+    )
+    .await?;
 
     let new_block = payload_build_result.payload;
 
@@ -932,6 +1099,7 @@ pub async fn produce_custom_l2_block(
     Ok(new_block)
 }
 
+#[cfg(not(feature = "l2"))]
 async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
     let eth_client = EthClient::new(rpc_url.as_str())?;
 

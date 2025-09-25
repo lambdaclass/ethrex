@@ -58,6 +58,14 @@ pub struct Options {
     pub execute: bool,
     #[arg(
         long,
+        value_name = "BOOLEAN",
+        default_value_t = false,
+        help = "Execute without backend",
+        help_heading = "Replayer options"
+    )]
+    pub no_zkvm: bool,
+    #[arg(
+        long,
         default_value_t = false,
         value_name = "BOOLEAN",
         group = "modes",
@@ -111,11 +119,12 @@ async fn main() {
             if let Some(rpc_url) = rpc_url {
                 let handle = tokio::spawn(async move {
                     replay_execution(
-                        replayer_mode(opts.execute).unwrap(),
+                        replayer_mode(opts.execute, opts.no_zkvm).unwrap(),
                         network,
                         rpc_url,
                         slack_webhook_url,
                         cache_level,
+                        opts.no_zkvm,
                     )
                     .await
                 });
@@ -131,7 +140,7 @@ async fn main() {
 
         let handle = tokio::spawn(async move {
             replay_proving(
-                replayer_mode(opts.execute).unwrap(),
+                replayer_mode(opts.execute, opts.no_zkvm).unwrap(),
                 [
                     (hoodi_rpc_url, Network::PublicNetwork(PublicNetwork::Hoodi)),
                     (
@@ -211,6 +220,7 @@ async fn replay_execution(
     rpc_url: Url,
     slack_webhook_url: Option<Url>,
     cache_level: CacheLevel,
+    no_zkvm: bool,
 ) -> Result<(), EthClientError> {
     tracing::info!("Starting execution replayer for network: {network} with RPC URL: {rpc_url}");
 
@@ -224,6 +234,7 @@ async fn replay_execution(
             &eth_client,
             slack_webhook_url.clone(),
             cache_level.clone(),
+            no_zkvm,
         )
         .await?;
 
@@ -256,6 +267,7 @@ async fn replay_proving(
                 &eth_client,
                 slack_webhook_url.clone(),
                 cache_level.clone(),
+                false,
             )
             .await?;
         }
@@ -276,6 +288,7 @@ async fn replay_latest_block(
     eth_client: &EthClient,
     slack_webhook_url: Option<Url>,
     cache_level: CacheLevel,
+    no_zkvm: bool,
 ) -> Result<Duration, EthClientError> {
     let latest_block = eth_client
         .get_block_number()
@@ -291,14 +304,19 @@ async fn replay_latest_block(
         tracing::info!("Replaying block https://{network}.etherscan.io/block/{latest_block}",);
     }
 
-    let block = eth_client
-        .get_raw_block(BlockIdentifier::Number(latest_block))
+    let rpc_block = eth_client
+        .get_block_by_number(BlockIdentifier::Number(latest_block), true)
         .await?;
+
+    let block = rpc_block.try_into().expect("RPCBlock should be hydrated");
 
     let start = SystemTime::now();
 
     let run_result = match replayer_mode {
-        ReplayerMode::Execute | ReplayerMode::ExecuteSP1 | ReplayerMode::ExecuteRISC0 => {
+        ReplayerMode::Execute
+        | ReplayerMode::ExecuteSP1
+        | ReplayerMode::ExecuteRISC0
+        | ReplayerMode::ExecuteNoZkvm => {
             EthrexReplayCommand::Block(BlockOptions {
                 block: Some(latest_block),
                 opts: EthrexReplayOptions {
@@ -308,6 +326,7 @@ async fn replay_latest_block(
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    no_zkvm,
                     cache_level: cache_level.clone(),
                 },
             })
@@ -324,6 +343,7 @@ async fn replay_latest_block(
                     cached: false,
                     bench: false,
                     to_csv: false,
+                    no_zkvm: false,
                     cache_level: cache_level.clone(),
                 },
             })

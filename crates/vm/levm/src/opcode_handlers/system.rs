@@ -853,6 +853,8 @@ impl<'a> VM<'a> {
     }
 
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
+    ///
+    /// Returns the pc increment.
     pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
         self.handle_state_backup(ctx_result)?;
         let executed_call_frame = self.pop_call_frame()?;

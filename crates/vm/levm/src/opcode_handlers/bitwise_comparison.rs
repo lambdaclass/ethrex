@@ -144,7 +144,7 @@ impl<'a> VM<'a> {
             Ok(byte_index) => byte_index,
             Err(_) => {
                 // Index is out of bounds, then push 0
-                current_call_frame.stack.push1(U256::zero())?;
+                current_call_frame.stack.push_zero()?;
                 return Ok(false);
             }
         };
@@ -159,7 +159,7 @@ impl<'a> VM<'a> {
                 .stack
                 .push(&[U256::from(op2.byte(byte_to_push))])?;
         } else {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
         }
 
         Ok(false)
@@ -175,7 +175,7 @@ impl<'a> VM<'a> {
         if shift < U256::from(256) {
             current_call_frame.stack.push(&[value << shift])?;
         } else {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
         }
 
         Ok(false)
@@ -191,7 +191,7 @@ impl<'a> VM<'a> {
         if shift < U256::from(256) {
             current_call_frame.stack.push(&[value >> shift])?;
         } else {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
         }
 
         Ok(false)
