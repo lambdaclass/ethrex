@@ -23,6 +23,7 @@ smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
 digest = "0.10.6"
 lazy_static.workspace = true
 rayon.workspace = true
+pool_test.workspace = true
 
 [features]
 default = []

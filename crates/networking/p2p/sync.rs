@@ -1624,7 +1624,9 @@ async fn insert_storage_into_rocksdb(
     account_state_snapshots_dir: &Path,
     temp_db_dir: &Path,
 ) -> Result<(), SyncError> {
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+    use ethrex_trie::trie_sorted::trie_from_sorted_accounts;
+    use pool_test::ThreadPool;
+    use std::thread::scope;
 
     struct RocksDBIterator<'a> {
         iter: rocksdb::DBRawIterator<'a>,
@@ -1674,24 +1676,36 @@ async fn insert_storage_into_rocksdb(
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
 
-    accounts_with_storage.into_par_iter().map(|account_hash| {
-        let store_clone = store.clone();
-                let mut iter = db.raw_iterator();
-
-                let trie = store_clone
+    let account_with_storage_and_tries = accounts_with_storage
+        .into_iter()
+        .map(|account_hash| {
+            (
+                account_hash,
+                store
                     .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
-                    .expect("Should be able to open trie");
+                    .expect("Should be able to open trie"),
+            )
+        })
+        .collect::<Vec<(H256, Trie)>>();
+
+    scope(|scope| {
+        let pool = Arc::new(ThreadPool::new(16, scope));
+        for (account_hash, trie) in account_with_storage_and_tries.iter() {
+            let pool_clone = pool.clone();
+            let mut iter = db.raw_iterator();
+            let task = Box::new(move || {
                 let mut initial_key = account_hash.as_bytes().to_vec();
                 initial_key.extend([0_u8; 32]);
                 iter.seek(initial_key);
                 let mut iter = RocksDBIterator {
                     iter,
-                    limit: account_hash,
+                    limit: *account_hash,
                 };
 
-                let result = trie_from_sorted_accounts_wrap(
+                let result = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter,
+                    pool_clone
                 )
                 .inspect_err(|err: &TrieGenerationError| {
                     error!(
@@ -1700,7 +1714,9 @@ async fn insert_storage_into_rocksdb(
                 })
                 .map_err(SyncError::TrieGenerationError);
                 METRICS.storage_tries_state_roots_computed.inc();
-                result
-            }).collect::<Result<Vec<_>, _>>()?;
+                result;
+            });
+        }
+    });
     Ok(())
 }

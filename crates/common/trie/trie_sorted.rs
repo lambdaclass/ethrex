@@ -3,7 +3,8 @@ use crate::{
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use ethereum_types::H256;
-use rayon::{Scope, scope};
+use pool_test::ThreadPool;
+use std::{sync::Arc, thread::scope};
 use tracing::debug;
 
 #[derive(Debug, Default, Clone)]
@@ -134,7 +135,7 @@ fn flush_nodes_to_write(
 pub fn trie_from_sorted_accounts<'scope, T>(
     db: &'scope dyn TrieDB,
     data_iter: &mut T,
-    scope: &Scope<'scope>,
+    scope: Arc<ThreadPool<'scope>>,
 ) -> Result<H256, TrieGenerationError>
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
@@ -162,9 +163,9 @@ where
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
-            scope.spawn(move |_| {
+            scope.execute(Box::new(move || {
                 let _ = flush_nodes_to_write(nodes_to_write, db);
-            });
+            }));
             nodes_to_write = Vec::with_capacity(SIZE_TO_WRITE_DB as usize + 65);
         }
 
@@ -277,7 +278,10 @@ pub fn trie_from_sorted_accounts_wrap<T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
-    scope(|s| trie_from_sorted_accounts(db, accounts_iter, s))
+    scope(|s| {
+        let pool = ThreadPool::new(12, s);
+        trie_from_sorted_accounts(db, accounts_iter, Arc::new(pool))
+    })
 }
 
 #[cfg(test)]
