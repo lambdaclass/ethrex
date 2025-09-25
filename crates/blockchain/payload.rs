@@ -214,12 +214,23 @@ pub struct PayloadBuildContext {
 }
 
 impl PayloadBuildContext {
-    pub fn new(
+    pub fn new_for_l1(payload: Block, storage: &Store) -> Result<Self, EvmError> {
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm = Evm::new_for_l1(vm_db);
+        Self::new(payload, storage, vm)
+    }
+
+    pub fn new_for_l2(
         payload: Block,
         storage: &Store,
-        blockchain_type: BlockchainType,
         fee_vault: Option<Address>,
     ) -> Result<Self, EvmError> {
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm = Evm::new_for_l2(vm_db, fee_vault)?;
+        Self::new(payload, storage, vm)
+    }
+
+    pub fn new(payload: Block, storage: &Store, vm: Evm) -> Result<Self, EvmError> {
         let config = storage
             .get_chain_config()
             .map_err(|e| EvmError::DB(e.to_string()))?;
@@ -230,13 +241,6 @@ impl PayloadBuildContext {
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
-
-        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
-        let vm = match blockchain_type {
-            BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db, fee_vault)?,
-        };
-
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
@@ -387,8 +391,7 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.r#type.clone(), None)?;
+        let mut context = PayloadBuildContext::new_for_l1(payload, &self.storage)?;
 
         if let BlockchainType::L1 = self.r#type {
             self.apply_system_operations(&mut context)?;

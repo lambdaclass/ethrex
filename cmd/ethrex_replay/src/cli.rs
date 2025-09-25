@@ -11,7 +11,6 @@ use ethrex_common::{
         ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
     },
 };
-#[cfg(feature = "l2")]
 use ethrex_l2_rpc::clients::get_fee_vault_address;
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
