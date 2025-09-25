@@ -1,5 +1,5 @@
 use ethrex_common::Address;
-use keccak_hash::keccak;
+use ethrex_common::utils::keccak;
 
 #[cfg(feature = "secp256k1")]
 pub fn get_address_from_secret_key(secret_key: &secp256k1::SecretKey) -> Result<Address, String> {

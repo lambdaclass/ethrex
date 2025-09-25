@@ -11,7 +11,6 @@ use ethrex_common::{
     Address, H160, H256, U256, serde_utils::bool, types::Fork, utils::u256_from_big_endian,
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
-use keccak_hash::keccak256;
 use lambdaworks_math::{
     elliptic_curve::{
         short_weierstrass::{
@@ -376,13 +375,17 @@ pub fn ecrecover_ethrex(
     let mut public_key = public_key.serialize_uncompressed();
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
-    keccak256(&mut public_key[1..65]);
+    #[allow(clippy::indexing_slicing)]
+    let xy = &mut public_key[1..65];
 
-    // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
-    let mut output = vec![0u8; 12];
-    output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::Slicing)?);
+    let xy = keccak(xy);
 
-    Ok(Bytes::from(output.to_vec()))
+    // Address is the last 20 bytes of the hash.
+    let mut out = [0u8; 32];
+    #[allow(clippy::indexing_slicing)]
+    out[12..32].copy_from_slice(&xy[12..32]);
+
+    Ok(Bytes::copy_from_slice(&out))
 }
 
 /// ## ECRECOVER precompile.
@@ -446,7 +449,6 @@ pub fn ecrecover_sp1(
     #[allow(clippy::indexing_slicing)]
     let xy = &mut uncompressed[1..65];
 
-    // keccak256(X||Y).
     let xy = keccak(xy);
 
     // Address is the last 20 bytes of the hash.
