@@ -103,6 +103,9 @@ jobs:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
       - name: Install solc (Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
         run: |
