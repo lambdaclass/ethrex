@@ -306,6 +306,13 @@ impl Store {
             }
         }
 
+        secondary.try_catch_up_with_primary().map_err(|e| {
+            StoreError::Custom(format!(
+                "Secondary RocksDB instance failed to catch up with primary: {}",
+                e
+            ))
+        })?;
+
         Ok(Self {
             primary: Arc::new(primary),
             secondary: Arc::new(secondary),
@@ -441,7 +448,8 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let db = self.primary.clone();
+        let primary = self.primary.clone();
+        let secondary = self.secondary.clone();
 
         tokio::task::spawn_blocking(move || {
             let [
@@ -454,7 +462,7 @@ impl StoreEngine for Store {
                 cf_headers,
                 cf_bodies,
             ] = open_cfs(
-                &db,
+                &primary,
                 [
                     CF_STATE_TRIE_NODES,
                     CF_STORAGE_TRIES_NODES,
@@ -525,8 +533,15 @@ impl StoreEngine for Store {
             }
 
             // Single write operation
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            primary
+                .write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))?;
+            secondary.try_catch_up_with_primary().map_err(|e| {
+                StoreError::Custom(format!(
+                    "Secondary RocksDB instance failed to catch up with primary: {}",
+                    e
+                ))
+            })
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
