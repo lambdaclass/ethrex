@@ -6,6 +6,7 @@ use crate::{
 };
 use alloy_rlp::Encodable;
 use bytes::Bytes;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256,
     types::{Account, AccountUpdate, Fork, TxKind, TxType},
@@ -23,7 +24,6 @@ use ethrex_vm::{
         revm::{db::EvmState, helpers::fork_to_spec_id},
     },
 };
-use keccak_hash::keccak;
 pub use revm::primitives::{
     Address as RevmAddress, TxKind as RevmTxKind, U256 as RevmU256, hardfork::SpecId,
 };

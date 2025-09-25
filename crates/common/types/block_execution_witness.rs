@@ -7,13 +7,12 @@ use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
     types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
-    utils::decode_hex,
+    utils::{decode_hex, keccak},
 };
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{NodeRLP, Trie};
-use keccak_hash::keccak;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
