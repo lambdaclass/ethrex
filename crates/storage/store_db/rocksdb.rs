@@ -330,12 +330,20 @@ impl Store {
         K: AsRef<[u8]> + Send + 'static,
         V: AsRef<[u8]> + Send + 'static,
     {
-        let db = self.primary.clone();
+        let primary = self.primary.clone();
+        let secondary = self.secondary.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = cf_handle(&db, cf_name)?;
-            db.put_cf(&cf, key, value)
-                .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))
+            let cf = cf_handle(&primary, cf_name)?;
+            primary
+                .put_cf(&cf, key, value)
+                .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))?;
+            secondary.try_catch_up_with_primary().map_err(|e| {
+                StoreError::Custom(format!(
+                    "Secondary RocksDB instance failed to catch up with primary: {}",
+                    e
+                ))
+            })
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -377,21 +385,29 @@ impl Store {
         &self,
         batch_ops: Vec<(&'static str, Vec<(Vec<u8>, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let db = self.primary.clone();
+        let primary = self.primary.clone();
+        let secondary = self.secondary.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
             for (cf_name, ops) in batch_ops {
-                let cf = cf_handle(&db, cf_name)?;
+                let cf = cf_handle(&primary, cf_name)?;
 
                 for (key, value) in ops {
                     batch.put_cf(&cf, key, value);
                 }
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            primary
+                .write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))?;
+            secondary.try_catch_up_with_primary().map_err(|e| {
+                StoreError::Custom(format!(
+                    "Secondary RocksDB instance failed to catch up with primary: {}",
+                    e
+                ))
+            })
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -550,13 +566,14 @@ impl StoreEngine for Store {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        let db = self.primary.clone();
+        let primary = self.primary.clone();
+        let secondary = self.secondary.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
             let [cf_headers, cf_bodies, cf_block_numbers, cf_tx_locations] = open_cfs(
-                &db,
+                &primary,
                 [
                     CF_HEADERS,
                     CF_BODIES,
@@ -591,8 +608,15 @@ impl StoreEngine for Store {
                 }
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            primary
+                .write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))?;
+            secondary.try_catch_up_with_primary().map_err(|e| {
+                StoreError::Custom(format!(
+                    "Secondary RocksDB instance failed to catch up with primary: {}",
+                    e
+                ))
+            })
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -668,10 +692,11 @@ impl StoreEngine for Store {
         };
 
         let mut batch = WriteBatch::default();
-        let db = &self.primary;
+        let primary = &self.primary;
+        let secondary = &self.secondary;
 
         let [cf_canonical, cf_bodies, cf_headers, cf_block_numbers] = open_cfs(
-            db,
+            primary,
             [
                 CF_CANONICAL_BLOCK_HASHES,
                 CF_BODIES,
@@ -685,8 +710,15 @@ impl StoreEngine for Store {
         batch.delete_cf(&cf_headers, hash.as_bytes());
         batch.delete_cf(&cf_block_numbers, hash.as_bytes());
 
-        db.write(batch)
-            .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        primary
+            .write(batch)
+            .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))?;
+        secondary.try_catch_up_with_primary().map_err(|e| {
+            StoreError::Custom(format!(
+                "Secondary RocksDB instance failed to catch up with primary: {}",
+                e
+            ))
+        })
     }
 
     async fn get_block_bodies(
@@ -946,22 +978,30 @@ impl StoreEngine for Store {
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        let db = self.primary.clone();
+        let primary = self.primary.clone();
+        let secondary = self.secondary.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db
+            let cf = primary
                 .cf_handle(CF_SNAP_STATE)
                 .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
 
-            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+            let mut iter = primary.iterator_cf(&cf, rocksdb::IteratorMode::Start);
             let mut batch = WriteBatch::default();
 
             while let Some(Ok((key, _))) = iter.next() {
                 batch.delete_cf(&cf, key);
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            primary
+                .write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))?;
+            secondary.try_catch_up_with_primary().map_err(|e| {
+                StoreError::Custom(format!(
+                    "Secondary RocksDB instance failed to catch up with primary: {}",
+                    e
+                ))
+            })
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1177,13 +1217,14 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         // Get current latest block number to know what to clean up
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
-        let db = self.primary.clone();
+        let primary = self.primary.clone();
+        let secondary = self.secondary.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
             let [cf_canonical, cf_chain_data] =
-                open_cfs(&db, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
+                open_cfs(&primary, [CF_CANONICAL_BLOCK_HASHES, CF_CHAIN_DATA])?;
 
             // Update canonical block hashes
             if let Some(canonical_blocks) = new_canonical_blocks {
@@ -1223,8 +1264,15 @@ impl StoreEngine for Store {
                 );
             }
 
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+            primary
+                .write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))?;
+            secondary.try_catch_up_with_primary().map_err(|e| {
+                StoreError::Custom(format!(
+                    "Secondary RocksDB instance failed to catch up with primary: {}",
+                    e
+                ))
+            })
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
