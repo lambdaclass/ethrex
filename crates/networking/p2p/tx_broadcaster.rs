@@ -41,7 +41,8 @@ const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
 pub struct TxBroadcaster {
     kademlia: Kademlia,
     blockchain: Arc<Blockchain>,
-    broadcasted_txs_per_peer: HashMap<(H256, H256), Instant>, // (peer_id,tx_hash) -> timestamp
+    broadcasted_txs_per_peer: HashMap<(H256, H256), u32>, // (peer_id,tx_hash) -> seconds since start
+    start: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +68,7 @@ impl TxBroadcaster {
             kademlia,
             blockchain,
             broadcasted_txs_per_peer: HashMap::with_capacity(17_000_000), // 17M entries target
+            start: Instant::now(),
         };
 
         let server = state.clone().start();
@@ -86,6 +88,11 @@ impl TxBroadcaster {
         Ok(server)
     }
 
+    #[inline]
+    fn now_secs(&self) -> u32 {
+        self.start.elapsed().as_secs().min(u32::MAX as u64) as u32
+    }
+
     fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
         info!(total = self.broadcasted_txs_per_peer.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id));
        
@@ -98,7 +105,7 @@ impl TxBroadcaster {
             self.broadcasted_txs_per_peer.reserve(len);
         }
 
-        let now = Instant::now();
+        let now = self.now_secs();
         for tx in txs {
             self.broadcasted_txs_per_peer
                 .entry((peer_id, tx))
@@ -260,10 +267,11 @@ impl GenServer for TxBroadcaster {
             }
             Self::CastMsg::PruneTxs => {
                 debug!(received = "PruneTxs");
-                let now = Instant::now();
+                let now = self.now_secs();
                 let before = self.broadcasted_txs_per_peer.len();
-                self.broadcasted_txs_per_peer.retain(|_, &mut timestamp| {
-                    now.duration_since(timestamp) < Duration::from_secs(PRUNE_WAIT_TIME_SECS)
+                self.broadcasted_txs_per_peer.retain(|_, ts| {
+                    // Keep if within window; wrapping_sub handles u32 wrap-around
+                    now.wrapping_sub(*ts) < PRUNE_WAIT_TIME_SECS as u32
                 });
                 info!(before = before, after = self.broadcasted_txs_per_peer.len(), "Pruned old broadcasted transactions");
                 CastResponse::NoReply
