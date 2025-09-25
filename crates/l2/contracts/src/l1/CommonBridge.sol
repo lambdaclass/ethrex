@@ -214,6 +214,10 @@ contract CommonBridge is
         address l2Recipient
     ) public payable override whenNotPaused {
         uint256 value;
+        require(
+            _token == NATIVE_TOKEN_L1_ADDRESS,
+            "CommonBridge: token address is not the native token address. Use depositERC20() instead"
+        );
 
         if (_token == address(0)) {
             require(
@@ -231,11 +235,6 @@ contract CommonBridge is
             require(
                 msg.value == 0,
                 "CommonBridge: the native token is an ERC20, msg.value must be zero"
-            );
-
-            require(
-                _token == NATIVE_TOKEN_L1_ADDRESS,
-                "CommonBridge: token address is not the native token address. Use depositERC20() instead"
             );
 
             require(
