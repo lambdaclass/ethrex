@@ -58,6 +58,9 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
+      - name: See free space
+        run: df -h 
+        
       - name: Start L1 & Deploy contracts
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
