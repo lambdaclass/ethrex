@@ -1689,10 +1689,9 @@ async fn insert_storage_into_rocksdb(
         .collect::<Vec<(H256, Trie)>>();
 
     scope(|scope| {
-        let pool = ThreadPool::new(16, scope);
-        let pool_arc = Arc::new(pool);
+        let pool = Arc::new(ThreadPool::new(16, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
-            let pool_clone = pool_arc.clone();
+            let pool_clone = pool.clone();
             let mut iter = db.raw_iterator();
             let task = Box::new(move || {
                 let mut initial_key = account_hash.as_bytes().to_vec();
@@ -1717,6 +1716,7 @@ async fn insert_storage_into_rocksdb(
                 METRICS.storage_tries_state_roots_computed.inc();
                 result;
             });
+            pool.execute(task);
         }
     });
     Ok(())
