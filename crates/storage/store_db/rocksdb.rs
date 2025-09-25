@@ -103,7 +103,8 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
 pub struct Store {
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    primary: Arc<DBWithThreadMode<MultiThreaded>>,
+    secondary: Arc<DBWithThreadMode<MultiThreaded>>,
 }
 
 impl Store {
@@ -112,7 +113,7 @@ impl Store {
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
 
-        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache 
+        let cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB cache
 
         db_options.set_max_open_files(-1);
         db_options.set_max_file_opening_threads(16);
@@ -207,7 +208,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_cache(&cache);
@@ -219,7 +220,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_cache(&cache);
@@ -230,14 +231,14 @@ impl Store {
                 }
                 CF_STATE_TRIE_NODES | CF_STORAGE_TRIES_NODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB 
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter 
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB 
+                    block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_block_cache(&cache);
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     block_opts.set_cache_index_and_filter_blocks(true);
@@ -261,7 +262,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
@@ -273,10 +274,17 @@ impl Store {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+        let primary = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             path,
             cf_descriptors,
+        )
+        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
+
+        let secondary = DBWithThreadMode::<MultiThreaded>::open_as_secondary(
+            &db_options,
+            path,
+            &path.join(".secondary"),
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
@@ -284,7 +292,7 @@ impl Store {
         for cf_name in &existing_cfs {
             if cf_name != "default" && !expected_column_families.contains(&cf_name.as_str()) {
                 info!("Dropping obsolete column family: {}", cf_name);
-                match db.drop_cf(cf_name) {
+                match primary.drop_cf(cf_name) {
                     Ok(_) => info!("Successfully dropped column family: {}", cf_name),
                     Err(e) => {
                         // Log error but don't fail initialization - the database is still usable
@@ -298,29 +306,27 @@ impl Store {
             }
         }
 
-        Ok(Self { db: Arc::new(db) })
-    }
-
-    // Helper method to get column family handle
-    fn cf_handle(&self, cf_name: &str) -> Result<std::sync::Arc<BoundColumnFamily>, StoreError> {
-        self.db
-            .cf_handle(cf_name)
-            .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
+        Ok(Self {
+            primary: Arc::new(primary),
+            secondary: Arc::new(secondary),
+        })
     }
 
     // Helper method for async writes
-    async fn write_async<K, V>(&self, cf_name: &str, key: K, value: V) -> Result<(), StoreError>
+    async fn write_async<K, V>(
+        &self,
+        cf_name: &'static str,
+        key: K,
+        value: V,
+    ) -> Result<(), StoreError>
     where
         K: AsRef<[u8]> + Send + 'static,
         V: AsRef<[u8]> + Send + 'static,
     {
-        let db = self.db.clone();
-        let cf_name = cf_name.to_string();
+        let db = self.primary.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
+            let cf = cf_handle(&db, cf_name)?;
             db.put_cf(&cf, key, value)
                 .map_err(|e| StoreError::Custom(format!("RocksDB write error: {}", e)))
         })
@@ -329,17 +335,18 @@ impl Store {
     }
 
     // Helper method for async reads
-    async fn read_async<K>(&self, cf_name: &str, key: K) -> Result<Option<Vec<u8>>, StoreError>
+    async fn read_async<K>(
+        &self,
+        cf_name: &'static str,
+        key: K,
+    ) -> Result<Option<Vec<u8>>, StoreError>
     where
         K: AsRef<[u8]> + Send + 'static,
     {
-        let db = self.db.clone();
-        let cf_name = cf_name.to_string();
+        let db = self.secondary.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
+            let cf = cf_handle(&db, cf_name)?;
             db.get_cf(&cf, key)
                 .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
         })
@@ -352,8 +359,8 @@ impl Store {
     where
         K: AsRef<[u8]>,
     {
-        let cf = self.cf_handle(cf_name)?;
-        self.db
+        let cf = cf_handle(&self.secondary, cf_name)?;
+        self.secondary
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("RocksDB read error: {}", e)))
     }
@@ -361,18 +368,19 @@ impl Store {
     // Helper method for batch writes
     async fn write_batch_async(
         &self,
-        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+        batch_ops: Vec<(&'static str, Vec<(Vec<u8>, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.primary.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
 
-            for (cf_name, key, value) in batch_ops {
-                let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                    StoreError::Custom(format!("Column family not found: {}", cf_name))
-                })?;
-                batch.put_cf(&cf, key, value);
+            for (cf_name, ops) in batch_ops {
+                let cf = cf_handle(&db, cf_name)?;
+
+                for (key, value) in ops {
+                    batch.put_cf(&cf, key, value);
+                }
             }
 
             db.write(batch)
@@ -395,7 +403,7 @@ impl Store {
     // Helper method for bulk reads - equivalent to LibMDBX read_bulk
     async fn read_bulk_async<K, V, F>(
         &self,
-        cf_name: &str,
+        cf_name: &'static str,
         keys: Vec<K>,
         deserialize_fn: F,
     ) -> Result<Vec<V>, StoreError>
@@ -404,13 +412,10 @@ impl Store {
         V: Send + 'static,
         F: Fn(Vec<u8>) -> Result<V, StoreError> + Send + 'static,
     {
-        let db = self.db.clone();
-        let cf_name = cf_name.to_string();
+        let db = self.secondary.clone();
 
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
+            let cf = cf_handle(&db, cf_name)?;
 
             let mut results = Vec::with_capacity(keys.len());
 
@@ -436,7 +441,7 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.primary.clone();
 
         tokio::task::spawn_blocking(move || {
             let [
@@ -530,7 +535,7 @@ impl StoreEngine for Store {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.primary.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
@@ -589,24 +594,25 @@ impl StoreEngine for Store {
     }
 
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
+        let mut headers_batch_ops = Vec::new();
+        let mut numbers_batch_ops = Vec::new();
 
         for header in block_headers {
             let block_hash = header.hash();
             let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
             let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
 
-            batch_ops.push((CF_HEADERS.to_string(), hash_key, header_value));
+            headers_batch_ops.push((hash_key, header_value));
 
             let number_key = header.number.to_le_bytes().to_vec();
-            batch_ops.push((
-                CF_BLOCK_NUMBERS.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
-                number_key,
-            ));
+            numbers_batch_ops.push((BlockHashRLP::from(block_hash).bytes().clone(), number_key));
         }
 
-        self.write_batch_async(batch_ops).await
+        self.write_batch_async(vec![
+            (CF_HEADERS, headers_batch_ops),
+            (CF_BLOCK_NUMBERS, numbers_batch_ops),
+        ])
+        .await
     }
 
     fn get_block_header(
@@ -642,14 +648,15 @@ impl StoreEngine for Store {
     }
 
     async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        let mut batch = WriteBatch::default();
-
         let Some(hash) = self.get_canonical_block_hash_sync(block_number)? else {
             return Ok(());
         };
 
+        let mut batch = WriteBatch::default();
+        let db = &self.primary;
+
         let [cf_canonical, cf_bodies, cf_headers, cf_block_numbers] = open_cfs(
-            &self.db,
+            db,
             [
                 CF_CANONICAL_BLOCK_HASHES,
                 CF_BODIES,
@@ -663,8 +670,7 @@ impl StoreEngine for Store {
         batch.delete_cf(&cf_headers, hash.as_bytes());
         batch.delete_cf(&cf_block_numbers, hash.as_bytes());
 
-        self.db
-            .write(batch)
+        db.write(batch)
             .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
     }
 
@@ -822,14 +828,11 @@ impl StoreEngine for Store {
             composite_key.extend_from_slice(block_hash.as_bytes());
 
             let location_value = (block_number, block_hash, index).encode_to_vec();
-            batch_ops.push((
-                CF_TRANSACTION_LOCATIONS.to_string(),
-                composite_key,
-                location_value,
-            ));
+            batch_ops.push((composite_key, location_value));
         }
 
-        self.write_batch_async(batch_ops).await
+        self.write_batch_async(vec![(CF_TRANSACTION_LOCATIONS, batch_ops)])
+            .await
     }
 
     // TODO: REVIEW LOGIC AGAINST LIBMDBX
@@ -838,7 +841,7 @@ impl StoreEngine for Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        let db = self.db.clone();
+        let db = self.secondary.clone();
         let tx_hash_key = transaction_hash.as_bytes().to_vec();
 
         tokio::task::spawn_blocking(move || {
@@ -899,10 +902,10 @@ impl StoreEngine for Store {
         for (index, receipt) in receipts.into_iter().enumerate() {
             let key = (block_hash, index as u64).encode_to_vec();
             let value = receipt.encode_to_vec();
-            batch_ops.push((CF_RECEIPTS.to_string(), key, value));
+            batch_ops.push((key, value));
         }
 
-        self.write_batch_async(batch_ops).await
+        self.write_batch_async(vec![(CF_RECEIPTS, batch_ops)]).await
     }
 
     // TODO: Check differences with libmdbx
@@ -928,7 +931,7 @@ impl StoreEngine for Store {
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let db = self.primary.clone();
 
         tokio::task::spawn_blocking(move || {
             let cf = db
@@ -1113,7 +1116,8 @@ impl StoreEngine for Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
-            self.db.clone(),
+            self.primary.clone(),
+            self.secondary.clone(),
             CF_STORAGE_TRIES_NODES,
             Some(hashed_address),
         )?);
@@ -1122,7 +1126,8 @@ impl StoreEngine for Store {
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
-            self.db.clone(),
+            self.primary.clone(),
+            self.secondary.clone(),
             CF_STATE_TRIE_NODES,
             None,
         )?);
@@ -1130,7 +1135,7 @@ impl StoreEngine for Store {
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = RocksDBLockedTrieDB::new(self.db.clone(), CF_STATE_TRIE_NODES, None)?;
+        let db = RocksDBLockedTrieDB::new(self.secondary.clone(), CF_STATE_TRIE_NODES, None)?;
         Ok(Trie::open(Box::new(db), state_root))
     }
 
@@ -1140,7 +1145,7 @@ impl StoreEngine for Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         let db = RocksDBLockedTrieDB::new(
-            self.db.clone(),
+            self.secondary.clone(),
             CF_STORAGE_TRIES_NODES,
             Some(hashed_address),
         )?;
@@ -1157,7 +1162,7 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         // Get current latest block number to know what to clean up
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
-        let db = self.db.clone();
+        let db = self.primary.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();
@@ -1212,13 +1217,14 @@ impl StoreEngine for Store {
 
     // TODO: REVIEW LOGIC AGAINST LIBMDBX
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let cf = self.cf_handle(CF_RECEIPTS)?;
+        let db = &self.secondary;
+        let cf = cf_handle(db, CF_RECEIPTS)?;
         let mut receipts = Vec::new();
         let mut index = 0u64;
 
         loop {
             let key = (*block_hash, index).encode_to_vec();
-            match self.db.get_cf(&cf, key)? {
+            match db.get_cf(&cf, key)? {
                 Some(receipt_bytes) => {
                     let receipt = Receipt::decode(receipt_bytes.as_slice())?;
                     receipts.push(receipt);
@@ -1410,11 +1416,12 @@ impl StoreEngine for Store {
                 let mut key = Vec::with_capacity(64);
                 key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
-                batch_ops.push((CF_STORAGE_TRIES_NODES.to_string(), key, node_data));
+                batch_ops.push((key, node_data));
             }
         }
 
-        self.write_batch_async(batch_ops).await
+        self.write_batch_async(vec![(CF_STORAGE_TRIES_NODES, batch_ops)])
+            .await
     }
 
     async fn write_account_code_batch(
@@ -1426,11 +1433,20 @@ impl StoreEngine for Store {
         for (code_hash, code) in account_codes {
             let key = code_hash.as_bytes().to_vec();
             let value = AccountCodeRLP::from(code).bytes().clone();
-            batch_ops.push((CF_ACCOUNT_CODES.to_string(), key, value));
+            batch_ops.push((key, value));
         }
 
-        self.write_batch_async(batch_ops).await
+        self.write_batch_async(vec![(CF_ACCOUNT_CODES, batch_ops)])
+            .await
     }
+}
+
+// Helper method to get column family handle
+fn cf_handle<'a>(
+    db: &'a Arc<DBWithThreadMode<MultiThreaded>>,
+    cf_name: &str,
+) -> Result<std::sync::Arc<BoundColumnFamily<'a>>, StoreError> {
+    open_cfs(db, [cf_name]).map(|cfs| cfs[0].clone())
 }
 
 /// Open column families
@@ -1438,16 +1454,14 @@ fn open_cfs<'a, const N: usize>(
     db: &'a Arc<DBWithThreadMode<MultiThreaded>>,
     names: [&str; N],
 ) -> Result<[Arc<BoundColumnFamily<'a>>; N], StoreError> {
-    let mut handles = Vec::with_capacity(N);
-
-    for name in names {
-        handles
-            .push(db.cf_handle(name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family '{}' not found", name))
-            })?);
+    let opt_handles = names.map(|name| db.cf_handle(name));
+    for (name, handle) in names.iter().zip(opt_handles.iter()) {
+        if handle.is_none() {
+            return Err(StoreError::Custom(format!(
+                "Column family '{}' not found",
+                name
+            )));
+        }
     }
-
-    handles
-        .try_into()
-        .map_err(|_| StoreError::Custom("Unexpected number of column families".to_string()))
+    Ok(opt_handles.map(Option::unwrap))
 }

@@ -1,43 +1,44 @@
 use ethrex_common::H256;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
-use rocksdb::{DBWithThreadMode, MultiThreaded};
+use rocksdb::{BoundColumnFamily, DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
-    /// Column family name
-    cf_name: String,
+    primary: &'static Arc<DBWithThreadMode<MultiThreaded>>,
+    secondary: &'static Arc<DBWithThreadMode<MultiThreaded>>,
+    /// Column handles
+    cf_primary: Arc<BoundColumnFamily<'static>>,
+    cf_secondary: Arc<BoundColumnFamily<'static>>,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
 }
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Arc<DBWithThreadMode<MultiThreaded>>,
+        primary: Arc<DBWithThreadMode<MultiThreaded>>,
+        secondary: Arc<DBWithThreadMode<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
         // Verify column family exists
-        if db.cf_handle(cf_name).is_none() {
-            return Err(TrieError::DbError(anyhow::anyhow!(
-                "Column family not found: {}",
-                cf_name
-            )));
-        }
+        let primary = Box::leak(Box::new(primary));
+        let secondary = Box::leak(Box::new(secondary));
+        let cf_primary = primary.cf_handle(cf_name).ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
+        })?;
+        let cf_secondary = secondary.cf_handle(cf_name).ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
+        })?;
 
         Ok(Self {
-            db,
-            cf_name: cf_name.to_string(),
+            primary,
+            secondary,
+            cf_primary,
+            cf_secondary,
             address_prefix,
         })
-    }
-
-    fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily>, TrieError> {
-        self.db
-            .cf_handle(&self.cf_name)
-            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
     fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
@@ -56,26 +57,38 @@ impl RocksDBTrieDB {
     }
 }
 
+impl Drop for RocksDBTrieDB {
+    fn drop(&mut self) {
+        // Restore the leaked database reference
+        for db in [self.secondary, self.primary] {
+            unsafe {
+                drop(Box::from_raw(
+                    db as *const Arc<DBWithThreadMode<MultiThreaded>>
+                        as *mut Arc<DBWithThreadMode<MultiThreaded>>,
+                ));
+            }
+        }
+    }
+}
+
 impl TrieDB for RocksDBTrieDB {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let cf = self.cf_handle()?;
         let db_key = self.make_key(key);
 
-        self.db
-            .get_cf(&cf, db_key)
+        self.secondary
+            .get_cf(&self.cf_secondary, db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let cf = self.cf_handle()?;
         let mut batch = rocksdb::WriteBatch::default();
 
         for (key, value) in key_values {
             let db_key = self.make_key(key);
-            batch.put_cf(&cf, db_key, value);
+            batch.put_cf(&self.cf_primary, db_key, value);
         }
 
-        self.db
+        self.primary
             .write(batch)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
     }
@@ -88,8 +101,8 @@ mod tests {
     use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options};
     use tempfile::TempDir;
 
-    #[test]
-    fn test_trie_db_basic_operations() {
+    #[track_caller]
+    fn open_dbs() -> [Arc<DBWithThreadMode<MultiThreaded>>; 2] {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test_db");
 
@@ -99,16 +112,26 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+        let primary = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
-            db_path,
+            db_path.clone(),
             vec![cf_descriptor],
         )
         .unwrap();
-        let db = Arc::new(db);
+        let secondary = DBWithThreadMode::<MultiThreaded>::open_as_secondary(
+            &db_options,
+            db_path.clone(),
+            db_path.join(".secondary"),
+        )
+        .unwrap();
+        [Arc::new(primary), Arc::new(secondary)]
+    }
 
+    #[test]
+    fn test_trie_db_basic_operations() {
+        let [primary, secondary] = open_dbs();
         // Create TrieDB
-        let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
+        let trie_db = RocksDBTrieDB::new(primary, secondary, "test_cf", None).unwrap();
 
         // Test data
         let node_hash = NodeHash::from(H256::from([1u8; 32]));
@@ -130,26 +153,11 @@ mod tests {
 
     #[test]
     fn test_trie_db_with_address_prefix() {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_db");
-
-        // Setup RocksDB with column family
-        let mut db_options = Options::default();
-        db_options.create_if_missing(true);
-        db_options.create_missing_column_families(true);
-
-        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
-            &db_options,
-            db_path,
-            vec![cf_descriptor],
-        )
-        .unwrap();
-        let db = Arc::new(db);
+        let [primary, secondary] = open_dbs();
 
         // Create TrieDB with address prefix
         let address = H256::from([0xaa; 32]);
-        let trie_db = RocksDBTrieDB::new(db, "test_cf", Some(address)).unwrap();
+        let trie_db = RocksDBTrieDB::new(primary, secondary, "test_cf", Some(address)).unwrap();
 
         // Test data
         let node_hash = NodeHash::from(H256::from([1u8; 32]));
@@ -167,25 +175,10 @@ mod tests {
 
     #[test]
     fn test_trie_db_batch_operations() {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_db");
-
-        // Setup RocksDB with column family
-        let mut db_options = Options::default();
-        db_options.create_if_missing(true);
-        db_options.create_missing_column_families(true);
-
-        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
-            &db_options,
-            db_path,
-            vec![cf_descriptor],
-        )
-        .unwrap();
-        let db = Arc::new(db);
+        let [primary, secondary] = open_dbs();
 
         // Create TrieDB
-        let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
+        let trie_db = RocksDBTrieDB::new(primary, secondary, "test_cf", None).unwrap();
 
         // Test data
         let batch_data = vec![
