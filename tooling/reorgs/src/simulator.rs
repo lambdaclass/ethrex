@@ -27,6 +27,8 @@ use tracing::{error, info};
 
 pub struct Simulator {
     cmd_path: PathBuf,
+    test_name: String,
+
     base_opts: Options,
     jwt_secret: Bytes,
     genesis_path: PathBuf,
@@ -36,7 +38,7 @@ pub struct Simulator {
 }
 
 impl Simulator {
-    pub fn new(cmd_path: PathBuf) -> Self {
+    pub fn new(cmd_path: PathBuf, test_name: String) -> Self {
         let mut opts = Options::default_l1();
         let jwt_secret = generate_jwt_secret();
         std::fs::write("jwt.hex", hex::encode(&jwt_secret)).unwrap();
@@ -53,6 +55,7 @@ impl Simulator {
         opts.network = Some(Network::GenesisPath(genesis_path.clone()));
         Self {
             cmd_path,
+            test_name,
             base_opts: opts,
             genesis_path,
             jwt_secret,
@@ -70,18 +73,19 @@ impl Simulator {
 
     pub async fn start_node(&mut self) -> Node {
         let n = self.configs.len();
+        let test_name = &self.test_name;
         info!(node = n, "Starting node");
         let mut opts = self.base_opts.clone();
         opts.http_port = (8545 + n * 2).to_string();
         opts.authrpc_port = (8545 + n * 2 + 1).to_string();
         opts.p2p_port = (30303 + n).to_string();
         opts.discovery_port = (30303 + n).to_string();
-        opts.datadir = format!("data/node{n}").into();
+        opts.datadir = format!("data/{test_name}/node{n}").into();
 
         let _ = std::fs::remove_dir_all(&opts.datadir);
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
 
-        let logs_file_path = format!("data/node{n}.log");
+        let logs_file_path = format!("data/{test_name}/node{n}.log");
         let logs_file = File::create(&logs_file_path).expect("Failed to create logs file");
 
         let cancel = CancellationToken::new();

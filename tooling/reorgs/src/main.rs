@@ -56,7 +56,10 @@ where
     let start = std::time::Instant::now();
 
     info!(test=%test_name, "Running test");
-    let simulator = Arc::new(Mutex::new(Simulator::new(cmd_path.to_path_buf())));
+    let simulator = Arc::new(Mutex::new(Simulator::new(
+        cmd_path.to_path_buf(),
+        test_name.to_string(),
+    )));
 
     // Run in another task to clean up properly on panic
     let result = tokio::spawn(test_fn(simulator.clone())).await;
