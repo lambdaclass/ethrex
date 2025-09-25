@@ -4,7 +4,7 @@ services:
     volumes:
       - lighthouse:/lighthouse
       - ethrex:/ethrex
-    command: sh -c 'if [ -z "${KEEP_DATA:-}" ] || [ "${KEEP_DATA:-}" == "0" ] || [ "${KEEP_DATA:-}" == "false" ]; then rm -rf /lighthouse/* rm -rf /ethrex/* ; echo Old data removed. Starting from scratch ; else echo KEEP_DATA is set, skipping data reset ; fi'
+    command: sh -c 'if [ -z "${KEEP_DATA:-}" ] || [ "${KEEP_DATA:-}" == "0" ] || [ "${KEEP_DATA:-}" == "false" ]; then rm -rf /lighthouse/* /ethrex/* ; echo Old data removed. Starting from scratch ; else echo KEEP_DATA is set, skipping data reset ; fi'
 
   setup_jwt:
     image: alpine
