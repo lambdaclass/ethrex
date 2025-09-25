@@ -307,10 +307,10 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, &mut block_sync_state).await?;
+            self.snap_sync(store.clone(), &mut block_sync_state).await?;
 
-            // Next sync will be full-sync
-            block_sync_state.into_fullsync().await?;
+            store.clear_snap_state().await?;
+
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -1325,6 +1325,7 @@ pub async fn update_pivot(
         } else {
             return Err(SyncError::NotInSnapSync);
         }
+        *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
     }
 }
