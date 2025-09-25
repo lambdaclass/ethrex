@@ -228,7 +228,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
-                aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -654,15 +653,6 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub fee_estimate: String,
-    #[arg(
-        long,
-        value_name = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        required_if_eq("aligned", "true"),
-        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
-        help_heading = "Aligned options",
-        help = "Path to the SP1 elf. This is used for proof verification."
-    )]
-    pub aligned_sp1_elf_path: Option<String>,
 }
 
 impl Default for AlignedOptions {
@@ -673,7 +663,6 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
-            aligned_sp1_elf_path: None,
         }
     }
 }
@@ -830,15 +819,6 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub log_level: Level,
-    #[arg(
-        long,
-        default_value_t = false,
-        value_name = "BOOLEAN",
-        env = "PROVER_CLIENT_ALIGNED",
-        help = "Activate aligned proving system",
-        help_heading = "Prover client options"
-    )]
-    pub aligned: bool,
 }
 
 impl From<ProverClientOptions> for ProverConfig {
@@ -847,7 +827,6 @@ impl From<ProverClientOptions> for ProverConfig {
             backend: config.backend,
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
-            aligned_mode: config.aligned,
         }
     }
 }
@@ -860,7 +839,6 @@ impl Default for ProverClientOptions {
             ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
-            aligned: false,
             backend: Backend::Exec,
         }
     }

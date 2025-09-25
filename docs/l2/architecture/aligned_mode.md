@@ -2,18 +2,21 @@
 
 This document explains how to run an Ethrex L2 node in **Aligned mode** and highlights the key differences in component behavior compared to the default mode.
 
-## How to Run
+- Check [How to Run (local devnet)](#how-to-run-local-devnet) for a development or testing.
+- Check [How to Run (testnet)](#how-to-run-testnet) for a prod-like environment.
 
-> [!IMPORTANT]  
+## How to run (testnet)
+
+> [!IMPORTANT]
 > For this guide we assumed that there is an L1 running with all Aligned environment set.
 
-### 1. Generate the SP1 ELF Program and Verification Key
+### 1. Generate the prover ELF/VK
 
 Run:
 
 ```bash
 cd ethrex/crates/l2
-SP1_PROVER=cuda make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
+make build-prover-<sp1/risc0> # optional: GPU=true
 ```
 
 This will generate the SP1 ELF program and verification key under:
@@ -33,9 +36,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--genesis-l1-path <GENESIS_L1_PATH> \
 	--genesis-l2-path <GENESIS_L2_PATH> \
 	--contracts-path contracts \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+	--aligned \
     --aligned.aggregator-address <ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS> \
     --bridge-owner <ADDRESS> \
     --on-chain-proposer-owner <ADDRESS> \
@@ -44,9 +45,9 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
     --sp1-vk-path <SP1_VERIFICATION_KEY_PATH>
 ```
 
-> [!NOTE]  
-> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.  
-> In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
+> [!NOTE]
+> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
+> In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
 ### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
@@ -85,7 +86,6 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
     --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \
     --aligned-network <ETHREX_ALIGNED_NETWORK> \
     --fee-estimate <ETHREX_ALIGNED_FEE_ESTIMATE> \
-    --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
 ```
 
 Aligned params explanation:
@@ -93,7 +93,6 @@ Aligned params explanation:
 - `--aligned`: Enables aligned mode, enforcing all required parameters.
 - `ETHREX_ALIGNED_VERIFIER_INTERVAL_MS`: Interval in millisecs, that the `proof_verifier` will sleep between each proof aggregation check.
 - `ETHREX_ALIGNED_BEACON_CLIENT_URL`: URL of the beacon client used by the Aligned SDK to verify proof aggregations.
-- `ETHREX_ALIGNED_SP1_ELF_PATH`: Path to the SP1 ELF program. This is the same file used for SP1 verification outside of Aligned mode.
 - `ETHREX_ALIGNED_NETWORK` and `ETHREX_ALIGNED_FEE_ESTIMATE`: Parameters used by the [Aligned SDK](https://docs.alignedlayer.com/guides/1.2_sdk_api_reference).
 
 ### 4. Running the Prover
@@ -101,13 +100,13 @@ Aligned params explanation:
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
-SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
+make init-prover-<sp1/risc0> # optional: GPU=true
 ```
 
-## How to Run Using an Aligned Dev Environment
+## How to run (local devnet)
 
 > [!IMPORTANT]
-> This guide asumes you have already generated the SP1 ELF Program and Verification Key. See: [Generate the SP1 ELF Program and Verification Key](#1-generate-the-sp1-elf-program-and-verification-key)
+> This guide assumes you have already generated the prover ELF/VK. See: [Generate the prover ELF/VK](#1-generate-the-prover-elfvk)
 
 ### Set Up the Aligned Environment
 
@@ -116,7 +115,7 @@ SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```bash
 git clone git@github.com:yetanotherco/aligned_layer.git
 cd aligned_layer
-git checkout tags/v0.16.1
+git checkout tags/v0.17.0
 ```
 
 2. Edit the `aligned_layer/network_params.rs` file to send some funds to the `committer` and `integration_test` addresses:
@@ -151,7 +150,7 @@ To stop it run `make ethereum_package_rm`
 
 4. Start the batcher:
 
-First, increase the `max_proof_size` in `aligned_layer/config-files/config-batcher-ethereum-package.yaml` `max_proof_size: 41943040` for example.
+First, increase the `max_proof_size` in `aligned_layer/config-files/config-batcher-ethereum-package.yaml` `max_proof_size: 104857600 # 100 MiB` for example.
 
 ```
 cd aligned_layer
@@ -174,29 +173,18 @@ let ws_stream_future =
 ```
 
 ### Initialize L2 node
-
-1. In another terminal, let's deploy the L1 contracts specifying the `AlignedProofAggregatorService` contract address:
-
-```bash
+1. In another terminal let's deploy the L1 contracts, specifying the `AlignedProofAggregatorService` contract address, and adding the required prover types (Risc0 or SP1):
+```
 cd ethrex/crates/l2
 COMPILE_CONTRACTS=true \
-cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--eth-rpc-url http://localhost:8545 \
-	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-	--contracts-path contracts \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0xFD471836031dc5108809D173A067e8486B9047A3 \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--deposit-rich \
-	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+ETHREX_L2_ALIGNED=true \
+ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0xFD471836031dc5108809D173A067e8486B9047A3 \
+ETHREX_L2_SP1=true \ # optional
+ETHREX_L2_RISC0=true \ # optional
+make deploy-l1
 ```
 
-> [!NOTE]  
+> [!NOTE]
 > This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 
 You will see that some deposits fail with the following error:
@@ -210,7 +198,7 @@ This is because not all the accounts are pre-funded from the genesis.
 2. Send some funds to the Aligned batcher payment service contract from the proof sender:
 
 ```
-cd aligned_layer/batcher/aligned
+cd aligned_layer/crates/cli
 cargo run deposit-to-batcher \
 --network devnet \
 --private_key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
@@ -221,11 +209,12 @@ cargo run deposit-to-batcher \
 
 ```
 cd ethrex/crates/l2
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+ETHREX_ALIGNED_MODE=true \
+ETHREX_ALIGNED_BEACON_URL=http://127.0.0.1:58801 \
+ETHREX_ALIGNED_NETWORK=devnet \
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
+make init-l2-no-metrics
 ```
-
-> [!IMPORTANT]  
-> Set `BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the values printed in step 1.
 
 Suggestion:
 When running the integration test, consider increasing the `--committer.commit-time` to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the `init-l2-no-metrics` target:
@@ -234,26 +223,22 @@ When running the integration test, consider increasing the `--committer.commit-t
 --committer.commit-time 120000
 ```
 
-4. Start prover:
-
-```
+4. Start prover(s) in different terminals:
+```bash
 cd ethrex/crates/l2
-SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
+make init-prover-<sp1/risc0> # optional: GPU=true
 ```
 
 ### Aggregate proofs:
 
-After some time, you will see that the `l1_proof_verifier` is waiting for Aligned to aggregate the proofs:
+After some time, you will see that the `l1_proof_verifier` is waiting for Aligned to aggregate the proofs. You can trigger an aggregation (for either sp1 or risc0 proofs) by running:
 
-```
-2025-06-18T22:03:53.470356Z  INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 has not yet been aggregated by Aligned. Waiting for 5 seconds
-```
-
-You can aggregate them by running:
-
-```
+```bash
 cd aligned_layer
-make start_proof_aggregator AGGREGATOR=sp1
+make proof_aggregator_start AGGREGATOR=<sp1/risc0>
+
+# or with gpu acceleration
+make proof_aggregator_start_gpu AGGREGATOR=<sp1/risc0>
 ```
 
 If successful, the `l1_proof_verifier` will print the following logs:

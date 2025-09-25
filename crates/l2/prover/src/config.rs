@@ -8,5 +8,4 @@ pub struct ProverConfig {
     pub backend: Backend,
     pub proof_coordinators: Vec<Url>,
     pub proving_time_ms: u64,
-    pub aligned_mode: bool,
 }

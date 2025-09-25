@@ -5,6 +5,7 @@ use ethrex_common::{
         AccountUpdate, ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
     },
 };
+use ethrex_l2_common::prover::ProofFormat;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::debug::execution_witness::execution_witness_from_rpc_chain_config;
@@ -52,7 +53,7 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
 
     // Use catch_unwind to capture panics
     let result = catch_unwind(AssertUnwindSafe(|| {
-        ethrex_prover_lib::prove(backend, input, false)
+        ethrex_prover_lib::prove(backend, input, ProofFormat::Groth16)
     }));
 
     match result {

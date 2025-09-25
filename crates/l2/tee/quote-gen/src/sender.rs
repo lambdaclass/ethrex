@@ -22,6 +22,7 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
         ProofData::BatchResponse {
             batch_number,
             input,
+            ..
         } => match (batch_number, input) {
             (Some(batch_number), Some(input)) => Ok((
                 batch_number,

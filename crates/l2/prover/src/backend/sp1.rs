@@ -1,14 +1,13 @@
-use std::{fmt::Debug, sync::LazyLock};
+use std::fmt::Debug;
 
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
 use guest_program::input::ProgramInput;
 use rkyv::rancor::Error;
 use sp1_sdk::{
-    EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
-    SP1VerifyingKey,
+    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
 };
 use std::time::Instant;
 use tracing::info;
@@ -21,18 +20,6 @@ static PROGRAM_ELF: &[u8] =
 // To avoid compilation errors, we override it with an empty slice.
 #[cfg(clippy)]
 static PROGRAM_ELF: &[u8] = &[];
-
-struct ProverSetup {
-    client: EnvProver,
-    pk: SP1ProvingKey,
-    vk: SP1VerifyingKey,
-}
-
-static PROVER_SETUP: LazyLock<ProverSetup> = LazyLock::new(|| {
-    let client = ProverClient::from_env();
-    let (pk, vk) = client.setup(PROGRAM_ELF);
-    ProverSetup { client, pk, vk }
-});
 
 pub struct ProveOutput {
     pub proof: SP1ProofWithPublicValues,
@@ -64,11 +51,17 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let setup = &*PROVER_SETUP;
-
-    let now = Instant::now();
-    setup.client.execute(PROGRAM_ELF, &stdin).run()?;
-    let elapsed = now.elapsed();
+    let elapsed = if cfg!(feature = "gpu") {
+        let client = ProverClient::builder().cuda().build();
+        let now = Instant::now();
+        client.execute(PROGRAM_ELF, &stdin).run()?;
+        now.elapsed()
+    } else {
+        let client = ProverClient::builder().cpu().build();
+        let now = Instant::now();
+        client.execute(PROGRAM_ELF, &stdin).run()?;
+        now.elapsed()
+    };
 
     info!("Successfully executed SP1 program in {:.2?}", elapsed);
     Ok(())
@@ -76,43 +69,57 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn prove(
     input: ProgramInput,
-    aligned_mode: bool,
+    format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let setup = &*PROVER_SETUP;
-
-    // contains the receipt along with statistics about execution of the guest
-    let proof = if aligned_mode {
-        setup.client.prove(&setup.pk, &stdin).compressed().run()?
+    let (proof, vk) = if cfg!(feature = "gpu") {
+        let client = ProverClient::builder().cuda().build();
+        let (pk, vk) = client.setup(PROGRAM_ELF);
+        let proof = match format {
+            ProofFormat::Compressed => client.prove(&pk, &stdin).compressed().run()?,
+            ProofFormat::Groth16 => client.prove(&pk, &stdin).groth16().run()?,
+        };
+        (proof, vk)
     } else {
-        setup.client.prove(&setup.pk, &stdin).groth16().run()?
+        let client = ProverClient::builder().cpu().build();
+        let (pk, vk) = client.setup(PROGRAM_ELF);
+        let proof = match format {
+            ProofFormat::Compressed => client.prove(&pk, &stdin).compressed().run()?,
+            ProofFormat::Groth16 => client.prove(&pk, &stdin).groth16().run()?,
+        };
+        (proof, vk)
     };
 
     info!("Successfully generated SP1Proof.");
-    Ok(ProveOutput::new(proof, setup.vk.clone()))
+    Ok(ProveOutput::new(proof, vk))
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
-    let setup = &*PROVER_SETUP;
-    setup.client.verify(&output.proof, &output.vk)?;
+    if cfg!(feature = "gpu") {
+        let client = ProverClient::builder().cuda().build();
+        client.verify(&output.proof, &output.vk)?;
+    } else {
+        let client = ProverClient::builder().cpu().build();
+        client.verify(&output.proof, &output.vk)?;
+    };
 
     Ok(())
 }
 
 pub fn to_batch_proof(
     proof: ProveOutput,
-    aligned_mode: bool,
+    format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    let batch_proof = if aligned_mode {
-        BatchProof::ProofBytes(ProofBytes {
+    let batch_proof = match format {
+        ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
+            prover_type: ProverType::SP1,
             proof: bincode::serialize(&proof.proof)?,
             public_values: proof.proof.public_values.to_vec(),
-        })
-    } else {
-        BatchProof::ProofCalldata(to_calldata(proof))
+        }),
+        ProofFormat::Groth16 => BatchProof::ProofCalldata(to_calldata(proof)),
     };
 
     Ok(batch_proof)

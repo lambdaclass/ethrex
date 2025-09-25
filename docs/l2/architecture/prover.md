@@ -52,7 +52,7 @@ ethrex-prover is able to generate execution proofs of Ethereum Mainnet/Testnet b
 To run the blockchain (`proposer`) and prover in conjunction, start the `Prover`, use the following command:
 
 ```sh
-make init-prover T="prover_type (risc0,sp1) G=true"
+make init-prover-<sp1/risc0> # optional: GPU=true
 ```
 
 #### Run the whole system with the prover - In one Machine
@@ -68,7 +68,7 @@ make init-prover T="prover_type (risc0,sp1) G=true"
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-4. In a new terminal &rarr; `make init-prover T="(sp1,risc0)"`.
+4. In a new terminal &rarr; `make init-prover-<sp1/risc0> # GPU=true`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -106,7 +106,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       - PROVER_CLIENT_PROVING_TIME_MS: The amount of time to wait before requesting new data to prove
 
 - `Finally`, to start the `Prover`/`zkvm`, run:
-  - `make init-prover T=(sp1,risc0) G=true`
+  - `make init-prover-<sp1/risc0> # optional: GPU=true`
 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
 
@@ -126,12 +126,14 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
       // Set to true to randomize the salt.
       ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
-      // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-      ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
-      // Check the if the contract is present on your preferred network.
-      ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
-      // It can be deployed. Check the if the contract is present on your preferred network.
-      ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
+      // Set to true if you want SP1 proofs to be required
+      ETHREX_L2_SP1=true
+      // Check the if the verification contract is present on your preferred network. Don't define this if you want it to be deployed automatically.
+      ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS=<address>
+      // Set to true if you want proofs to be required
+      ETHREX_L2_RISC0=true
+      // Check the if the contract is present on your preferred network. You shall deploy it manually if not.
+      ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS=<address>
       // Set to any L1 endpoint.
       ETHREX_ETH_RPC_URL=<url>
       ```
@@ -176,7 +178,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       ```bash
       bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
       ```
-  1.  if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
+  1.  if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS=<address>` env. variable.
       if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
 
 ## Configuration
