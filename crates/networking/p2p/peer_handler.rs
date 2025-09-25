@@ -56,7 +56,7 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 // before we dump it into the file. This tunes how much memory ethrex uses during
 // the first steps of snap sync
 pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 512; // 512MB
-pub const SNAP_LIMIT: usize = 30;
+pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
 // this magic number is not part of the protocol and is taken from geth, see:
@@ -1292,7 +1292,6 @@ impl PeerHandler {
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
 
-        // TODO: here we need to push, for each big account, its current start/end_hash stuff.
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
@@ -1322,7 +1321,6 @@ impl PeerHandler {
         let mut completed_tasks = 0;
 
         // TODO: in a refactor, delete this replace with a structure that can handle removes
-        // let mut accounts_done: Vec<(H256, Vec<(H256, H256)>)> = Vec::new();
         let mut accounts_done: HashMap<H256, Vec<(H256, H256)>> = HashMap::new();
         let current_account_hashes = account_storage_roots
             .accounts_with_storage_root
@@ -1390,8 +1388,6 @@ impl PeerHandler {
                 self.peer_table.free_peer(peer_id).await;
 
                 for account in current_account_hashes[start_index..remaining_start].iter() {
-                    // If this is not a big account, insert it as done.
-                    // If it's a big account, its logic will be handled below
                     if !accounts_done.contains_key(account) {
                         accounts_done.insert(*account, vec![]);
                     }
@@ -1420,7 +1416,6 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
-                            // accounts_done.push(current_account_hashes[remaining_start]);
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&current_account_hashes[remaining_start])
@@ -1711,12 +1706,6 @@ impl PeerHandler {
                     .remove(&account_done);
             }
         }
-
-        // accounts_with_storage_root tracks accounts to download storage ranges by
-        // setting account_hash -> storage_root (root for verify_range)
-
-        // We need to track the following: (storage_root, Vec<start_hash, end_hash>) with the vec having the start and
-        // end of each task to resume on a big account. The storage root needs to be modified each time the pivot jumps.
 
         // Dropping the task sender so that the recv returns None
         drop(task_sender);

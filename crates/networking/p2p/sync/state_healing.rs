@@ -181,18 +181,12 @@ async fn heal_state_trie(
                             }
 
                             storage_accounts.healed_accounts.insert(account_hash);
-                            // Instead of removing, here we should set its new storage root value while
-                            // keeping its vec of stuff intact. That way request storage ranges can resume
-                            // with the new storage root.
                             let old_value = storage_accounts
                                 .accounts_with_storage_root
                                 .get_mut(&account_hash);
                             if let Some((old_root, _)) = old_value {
                                 *old_root = None;
                             }
-                            // storage_accounts
-                            //     .accounts_with_storage_root
-                            //     .remove(&account_hash);
                         }
                     }
                     leafs_healed += nodes

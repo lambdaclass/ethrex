@@ -1343,18 +1343,11 @@ pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
 pub struct AccountStorageRoots {
     /// The accounts that have not been healed are guaranteed to have the original storage root
     /// we can read this storage root
-    // pub accounts_with_storage_root: BTreeMap<H256, H256>,
     pub accounts_with_storage_root: BTreeMap<H256, (Option<H256>, Vec<(H256, H256)>)>,
     /// If an account has been healed, it may return to a previous state, so we just store the account
     /// in a hashset
     pub healed_accounts: HashSet<H256>,
 }
-
-// accounts_with_storage_root tracks accounts to download storage ranges by
-// setting account_hash -> storage_root (root for verify_range)
-
-// We need to track the following: (storage_root, Vec<start_hash, end_hash>) with the vec having the start and
-// end of each task to resume on a big account. The storage root needs to be modified each time the pivot jumps.
 
 #[derive(thiserror::Error, Debug)]
 pub enum SyncError {
