@@ -1,0 +1,38 @@
+use std::marker::Send;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::Scope;
+
+pub struct ThreadPool<'scope> {
+    task_queue_sender: Sender<Box<dyn 'scope + Send + FnOnce()>>, // Implictly our threads in the thread pool have the receiver
+    _phantom_data: std::marker::PhantomData<&'scope ()>,
+}
+
+impl<'scope> ThreadPool<'scope> {
+    pub fn new(thread_count: usize, scope: &'scope Scope<'scope, '_>) -> Self {
+        let (task_queue_sender, receiver) = channel::<Box<dyn 'scope + Send + FnOnce()>>();
+        let task_queue_rx = Arc::new(Mutex::new(receiver));
+
+        for _ in 0..thread_count {
+            let task_queue_rx_clone = task_queue_rx.clone();
+            scope.spawn(move || {
+                // Thread work goes here
+                while let Ok(task) = {
+                    let rx = task_queue_rx_clone.lock().unwrap();
+                    rx.recv()
+                } {
+                    task();
+                }
+            });
+        }
+
+        ThreadPool {
+            task_queue_sender,
+            _phantom_data: std::marker::PhantomData,
+        }
+    }
+
+    pub fn execute(&self, task: Box<dyn 'scope + Send + FnOnce()>) {
+        self.task_queue_sender.send(task).unwrap();
+    }
+}

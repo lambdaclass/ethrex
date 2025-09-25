@@ -1,9 +1,9 @@
+use ethrex_common::{H256, utils::keccak};
 use ethrex_common::{
     U256,
     constants::EMPTY_KECCACK_HASH,
     types::{AccountInfo, GenesisAccount},
 };
-use keccak_hash::{H256, keccak};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

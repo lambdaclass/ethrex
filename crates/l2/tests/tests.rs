@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use ethrex_common::types::TxType;
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
@@ -28,7 +29,6 @@ use ethrex_rpc::{
     },
 };
 use hex::FromHexError;
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{
     fs::{File, read_to_string},

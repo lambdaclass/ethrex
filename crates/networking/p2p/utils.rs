@@ -4,10 +4,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use ethrex_common::utils::keccak;
 use ethrex_common::{H256, H512, U256, types::AccountState};
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_trie::Node;
-use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
 
