@@ -1,7 +1,9 @@
 [package]
 name = "load_test"
-edition.workspace = true
 version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 clap.workspace = true

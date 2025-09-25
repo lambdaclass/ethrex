@@ -224,6 +224,7 @@ pub enum DatabaseError {
 /// "Stop" is an Opcode
 pub enum OpcodeResult {
     Continue { pc_increment: usize },
+    SetPc { new_pc: usize },
     Halt,
 }
 
