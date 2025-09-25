@@ -2,6 +2,8 @@
 name = "ethrex-config"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-p2p.workspace = true
