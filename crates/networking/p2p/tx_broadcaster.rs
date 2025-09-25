@@ -28,7 +28,7 @@ use crate::{
 // Soft limit for the number of transaction hashes sent in a single NewPooledTransactionHashes message as per [the spec](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x080)
 const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
-// Amount of seconds after which we prune old entries from broadcasted_txs_per_peer (We should fine tune this)
+// Amount of seconds after which we prune broadcast records (We should fine tune this)
 const PRUNE_WAIT_TIME_SECS: u64 = 180; // 3 minutes
 
 // Amount of seconds between each prune
@@ -37,12 +37,51 @@ const PRUNE_INTERVAL_SECS: u64 = 60; // 1 minute
 // Amount of seconds between each broadcast
 const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
 
+#[derive(Debug, Clone, Default)]
+struct PeerMask {
+    bits: Vec<u64>,
+}
+
+impl PeerMask {
+    #[inline]
+    fn ensure(&mut self, idx: u32) {
+        let word = (idx as usize) / 64;
+        if self.bits.len() <= word {
+            self.bits.resize(word + 1, 0);
+        }
+    }
+
+    #[inline]
+    fn is_set(&self, idx: u32) -> bool {
+        let word = (idx as usize) / 64;
+        if word >= self.bits.len() {
+            return false;
+        }
+        let bit = (idx as usize) % 64;
+        (self.bits[word] >> bit) & 1 == 1
+    }
+
+    #[inline]
+    fn set(&mut self, idx: u32) {
+        self.ensure(idx);
+        let word = (idx as usize) / 64;
+        let bit = (idx as usize) % 64;
+        self.bits[word] |= 1u64 << bit;
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct BroadcastRecord {
+    peers: PeerMask,
+    last_sent: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
     kademlia: Kademlia,
     blockchain: Arc<Blockchain>,
-    // (peer_idx, tx_hash) -> seconds since start; peer_idx is a compact u32 assigned per peer
-    broadcasted_txs_per_peer: HashMap<(u32, H256), u32>,
+    // tx_hash -> broadcast information (peer mask + last sent timestamp)
+    sent_by_tx: HashMap<H256, BroadcastRecord>,
     // Map peer_id (H256) to compact u32 index to shrink key size and avoid collisions
     peer_indexer: HashMap<H256, u32>,
     next_peer_idx: u32,
@@ -71,7 +110,7 @@ impl TxBroadcaster {
         let state = TxBroadcaster {
             kademlia,
             blockchain,
-            broadcasted_txs_per_peer: HashMap::new(), // 17M entries target
+            sent_by_tx: HashMap::new(),
             peer_indexer: HashMap::new(),
             next_peer_idx: 0,
             start: Instant::now(),
@@ -113,23 +152,23 @@ impl TxBroadcaster {
     }
 
     fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
-        info!(total = self.broadcasted_txs_per_peer.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id));
-       
+        info!(total = self.sent_by_tx.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id));
+
         if txs.is_empty() {
             return;
         }
 
         let len = txs.len();
         if len > 1 {
-            self.broadcasted_txs_per_peer.reserve(len);
+            self.sent_by_tx.reserve(len);
         }
 
         let now = self.now_secs();
         let peer_idx = self.peer_index(peer_id);
         for tx in txs {
-            self.broadcasted_txs_per_peer
-                .entry((peer_idx, tx))
-                .insert_entry(now);
+            let record = self.sent_by_tx.entry(tx).or_default();
+            record.peers.set(peer_idx);
+            record.last_sent = now;
         }
     }
 
@@ -169,9 +208,11 @@ impl TxBroadcaster {
             let txs_to_send = full_txs
                 .iter()
                 .filter(|tx| {
+                    let hash = tx.hash();
                     !self
-                        .broadcasted_txs_per_peer
-                        .contains_key(&(peer_idx, tx.hash()))
+                        .sent_by_tx
+                        .get(&hash)
+                        .map_or(false, |record| record.peers.is_set(peer_idx))
                 })
                 .cloned()
                 .collect::<Vec<Transaction>>();
@@ -213,9 +254,11 @@ impl TxBroadcaster {
         let txs_to_send = txs
             .iter()
             .filter(|tx| {
+                let hash = tx.hash();
                 !self
-                    .broadcasted_txs_per_peer
-                    .contains_key(&(peer_idx, tx.hash()))
+                    .sent_by_tx
+                    .get(&hash)
+                    .map_or(false, |record| record.peers.is_set(peer_idx))
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
@@ -290,12 +333,26 @@ impl GenServer for TxBroadcaster {
             Self::CastMsg::PruneTxs => {
                 debug!(received = "PruneTxs");
                 let now = self.now_secs();
-                let before = self.broadcasted_txs_per_peer.len();
-                self.broadcasted_txs_per_peer.retain(|_, ts| {
-                    // Keep if within window; wrapping_sub handles u32 wrap-around
-                    now.wrapping_sub(*ts) < PRUNE_WAIT_TIME_SECS as u32
+                let before = self.sent_by_tx.len();
+                let mempool_hashes = self
+                    .blockchain
+                    .mempool
+                    .tx_hashes()
+                    .inspect_err(|err| {
+                        error!(err = ?err, "Failed to fetch mempool hashes for pruning");
+                    })
+                    .ok();
+                self.sent_by_tx.retain(|tx_hash, record| {
+                    let recent = now.wrapping_sub(record.last_sent) < PRUNE_WAIT_TIME_SECS as u32;
+                    if !recent {
+                        return false;
+                    }
+                    match &mempool_hashes {
+                        Some(hashes) => hashes.contains(tx_hash),
+                        _ => true,
+                    }
                 });
-                info!(before = before, after = self.broadcasted_txs_per_peer.len(), "Pruned old broadcasted transactions");
+                info!(before = before, after = self.sent_by_tx.len(), "Pruned old broadcasted transactions");
                 CastResponse::NoReply
             }
         }

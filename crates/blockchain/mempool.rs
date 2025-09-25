@@ -105,6 +105,13 @@ impl Mempool {
         Ok(txs)
     }
 
+    pub fn tx_hashes(&self) -> Result<HashSet<H256>, StoreError> {
+        self.transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
+            .map(|pool| pool.keys().cloned().collect())
+    }
+
     pub fn clear_broadcasted_txs(&self) {
         self.broadcast_pool
             .write()
