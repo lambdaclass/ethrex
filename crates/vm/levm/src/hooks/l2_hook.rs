@@ -12,7 +12,10 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xff,
 ]);
 
-pub struct L2Hook {}
+pub struct L2Hook {
+    /// If set, the base fee is sent to this address instead of being burned.
+    pub fee_vault: Option<Address>,
+}
 
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
@@ -109,7 +112,7 @@ impl Hook for L2Hook {
         if !vm.env.is_privileged {
             DefaultHook.finalize_execution(vm, ctx_result)?;
             // Different from L1, the base fee is not burned
-            return pay_to_fee_vault(vm, ctx_result.gas_used);
+            return pay_to_fee_vault(vm, ctx_result.gas_used, self.fee_vault);
         }
 
         if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
@@ -124,11 +127,15 @@ impl Hook for L2Hook {
     }
 }
 
-fn pay_to_fee_vault(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), crate::errors::VMError> {
+fn pay_to_fee_vault(
+    vm: &mut VM<'_>,
+    gas_to_pay: u64,
+    fee_vault: Option<Address>,
+) -> Result<(), crate::errors::VMError> {
     let base_fee = U256::from(gas_to_pay)
         .checked_mul(vm.env.base_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
-    let Some(fee_vault) = vm.env.fee_vault else {
+    let Some(fee_vault) = fee_vault else {
         // No fee vault configured, base fee is effectively burned
         return Ok(());
     };

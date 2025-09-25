@@ -83,7 +83,7 @@ pub async fn run_test(
         let tx = get_tx_from_test_case(test_case).await?;
         let tracer = LevmCallTracer::disabled();
         let mut vm =
-            VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
+            VM::new(env, &mut db, &tx, tracer, VMType::L1, None).map_err(RunnerError::VMError)?;
 
         // Execute transaction with VM.
         let execution_result = vm.execute();
@@ -134,7 +134,6 @@ pub fn get_vm_env_for_test(
         config,
         block_number: test_env.current_number,
         coinbase: test_env.current_coinbase,
-        fee_vault: None,
         timestamp: test_env.current_timestamp,
         prev_randao: test_env.current_random,
         difficulty: test_env.current_difficulty,

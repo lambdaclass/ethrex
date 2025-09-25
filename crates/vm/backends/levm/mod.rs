@@ -85,7 +85,6 @@ impl LEVM {
         tx_sender: Address,
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-        fee_vault: Option<Address>,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = tx
@@ -102,7 +101,6 @@ impl LEVM {
             config,
             block_number: block_header.number.into(),
             coinbase: block_header.coinbase,
-            fee_vault,
             timestamp: block_header.timestamp.into(),
             prev_randao: Some(block_header.prev_randao),
             chain_id: chain_config.chain_id.into(),
@@ -134,8 +132,8 @@ impl LEVM {
         vm_type: VMType,
         fee_vault: Option<Address>,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, fee_vault)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, fee_vault)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -154,13 +152,13 @@ impl LEVM {
         vm_type: VMType,
         fee_vault: Option<Address>,
     ) -> Result<ExecutionResult, EvmError> {
-        let mut env = env_from_generic(tx, block_header, db, fee_vault)?;
+        let mut env = env_from_generic(tx, block_header, db)?;
 
         env.block_gas_limit = u64::MAX; // disable block gas limit
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type, fee_vault)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -305,17 +303,17 @@ impl LEVM {
         vm_type: VMType,
         fee_vault: Option<Address>,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
-        let mut env = env_from_generic(&tx, header, db, fee_vault)?;
+        let mut env = env_from_generic(&tx, header, db)?;
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, fee_vault)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, fee_vault)?;
 
         let report = vm.stateless_execute()?;
 
@@ -394,7 +392,7 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     });
     let mut vm =
-        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
+        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, None).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -488,7 +486,6 @@ fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
-    fee_vault: Option<Address>,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
     let gas_price = calculate_gas_price(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
@@ -499,7 +496,6 @@ fn env_from_generic(
         config,
         block_number: header.number.into(),
         coinbase: header.coinbase,
-        fee_vault,
         timestamp: header.timestamp.into(),
         prev_randao: Some(header.prev_randao),
         chain_id: chain_config.chain_id.into(),
@@ -523,6 +519,7 @@ fn vm_from_generic<'a>(
     env: Environment,
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
+    fee_vault: Option<Address>,
 ) -> Result<VM<'a>, VMError> {
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
@@ -557,5 +554,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, fee_vault)
 }

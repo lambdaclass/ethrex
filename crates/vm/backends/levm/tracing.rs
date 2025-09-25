@@ -60,7 +60,6 @@ impl LEVM {
             })?,
             block_header,
             db,
-            fee_vault,
         )?;
         let mut vm = VM::new(
             env,
@@ -68,6 +67,7 @@ impl LEVM {
             tx,
             LevmCallTracer::new(only_top_call, with_log),
             vm_type,
+            fee_vault,
         )?;
 
         vm.execute()?;

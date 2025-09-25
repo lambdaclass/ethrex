@@ -83,5 +83,5 @@ fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> Result<
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1, None)
 }
