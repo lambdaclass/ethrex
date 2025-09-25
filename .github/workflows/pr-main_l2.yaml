@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -102,7 +102,7 @@ jobs:
               [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -176,7 +176,7 @@ jobs:
     needs: build-docker
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -275,7 +275,7 @@ jobs:
           large-packages: false
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -362,7 +362,7 @@ jobs:
     needs: build-docker
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
