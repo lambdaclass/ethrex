@@ -119,8 +119,12 @@ impl LeafNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        Encoder::new(&mut buf)
+        // (1 items + 4 items) * 32 bytes, assuming worst case in which it contains an
+        // ethereum account (4 item RLP) and a 32 byte partial
+        const RLP_ENCODED_SIZE: usize = 160;
+
+        let mut buf = Vec::with_capacity(RLP_ENCODED_SIZE);
+        Encoder::new_with_capacity(&mut buf, RLP_ENCODED_SIZE)
             .encode_bytes(&self.partial.encode_compact())
             .encode_bytes(&self.value)
             .finish();

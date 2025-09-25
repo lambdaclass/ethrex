@@ -183,6 +183,16 @@ impl<'a> Encoder<'a> {
         }
     }
 
+    /// Creates a new encoder that writes to the given buffer.
+    ///
+    /// Preallocates the temp buffer for `capacity` bytes.
+    pub fn new_with_capacity(buf: &'a mut dyn BufMut, capacity: usize) -> Self {
+        Self {
+            buf,
+            temp_buf: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Stores a field to be encoded.
     pub fn encode_field<T: RLPEncode>(mut self, value: &T) -> Self {
         <T as RLPEncode>::encode(value, &mut self.temp_buf);

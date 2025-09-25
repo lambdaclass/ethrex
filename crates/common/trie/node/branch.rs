@@ -208,8 +208,12 @@ impl BranchNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        let mut encoder = Encoder::new(&mut buf);
+        // 16 items * 32 bytes, assuming branches don't have values
+        // in a state or storage trie
+        const RLP_ENCODED_SIZE: usize = 512;
+
+        let mut buf = Vec::with_capacity(RLP_ENCODED_SIZE);
+        let mut encoder = Encoder::new_with_capacity(&mut buf, RLP_ENCODED_SIZE);
         for child in self.choices.iter() {
             match child.compute_hash() {
                 NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
