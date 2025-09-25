@@ -3,7 +3,9 @@ use std::time::{Duration, SystemTime};
 use clap::Parser;
 use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_replay::{
-    cli::{Action, BlockOptions, CommonOptions, EthrexReplayCommand, EthrexReplayOptions},
+    cli::{
+        Action, BlockOptions, CacheLevel, CommonOptions, EthrexReplayCommand, EthrexReplayOptions,
+    },
     report::Report,
     slack::{SlackWebHookBlock, SlackWebHookRequest, try_send_report_to_slack},
 };
@@ -16,7 +18,32 @@ use tokio::task::{JoinError, JoinHandle};
 #[clap(group = clap::ArgGroup::new("rpc_urls").multiple(true).required(true))]
 pub struct Options {
     #[command(flatten)]
-    pub replayer: EthrexReplayOptions,
+    pub common: CommonOptions,
+    #[arg(long, group = "data_source", help_heading = "Replay Options")]
+    pub rpc_url: Url,
+    #[arg(long, group = "data_source", help_heading = "Replay Options")]
+    pub cached: bool,
+    #[arg(long, required = false, help_heading = "Replay Options")]
+    pub to_csv: bool,
+    #[arg(long, default_value = "on", help_heading = "Replay Options")]
+    pub cache_level: CacheLevel,
+    #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
+    pub slack_webhook_url: Option<Url>,
+    #[arg(
+        long,
+        help = "Execute with `Blockchain::add_block`, without using zkvm as backend",
+        help_heading = "Replay Options",
+        conflicts_with = "zkvm"
+    )]
+    pub no_zkvm: bool,
+    #[arg(
+        long,
+        short,
+        help = "Enable verbose logging",
+        help_heading = "Replay Options",
+        required = false
+    )]
+    pub verbose: bool,
     #[arg(
         long,
         value_name = "URL",
@@ -49,7 +76,7 @@ async fn main() {
 
     let opts = Options::parse();
 
-    if opts.replayer.slack_webhook_url.is_none() {
+    if opts.slack_webhook_url.is_none() {
         tracing::warn!(
             "SLACK_WEBHOOK_URL environment variable is not set and --slack-webhook-url was not passed. Slack notifications will not be sent."
         );
@@ -57,7 +84,7 @@ async fn main() {
 
     let mut replayers_handles = Vec::new();
 
-    match opts.replayer.common.action {
+    match opts.common.action {
         Action::Execute => {
             for (rpc_url, network) in [
                 (
@@ -137,7 +164,7 @@ async fn main() {
             let (result, _index, _remaining_handles) = select_all(revalidation_handles).await;
             result
         } => {
-            handle_rpc_revalidation_handle_result(res, opts.hoodi_rpc_url.unwrap(), opts.replayer.slack_webhook_url.clone()).await; // TODO: change hoodi rpc to generic
+            handle_rpc_revalidation_handle_result(res, opts.hoodi_rpc_url.unwrap(), opts.slack_webhook_url.clone()).await; // TODO: change hoodi rpc to generic
             shutdown(replayers_handles);
         }
     }
@@ -241,16 +268,17 @@ async fn replay_latest_block(
         block: Some(latest_block),
         opts: EthrexReplayOptions {
             common: CommonOptions {
-                zkvm: opts.replayer.common.zkvm.clone(),
-                resource: opts.replayer.common.resource.clone(),
+                zkvm: opts.common.zkvm.clone(),
+                resource: opts.common.resource.clone(),
                 action: Action::Execute,
             },
             rpc_url: rpc_url.clone(),
             cached: false,
             to_csv: false,
-            no_zkvm: opts.replayer.no_zkvm,
-            cache_level: opts.replayer.cache_level.clone(),
+            no_zkvm: opts.no_zkvm,
+            cache_level: opts.cache_level.clone(),
             slack_webhook_url: None,
+            verbose: opts.verbose,
         },
     })
     .run()
@@ -259,23 +287,24 @@ async fn replay_latest_block(
 
     let start = SystemTime::now();
 
-    let proving_result = match opts.replayer.common.action {
+    let proving_result = match opts.common.action {
         Action::Execute => None,
         Action::Prove => Some(
             EthrexReplayCommand::Block(BlockOptions {
                 block: Some(latest_block),
                 opts: EthrexReplayOptions {
                     common: CommonOptions {
-                        zkvm: opts.replayer.common.zkvm.clone(),
-                        resource: opts.replayer.common.resource.clone(),
+                        zkvm: opts.common.zkvm.clone(),
+                        resource: opts.common.resource.clone(),
                         action: Action::Prove,
                     },
                     rpc_url,
                     cached: false,
                     to_csv: false,
                     no_zkvm: false,
-                    cache_level: opts.replayer.cache_level.clone(),
+                    cache_level: opts.cache_level.clone(),
                     slack_webhook_url: None,
+                    verbose: opts.verbose,
                 },
             })
             .run()
@@ -291,9 +320,9 @@ async fn replay_latest_block(
     let execution_failed = execution_result.is_err();
 
     let report = Report::new_for(
-        opts.replayer.common.zkvm,
-        opts.replayer.common.resource,
-        opts.replayer.common.action.clone(),
+        opts.common.zkvm,
+        opts.common.resource,
+        opts.common.action.clone(),
         block,
         network,
         execution_result,
@@ -302,10 +331,10 @@ async fn replay_latest_block(
 
     println!("{report}");
 
-    if opts.replayer.common.action == Action::Prove
-        || (opts.replayer.common.action == Action::Execute && execution_failed)
+    if opts.common.action == Action::Prove
+        || (opts.common.action == Action::Execute && execution_failed)
     {
-        try_send_report_to_slack(&report, opts.replayer.slack_webhook_url.clone()).await?;
+        try_send_report_to_slack(&report, opts.slack_webhook_url.clone()).await?;
     }
 
     Ok(elapsed)
