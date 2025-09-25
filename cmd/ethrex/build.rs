@@ -235,7 +235,6 @@ fn download_contract_deps(contracts_path: &Path) {
         &contracts_path
             .join("lib/openzeppelin-contracts")
             .to_string_lossy(),
-        Some("release-v4.9"),
         None,
         true,
     )
@@ -245,7 +244,6 @@ fn download_contract_deps(contracts_path: &Path) {
         "https://github.com/succinctlabs/sp1-contracts.git",
         &contracts_path.join("lib/sp1-contracts").to_string_lossy(),
         None,
-        None,
         false,
     )
     .expect("Failed to clone sp1-contracts");
@@ -253,7 +251,6 @@ fn download_contract_deps(contracts_path: &Path) {
     ethrex_l2_sdk::git_clone(
         "https://github.com/pcaversaccio/create2deployer",
         &contracts_path.join("lib/create2deployer").to_string_lossy(),
-        None,
         None,
         true,
     )
