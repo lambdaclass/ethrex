@@ -1,12 +1,14 @@
-use std::thread::{Scope, scope};
-
 use crate::{
     EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::{
+    Scope,
+    iter::{IntoParallelRefIterator, ParallelIterator},
+    scope,
+};
 use tracing::debug;
 
 #[derive(Debug, Default, Clone)]
@@ -126,27 +128,21 @@ fn flush_nodes_to_write(
     nodes_to_write: Vec<Node>,
     db: &dyn TrieDB,
 ) -> Result<(), TrieGenerationError> {
-    db.put_batch(
-        nodes_to_write
-            .par_iter()
-            .map(|node| (node.compute_hash(), node.encode_to_vec()))
-            .collect(),
-    )
-    .map_err(TrieGenerationError::FlushToDbError)
+    db.put_batch_no_alloc(nodes_to_write)
+        .map_err(TrieGenerationError::FlushToDbError)
 }
 
 #[inline(never)]
 pub fn trie_from_sorted_accounts<'scope, T>(
     db: &'scope dyn TrieDB,
     data_iter: &mut T,
-    scoped_thread: &'scope Scope<'scope, '_>,
+    scope: &Scope<'scope>,
 ) -> Result<H256, TrieGenerationError>
 where
-    T: Iterator<Item = (H256, Vec<u8>)>,
+    T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
     let mut nodes_to_write: Vec<Node> = Vec::with_capacity(SIZE_TO_WRITE_DB as usize + 65);
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
-    let mut write_threads = Vec::new();
 
     let mut left_side = StackElement::default();
     let Some(initial_value) = data_iter.next() else {
@@ -168,8 +164,9 @@ where
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
-            write_threads
-                .push(scoped_thread.spawn(move || flush_nodes_to_write(nodes_to_write, db)));
+            scope.spawn(move |_| {
+                let _ = flush_nodes_to_write(nodes_to_write, db);
+            });
             nodes_to_write = Vec::with_capacity(SIZE_TO_WRITE_DB as usize + 65);
         }
 
@@ -271,12 +268,7 @@ where
             .finalize()
     };
 
-    write_threads.push(scoped_thread.spawn(move || flush_nodes_to_write(nodes_to_write, db)));
-    write_threads
-        .into_iter()
-        .flat_map(|thread| thread.join())
-        .collect::<Result<(), _>>()?;
-
+    flush_nodes_to_write(nodes_to_write, db)?;
     Ok(hash)
 }
 
@@ -285,9 +277,9 @@ pub fn trie_from_sorted_accounts_wrap<T>(
     accounts_iter: &mut T,
 ) -> Result<H256, TrieGenerationError>
 where
-    T: Iterator<Item = (H256, Vec<u8>)>,
+    T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
-    scope(move |s| trie_from_sorted_accounts(db, accounts_iter, s))
+    scope(|s| trie_from_sorted_accounts(db, accounts_iter, s))
 }
 
 #[cfg(test)]
