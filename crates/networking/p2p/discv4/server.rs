@@ -353,7 +353,9 @@ impl DiscoveryServer {
         let random_pub_key = public_key_from_signing_key(&random_priv_key);
 
         let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
-        self.send(msg, node.udp_addr()).await?;
+        self.send(msg, node.udp_addr()).await.inspect_err(|e| {
+            error!(sent = "FindNode", to = ?node, err = ?e, "Error sending message");
+        })?;
 
         debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
@@ -450,12 +452,28 @@ impl DiscoveryServer {
             return;
         }
 
-        let neighbors = get_closest_nodes(node_id, table.clone());
+        let cloned_table = table.clone();
 
         drop(table);
 
-        // we are sending the neighbors in 2 different messages to avoid exceeding the
-        // maximum packet size
+        let Ok(neighbors) =
+            tokio::task::spawn_blocking(move || get_closest_nodes(node_id, cloned_table))
+                .await
+                .inspect_err(|err| {
+                    debug!(
+                        received = "FindNode",
+                        to = %format!("{sender_public_key:#x}"),
+                        err = ?err,
+                        "Error getting closest nodes"
+                    )
+                })
+        else {
+            return;
+        };
+        // A single node encodes to at most 89B, so 8 of them are at most 712B plus
+        // recursive length and expiration time, well within bound of 1280B per packet.
+        // Sending all in one packet would exceed bounds with the nodes only, weighing
+        // up to 1424B.
         for chunk in neighbors.chunks(8) {
             let _ = self
                 .send_neighbors(chunk.to_vec(), &node)
@@ -509,8 +527,13 @@ impl DiscoveryServer {
         if let Some(s) = &self.sink {
             s.lock()
                 .await
-                .send((message, addr))
+                .send((message.clone(), addr))
                 .await
+                // Logging extra info to solve https://github.com/lambdaclass/ethrex/issues/4492
+                // Remove next line once the cause of the error is found
+                .inspect_err(
+                    |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
+                )
                 .map_err(DiscoveryServerError::MessageSendFailure)
         } else {
             error!("Trying to send a message through a non-initialized UdpSocket");

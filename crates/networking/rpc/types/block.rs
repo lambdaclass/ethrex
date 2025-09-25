@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcBlock {
-    hash: H256,
+    pub hash: H256,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub size: u64,
     #[serde(flatten)]
@@ -105,7 +105,7 @@ impl FullBlockBody {
             transactions.push(RpcTransaction::build(
                 tx.clone(),
                 Some(block_number),
-                block_hash,
+                Some(block_hash),
                 Some(index),
             )?);
         }

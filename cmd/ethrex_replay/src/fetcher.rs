@@ -1,18 +1,25 @@
 use std::time::{Duration, SystemTime};
 
 use ethrex_common::types::ChainConfig;
+use ethrex_config::networks::Network;
+use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
+    clients::{EthClientError, eth::errors::GetWitnessError},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::WrapErr;
 use tracing::{debug, info, warn};
 
-use crate::cache::Cache;
-use ethrex_config::networks::Network;
+use crate::{
+    cache::{Cache, get_block_cache_file_name},
+    rpc::db::RpcDB,
+};
 
 #[cfg(feature = "l2")]
 use crate::cache::L2Fields;
+#[cfg(feature = "l2")]
+use crate::cache::get_batch_cache_file_name;
 
 pub async fn get_blockdata(
     eth_client: EthClient,
@@ -34,11 +41,9 @@ pub async fn get_blockdata(
 
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{requested_block_number}.json");
+    let file_name = get_block_cache_file_name(&network, requested_block_number, None);
 
-    if let Ok(cache) =
-        Cache::load_cache(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}"))
-    {
+    if let Ok(cache) = Cache::load(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
         info!("Getting block {requested_block_number} data from cache");
         return Ok(cache);
     }
@@ -80,10 +85,52 @@ pub async fn get_blockdata(
 
     let execution_witness_retrieval_start_time = SystemTime::now();
 
-    let witness_rpc = eth_client
+    let witness_rpc = match eth_client
         .get_witness(BlockIdentifier::Number(requested_block_number), None)
         .await
-        .wrap_err("Unimplemented: Retry with eth_getProofs")?;
+    {
+        Ok(witness) => witness,
+        Err(EthClientError::GetWitnessError(GetWitnessError::RPCError(_))) => {
+            warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
+
+            #[cfg(feature = "l2")]
+            let vm_type = VMType::L2;
+            #[cfg(not(feature = "l2"))]
+            let vm_type = VMType::L1;
+
+            info!(
+                "Caching callers and recipients state for block {}",
+                requested_block_number - 1
+            );
+            let rpc_db = RpcDB::with_cache(
+                eth_client.urls.first().unwrap().as_str(),
+                chain_config,
+                (requested_block_number - 1).try_into()?,
+                &block,
+                vm_type,
+            )
+            .await
+            .wrap_err("failed to create rpc db")?;
+
+            info!(
+                "Pre executing block {}. This may take a while.",
+                requested_block_number - 1
+            );
+            let rpc_db = rpc_db
+                .to_execution_witness(&block)
+                .wrap_err("failed to build execution db")?;
+            info!(
+                "Finished building execution witness for block {}",
+                requested_block_number - 1
+            );
+            rpc_db
+        }
+        Err(e) => {
+            return Err(eyre::eyre!(format!(
+                "Unexpected response from debug_executionWitness: {e}"
+            )));
+        }
+    };
 
     let execution_witness_retrieval_duration = execution_witness_retrieval_start_time
         .elapsed()
@@ -96,24 +143,7 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    debug!("Caching block {requested_block_number}");
-
-    let block_cache_start_time = SystemTime::now();
-
-    let cache = Cache::new(vec![block], witness_rpc, Some(network));
-
-    cache.write_cache(&file_name)?;
-
-    let block_cache_duration = block_cache_start_time.elapsed().unwrap_or_else(|e| {
-        panic!("SystemTime::elapsed failed: {e}");
-    });
-
-    debug!(
-        "Cached block {requested_block_number} in {}",
-        format_duration(block_cache_duration)
-    );
-
-    Ok(cache)
+    Ok(Cache::new(vec![block], witness_rpc, chain_config))
 }
 
 async fn fetch_rangedata_from_client(
@@ -142,10 +172,15 @@ async fn fetch_rangedata_from_client(
     let block_retrieval_start_time = SystemTime::now();
 
     for block_number in from..=to {
-        let block = eth_client
-            .get_raw_block(BlockIdentifier::Number(block_number))
+        let rpc_block = eth_client
+            .get_block_by_number(BlockIdentifier::Number(block_number), true)
             .await
-            .wrap_err("failed to fetch block")?;
+            .wrap_err(format!("failed to fetch block {block_number}"))?;
+
+        let block = rpc_block
+            .try_into()
+            .map_err(|e| eyre::eyre!("Failed to convert rpc block to block: {}", e))
+            .wrap_err("Failed to convert from rpc block to block")?;
         blocks.push(block);
     }
 
@@ -182,15 +217,12 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let network = Network::try_from(chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
-
-    let cache = Cache::new(blocks, witness_rpc, Some(network));
+    let cache = Cache::new(blocks, witness_rpc, chain_config);
 
     Ok(cache)
 }
 
+#[cfg(not(feature = "l2"))]
 pub async fn get_rangedata(
     eth_client: EthClient,
     network: Network,
@@ -199,9 +231,9 @@ pub async fn get_rangedata(
 ) -> eyre::Result<Cache> {
     let chain_config = network.get_genesis()?.config;
 
-    let file_name = format!("cache_{network}_{from}-{to}.json");
+    let file_name = get_block_cache_file_name(&network, from, Some(to));
 
-    if let Ok(cache) = Cache::load_cache(&file_name) {
+    if let Ok(cache) = Cache::load(&file_name) {
         info!("Getting block range data from cache");
         return Ok(cache);
     }
@@ -210,7 +242,7 @@ pub async fn get_rangedata(
 
     let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to).await?;
 
-    cache.write_cache(&file_name)?;
+    cache.write()?;
 
     Ok(cache)
 }
@@ -223,8 +255,8 @@ pub async fn get_batchdata(
 ) -> eyre::Result<Cache> {
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
-    let file_name = format!("cache_batch_{batch_number}.json");
-    if let Ok(cache) = Cache::load_cache(&file_name) {
+    let file_name = get_batch_cache_file_name(batch_number);
+    if let Ok(cache) = Cache::load(&file_name) {
         info!("Getting batch data from cache");
         return Ok(cache);
     }
@@ -256,7 +288,7 @@ pub async fn get_batchdata(
             .unwrap_or(&[0_u8; 48]),
     });
 
-    cache.write_cache(&file_name)?;
+    cache.write()?;
 
     Ok(cache)
 }
