@@ -42,7 +42,7 @@ Currently ethrex replay only works against ethrex nodes with the `debug_executio
 ## Supported zkVM Replays (execution & proving)
 
 > ✅: supported.
-> ⚠️: supported, but flacky.
+> ⚠️: supported, but flaky.
 > 🔜: to be supported.
 
 | zkVM   | Hoodi | Sepolia | Mainnet | Public ethrex L2s |
