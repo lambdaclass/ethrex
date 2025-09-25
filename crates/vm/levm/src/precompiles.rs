@@ -311,6 +311,16 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     {
         ecrecover_sp1(calldata, gas_remaining, _fork)
     }
+
+    #[cfg(feature = "openvm-kzg")]
+    {
+        unimplemented!()
+    }
+    
+    #[cfg(not(any(feature = "c-kzg", feature = "kzg-rs", feature = "openvm-kzg")))]
+    {
+        compile_error!("Either feature `c-kzg`, `kzg-rs` or `openvm-kzg` must be enabled to compile this crate.");
+    }
 }
 
 /// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
