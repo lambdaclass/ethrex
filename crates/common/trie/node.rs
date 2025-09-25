@@ -85,12 +85,14 @@ impl NodeRef {
         }
     }
 
-    // TODO: could be "with_hash"
-    // WARN: could lead to errors if setting the wrong hash
-    pub fn set_hash(&self, hash: NodeHash) {
-        if let NodeRef::Node(_, node_hash) = self {
+    /// # Warning
+    /// will lead to errors if setting the wrong hash, use only
+    /// when the hash was correctly precalculated
+    pub fn with_hash(self, hash: NodeHash) -> Self {
+        if let NodeRef::Node(_, node_hash) = &self {
             let _ = node_hash.set(hash);
         }
+        self
     }
 }
 
