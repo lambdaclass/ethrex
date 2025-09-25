@@ -100,7 +100,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blocks,
         execution_witness,
         elasticity_multiplier,
-        fee_vault,
+        fee_vault: _fee_vault,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
@@ -115,27 +115,20 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &blocks,
             execution_witness,
             elasticity_multiplier,
-            fee_vault,
+            _fee_vault,
             blob_commitment,
             blob_proof,
             chain_id,
         );
     }
 
-    stateless_validation_l1(
-        &blocks,
-        execution_witness,
-        elasticity_multiplier,
-        fee_vault,
-        chain_id,
-    )
+    stateless_validation_l1(&blocks, execution_witness, elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    _fee_vault: Option<Address>,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {

@@ -36,7 +36,6 @@ impl Blockchain {
             .await?;
         // Run the block until the transaction we want to trace
         vm.rerun_block(&block, Some(tx_index))?;
-
         // Trace the transaction
         timeout_trace_operation(timeout, move || {
             vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
