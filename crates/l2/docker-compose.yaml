@@ -87,11 +87,10 @@ services:
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
       - env:/env/
-      - ../../cmd:/host-cmd
     entrypoint:
       - /bin/bash
       - -c
-      - export $$(xargs < /env/.env); cp /env/.env /host-cmd/.env; exec ./ethrex "$$0" "$$@"
+      - export $$(xargs < /env/.env); exec ./ethrex "$$0" "$$@"
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
       l2
