@@ -87,6 +87,14 @@ impl TxBroadcaster {
     }
 
     fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
+        info!(total = self.broadcasted_txs_per_peer.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id));
+       
+        if txs.is_empty() {
+            return;
+        }
+        
+        // self.broadcasted_txs_per_peer.reserve(txs.len());
+
         let now = Instant::now();
         for tx in txs {
             self.broadcasted_txs_per_peer
@@ -250,9 +258,11 @@ impl GenServer for TxBroadcaster {
             Self::CastMsg::PruneTxs => {
                 debug!(received = "PruneTxs");
                 let now = Instant::now();
+                let before = self.broadcasted_txs_per_peer.len();
                 self.broadcasted_txs_per_peer.retain(|_, &mut timestamp| {
                     now.duration_since(timestamp) < Duration::from_secs(PRUNE_WAIT_TIME_SECS)
                 });
+                info!(before = before, after = self.broadcasted_txs_per_peer.len(), peer_id = %format!("{:#x}", peer_id), "Pruned old broadcasted transactions");
                 CastResponse::NoReply
             }
         }
