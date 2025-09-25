@@ -1418,8 +1418,7 @@ impl PeerHandler {
                             task_count += 1;
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
-                                .get_mut(&current_account_hashes[remaining_start])
-                                .unwrap();
+                                .get_mut(&current_account_hashes[remaining_start]).ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
                             for (old_start, end) in old_intervals {
                                 if end == &hash_end {
                                     *old_start = hash_start;
@@ -1432,12 +1431,15 @@ impl PeerHandler {
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&current_account_hashes[remaining_start])
-                                .unwrap();
+                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
                             old_intervals.remove(
                                 old_intervals
                                     .iter()
                                     .position(|(_old_start, end)| end == &hash_end)
-                                    .unwrap(),
+                                    .ok_or(PeerHandlerError::UnrecoverableError(
+                                        "Could not find an old interval that we were tracking"
+                                            .to_owned(),
+                                    ))?,
                             );
                             if old_intervals.is_empty() {
                                 accounts_done
@@ -1499,7 +1501,7 @@ impl PeerHandler {
                                 let (_, intervals) = account_storage_roots
                                     .accounts_with_storage_root
                                     .get_mut(&current_account_hashes[remaining_start])
-                                    .unwrap();
+                                    .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
 
                                 for i in 0..chunk_count {
                                     let start_hash_u256 = start_hash_u256 + chunk_size * i;
@@ -1534,7 +1536,7 @@ impl PeerHandler {
                             let (_, intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&current_account_hashes[remaining_start])
-                                .unwrap();
+                                .ok_or(PeerHandlerError::UnrecoverableError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
 
                             for i in 0..chunk_count {
                                 let start_hash_u256 = start_hash_u256 + chunk_size * i;
@@ -1638,8 +1640,8 @@ impl PeerHandler {
                             *hash,
                             store
                                 .get_account_state_by_acc_hash(pivot_header.hash(), *hash)
-                                .unwrap()
-                                .unwrap()
+                                .expect("Failed to get account in state trie")
+                                .expect("Could not find account that should have been downloaded or healed")
                                 .storage_root,
                         ),
                     })
@@ -2098,6 +2100,8 @@ pub enum PeerHandlerError {
     NoResponseFromPeer,
     #[error("Dumping snapshots to disk failed {0:?}")]
     DumpError(DumpError),
+    #[error("Encountered an unexpected error. This is a bug {0}")]
+    UnrecoverableError(String),
 }
 
 #[derive(Debug, Clone, std::hash::Hash)]

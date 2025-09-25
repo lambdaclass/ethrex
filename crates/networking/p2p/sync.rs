@@ -1339,6 +1339,7 @@ pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
     timestamp + (SNAP_LIMIT as u64 * 12)
 }
 #[derive(Debug, Default)]
+#[allow(clippy::type_complexity)]
 /// We store for optimization the accounts that need to heal storage
 pub struct AccountStorageRoots {
     /// The accounts that have not been healed are guaranteed to have the original storage root
