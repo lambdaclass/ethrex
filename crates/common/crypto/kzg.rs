@@ -58,6 +58,7 @@ impl From<openvm_kzg::KzgError> for KzgError {
 /// - OpenVM (openvm-kzg) - TODO
 ///
 /// There's no implementation of blob verification for openvm-kzg yet.
+#[allow(clippy::needless_return)]
 pub fn verify_blob_kzg_proof(
     blob: Blob,
     commitment: Commitment,
@@ -112,6 +113,7 @@ pub fn verify_blob_kzg_proof(
 /// - OpenVM (openvm-kzg) - TODO
 ///
 /// There's no implementation of blob verification for openvm-kzg yet.
+#[allow(clippy::needless_return)]
 pub fn verify_kzg_proof(
     commitment_bytes: [u8; 48],
     z: [u8; 32],
