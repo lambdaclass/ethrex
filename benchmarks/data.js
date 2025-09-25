@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758823135821,
+  "lastUpdate": 1758825112467,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16615,6 +16615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 88328545687,
             "range": "± 203515036",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0daee437c4730a9dc313e90153f472aaea8af039",
+          "message": "fix(replay): improve rate limit when using eth_getProofs (#4632)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nWith the previous rate limit we were so slow that we couldn't even\nexecute replay with eth_getProof with a geth full node because it took\nso long that the state was pruned (after 25min).\nThis new rate limit logic is a sweet spot, I had to make some changes to\noriginal logic because it had some flaws.\n\nResults: Execution can go from more than an hour to a few minutes\nbecause of this",
+          "timestamp": "2025-09-25T17:41:50Z",
+          "tree_id": "bf9133bfbfb2a0d560b9c0167b6fc74ed4d26ce0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0daee437c4730a9dc313e90153f472aaea8af039"
+        },
+        "date": 1758825091489,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89914459493,
+            "range": "± 163093176",
             "unit": "ns/iter"
           }
         ]
