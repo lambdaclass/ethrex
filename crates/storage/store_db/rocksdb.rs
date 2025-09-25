@@ -281,10 +281,11 @@ impl Store {
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
-        let secondary = DBWithThreadMode::<MultiThreaded>::open_as_secondary(
+        let secondary = DBWithThreadMode::<MultiThreaded>::open_cf_as_secondary(
             &db_options,
             path,
             &path.join(".secondary"),
+            &expected_column_families,
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB: {}", e)))?;
 
