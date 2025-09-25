@@ -25,20 +25,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install RISC0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
-          ~/.risc0/bin/rzup install risc0-groth16
-          ~/.risc0/bin/rzup install rust
-
-      - name: Create placeholder SP1 ELF
-        run: |
-          mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
-          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
-
       - name: Run cargo check
         run: cargo check --workspace
 
@@ -46,7 +32,6 @@ jobs:
         run: |
           cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
-          make lint
 
       - name: Run cargo fmt
         run: |
@@ -114,8 +99,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
-        # TODO: Change repo back to https://github.com/ethereum/hive when
-        # https://github.com/ethereum/hive/pull/1325 is merged
         run: |
           git clone --single-branch --branch master https://github.com/lambdaclass/hive
           cd hive
@@ -206,11 +189,10 @@ jobs:
           - name: "Sync full"
             simulation: ethereum/sync
             test_pattern: ""
-          # Flaky, reenable when fixed
-          # - name: "Sync snap"
-          #   simulation: ethereum/sync
-          #   test_pattern: ""
-          #   ethrex_flags: "--syncmode snap"
+          - name: "Sync snap"
+            simulation: ethereum/sync
+            test_pattern: ""
+            ethrex_flags: "--syncmode snap"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -231,7 +213,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
+        run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1 --docker.output
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:

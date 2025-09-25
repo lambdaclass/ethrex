@@ -23,7 +23,7 @@ ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k
 The CLI import subcommand executes `cmd/ethrex/cli.rs:import_blocks`, which can be summarized as:
 
 ```rust
-let store = init_store(&data_dir, network).await;
+let store = init_store(&datadir, network).await;
 let blockchain = init_blockchain(evm, store.clone());
 for block in parse(rlp_file) {
     blockchain.add_block(block)
