@@ -49,8 +49,8 @@ PROOF_COORDINATOR_ADDRESS?=127.0.0.1
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
 
-DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS ../../cmd/.env | cut -d= -f2)
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS ../../cmd/.env | cut -d= -f2)
+DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS ../../.env | cut -d= -f2)
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS ../../.env | cut -d= -f2)
 
 PROVER_SRC_FILES := $(shell find prover/src -type f)
 
@@ -83,42 +83,33 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
-	--eth-rpc-url ${L1_RPC_URL} \
-	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--deposit-rich \
-	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--eth.rpc-url ${L1_RPC_URL} \
+	--deployer.private-key ${L1_PRIVATE_KEY} \
+	--deployer.on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
+	--deployer.env-file ../../.env \
+	--l2.dev-genesis
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
-	--eth-rpc-url ${L1_RPC_URL} \
-	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--eth.rpc-url ${L1_RPC_URL} \
+	--deployer.private-key ${L1_PRIVATE_KEY} \
 	--sp1.deploy-verifier \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--deposit-rich \
-	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--deployer.on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--deployer.deposit-accounts ../../fixtures/keys/private_keys_l1.txt \
+	--deployer.env-file ../../.env \
+	--l2.dev-genesis
 
 # ==============================================================================
 # L2
 # ==============================================================================
 
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
-	export $(shell cat ../../cmd/.env | xargs); \
+	export $(shell cat ../../.env | xargs); \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	l2 \
 	--watcher.block-delay 0 \
@@ -152,6 +143,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
 
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
+	docker compose down ethrex_l2
 	pgrep -a -f "ethrex l2" | awk '!/prover/ {print $1}' | xargs -r kill -s SIGINT
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
@@ -216,7 +208,7 @@ test: ## 🚧 Runs the L2's integration test, run `make init` and in a new termi
 
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
-	touch .env
+	touch ../../.env
 	docker compose down
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
@@ -230,7 +222,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
-	touch .env
+	touch ../../.env
 	docker compose down
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
@@ -242,7 +234,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 
 # State reconstruction tests
 state-diff-test:
-	touch .env
+	touch ../../.env
 	cargo run --release --manifest-path ../../Cargo.toml -- \
 	l2 reconstruct \
 	-g ../../fixtures/genesis/l2.json \
