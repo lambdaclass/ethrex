@@ -1,4 +1,6 @@
-use crate::types::{Blob, Commitment, Proof};
+use std::iter::repeat_n;
+
+use crate::types::{Blob, CELLS_PER_EXT_BLOB, Commitment, Proof};
 
 #[derive(thiserror::Error, Debug)]
 pub enum KzgError {
@@ -35,9 +37,9 @@ pub fn verify_cell_kzg_proof_batch(
             &c_kzg_settings,
             &commitments
                 .iter()
-                .map(|commitment| (*commitment).into())
+                .flat_map(|commitment| repeat_n((*commitment).into(), CELLS_PER_EXT_BLOB))
                 .collect::<Vec<_>>(),
-            &(0_u64..blobs.len() as u64).collect::<Vec<_>>(),
+            &Vec::from_iter((0..blobs.len()).flat_map(|_| 0..CELLS_PER_EXT_BLOB as u64)),
             &cells,
             &cell_proof
                 .into_iter()
