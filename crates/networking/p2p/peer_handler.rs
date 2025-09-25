@@ -1491,6 +1491,7 @@ impl PeerHandler {
                                     task_count += 1;
                                 }
                             } else {
+                                // TODO: DRY
                                 account_storage_roots.accounts_with_storage_root.insert(
                                     current_account_hashes[remaining_start],
                                     (None, vec![]),
