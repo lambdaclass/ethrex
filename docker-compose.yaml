@@ -22,6 +22,9 @@ services:
       beacon
       --http
       --http-address 0.0.0.0
+      --metrics
+      --metrics-address 0.0.0.0
+      --metrics-allow-origin http://lighthouse:5054
       --execution-endpoint http://ethrex:8551
       --execution-jwt /secrets/jwt.hex
       --checkpoint-sync-url https://${ETHREX_NETWORK:-mainnet}-checkpoint-sync.attestant.io
@@ -45,15 +48,83 @@ services:
       --network ${ETHREX_NETWORK:-mainnet}
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
+      --metrics
+      --metrics.port 3701
       --syncmode snap
-      --datadir /data
+      --datadir /data/${ETHREX_NETWORK:-mainnet}
     ulimits:
       nofile: 1000000
     depends_on:
       setup_jwt:
         condition: service_completed_successfully
 
+  download_metrics_files:
+    image: alpine
+    volumes:
+      - metrics:/metrics
+    command: >
+      sh -c '
+      apk add curl;
+      mkdir -p /metrics/datasources;
+      mkdir -p /metrics/dashboards/common_dashboards;
+      curl -L -o /metrics/dashboards/dashboards.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/grafana/dashboards/dashboard_config_l1.yaml;
+      curl -L -o /metrics/dashboards/common_dashboards/ethereum_metrics_exporter.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/grafana/dashboards/common_dashboards/ethereum_metrics_exporter.json;
+      curl -L -o /metrics/dashboards/common_dashboards/ethrex_l1_perf.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json;
+      curl -L -o /metrics/datasources/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/grafana/datasources/prometheus.yaml;
+      curl -L -o /metrics/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml;
+      sed -i /metrics/prometheus.yaml -e "s/host.docker.internal:3701/ethrex:3701/" -e "s/host.docker.internal:5054/lighthouse:5054/";
+      '
+    profiles:
+      - metrics
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - metrics:/etc/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: --config.file=/etc/prometheus/prometheus.yaml
+    depends_on:
+      download_metrics_files:
+        condition: service_completed_successfully
+    profiles:
+      - metrics
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - metrics:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - prometheus
+    profiles:
+      - metrics
+
+  ethereum-metrics-exporter:
+    image: samcm/ethereum-metrics-exporter:latest
+    command:
+      - --execution-url=http://ethrex:8545
+      - --execution-modules="eth","net","web3","txpool"
+      - --consensus-url=http://lighthouse:5052
+      - --metrics-port=9093
+    ports:
+      - "9093:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - prometheus
+    profiles:
+      - metrics
+
 volumes:
   secrets:
   lighthouse:
   ethrex:
+  metrics:
