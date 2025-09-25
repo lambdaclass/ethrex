@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
 use std::{collections::HashMap, sync::Arc, sync::RwLock};

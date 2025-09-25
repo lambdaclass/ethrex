@@ -26,20 +26,46 @@ jobs:
             }
           - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
           - {
-              name: "Cancun Engine tests",
+              name: "Engine tests",
               file_name: engine,
               simulation: ethereum/engine,
             }
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
           - {
-              name: "Consume Engine tests",
-              file_name: consume-engine,
+              name: "Consume Engine tests (Rest)",
+              file_name: consume-engine-rest,
               simulation: ethereum/eest/consume-engine,
+              limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
             }
           - {
-              name: "Consume RLP tests",
-              file_name: consume-rlp,
+              name: "Consume Engine tests (Prague)",
+              file_name: consume-engine-prague,
+              simulation: ethereum/eest/consume-engine,
+              limit: ".*fork_Prague.*",
+            }
+          - {
+              name: "Consume Engine tests (Osaka)",
+              file_name: consume-engine-osaka,
+              simulation: ethereum/eest/consume-engine,
+              limit: ".*fork_Osaka.*",
+            }
+          - {
+              name: "Consume RLP tests (Rest)",
+              file_name: consume-rlp-rest,
               simulation: ethereum/eest/consume-rlp,
+              limit: ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*",
+            }
+          - {
+              name: "Consume RLP tests (Prague)",
+              file_name: consume-rlp-prague,
+              simulation: ethereum/eest/consume-rlp,
+              limit: ".*fork_Prague.*",
+            }
+          - {
+              name: "Consume RLP tests (Osaka)",
+              file_name: consume-rlp-osaka,
+              simulation: ethereum/eest/consume-rlp,
+              limit: ".*fork_Osaka.*",
             }
 
     steps:
@@ -53,46 +79,56 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Pull image
-        if: ${{ github.ref_name == 'main' }}
         run: |
           docker pull ghcr.io/lambdaclass/ethrex:main
           # Tests use ethrex:ci so we retag it
           docker tag ghcr.io/lambdaclass/ethrex:main ethrex:ci
 
-      - name: Build image
-        uses: ./.github/actions/build-docker
-        if: ${{ github.ref_name != 'main' }}
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-
-      - name: Setup Hive
-        run: make setup-hive
+      - name: Load hive client config
+        id: client-config
+        shell: bash
+        run: |
+          {
+            echo "config<<EOF"
+            cat .github/config/hive/clients.yaml
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
-      # We use the `main` branch for now since it's working, but we can pin it to a specific release if necessary
-      - name: Set custom hive flags
+      - name: Determine hive flags
+        id: hive-flags
+        shell: bash
+        env:
+          SIMULATION: ${{ matrix.test.simulation }}
+          SIM_LIMIT: ${{ matrix.test.limit || '' }}
         run: |
-          if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
-            EEST_FIXTURES="https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_develop.tar.gz"
-            EEST_BRANCH=main
-            echo 'HIVE_FLAGS=--sim.buildarg fixtures='"$EEST_FIXTURES"' --sim.buildarg branch='"$EEST_BRANCH"' --sim.limit ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*"' >> $GITHUB_ENV
+          FLAGS='--sim.parallelism 4 --sim.loglevel 1'
+          if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
+            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
+            FLAGS+=" --sim.buildarg branch=v5.0.0"
+            FLAGS+=" --client.checktimelimit=180s"
           fi
+          if [[ -n "$SIM_LIMIT" ]]; then
+            FLAGS+=" --sim.limit \"$SIM_LIMIT\""
+          fi
+          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../.github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1
+        id: run-hive-action
+        uses: ethpandaops/hive-github-action@a9ec89442df18ee579d3179b76c47f5f93954307
         continue-on-error: true
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.test.file_name }}_${{ inputs.job_type }}_logs
-          path: hive/workspace/logs/*-*.json
-          if-no-files-found: error
+          # This uses ethereum/hive as default
+          # Uncomment to use a custom hive version
+          # hive_repository: lambdaclass/hive
+          # hive_version: master
+          simulator: ${{ matrix.test.simulation }}
+          client: ethrex
+          client_config: ${{ steps.client-config.outputs.config }}
+          extra_flags: ${{ steps.hive-flags.outputs.flags }}
+          workflow_artifact_upload: true
+          workflow_artifact_prefix: ${{ matrix.test.file_name }}_${{ inputs.job_type }}
 
   hive-report:
     name: Generate and Save report
@@ -110,8 +146,41 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: hive/workspace/logs
-          pattern: "*_${{ inputs.job_type }}_logs"
+          pattern: "*_${{ inputs.job_type }}-results.zip"
           merge-multiple: true
+
+      - name: Flatten hive result files
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          mkdir -p hive/workspace/logs
+          for json in hive/workspace/logs/**/*.json; do
+            base_name=$(basename "$json")
+            target="hive/workspace/logs/$base_name"
+            if [[ "$json" != "$target" ]]; then
+              mv "$json" "$target"
+            fi
+          done
+          find hive/workspace/logs -mindepth 1 -type d -exec rm -rf {} +
+
+      - name: Print failed tests
+        if: always()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found_failures=false
+          for log in hive/workspace/logs/*.log; do
+            mapfile -t failures < <(grep 'FAILED ' "$log" | sed -E 's/^.*FAILED ([^ ]+).*/\1/' || true)
+            if (( ${#failures[@]} )); then
+              found_failures=true
+              echo "Failures in $(basename "$log"):"
+              printf '  %s\n' "${failures[@]}"
+              echo
+            fi
+          done
+          if [ "$found_failures" = false ]; then
+            echo "No test failures found in logs."
+          fi
 
       - name: Generate the hive report
         run: cargo run -p hive_report > results.md

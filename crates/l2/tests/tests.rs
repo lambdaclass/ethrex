@@ -1767,13 +1767,10 @@ fn bridge_owner_private_key() -> SecretKey {
     SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
 }
 
-// FIXME: Remove this before merging
-#[allow(dead_code)]
 #[derive(Debug)]
 struct FeesDetails {
     total_fees: U256,
     recoverable_fees: U256,
-    burned_fees: U256,
 }
 
 async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> FeesDetails {
@@ -1799,7 +1796,6 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
     FeesDetails {
         total_fees,
         recoverable_fees,
-        burned_fees: total_fees - recoverable_fees,
     }
 }
 
@@ -1958,7 +1954,7 @@ fn get_contract_dependencies(contracts_path: &Path) {
             .join("lib/openzeppelin-contracts-upgradeable")
             .to_str()
             .expect("Failed to convert path to str"),
-        None,
+        Some("release-v5.4"),
         true,
     )
     .unwrap();

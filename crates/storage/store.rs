@@ -20,12 +20,12 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::fmt::Debug;
 use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::RwLock,
 };
+use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -35,14 +35,13 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<dyn StoreEngine>,
-    chain_config: Arc<RwLock<ChainConfig>>,
-    latest_block_header: Arc<RwLock<BlockHeader>>,
+    pub engine: Arc<dyn StoreEngine>,
+    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
@@ -79,8 +78,9 @@ impl Store {
         self.engine.apply_updates(update_batch).await
     }
 
-    pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
-        info!(engine = ?engine_type, path = %path, "Opening storage engine");
+    pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
+        let path = path.as_ref();
+        info!(engine = ?engine_type, ?path, "Opening storage engine");
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
@@ -105,7 +105,7 @@ impl Store {
     }
 
     pub async fn new_from_genesis(
-        store_path: &str,
+        store_path: &Path,
         engine_type: EngineType,
         genesis_path: &str,
     ) -> Result<Self, StoreError> {
@@ -139,9 +139,11 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
+
         let account_state = AccountState::decode(&encoded_state)?;
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
@@ -1345,6 +1347,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
+
 fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())

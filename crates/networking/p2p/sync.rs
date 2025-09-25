@@ -51,7 +51,10 @@ const SECONDS_PER_BLOCK: u64 = 12;
 /// Bytecodes to downloader per batch
 const BYTECODE_CHUNK_SIZE: usize = 50_000;
 
-const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
+/// We assume this amount of slots are missing a block to adjust our timestamp
+/// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
+/// that are unlikely to be re-orged.
+const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -94,7 +97,7 @@ pub struct Syncer {
     blockchain: Arc<Blockchain>,
     /// This string indicates a folder where the snap algorithm will store temporary files that are
     /// used during the syncing process
-    datadir: String,
+    datadir: PathBuf,
 }
 
 impl Syncer {
@@ -103,7 +106,7 @@ impl Syncer {
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
-        datadir: String,
+        datadir: PathBuf,
     ) -> Self {
         Self {
             snap_enabled,
@@ -123,9 +126,9 @@ impl Syncer {
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
+                Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
             )),
-            datadir: ".".to_string(),
+            datadir: ".".into(),
         }
     }
 
@@ -304,10 +307,10 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, &mut block_sync_state).await?;
+            self.snap_sync(store.clone(), &mut block_sync_state).await?;
 
-            // Next sync will be full-sync
-            block_sync_state.into_fullsync().await?;
+            store.clear_snap_state().await?;
+
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -335,7 +338,7 @@ impl Syncer {
         loop {
             debug!("Sync Log 1: In Full Sync");
             debug!(
-                "Sync Log 3: State current headears len {}",
+                "Sync Log 3: State current headers len {}",
                 block_sync_state.current_headers.len()
             );
             debug!(
@@ -866,7 +869,7 @@ impl Syncer {
                 .request_account_range(
                     H256::zero(),
                     H256::repeat_byte(0xff),
-                    account_state_snapshots_dir.clone(),
+                    account_state_snapshots_dir.as_ref(),
                     &mut pivot_header,
                     block_sync_state,
                 )
@@ -883,7 +886,7 @@ impl Syncer {
             {
                 *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
                 let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone().into(), err)
+                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone(), err)
                 })?;
                 info!("Reading account file from entry {entry:?}");
                 let snapshot_path = entry.path();
@@ -996,7 +999,7 @@ impl Syncer {
                     .peers
                     .request_storage_ranges(
                         &mut storage_accounts,
-                        account_storages_snapshots_dir.clone(),
+                        account_storages_snapshots_dir.as_ref(),
                         chunk_index,
                         &mut pivot_header,
                     )
@@ -1034,7 +1037,7 @@ impl Syncer {
                 .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
             {
                 let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone().into(), err)
+                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone(), err)
                 })?;
                 info!("Reading account storage file from entry {entry:?}");
 
@@ -1368,6 +1371,7 @@ pub async fn update_pivot(
         } else {
             return Err(SyncError::NotInSnapSync);
         }
+        *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
     }
 }
