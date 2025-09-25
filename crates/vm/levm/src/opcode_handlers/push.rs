@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, InternalError, VMError},
     gas_cost,
     vm::VM,
 };
@@ -10,27 +10,18 @@ use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
 
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
-    pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
-
-        let current_pc = current_call_frame.pc;
+    pub fn op_push<const N: usize>(&mut self) -> Result<bool, VMError> {
+        let call_frame = &mut self.current_call_frame;
+        call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
         // Check to avoid multiple checks.
-        if current_pc.checked_add(N.wrapping_add(1)).is_none() {
+        if call_frame.pc.checked_add(N).is_none() {
             Err(InternalError::Overflow)?;
         }
 
-        let pc_offset = current_pc
-            // Add 1 to the PC because we don't want to include the
-            // Bytecode of the current instruction in the data we're about
-            // to read. We only want to read the data _NEXT_ to that
-            // bytecode
-            .wrapping_add(1);
-
-        let value = if let Some(slice) = current_call_frame
+        let value = if let Some(slice) = call_frame
             .bytecode
-            .get(pc_offset..pc_offset.wrapping_add(N))
+            .get(call_frame.pc..call_frame.pc.wrapping_add(N))
         {
             u256_from_big_endian_const(
                 // SAFETY: If the get succeeded, we got N elements so the cast is safe.
@@ -43,18 +34,16 @@ impl<'a> VM<'a> {
             U256::zero()
         };
 
-        current_call_frame.stack.push1(value)?;
+        call_frame.stack.push1(value)?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
-        let increment_pc_by = N.wrapping_add(1);
+        call_frame.pc = call_frame.pc.wrapping_add(N);
 
-        Ok(OpcodeResult::Continue {
-            pc_increment: increment_pc_by,
-        })
+        Ok(false)
     }
 
     // PUSH0
-    pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_push0(&mut self) -> Result<bool, VMError> {
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
         if self.env.config.fork < Fork::Shanghai {
             return Err(ExceptionalHalt::InvalidOpcode.into());
@@ -65,6 +54,6 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(U256::zero())?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(false)
     }
 }

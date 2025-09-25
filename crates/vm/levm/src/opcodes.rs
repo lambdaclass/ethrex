@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExceptionalHalt, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, VMError},
     vm::VM,
 };
 use strum::EnumString;
@@ -357,12 +357,12 @@ impl From<Opcode> for usize {
 
 /// Represents an opcode function handler.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct OpCodeFn<'a>(fn(&'_ mut VM<'a>) -> Result<OpcodeResult, VMError>);
+pub(crate) struct OpCodeFn<'a>(fn(&'_ mut VM<'a>) -> Result<bool, VMError>);
 
 impl<'a> OpCodeFn<'a> {
     /// Call the opcode handler.
     #[inline(always)]
-    pub fn call(self, vm: &mut VM<'a>) -> Result<OpcodeResult, VMError> {
+    pub fn call(self, vm: &mut VM<'a>) -> Result<bool, VMError> {
         (self.0)(vm)
     }
 }
@@ -537,11 +537,11 @@ impl<'a> VM<'a> {
     }
 
     /// Used within the opcode table for invalid opcodes.
-    pub fn on_invalid_opcode(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn on_invalid_opcode(&mut self) -> Result<bool, VMError> {
         Err(ExceptionalHalt::InvalidOpcode.into())
     }
 
-    pub fn op_stop(&mut self) -> Result<OpcodeResult, VMError> {
-        Ok(OpcodeResult::Halt)
+    pub fn op_stop(&mut self) -> Result<bool, VMError> {
+        Ok(true)
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    errors::{ContextResult, ExecutionReport, InternalError, VMError},
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -445,6 +445,7 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+            self.increment_pc_by(1)?;
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
@@ -452,12 +453,8 @@ impl<'a> VM<'a> {
             let op_result = VM::OPCODE_TABLE[opcode as usize].call(self);
 
             let result = match op_result {
-                Ok(OpcodeResult::Continue { pc_increment }) => {
-                    self.increment_pc_by(pc_increment)?;
-                    continue;
-                }
-
-                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
+                Ok(false) => continue,
+                Ok(true) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };
 

@@ -218,15 +218,6 @@ pub enum DatabaseError {
     Custom(String),
 }
 
-#[derive(Debug, Clone)]
-/// Note: "Halt" does not mean "Error during execution" it simply
-/// means that the execution stopped. It's not called "Stop" because
-/// "Stop" is an Opcode
-pub enum OpcodeResult {
-    Continue { pc_increment: usize },
-    Halt,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TxResult {
     Success,

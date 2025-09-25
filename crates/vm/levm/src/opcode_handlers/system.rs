@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
-    errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::calculate_memory_size,
     precompiles,
@@ -19,7 +19,7 @@ use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
 
 impl<'a> VM<'a> {
     // CALL operation
-    pub fn op_call(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_call(&mut self) -> Result<bool, VMError> {
         let (
             gas,
             callee,
@@ -122,7 +122,7 @@ impl<'a> VM<'a> {
     }
 
     // CALLCODE operation
-    pub fn op_callcode(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_callcode(&mut self) -> Result<bool, VMError> {
         // STACK
         let (
             gas,
@@ -220,12 +220,12 @@ impl<'a> VM<'a> {
     }
 
     // RETURN operation
-    pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_return(&mut self) -> Result<bool, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [offset, size] = *current_call_frame.stack.pop()?;
 
         if size.is_zero() {
-            return Ok(OpcodeResult::Halt);
+            return Ok(true);
         }
 
         let (size, offset) = size_offset_to_usize(size, offset)?;
@@ -237,11 +237,11 @@ impl<'a> VM<'a> {
 
         current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
 
-        Ok(OpcodeResult::Halt)
+        Ok(true)
     }
 
     // DELEGATECALL operation
-    pub fn op_delegatecall(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_delegatecall(&mut self) -> Result<bool, VMError> {
         // STACK
         let (
             gas,
@@ -338,7 +338,7 @@ impl<'a> VM<'a> {
     }
 
     // STATICCALL operation
-    pub fn op_staticcall(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_staticcall(&mut self) -> Result<bool, VMError> {
         // STACK
         let (
             gas,
@@ -433,7 +433,7 @@ impl<'a> VM<'a> {
     }
 
     // CREATE operation
-    pub fn op_create(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_create(&mut self) -> Result<bool, VMError> {
         let fork = self.env.config.fork;
         let current_call_frame = &mut self.current_call_frame;
         let [
@@ -462,7 +462,7 @@ impl<'a> VM<'a> {
     }
 
     // CREATE2 operation
-    pub fn op_create2(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_create2(&mut self) -> Result<bool, VMError> {
         let fork = self.env.config.fork;
         let current_call_frame = &mut self.current_call_frame;
         let [
@@ -492,7 +492,7 @@ impl<'a> VM<'a> {
     }
 
     // REVERT operation
-    pub fn op_revert(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_revert(&mut self) -> Result<bool, VMError> {
         // Description: Gets values from stack, calculates gas cost and sets return data.
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
@@ -516,12 +516,12 @@ impl<'a> VM<'a> {
 
     /// ### INVALID operation
     /// Reverts consuming all gas, no return data.
-    pub fn op_invalid(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_invalid(&mut self) -> Result<bool, VMError> {
         Err(ExceptionalHalt::InvalidOpcode.into())
     }
 
     // SELFDESTRUCT operation
-    pub fn op_selfdestruct(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_selfdestruct(&mut self) -> Result<bool, VMError> {
         // Sends all ether in the account to the target address
         // Steps:
         // 1. Pop the target address from the stack
@@ -578,7 +578,7 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_early(0, None)?;
 
-        Ok(OpcodeResult::Halt)
+        Ok(true)
     }
 
     /// Common behavior for CREATE and CREATE2 opcodes
@@ -588,7 +588,7 @@ impl<'a> VM<'a> {
         code_offset_in_memory: usize,
         code_size_in_memory: usize,
         salt: Option<U256>,
-    ) -> Result<OpcodeResult, VMError> {
+    ) -> Result<bool, VMError> {
         // Validations that can cause out of gas.
         // 1. [EIP-3860] - Cant exceed init code max size
         if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
@@ -656,7 +656,7 @@ impl<'a> VM<'a> {
         for (condition, reason) in checks {
             if condition {
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(false);
             }
         }
 
@@ -669,7 +669,7 @@ impl<'a> VM<'a> {
             self.current_call_frame.stack.push1(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(false);
         }
 
         let mut stack = self.stack_pool.pop().unwrap_or_default();
@@ -703,7 +703,7 @@ impl<'a> VM<'a> {
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        Ok(OpcodeResult::Continue { pc_increment: 0 })
+        Ok(false)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -728,7 +728,7 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Bytes,
         is_delegation_7702: bool,
-    ) -> Result<OpcodeResult, VMError> {
+    ) -> Result<bool, VMError> {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
 
@@ -737,7 +737,7 @@ impl<'a> VM<'a> {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(false);
             }
         }
 
@@ -749,7 +749,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(false);
         }
 
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
@@ -798,9 +798,6 @@ impl<'a> VM<'a> {
                 TxResult::Revert(_) => FAIL,
             })?;
 
-            // Increment PC of the parent callframe after execution of the child.
-            call_frame.increment_pc_by(1)?;
-
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
@@ -840,7 +837,7 @@ impl<'a> VM<'a> {
             self.substate.push_backup();
         }
 
-        Ok(OpcodeResult::Continue { pc_increment: 0 })
+        Ok(false)
     }
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
@@ -866,9 +863,6 @@ impl<'a> VM<'a> {
         } else {
             self.handle_return_call(executed_call_frame, ctx_result)?;
         }
-
-        // Increment PC of the parent callframe after execution of the child.
-        self.increment_pc_by(1)?;
 
         Ok(())
     }
