@@ -398,8 +398,6 @@ impl EthrexReplayCommand {
             }
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, common })) => {
-                let action = common.action.clone();
-
                 let opts = EthrexReplayOptions {
                     rpc_url: Url::parse("http://localhost:8545")?,
                     cached: false,
@@ -410,18 +408,9 @@ impl EthrexReplayCommand {
                     slack_webhook_url: None,
                 };
 
-                let elapsed = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
+                let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
 
-                match action {
-                    Action::Execute => println!(
-                        "Successfully executed {} in {elapsed:.2} seconds.",
-                        if n_blocks > 1 { "batch" } else { "block" }
-                    ),
-                    Action::Prove => println!(
-                        "Successfully proved {} in {elapsed:.2} seconds.",
-                        if n_blocks > 1 { "batch" } else { "block" }
-                    ),
-                }
+                println!("{report}");
             }
             #[cfg(not(feature = "l2"))]
             Self::Transaction(opts) => replay_transaction(opts).await?,
@@ -496,8 +485,6 @@ impl EthrexReplayCommand {
                 n_blocks,
                 common,
             }))) => {
-                let action = common.action.clone();
-
                 let opts = EthrexReplayOptions {
                     common,
                     rpc_url: Url::parse("http://localhost:8545")?,
@@ -508,16 +495,9 @@ impl EthrexReplayCommand {
                     slack_webhook_url: None,
                 };
 
-                let elapsed = replay_custom_l2_blocks(max(1, n_blocks), opts).await?;
+                let report = replay_custom_l2_blocks(max(1, n_blocks), opts).await?;
 
-                match action {
-                    Action::Prove => println!(
-                        "Successfully proved L2 batch of {n_blocks} blocks in {elapsed:.2} seconds."
-                    ),
-                    Action::Execute => println!(
-                        "Successfully executed L2 batch of {n_blocks} blocks in {elapsed:.2} seconds."
-                    ),
-                }
+                println!("{report}");
             }
         }
 
