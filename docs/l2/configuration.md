@@ -17,4 +17,5 @@ When configured, the sequencer redirects collected base fees to the specified ad
 > [!CAUTION]  
 > If the fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
 
-
+> [!CAUTION]  
+> Even though it may technically be possible to change the fee vault address or switch between burning and not burning fees from one batch to another, the feature was not designed to allow such behavior once the chain has been launched.
