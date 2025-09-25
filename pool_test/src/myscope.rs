@@ -1,52 +1,38 @@
-use std::thread;
+use std::marker::Send;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::Scope;
 
-pub struct ThreadPool<'scope, 'env> {
-    s: &'scope thread::Scope<'scope, 'env>,
+pub struct ThreadPool<'scope> {
+    task_queue_sender: Sender<Box<dyn 'scope + Send + FnOnce()>>, // Implictly our threads in the thread pool have the receiver
+    _phantom_data: std::marker::PhantomData<&'scope ()>,
 }
 
-impl<'scope, 'env> ThreadPool<'scope, 'env> {
-    pub fn new(thread_count: usize) -> Self {
-        thread::scope(|s| {
-                for _ in 0..thread_count {
-                    s.spawn(|| {
-                        // Thread work goes here
-                    });
+impl<'scope> ThreadPool<'scope> {
+    pub fn new(thread_count: usize, scope: &'scope Scope<'scope, '_>) -> Self {
+        let (task_queue_sender, receiver) = channel::<Box<dyn 'scope + Send + FnOnce()>>();
+        let task_queue_rx = Arc::new(Mutex::new(receiver));
+
+        for _ in 0..thread_count {
+            let task_queue_rx_clone = task_queue_rx.clone();
+            scope.spawn(move || {
+                // Thread work goes here
+                while let Ok(task) = {
+                    let rx = task_queue_rx_clone.lock().unwrap();
+                    rx.recv()
+                } {
+                    task();
                 }
             });
+        }
 
         ThreadPool {
-            s: ,
+            task_queue_sender,
+            _phantom_data: std::marker::PhantomData,
         }
     }
+
+    pub fn execute(&self, task: Box<dyn 'scope + Send + FnOnce()>) {
+        self.task_queue_sender.send(task).unwrap();
+    }
 }
-
-fn execute<'a>(s: &'a thread::Scope<'a, '_>, f: impl FnOnce() + std::marker::Send + 'a) {
-    s.spawn(|| f);
-}
-
-fn run_scoped_threads() {
-    let mut a = vec![1, 2, 3];
-    let mut x = 0;
-
-    let f = || {
-            println!("hello from the first scoped thread");
-            // We can borrow `a` here.
-            dbg!(&a);
-        };
-    thread::scope(|s| {
-        s.spawn(f);
-        s.spawn(|| {
-            println!("hello from the second scoped thread");
-            // We can even mutably borrow `x` here,
-            // because no other threads are using it.
-            x += a[0] + a[2];
-        });
-        println!("hello from the main thread");
-    });
-
-    // After the scope, we can modify and access our variables again:
-    a.push(4);
-    assert_eq!(x, a.len());
-}
-
-//std::thread::scope
