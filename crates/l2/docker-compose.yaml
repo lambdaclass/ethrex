@@ -106,20 +106,6 @@ services:
     depends_on:
       contract_deployer:
         condition: service_completed_successfully
-      # copy_env_to_host:
-      #   condition: service_completed_successfully
-
-  # # After contract deployment, copy the generated .env file with contract addresses to the host machine
-  # # so that tests running outside Docker can access them.
-  # copy_env_to_host:
-  #   image: busybox
-  #   depends_on:
-  #     contract_deployer:
-  #       condition: service_completed_successfully
-  #   volumes:
-  #     - env:/env:ro
-  #     - ../../cmd:/host-cmd
-  #   command: sh -c "cp /env/.env /host-cmd/.env"
 
   ethrex_prover:
     container_name: ethrex_prover
