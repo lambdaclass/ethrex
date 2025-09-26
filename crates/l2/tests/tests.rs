@@ -1005,11 +1005,47 @@ async fn test_deposit(
 
     println!("test_deposit: Depositing funds from L1 to L2");
 
-    let deposit_tx_hash = ethrex_l2_sdk::deposit_through_transfer(
-        deposit_value,
-        rich_wallet_address,
-        rich_wallet_private_key,
+    // FIXME: This is hardcoded to ETH
+    let native_token_l1_address = Address::zero();
+
+    let native_token_is_eth = native_token_l1_address == Address::zero();
+
+    let calldata_values = if native_token_is_eth {
+        vec![
+            // uint256 _amount: 0 means deposit all ETH sent with the tx
+            Value::Uint(U256::zero()),
+            // address _token: address(0) means ETH
+            Value::Address(Address::zero()),
+            // address l2Recipient: the address on L2 to receive the funds
+            Value::Address(rich_wallet_address),
+        ]
+    } else {
+        todo!()
+    };
+
+    let native_token_deposit_calldata =
+        encode_calldata("deposit(uint256,address,address)", &calldata_values)?;
+
+    let overrides = Overrides {
+        value: native_token_is_eth.then_some(deposit_value).or(None),
+        from: Some(rich_wallet_address),
+        ..Overrides::default()
+    };
+
+    let generic_tx = build_generic_tx(
         l1_client,
+        TxType::EIP1559,
+        bridge_address()?,
+        rich_wallet_address,
+        native_token_deposit_calldata.into(),
+        overrides,
+    )
+    .await?;
+
+    let deposit_tx_hash = ethrex_l2_sdk::send_generic_transaction(
+        l1_client,
+        generic_tx,
+        &(LocalSigner::new(*rich_wallet_private_key).into()),
     )
     .await?;
 

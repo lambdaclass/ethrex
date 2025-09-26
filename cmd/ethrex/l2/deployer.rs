@@ -324,6 +324,15 @@ pub struct DeployerOptions {
         help = "Genesis data is extracted at compile time, used for development"
     )]
     pub use_compiled_genesis: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        default_value = "0x0000000000000000000000000000000000000000",
+        env = "ETHREX_NATIVE_TOKEN_L1_ADDRESS",
+        help_heading = "Deployer options",
+        help = "The L1 address of the L2 native token (e.g., USDC, USDT, DAI, etc. Use address(0) for ETH)"
+    )]
+    pub native_token_l1_address: Address,
 }
 
 impl Default for DeployerOptions {
@@ -406,6 +415,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
+            native_token_l1_address: H160::zero(),
         }
     }
 }
@@ -490,7 +500,10 @@ const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,ad
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address)";
+
+// deposit(uint256 _amount, address _token, address _l2Recipient)
+const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address,address)";
 
 #[derive(Clone, Copy)]
 pub struct ContractAddresses {
@@ -909,6 +922,7 @@ async fn initialize_contracts(
             Value::Address(opts.bridge_owner),
             Value::Address(contract_addresses.on_chain_proposer_address),
             Value::Uint(opts.inclusion_max_wait.into()),
+            Value::Address(opts.native_token_l1_address),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
@@ -977,12 +991,38 @@ async fn make_deposits(
         let get_balance = eth_client
             .get_balance(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
+
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
 
+        let native_token_is_eth = opts.native_token_l1_address == Address::zero();
+
+        let calldata_values = if native_token_is_eth {
+            vec![
+                // uint256 _amount: 0 means deposit all ETH sent with the tx
+                Value::Uint(U256::zero()),
+                // address _token: address(0) means ETH
+                Value::Address(Address::zero()),
+                // address l2Recipient: the address on L2 to receive the funds
+                Value::Address(signer.address()),
+            ]
+        } else {
+            vec![
+                // uint256 _amount: amount of ERC20 to deposit
+                Value::Uint(value_to_deposit),
+                // address _token: the L1 address of the ERC20 token
+                Value::Address(opts.native_token_l1_address),
+                // address l2Recipient: the address on L2 to receive the funds
+                Value::Address(signer.address()),
+            ]
+        };
+
+        let native_token_deposit_calldata =
+            encode_calldata(NATIVE_TOKEN_DEPOSIT_SIGNATURE, &calldata_values)?;
+
         let overrides = Overrides {
-            value: Some(value_to_deposit),
+            value: native_token_is_eth.then_some(value_to_deposit).or(None),
             from: Some(signer.address()),
             ..Overrides::default()
         };
@@ -992,7 +1032,7 @@ async fn make_deposits(
             TxType::EIP1559,
             bridge,
             signer.address(),
-            Bytes::new(),
+            native_token_deposit_calldata.into(),
             overrides,
         )
         .await?;
