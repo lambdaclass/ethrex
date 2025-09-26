@@ -57,10 +57,8 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - touch /env/.env; exec ./ethrex "$0" "$@"
+      - touch /env/.env; exec ./ethrex l2 deploy "$0" "$@"
     command: >
-      l2
-      deploy
       --randomize-contract-deployment
 
   ethrex_l2:
@@ -89,10 +87,9 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - export $(xargs < /env/.env); exec ./ethrex "$0" "$@" 
+      - export $(xargs < /env/.env); exec ./ethrex l2 "$0" "$@" 
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
-      l2
       --network /genesis/l2.json
       --http.addr 0.0.0.0
       --http.port 1729
