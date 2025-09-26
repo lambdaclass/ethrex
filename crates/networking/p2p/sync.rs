@@ -1076,11 +1076,11 @@ impl Syncer {
                                 pivot_hash_moved,
                             );
                             let duration = Instant::now() - start;
-                            debug!(
-                                duration = duration.as_micros(),
-                                keys = n_keys,
-                                "Computed Storage Root"
-                            );
+                            // debug!(
+                            //     duration = duration.as_micros(),
+                            //     keys = n_keys,
+                            //     "Computed Storage Root"
+                            // );
                             changes
                         })
                         .collect::<Result<Vec<_>, SyncError>>()
