@@ -37,6 +37,31 @@ impl MempoolInner {
             ..Default::default()
         }
     }
+
+    /// Remove a transaction from the pool with the transaction pool lock already taken
+    fn remove_transaction_with_lock(&mut self, hash: &H256) -> Result<(), StoreError> {
+        if let Some(tx) = self.transaction_pool.get(hash) {
+            if matches!(tx.tx_type(), TxType::EIP4844) {
+                self.blobs_bundle_pool.remove(hash);
+            }
+
+            self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
+            self.transaction_pool.remove(hash);
+            self.broadcast_pool.remove(hash);
+            self.txs_order.retain(|h| h != hash);
+        };
+
+        Ok(())
+    }
+
+    /// Remove the oldest transaction in the pool
+    fn remove_oldest_transaction(&mut self) -> Result<(), StoreError> {
+        if let Some(&oldest_hash) = self.txs_order.first() {
+            self.remove_transaction_with_lock(&oldest_hash)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -63,15 +88,6 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
-    /// Remove the oldest transaction in the pool
-    fn remove_oldest_transaction(&self, inner: &mut MempoolInner) -> Result<(), StoreError> {
-        if let Some(&oldest_hash) = inner.txs_order.first() {
-            self.remove_transaction_with_lock(&oldest_hash, inner)?;
-        }
-
-        Ok(())
-    }
-
     /// Add transaction to the pool without doing validity checks
     pub fn add_transaction(
         &self,
@@ -80,7 +96,7 @@ impl Mempool {
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
         if inner.transaction_pool.len() >= MEMPOOL_MAX_SIZE {
-            self.remove_oldest_transaction(&mut inner)?;
+            inner.remove_oldest_transaction()?;
         }
         inner.txs_order.push(hash);
         inner
@@ -133,27 +149,7 @@ impl Mempool {
     /// Remove a transaction from the pool
     pub fn remove_transaction(&self, hash: &H256) -> Result<(), StoreError> {
         let mut inner = self.write()?;
-        self.remove_transaction_with_lock(hash, &mut inner)?;
-        Ok(())
-    }
-
-    /// Remove a transaction from the pool with the transaction pool lock already taken
-    fn remove_transaction_with_lock(
-        &self,
-        hash: &H256,
-        inner: &mut MempoolInner,
-    ) -> Result<(), StoreError> {
-        if let Some(tx) = inner.transaction_pool.get(hash) {
-            if matches!(tx.tx_type(), TxType::EIP4844) {
-                inner.blobs_bundle_pool.remove(hash);
-            }
-
-            inner.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
-            inner.transaction_pool.remove(hash);
-            inner.broadcast_pool.remove(hash);
-            inner.txs_order.retain(|h| h != hash);
-        };
-
+        inner.remove_transaction_with_lock(hash)?;
         Ok(())
     }
 
