@@ -183,23 +183,9 @@ impl StoreEngine for Store {
             }
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
-                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
-                for mut entries in
-                    receipts
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(index, receipt)| {
-                            let key = (block_hash, index as u64).into();
-                            let receipt_rlp = receipt.encode_to_vec();
-                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
-                        })
-                {
-                    key_values.append(&mut entries);
-                }
-                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-                for (key, value) in key_values {
-                    cursor
-                        .upsert(key, value)
+                for (index, receipt) in receipts.into_iter().enumerate() {
+                    let key = (block_hash, index as u64).into();
+                    tx.upsert::<Receipts>(key, receipt)
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
@@ -417,10 +403,7 @@ impl StoreEngine for Store {
         receipt: Receipt,
     ) -> Result<(), StoreError> {
         let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
-        let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec()) else {
-            return Err(StoreError::Custom("Invalid size".to_string()));
-        };
-        self.write_batch::<Receipts>(entries).await
+        self.write::<Receipts>(key, receipt).await
     }
 
     async fn get_receipt(
@@ -428,10 +411,8 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
         let key = (block_hash, index).into();
-        IndexedChunk::read_from_db(&mut cursor, key)
+        self.read::<Receipts>(key).await
     }
 
     async fn add_transaction_location(
@@ -751,46 +732,34 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let mut key_values = vec![];
-
-        for (index, receipt) in receipts.clone().into_iter().enumerate() {
-            let key = (block_hash, index as u64).into();
-            let receipt_rlp = receipt.encode_to_vec();
-            let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                continue;
-            };
-
-            key_values.append(&mut entries);
-        }
+        let key_values = receipts
+            .into_iter()
+            .enumerate()
+            .map(|(index, receipt)| {
+                let key = (block_hash, index as u64).into();
+                (key, receipt)
+            })
+            .collect::<Vec<_>>();
 
         self.write_batch::<Receipts>(key_values).await
     }
 
     async fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let block_hash = *block_hash;
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut receipts = vec![];
-            let mut receipt_index = 0;
-            let mut key = (block_hash, 0).into();
-            let txn = db.begin_read().map_err(|_| StoreError::ReadError)?;
-            let mut cursor = txn
-                .cursor::<Receipts>()
-                .map_err(|_| StoreError::CursorError("Receipts".to_owned()))?;
+        let mut receipts = Vec::new();
+        let mut index = 0u64;
 
-            // We're searching receipts for a block, the keys
-            // for the receipt table are of the kind: rlp((BlockHash, Index)).
-            // So we search for values in the db that match with this kind
-            // of key, until we reach an Index that returns None
-            // and we stop the search.
-            while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
-                receipts.push(receipt);
-                receipt_index += 1;
-                key = (block_hash, receipt_index).into();
+        loop {
+            let key = (*block_hash, index).into();
+            match self.read::<Receipts>(key).await? {
+                Some(receipt) => {
+                    receipts.push(receipt);
+                    index += 1;
+                }
+                None => break,
             }
+        }
 
-            Ok(receipts)
-        }).await.map_err(|e| StoreError::Custom(format!("Task panicked: {:?}", e)))?
+        Ok(receipts)
     }
 
     async fn set_header_download_checkpoint(
@@ -1112,9 +1081,9 @@ table!(
     ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
 );
 
-dupsort!(
+table!(
     /// Receipts table.
-    ( Receipts ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Receipt>
+    ( Receipts ) Rlp<(BlockHash, Index)> => Receipt
 );
 
 dupsort!(
@@ -1467,15 +1436,15 @@ mod tests {
         }
     }
 
-    // Test IndexedChunks implementation with receipts as the type
+    // Test IndexedChunks implementation with Vec<u8> as the type
     #[test]
     fn mdbx_indexed_chunks_test() {
         dupsort!(
-            /// Receipts table.
-            ( Receipts ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Receipt>
+            /// Test table.
+            ( TestTable ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Vec<u8>>
         );
 
-        let tables = [table_info!(Receipts)].into_iter().collect();
+        let tables = [table_info!(TestTable)].into_iter().collect();
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
@@ -1486,18 +1455,17 @@ mod tests {
         };
         let db = Database::create_with_options(None, options, &tables).unwrap();
 
-        let mut receipts = vec![];
+        let mut data_items = vec![];
         for i in 0..10 {
-            receipts.push(generate_big_receipt(100 * (i + 1), 10, 10 * (i + 1)));
+            data_items.push(vec![i as u8; 100 * (i + 1)]); // Generate some test data
         }
 
-        // encode receipts
+        // encode data
         let block_hash = H256::random();
         let mut key_values = vec![];
-        for (i, receipt) in receipts.iter().enumerate() {
+        for (i, data) in data_items.iter().enumerate() {
             let key = (block_hash, i as u64).into();
-            let receipt_rlp = receipt.encode_to_vec();
-            let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+            let Some(mut entries) = IndexedChunk::from::<TestTable>(key, data) else {
                 continue;
             };
             key_values.append(&mut entries);
@@ -1505,25 +1473,25 @@ mod tests {
 
         // store values
         let txn = db.begin_readwrite().unwrap();
-        let mut cursor = txn.cursor::<Receipts>().unwrap();
+        let mut cursor = txn.cursor::<TestTable>().unwrap();
         for (key, value) in key_values {
             cursor.upsert(key, value).unwrap()
         }
         txn.commit().unwrap();
 
         // now retrieve the values and assert they are the same
-        let mut stored_receipts = vec![];
-        let mut receipt_index = 0;
+        let mut stored_data = vec![];
+        let mut data_index = 0;
         let mut key: Rlp<(BlockHash, Index)> = (block_hash, 0).into();
         let txn = db.begin_read().unwrap();
-        let mut cursor = txn.cursor::<Receipts>().unwrap();
-        while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key).unwrap() {
-            stored_receipts.push(receipt);
-            receipt_index += 1;
-            key = (block_hash, receipt_index).into();
+        let mut cursor = txn.cursor::<TestTable>().unwrap();
+        while let Some(data) = IndexedChunk::read_from_db(&mut cursor, key).unwrap() {
+            stored_data.push(data);
+            data_index += 1;
+            key = (block_hash, data_index).into();
         }
 
-        assert_eq!(receipts, stored_receipts);
+        assert_eq!(data_items, stored_data);
     }
 
     // This test verifies the 256-chunk-per-value limitation on indexed chunks.

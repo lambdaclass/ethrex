@@ -1213,30 +1213,22 @@ impl StoreEngine for Store {
 
     // TODO: REVIEW LOGIC AGAINST LIBMDBX
     async fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let block_hash = *block_hash;
-        let db = self.db.clone();
-        let cf_name = CF_RECEIPTS.to_string();
-        tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&cf_name).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: {}", cf_name))
-            })?;
-            let mut receipts = Vec::new();
-            let mut index = 0u64;
+        let mut receipts = Vec::new();
+        let mut index = 0u64;
 
-            loop {
-                let key = (block_hash, index).encode_to_vec();
-                match db.get_cf(&cf, key)? {
-                    Some(receipt_bytes) => {
-                        let receipt = Receipt::decode(receipt_bytes.as_slice())?;
-                        receipts.push(receipt);
-                        index += 1;
-                    }
-                    None => break,
+        loop {
+            let key = (*block_hash, index).encode_to_vec();
+            match self.read_async(CF_RECEIPTS, key).await? {
+                Some(receipt_bytes) => {
+                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
+                    receipts.push(receipt);
+                    index += 1;
                 }
+                None => break,
             }
+        }
 
-            Ok(receipts)
-        }).await.map_err(|e| StoreError::Custom(format!("Task panicked: {:?}", e)))?
+        Ok(receipts)
     }
 
     async fn set_header_download_checkpoint(
