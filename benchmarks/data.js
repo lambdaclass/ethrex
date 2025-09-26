@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758907155256,
+  "lastUpdate": 1758909563035,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -34854,6 +34854,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0045204794661190964,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "dfb8902f6d3e0f7ed3970daa9cf08e42dc18eb44",
+          "message": "refactor(l1,l2): remove keccak-hash crate (#4542)\n\n**Motivation**\nWe want to stop using the keccak-hash crate and implement it with sha3.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nRemoved the keccak-hash crate and implemented it with sha3\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4535\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-09-25T18:25:15Z",
+          "tree_id": "d4234e14e79894bad891038d88820a624d0a3b36",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dfb8902f6d3e0f7ed3970daa9cf08e42dc18eb44"
+        },
+        "date": 1758909539449,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0045721152647975076,
             "unit": "Mgas/s"
           }
         ]
