@@ -4332,6 +4332,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "hmac",
+ "itertools 0.14.0",
  "lazy_static",
  "pool_test",
  "prometheus 0.14.0",

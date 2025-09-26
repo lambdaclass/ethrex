@@ -1469,7 +1469,8 @@ async fn insert_accounts_into_db(
 
         storage_accounts.accounts_with_storage_root.extend(
             account_states_snapshot.iter().filter_map(|(hash, state)| {
-                (state.storage_root != *EMPTY_TRIE_HASH).then_some((*hash, state.storage_root))
+                (state.storage_root != *EMPTY_TRIE_HASH)
+                    .then_some((*hash, (Some(state.storage_root), Vec::new())))
             }),
         );
 
@@ -1570,7 +1571,9 @@ async fn insert_storages_into_db(
         .await??;
         info!("Writing to db");
 
-        store.write_storage_trie_nodes_batch(storage_trie_node_changes)
+        store
+            .write_storage_trie_nodes_batch(storage_trie_node_changes)
+            .await?;
     }
     Ok(())
 }
@@ -1620,9 +1623,10 @@ async fn insert_accounts_into_rocksdb(
                     .fetch_add(1, Ordering::Relaxed);
                 let account_state = AccountState::decode(v).expect("We should have accounts here");
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts
-                        .accounts_with_storage_root
-                        .insert(H256::from_slice(k), account_state.storage_root);
+                    storage_accounts.accounts_with_storage_root.insert(
+                        H256::from_slice(k),
+                        (Some(account_state.storage_root), Vec::new()),
+                    );
                 }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
