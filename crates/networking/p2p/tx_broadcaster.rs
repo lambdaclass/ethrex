@@ -137,7 +137,7 @@ impl TxBroadcaster {
     }
 
     #[inline]
-    fn now_secs(&self) -> u32 {
+    fn secs_since_start(&self) -> u32 {
         self.start.elapsed().as_secs().min(u32::MAX as u64) as u32
     }
 
@@ -151,26 +151,21 @@ impl TxBroadcaster {
             // self.peer_indexer.len() could be used instead of next_peer_idx but avoided here if we ever
             // remove entries from peer_indexer in the future.
             let idx = self.next_peer_idx;
-            // In practice we won't exceed u32::MAX (~4.29 Billion) peers, wrapping_add could be unnecessary.
-            self.next_peer_idx = self.next_peer_idx.wrapping_add(1);
+            // In practice we won't exceed u32::MAX (~4.29 Billion) peers.
+            self.next_peer_idx += 1;
             self.peer_indexer.insert(peer_id, idx);
             idx
         }
     }
 
     fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
-    info!(total = self.known_txs.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id));
+        debug!(total = self.known_txs.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id), "Adding transactions to known list");
 
         if txs.is_empty() {
             return;
         }
 
-        let len = txs.len();
-        if len > 1 {
-            self.known_txs.reserve(len);
-        }
-
-        let now = self.now_secs();
+        let now = self.secs_since_start();
         let peer_idx = self.peer_index(peer_id);
         for tx in txs {
             let record = self.known_txs.entry(tx).or_default();
@@ -339,7 +334,7 @@ impl GenServer for TxBroadcaster {
             }
             Self::CastMsg::PruneTxs => {
                 debug!(received = "PruneTxs");
-                let now = self.now_secs();
+                let now = self.secs_since_start();
                 let before = self.known_txs.len();
                 let mempool_hashes = self
                     .blockchain
@@ -359,7 +354,7 @@ impl GenServer for TxBroadcaster {
                         _ => true,
                     }
                 });
-                info!(before = before, after = self.known_txs.len(), "Pruned old broadcasted transactions");
+                debug!(before = before, after = self.known_txs.len(), "Pruned old broadcasted transactions");
                 CastResponse::NoReply
             }
         }
