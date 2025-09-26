@@ -1,6 +1,5 @@
 use std::{
     cmp::max,
-    collections::HashSet,
     fmt::Display,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -31,26 +30,30 @@ use ethrex_storage::{
 };
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::EngineTypeRollup;
-use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRef, node::LeafNode};
+use ethrex_trie::{
+    InMemoryTrieDB, Node,
+    node::{BranchNode, LeafNode},
+};
 use reqwest::Url;
 #[cfg(feature = "l2")]
 use std::path::Path;
 use tracing::info;
 
-use crate::fetcher::get_blockdata;
+#[cfg(feature = "l2")]
+use crate::fetcher::get_batchdata;
 #[cfg(not(feature = "l2"))]
 use crate::fetcher::get_rangedata;
 #[cfg(not(feature = "l2"))]
 use crate::plot_composition::plot;
-use crate::report::Report;
-use crate::run::{exec, prove, run_tx};
-use crate::{cache::Cache, slack::try_send_report_to_slack};
+use crate::{cache::Cache, report::Report};
+use crate::{fetcher::get_blockdata, helpers::get_referenced_hashes};
+use crate::{
+    run::{exec, prove, run_tx},
+    slack::try_send_report_to_slack,
+};
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
 };
-
-#[cfg(feature = "l2")]
-use crate::fetcher::get_batchdata;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -549,7 +552,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     let guest_program = GuestProgramState::try_from(witness.clone())?;
 
     // This will contain all code hashes with the corresponding bytecode
-    // For the code hashes that we don't have we'll will it with <CodeHash, Bytes::new()>
+    // For the code hashes that we don't have we'll fill it with <CodeHash, Bytes::new()>
     let mut all_codes_hashed = guest_program.codes_hashed.clone();
 
     let in_memory_store = InMemoryStore::new();
@@ -565,42 +568,16 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         //   2. Get all code hashes that exist in the accounts that we have so that if we don't have the code we set it to empty bytes.
         // We do these things because sometimes the witness may be incomplete and in those cases we don't want failures for missing data.
         // This only applies when we use the InMemoryDatabase and not when we use the ExecutionWitness as database, that's because in the latter failures are dismissed and we fall back to default values.
-        let mut nodes = state_trie_nodes.lock().unwrap();
-        let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie (by Branch or Ext nodes).
+        let mut state_nodes = state_trie_nodes.lock().unwrap();
+        let referenced_node_hashes = get_referenced_hashes(&state_nodes)?;
 
-        for (_node_hash, node_rlp) in nodes.iter() {
-            let node = Node::decode(node_rlp)?;
-            match node {
-                Node::Branch(node) => {
-                    for choice in &node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
-
-                        referenced_node_hashes.insert(hash);
-                    }
-                }
-                Node::Extension(node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    referenced_node_hashes.insert(hash);
-                }
-                Node::Leaf(node) => {
-                    let info = AccountState::decode(&node.value)?;
-                    all_codes_hashed.entry(info.code_hash).or_insert(vec![]);
-                }
-            }
-        }
-
+        let dummy_leaf = Node::from(LeafNode::default()).encode_to_vec();
         // Insert arbitrary leaf nodes to state trie.
         for hash in referenced_node_hashes {
-            let dummy_leaf: Node = LeafNode::default().into();
-            nodes.entry(hash).or_insert(dummy_leaf.encode_to_vec());
+            state_nodes.entry(hash).or_insert(dummy_leaf.clone());
         }
 
-        drop(nodes);
+        drop(state_nodes);
 
         let mut inner_store = in_memory_store.inner()?;
 
@@ -627,12 +604,32 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
                 continue;
             };
 
-            let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
+            let account_state = AccountState::decode(&account_state_rlp)?;
 
+            // If code hash of account isn't present insert empty code so that if not found the execution doesn't break.
+            let code_hash = account_state.code_hash;
+            all_codes_hashed.entry(code_hash).or_insert(vec![]);
+
+            let storage_root = account_state.storage_root;
             let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
                 Ok(trie) => trie.inner,
                 Err(_) => continue,
             };
+
+            // Fill storage trie with dummy branch nodes that have the hash of the missing nodes
+            // This is useful for eth_getProofs when we want to restructure the trie after removing a node whose sibling isn't known
+            // We assume the sibling is a branch node because we already covered the cases in which it's a Leaf or Extension node by injecting nodes in the witness.
+            // For more info read: https://github.com/kkrt-labs/zk-pig/blob/v0.8.0/docs/modified-mpt.md
+            {
+                let mut storage_nodes = storage_trie.lock().unwrap();
+                let dummy_branch = Node::from(BranchNode::default()).encode_to_vec();
+
+                let referenced_storage_node_hashes = get_referenced_hashes(&storage_nodes)?;
+
+                for hash in referenced_storage_node_hashes {
+                    storage_nodes.entry(hash).or_insert(dummy_branch.clone());
+                }
+            }
 
             inner_store
                 .storage_trie_nodes
