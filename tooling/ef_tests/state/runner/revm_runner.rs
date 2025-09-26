@@ -242,7 +242,7 @@ pub fn prepare_revm_for_tx<'state>(
 
     // The latest version of revm(19.3.0) is needed to run the ef-tests with the latest changes.
     // Update it in every Cargo.toml.
-    // revm-inspectors and revm-primitives have to be bumped too.
+    // revm-inspectors has to be bumped too.
     // NOTE:
     // - rust 1.82.X is needed
     // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)

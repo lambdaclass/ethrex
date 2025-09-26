@@ -4656,7 +4656,6 @@ dependencies = [
  "lazy_static",
  "revm",
  "revm-inspectors",
- "revm-primitives",
  "rkyv",
  "serde",
  "sha3",

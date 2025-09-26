@@ -37,9 +37,6 @@ revm = { version = "27.0.3", features = [
     "optional_block_gas_limit",
 ], default-features = false, optional = true }
 revm-inspectors = { version = "0.26.5", optional = true }
-revm-primitives = { version = "20.0.0", features = [
-    "std",
-], default-features = false, optional = true }
 
 [lib]
 path = "./lib.rs"
@@ -51,7 +48,6 @@ debug = ["ethrex-levm/debug"]
 revm = [
     "dep:revm",
     "dep:revm-inspectors",
-    "dep:revm-primitives",
     "revm/blst",
     "revm/c-kzg",
 ]

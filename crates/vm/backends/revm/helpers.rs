@@ -10,7 +10,7 @@ use revm::{
 };
 
 // Rename imported types for clarity
-use revm_primitives::hardfork::SpecId;
+use revm::primitives::hardfork::SpecId;
 
 use crate::{backends::revm::db::EvmState, errors::EvmError, execution_result::ExecutionResult};
 

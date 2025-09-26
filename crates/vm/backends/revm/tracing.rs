@@ -17,7 +17,7 @@ use revm_inspectors::tracing::{
     CallTraceArena, TracingInspectorConfig,
     types::{CallKind, CallLog as RevmCallLog, CallTraceNode},
 };
-use revm_primitives::hardfork::SpecId;
+use revm::primitives::hardfork::SpecId;
 
 use super::{REVM, block_env, db::EvmState, tx_env};
 
