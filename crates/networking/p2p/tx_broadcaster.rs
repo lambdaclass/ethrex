@@ -72,10 +72,19 @@ impl PeerMask {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct BroadcastRecord {
     peers: PeerMask,
-    last_sent: u32,
+    last_sent: Instant,
+}
+
+impl Default for BroadcastRecord {
+    fn default() -> Self {
+        Self {
+            peers: PeerMask::default(),
+            last_sent: Instant::now(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +97,6 @@ pub struct TxBroadcaster {
     known_txs: HashMap<H256, BroadcastRecord>,
     // Next index to assign to a new peer
     next_peer_idx: u32,
-    start: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -116,7 +124,6 @@ impl TxBroadcaster {
             known_txs: HashMap::new(),
             peer_indexer: HashMap::new(),
             next_peer_idx: 0,
-            start: Instant::now(),
         };
 
         let server = state.clone().start();
@@ -134,11 +141,6 @@ impl TxBroadcaster {
         );
 
         Ok(server)
-    }
-
-    #[inline]
-    fn secs_since_start(&self) -> u32 {
-        self.start.elapsed().as_secs().min(u32::MAX as u64) as u32
     }
 
     // Get or assign a unique index to the peer_id
@@ -165,7 +167,7 @@ impl TxBroadcaster {
             return;
         }
 
-        let now = self.secs_since_start();
+        let now = Instant::now();
         let peer_idx = self.peer_index(peer_id);
         for tx in txs {
             let record = self.known_txs.entry(tx).or_default();
@@ -334,16 +336,12 @@ impl GenServer for TxBroadcaster {
             }
             Self::CastMsg::PruneTxs => {
                 debug!(received = "PruneTxs");
-                let now = self.secs_since_start();
+                let now = Instant::now();
                 let before = self.known_txs.len();
-                
-                self.known_txs.retain(|_, record| {
-                    let recent = now.wrapping_sub(record.last_sent) < PRUNE_WAIT_TIME_SECS as u32;
-                    if !recent {
-                        return false;
-                    };
+                let prune_window = Duration::from_secs(PRUNE_WAIT_TIME_SECS);
 
-                    true
+                self.known_txs.retain(|_, record| {
+                    now.duration_since(record.last_sent) < prune_window
                 });
                 debug!(before = before, after = self.known_txs.len(), "Pruned old broadcasted transactions");
                 CastResponse::NoReply
