@@ -1,7 +1,9 @@
 [package]
 name = "ethrex-p2p"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -28,10 +30,12 @@ secp256k1.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
-keccak-hash.workspace = true
 futures.workspace = true
+cfg-if.workspace = true
+rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
+pool_test.workspace = true
 tokio-stream = "0.1.17"
 sha3 = "0.10.8"
 
@@ -56,6 +60,7 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
+rocksdb = ["dep:rocksdb"]
 
 [lints.clippy]
 unwrap_used = "deny"

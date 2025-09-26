@@ -6,6 +6,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{PrivilegedL2Transaction, TxType};
+use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
 use ethrex_l2_sdk::{
     build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
@@ -17,7 +18,6 @@ use ethrex_rpc::{
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
-use keccak_hash::keccak;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,

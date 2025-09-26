@@ -4,19 +4,19 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ethrex_common::{H256, H512};
-use ethrex_rlp::error::RLPDecodeError;
+use ethrex_common::utils::keccak;
+use ethrex_common::{H256, H512, U256, types::AccountState};
+use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_trie::Node;
-use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
 
+use crate::peer_handler::DumpError;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
 };
-
-use crate::peer_handler::DumpError;
+use tracing::error;
 
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
@@ -66,12 +66,40 @@ pub fn get_account_state_snapshots_dir(datadir: &Path) -> PathBuf {
     datadir.join("account_state_snapshots")
 }
 
+pub fn get_rocksdb_temp_accounts_dir(datadir: &Path) -> PathBuf {
+    datadir.join("temp_acc_dir")
+}
+
+pub fn get_rocksdb_temp_storage_dir(datadir: &Path) -> PathBuf {
+    datadir.join("temp_storage_dir")
+}
+
 pub fn get_account_state_snapshot_file(directory: &Path, chunk_index: u64) -> PathBuf {
     directory.join(format!("account_state_chunk.rlp.{chunk_index}"))
 }
 
 pub fn get_account_storages_snapshot_file(directory: &Path, chunk_index: u64) -> PathBuf {
     directory.join(format!("account_storages_chunk.rlp.{chunk_index}"))
+}
+
+#[cfg(feature = "rocksdb")]
+pub fn dump_to_rocks_db(
+    path: &Path,
+    mut contents: Vec<(Vec<u8>, Vec<u8>)>,
+) -> Result<(), rocksdb::Error> {
+    contents.sort();
+    contents.dedup_by_key(|(k, _)| {
+        let mut buf = [0u8; 64];
+        buf[..k.len()].copy_from_slice(k);
+        buf
+    });
+    let writer_options = rocksdb::Options::default();
+    let mut writer = rocksdb::SstFileWriter::create(&writer_options);
+    writer.open(std::path::Path::new(&path))?;
+    for values in contents {
+        writer.put(values.0, values.1)?;
+    }
+    writer.finish()
 }
 
 pub fn get_code_hashes_snapshots_dir(datadir: &Path) -> PathBuf {
@@ -90,6 +118,60 @@ pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
             contents,
             error: err.kind(),
         })
+}
+
+pub fn dump_accounts_to_file(
+    path: &Path,
+    accounts: Vec<(H256, AccountState)>,
+) -> Result<(), DumpError> {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "rocksdb")] {
+            dump_to_rocks_db(
+                path,
+                accounts
+                    .into_iter()
+                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())
+                ).collect::<Vec<_>>()
+            )
+                .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+                .map_err(|_| DumpError {
+                    path: path.to_path_buf(),
+                    contents: Vec::new(),
+                    error: std::io::ErrorKind::Other,
+                })
+        } else {
+            dump_to_file(path, accounts.encode_to_vec())
+        }
+    }
+}
+
+pub fn dump_storages_to_file(
+    path: &Path,
+    storages: Vec<(H256, Vec<(H256, U256)>)>,
+) -> Result<(), DumpError> {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "rocksdb")] {
+            dump_to_rocks_db(
+                path,
+                storages
+                    .into_iter()
+                    .flat_map(|(hash, slots)| {
+                        slots.into_iter().map(move |(slot_hash, slot_value)| {
+                            let key = [hash.as_bytes(), slot_hash.as_bytes()].concat();
+                            (key, slot_value.encode_to_vec())
+                        })
+                    }).collect::<Vec<_>>()
+            )
+                .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+                .map_err(|_| DumpError {
+                    path: path.to_path_buf(),
+                    contents: Vec::new(),
+                    error: std::io::ErrorKind::Other,
+                })
+        } else {
+            dump_to_file(path, storages.encode_to_vec())
+        }
+    }
 }
 
 /// TODO: make it more generic

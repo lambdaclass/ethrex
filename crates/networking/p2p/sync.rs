@@ -23,17 +23,22 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{NodeHash, Trie, TrieError};
+use ethrex_trie::trie_sorted::TrieGenerationError;
+use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+#[cfg(not(feature = "rocksdb"))]
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+#[cfg(not(feature = "rocksdb"))]
+use std::sync::Mutex;
 use std::time::SystemTime;
 use std::{
     array,
     cmp::min,
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -307,10 +312,10 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, &mut block_sync_state).await?;
+            self.snap_sync(store.clone(), &mut block_sync_state).await?;
 
-            // Next sync will be full-sync
-            block_sync_state.into_fullsync().await?;
+            store.clear_snap_state().await?;
+
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -856,7 +861,8 @@ impl Syncer {
         std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
 
         // Create collector to store code hashes in files
-        let mut code_hash_collector = CodeHashCollector::new(code_hashes_snapshot_dir.clone());
+        let mut code_hash_collector: CodeHashCollector =
+            CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
         let mut storage_accounts = AccountStorageRoots::default();
         if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -880,69 +886,25 @@ impl Syncer {
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
-            let mut computed_state_root = *EMPTY_TRIE_HASH;
-            for entry in std::fs::read_dir(&account_state_snapshots_dir)
-                .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-            {
-                *METRICS.current_step.lock().await = "Inserting Account Ranges".to_string();
-                let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_state_snapshots_dir.clone(), err)
-                })?;
-                info!("Reading account file from entry {entry:?}");
-                let snapshot_path = entry.path();
-                let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-                let account_states_snapshot: Vec<(H256, AccountState)> =
-                    RLPDecode::decode(&snapshot_contents)
-                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-                let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-                    account_states_snapshot.iter().cloned().unzip();
-
-                storage_accounts.accounts_with_storage_root.extend(
-                    account_hashes
-                        .iter()
-                        .zip(account_states.iter())
-                        .filter_map(|(hash, state)| {
-                            (state.storage_root != *EMPTY_TRIE_HASH)
-                                .then_some((*hash, (Some(state.storage_root), vec![])))
-                        }),
-                );
-
-                info!("Inserting accounts into the state trie");
-
-                // Collect valid code hashes from current account snapshot
-                let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
-                    .iter()
-                    .filter_map(|(_, state)| {
-                        (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
-                    })
-                    .collect();
-
-                code_hash_collector.extend(code_hashes_from_snapshot);
-                code_hash_collector.flush_if_needed().await?;
-
-                let store_clone = store.clone();
-                let current_state_root =
-                    tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                        let mut trie = store_clone.open_state_trie(computed_state_root)?;
-
-                        for (account_hash, account) in account_states_snapshot {
-                            METRICS
-                                .account_tries_inserted
-                                .fetch_add(1, Ordering::Relaxed);
-                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                        }
-                        *METRICS.current_step.blocking_lock() =
-                            "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
-                        let current_state_root = trie.hash()?;
-                        Ok(current_state_root)
-                    })
-                    .await??;
-
-                computed_state_root = current_state_root;
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "rocksdb")] {
+                    let computed_state_root = insert_accounts_into_rocksdb(
+                        store.clone(),
+                        &mut storage_accounts,
+                        &account_state_snapshots_dir,
+                        &crate::utils::get_rocksdb_temp_accounts_dir(&self.datadir),
+                        &mut code_hash_collector,
+                    ).await?;
+                    let accounts_with_storage = std::collections::BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
+                } else {
+                    let computed_state_root = insert_accounts_into_db(
+                        store.clone(),
+                        &mut storage_accounts,
+                        &account_state_snapshots_dir,
+                        &mut code_hash_collector,
+                    ).await?;
+                }
             }
-
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
@@ -1024,74 +986,32 @@ impl Syncer {
             );
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
-            let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-                Arc::new(Mutex::new(HashMap::new()));
-
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
             *METRICS.current_step.lock().await =
                 "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
-            for entry in std::fs::read_dir(&account_storages_snapshots_dir)
-                .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-            {
-                let entry = entry.map_err(|err| {
-                    SyncError::SnapshotReadError(account_storages_snapshots_dir.clone(), err)
-                })?;
-                info!("Reading account storage file from entry {entry:?}");
 
-                let snapshot_path = entry.path();
-
-                let snapshot_contents = std::fs::read(&snapshot_path)
-                    .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-
-                let account_storages_snapshot: Vec<(Vec<H256>, Vec<(H256, U256)>)> =
-                    RLPDecode::decode(&snapshot_contents)
-                        .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-                let maybe_big_account_storage_state_roots_clone =
-                    maybe_big_account_storage_state_roots.clone();
-                let store_clone = store.clone();
-                let pivot_hash_moved = pivot_header.hash();
-                info!("Starting compute of account_storages_snapshot");
-                let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
-                    let store: Store = store_clone;
-
-                    account_storages_snapshot
-                        .into_par_iter()
-                        .flat_map(|(accounts, storages)| {
-                            let storages: Arc<[_]> = storages.into();
-                            accounts
-                                .into_par_iter()
-                                // FIXME: we probably want to make storages an Arc
-                                .map(move |account| (account, storages.clone()))
-                        })
-                        .map(|(account, storages)| {
-                            let start = Instant::now();
-                            let n_keys = storages.len();
-                            let changes = compute_storage_roots(
-                                maybe_big_account_storage_state_roots_clone.clone(),
-                                store.clone(),
-                                account,
-                                &storages,
-                                pivot_hash_moved,
-                            );
-                            let duration = Instant::now() - start;
-                            // debug!(
-                            //     duration = duration.as_micros(),
-                            //     keys = n_keys,
-                            //     "Computed Storage Root"
-                            // );
-                            changes
-                        })
-                        .collect::<Result<Vec<_>, SyncError>>()
-                })
-                .await??;
-                info!("Writing to db");
-
-                store
-                    .write_storage_trie_nodes_batch(storage_trie_node_changes)
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "rocksdb")] {
+                    insert_storage_into_rocksdb(
+                        store.clone(),
+                        accounts_with_storage,
+                        &account_storages_snapshots_dir,
+                        &crate::utils::get_rocksdb_temp_storage_dir(&self.datadir)
+                    ).await?;
+                } else {
+                    let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
+                        Arc::new(Mutex::new(HashMap::new()));
+                    insert_storages_into_db(
+                        store.clone(),
+                        &account_storages_snapshots_dir,
+                        &maybe_big_account_storage_state_roots,
+                        &pivot_header,
+                    )
                     .await?;
+                }
             }
+
             *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
             info!("Finished storing storage tries");
@@ -1243,8 +1163,10 @@ impl Syncer {
     }
 }
 
-type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
+#[cfg(not(feature = "rocksdb"))]
+type StorageRoots = (H256, Vec<(ethrex_trie::NodeHash, Vec<u8>)>);
 
+#[cfg(not(feature = "rocksdb"))]
 fn compute_storage_roots(
     maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
@@ -1413,12 +1335,22 @@ pub enum SyncError {
     NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
+    #[error("Couldn't create a thread")]
+    ThreadCreationError,
     #[error("Called update_pivot outside snapsync mode")]
     NotInSnapSync,
     #[error("Peer handler error: {0}")]
     PeerHandler(#[from] PeerHandlerError),
     #[error("Corrupt Path")]
     CorruptPath,
+    #[error("Sorted Trie Generation Error: {0}")]
+    TrieGenerationError(#[from] TrieGenerationError),
+    #[error("Failed to get account temp db directory")]
+    AccountTempDBDirNotFound,
+    #[error("Failed to get storage temp db directory")]
+    StorageTempDBDirNotFound,
+    #[error("RocksDB Error: {0}")]
+    RocksDBError(String),
     #[error("Bytecode file error")]
     BytecodeFileError,
 }
@@ -1512,4 +1444,302 @@ pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
         std::process::exit(-1);
     }
     is_valid
+}
+
+#[cfg(not(feature = "rocksdb"))]
+async fn insert_accounts_into_db(
+    store: Store,
+    storage_accounts: &mut AccountStorageRoots,
+    account_state_snapshots_dir: &Path,
+    code_hash_collector: &mut CodeHashCollector,
+) -> Result<H256, SyncError> {
+    let mut computed_state_root = *EMPTY_TRIE_HASH;
+    for entry in std::fs::read_dir(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+    {
+        let entry = entry
+            .map_err(|err| SyncError::SnapshotReadError(account_state_snapshots_dir.into(), err))?;
+        info!("Reading account file from entry {entry:?}");
+        let snapshot_path = entry.path();
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        let account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        storage_accounts.accounts_with_storage_root.extend(
+            account_states_snapshot.iter().filter_map(|(hash, state)| {
+                (state.storage_root != *EMPTY_TRIE_HASH).then_some((*hash, state.storage_root))
+            }),
+        );
+
+        // Collect valid code hashes from current account snapshot
+        let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
+            .iter()
+            .filter_map(|(_, state)| {
+                (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
+            })
+            .collect();
+
+        code_hash_collector.extend(code_hashes_from_snapshot);
+        code_hash_collector.flush_if_needed().await?;
+
+        info!("Inserting accounts into the state trie");
+
+        let store_clone = store.clone();
+        let current_state_root: Result<H256, SyncError> =
+            tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
+                let mut trie = store_clone.open_state_trie(computed_state_root)?;
+
+                for (account_hash, account) in account_states_snapshot {
+                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+                }
+                info!("Comitting to disk");
+                let current_state_root = trie.hash()?;
+                Ok(current_state_root)
+            })
+            .await?;
+
+        computed_state_root = current_state_root?;
+    }
+    info!("computed_state_root {computed_state_root}");
+    Ok(computed_state_root)
+}
+
+#[cfg(not(feature = "rocksdb"))]
+async fn insert_storages_into_db(
+    store: Store,
+    account_storages_snapshots_dir: &Path,
+    maybe_big_account_storage_state_roots: &Arc<Mutex<HashMap<H256, H256>>>,
+    pivot_header: &BlockHeader,
+) -> Result<(), SyncError> {
+    for entry in std::fs::read_dir(account_storages_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
+    {
+        let entry = entry.map_err(|err| {
+            SyncError::SnapshotReadError(account_storages_snapshots_dir.into(), err)
+        })?;
+        info!("Reading account storage file from entry {entry:?}");
+
+        let snapshot_path = entry.path();
+
+        let snapshot_contents = std::fs::read(&snapshot_path)
+            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+
+        let account_storages_snapshot: Vec<(Vec<H256>, Vec<(H256, U256)>)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        let maybe_big_account_storage_state_roots_clone =
+            maybe_big_account_storage_state_roots.clone();
+        let store_clone = store.clone();
+        let pivot_hash_moved = pivot_header.hash();
+        info!("Starting compute of account_storages_snapshot");
+        let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
+            let store: Store = store_clone;
+
+            account_storages_snapshot
+                .into_par_iter()
+                .flat_map(|(accounts, storages)| {
+                    let storages: Arc<[_]> = storages.into();
+                    accounts
+                        .into_par_iter()
+                        // FIXME: we probably want to make storages an Arc
+                        .map(move |account| (account, storages.clone()))
+                })
+                .map(|(account, storages)| {
+                    let start = Instant::now();
+                    let n_keys = storages.len();
+                    let changes = compute_storage_roots(
+                        maybe_big_account_storage_state_roots_clone.clone(),
+                        store.clone(),
+                        account,
+                        &storages,
+                        pivot_hash_moved,
+                    );
+                    let duration = Instant::now() - start;
+                    // debug!(
+                    //     duration = duration.as_micros(),
+                    //     keys = n_keys,
+                    //     "Computed Storage Root"
+                    // );
+                    changes
+                })
+                .collect::<Result<Vec<_>, SyncError>>()
+        })
+        .await??;
+        info!("Writing to db");
+
+        store.write_storage_trie_nodes_batch(storage_trie_node_changes)
+    }
+    Ok(())
+}
+
+#[cfg(feature = "rocksdb")]
+async fn insert_accounts_into_rocksdb(
+    store: Store,
+    storage_accounts: &mut AccountStorageRoots,
+    account_state_snapshots_dir: &Path,
+    temp_db_dir: &Path,
+    code_hash_collector: &mut CodeHashCollector,
+) -> Result<H256, SyncError> {
+    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, temp_db_dir)
+        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
+    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
+        .into_iter()
+        .map(|res| res.path())
+        .collect();
+    db.ingest_external_file(file_paths)
+        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    for account in iter {
+        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
+        if account_state.code_hash != *EMPTY_KECCACK_HASH {
+            code_hash_collector.add(account_state.code_hash);
+            code_hash_collector.flush_if_needed().await?;
+        }
+    }
+
+    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    trie_from_sorted_accounts_wrap(
+        trie.db(),
+        &mut iter
+            .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
+            .inspect(|(k, v)| {
+                METRICS
+                    .account_tries_inserted
+                    .fetch_add(1, Ordering::Relaxed);
+                let account_state = AccountState::decode(v).expect("We should have accounts here");
+                if account_state.storage_root != *EMPTY_TRIE_HASH {
+                    storage_accounts
+                        .accounts_with_storage_root
+                        .insert(H256::from_slice(k), account_state.storage_root);
+                }
+            })
+            .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
+    )
+    .map_err(SyncError::TrieGenerationError)
+}
+
+#[cfg(feature = "rocksdb")]
+async fn insert_storage_into_rocksdb(
+    store: Store,
+    accounts_with_storage: std::collections::BTreeSet<H256>,
+    account_state_snapshots_dir: &Path,
+    temp_db_dir: &Path,
+) -> Result<(), SyncError> {
+    use ethrex_trie::trie_sorted::trie_from_sorted_accounts;
+    use pool_test::ThreadPool;
+    use std::thread::scope;
+
+    struct RocksDBIterator<'a> {
+        iter: rocksdb::DBRawIterator<'a>,
+        limit: H256,
+    }
+
+    impl<'a> Iterator for RocksDBIterator<'a> {
+        type Item = (H256, Vec<u8>);
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if !self.iter.valid() {
+                return None;
+            }
+            let return_value = {
+                let key = self.iter.key();
+                let value = self.iter.value();
+                match (key, value) {
+                    (Some(key), Some(value)) => {
+                        let hash = H256::from_slice(&key[0..32]);
+                        let key = H256::from_slice(&key[32..]);
+                        let value = value.to_vec();
+                        if hash != self.limit {
+                            None
+                        } else {
+                            Some((key, value))
+                        }
+                    }
+                    _ => None,
+                }
+            };
+            self.iter.next();
+            return_value
+        }
+    }
+
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, temp_db_dir)
+        .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
+    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
+        .into_iter()
+        .map(|res| res.path())
+        .collect();
+    db.ingest_external_file(file_paths)
+        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    db.compact_range(Option::<&[u8]>::None, Option::<&[u8]>::None);
+    let snapshot = db.snapshot();
+
+    let account_with_storage_and_tries = accounts_with_storage
+        .into_iter()
+        .map(|account_hash| {
+            (
+                account_hash,
+                store
+                    .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                    .expect("Should be able to open trie"),
+            )
+        })
+        .collect::<Vec<(H256, Trie)>>();
+
+    scope(|scope| {
+        use std::num::NonZero;
+
+        let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(
+            std::thread::available_parallelism()
+                .map(|num| num.into())
+                .unwrap_or(8),
+            scope,
+        ));
+        for (account_hash, trie) in account_with_storage_and_tries.iter() {
+            let pool_clone = pool.clone();
+            let mut iter = snapshot.raw_iterator();
+            let task = Box::new(move || {
+                let mut initial_key = account_hash.as_bytes().to_vec();
+                initial_key.extend([0_u8; 32]);
+                iter.seek(initial_key);
+                let mut iter = RocksDBIterator {
+                    iter,
+                    limit: *account_hash,
+                };
+
+                let result = trie_from_sorted_accounts(
+                    trie.db(),
+                    &mut iter,
+                    pool_clone
+                )
+                .inspect_err(|err: &TrieGenerationError| {
+                    error!(
+                        "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
+                    );
+                })
+                .map_err(SyncError::TrieGenerationError);
+                METRICS.storage_tries_state_roots_computed.inc();
+                result;
+            });
+            pool.execute(task);
+        }
+    });
+    Ok(())
 }
