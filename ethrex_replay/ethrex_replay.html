@@ -240,32 +240,54 @@
 <h1 id="ethrex-replay"><a class="header" href="#ethrex-replay">ethrex-replay</a></h1>
 <p>A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by <a href="https://github.com/lambdaclass/starknet-replay">starknet-replay</a>.
 Currently ethrex replay only works against ethrex nodes with the <code>debug_executionWitness</code> RPC endpoint.</p>
-<h2 id="status"><a class="header" href="#status">Status</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Node</th><th>Network</th><th><code>ethrex-replay execute block</code></th><th>Additional Comments</th><th><code>ethrex-replay prove block</code></th><th>Additional Comments</th></tr></thead><tbody>
-<tr><td>reth</td><td>hoodi</td><td>✅</td><td>Most of the recent blocks can be executed with or without SP1 and proved with SP1</td><td>✅</td><td>Every block that is successfully executed with SP1, can also be successfully proved.</td></tr>
-<tr><td>reth</td><td>sepolia</td><td>✅</td><td>Most of the recent blocks can be executed with or without SP1 and proved with SP1</td><td>✅</td><td>SP1 panicked in all attempts to prove blocks.</td></tr>
-<tr><td>reth</td><td>mainnet</td><td>✅</td><td>Works reliably. Execution with SP1 works in most of the blocks, but with SP1 it works with ~8/10 success rate</td><td>✅</td><td>Works reliably. Execution with SP1 works in most of the blocks, but with SP1 it works with ~8/10 success rate</td></tr>
-<tr><td>geth</td><td>hoodi</td><td>✅</td><td>-</td><td>🔜</td><td>-</td></tr>
-<tr><td>geth</td><td>sepolia</td><td>🔜</td><td>-</td><td>🔜</td><td>-</td></tr>
-<tr><td>geth</td><td>mainnet</td><td>🔜</td><td>-</td><td>🔜</td><td>-</td></tr>
-<tr><td>nethermind</td><td>hoodi</td><td>🏗️</td><td>Fails sometimes.</td><td>🔜</td><td>-</td></tr>
-<tr><td>nethermind</td><td>sepolia</td><td>🔜</td><td>-</td><td>🔜</td><td>-</td></tr>
-<tr><td>nethermind</td><td>mainnet</td><td>🔜</td><td>-</td><td>🔜</td><td>-</td></tr>
-<tr><td>ethrex</td><td>hoodi</td><td>✅</td><td>-</td><td>✅</td><td>-</td></tr>
-<tr><td>ethrex</td><td>sepolia</td><td>✅</td><td>-</td><td>✅</td><td>-</td></tr>
-<tr><td>ethrex</td><td>mainnet</td><td>✅</td><td>Works reliably. Execution with SP1 works in most of the blocks, but with SP1 it works with ~8/10 success rate</td><td>✅</td><td>Works reliably. Execution with SP1 works in most of the blocks, but with SP1 it works with ~8/10 success rate</td></tr>
-<tr><td>erigon</td><td>hoodi</td><td>🔜</td><td>-</td><td>🔜</td><td>-</td></tr>
-<tr><td>erigon</td><td>sepolia</td><td>🔜</td><td>-</td><td>🔜</td><td>-</td></tr>
-<tr><td>erigon</td><td>mainnet</td><td>🔜</td><td>-</td><td>🔜</td><td>-</td></tr>
+<h2 id="features"><a class="header" href="#features">Features</a></h2>
+<h3 id="l1"><a class="header" href="#l1">L1</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>ethrex-replay block</code></td><td>Replay a single block.</td></tr>
+<tr><td><code>ethrex-replay blocks</code></td><td>Replay a list of specific block numbers, a range of blocks, or from a specific block to the latest (see <code>ethrex-replay blocks --help</code>)</td></tr>
+<tr><td><code>ethrex-replay block-composition</code></td><td></td></tr>
+<tr><td><code>ethrex-replay custom</code></td><td>Build your block before to replay it.</td></tr>
+<tr><td><code>ethrex-replay transaction</code></td><td>Replay a single transaction of a block.</td></tr>
+<tr><td><code>ethrex-replay cache</code></td><td>Generate witness data prior to block replay (see <code>ethrex-replay cache --help</code>)</td></tr>
 </tbody></table>
 </div>
-<h2 id="client-compatibility"><a class="header" href="#client-compatibility">Client Compatibility</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Client</th><th><code>ethrex-replay execute block</code></th><th><code>ethrex-replay prove block</code></th></tr></thead><tbody>
-<tr><td>reth</td><td>✅</td><td>✅</td></tr>
-<tr><td>geth</td><td>✅</td><td>✅</td></tr>
-<tr><td>nethermind</td><td>🏗️</td><td>🏗️</td></tr>
-<tr><td>ethrex</td><td>✅</td><td>✅</td></tr>
-<tr><td>erigon</td><td>🔜</td><td>🔜</td></tr>
+<h3 id="l2"><a class="header" href="#l2">L2</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>ethrex-replay l2 batch</code></td><td></td></tr>
+<tr><td><code>ethrex-replay l2 block</code></td><td></td></tr>
+<tr><td><code>ethrex-replay l2 custom</code></td><td></td></tr>
+<tr><td><code>ethrex-replay l2 transaction</code></td><td></td></tr>
+</tbody></table>
+</div>
+<h2 id="supported-clients"><a class="header" href="#supported-clients">Supported Clients</a></h2>
+<blockquote>
+<p>✅: supported.
+⚠️: supported, but flaky.
+🔜: to be supported.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th>Hoodi</th><th>Sepolia</th><th>Mainnet</th><th>Public ethrex L2s</th></tr></thead><tbody>
+<tr><td>ethrex</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+<tr><td>reth</td><td>✅</td><td>✅</td><td>✅</td><td>-</td></tr>
+<tr><td>geth</td><td>✅</td><td>✅</td><td>✅</td><td>-</td></tr>
+<tr><td>Nethermind</td><td>⚠️</td><td>⚠️</td><td>⚠️</td><td>-</td></tr>
+<tr><td>erigon</td><td>🔜</td><td>🔜</td><td>🔜</td><td>-</td></tr>
+</tbody></table>
+</div>
+<h2 id="supported-zkvm-replays-execution--proving"><a class="header" href="#supported-zkvm-replays-execution--proving">Supported zkVM Replays (execution &amp; proving)</a></h2>
+<blockquote>
+<p>✅: supported.
+⚠️: supported, but flaky.
+🔜: to be supported.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>zkVM</th><th>Hoodi</th><th>Sepolia</th><th>Mainnet</th><th>Public ethrex L2s</th></tr></thead><tbody>
+<tr><td>RISC0</td><td>✅</td><td>✅</td><td>✅</td><td>🔜</td></tr>
+<tr><td>SP1</td><td>✅</td><td>✅</td><td>✅</td><td>🔜</td></tr>
+<tr><td>OpenVM</td><td>⚠️</td><td>🔜</td><td>🔜</td><td>🔜</td></tr>
+<tr><td>ZisK</td><td>🔜</td><td>🔜</td><td>⚠️</td><td>🔜</td></tr>
+<tr><td>Jolt</td><td>🔜</td><td>🔜</td><td>🔜</td><td>🔜</td></tr>
+<tr><td>Nexus</td><td>🔜</td><td>🔜</td><td>🔜</td><td>🔜</td></tr>
+<tr><td>Pico</td><td>🔜</td><td>🔜</td><td>🔜</td><td>🔜</td></tr>
+<tr><td>Ziren</td><td>🔜</td><td>🔜</td><td>🔜</td><td>🔜</td></tr>
 </tbody></table>
 </div>
 <h2 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h2>
@@ -355,7 +377,7 @@ cargo r -r -p ethrex-replay --features l2,risc0 -- &lt;COMMAND&gt; [ARGS]
 ## RISC0 backend + GPU
 cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
 </code></pre>
-<h4 id="features"><a class="header" href="#features">Features</a></h4>
+<h4 id="features-1"><a class="header" href="#features-1">Features</a></h4>
 <p>The following table lists the available features for <code>ethrex-replay</code>. To enable a feature, use the <code>--features</code> flag with <code>cargo install</code>, specifying a comma-separated list of features.</p>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>gpu</code></td><td>Enables GPU support with SP1 or RISC0 backends (must be combined with one of each features, e.g. <code>sp1,gpu</code> or <code>risc0,gpu</code>)</td></tr>
@@ -390,9 +412,14 @@ cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
   <span class="mdbook-alerts-icon"></span>
   note
 </p>
-<p>If <code>BLOCK_NUMBER</code> is not provided, the latest block will be executed.</p>
+<ol>
+<li>If <code>BLOCK_NUMBER</code> is not provided, the latest block will be executed.</li>
+<li>If <code>ZKVM</code> is not provided, no zkVM will be used for execution.</li>
+<li>If <code>RESOURCE</code> is not provided, CPU will be used for execution.</li>
+<li>If <code>ACTION</code> is not provided, only execution will be performed.</li>
+</ol>
 </div>
-<pre><code>ethrex-replay block --block &lt;BLOCK_NUMBER&gt; --execute --rpc-url &lt;RPC_URL&gt;
+<pre><code>ethrex-replay block &lt;BLOCK_NUMBER&gt; --zkvm &lt;ZKVM&gt; --resource &lt;RESOURCE&gt; --action &lt;ACTION&gt; --rpc-url &lt;RPC_URL&gt;
 </code></pre>
 <h3 id="prove-a-single-block"><a class="header" href="#prove-a-single-block">Prove a single block</a></h3>
 <div class="mdbook-alerts mdbook-alerts-note">
@@ -407,7 +434,7 @@ cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
 <li>If proving with SP1, add <code>SP1_PROVER=cuda</code> to the command to enable GPU support.</li>
 </ol>
 </div>
-<pre><code>ethrex-replay block --block &lt;BLOCK_NUMBER&gt; --prove --rpc-url &lt;RPC_URL&gt;
+<pre><code>ethrex-replay block &lt;BLOCK_NUMBER&gt; --zkvm &lt;ZKVM&gt; --resource gpu --action prove --rpc-url &lt;RPC_URL&gt;
 </code></pre>
 <h3 id="execute-an-l2-batch"><a class="header" href="#execute-an-l2-batch">Execute an L2 batch</a></h3>
 <pre><code>ethrex-replay l2 batch --batch &lt;BATCH_NUMBER&gt; --execute --rpc-url &lt;RPC_URL&gt;
@@ -434,9 +461,9 @@ cargo r -r -p ethrex-replay --features l2,risc0,gpu -- &lt;COMMAND&gt; [ARGS]
 </p>
 <p>L2 transaction replay requires the binary to be run/compiled with the <code>l2</code> feature.</p>
 </div>
-<pre><code>ethrex-replay transaction --tx-hash &lt;TX_HASH&gt; --execute --rpc-url &lt;RPC_URL&gt;
+<pre><code>ethrex-replay transaction &lt;TX_HASH&gt; --execute --rpc-url &lt;RPC_URL&gt;
 
-ethrex-replay l2 transaction --tx-hash &lt;TX_HASH&gt; --execute --rpc-url &lt;RPC_URL&gt;
+ethrex-replay l2 transaction &lt;TX_HASH&gt; --execute --rpc-url &lt;RPC_URL&gt;
 </code></pre>
 <h3 id="plot-block-composition"><a class="header" href="#plot-block-composition">Plot block composition</a></h3>
 <pre><code>ethrex-replay block-composition --start-block &lt;START_BLOCK&gt; --end-block &lt;END_BLOCK&gt; --rpc-url &lt;RPC_URL&gt; --network &lt;NETWORK&gt;
