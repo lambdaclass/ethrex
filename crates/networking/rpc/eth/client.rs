@@ -7,7 +7,7 @@ use ethrex_common::system_contracts::*;
 use ethrex_common::types::Fork;
 use ethrex_common::types::ForkBlobSchedule;
 use ethrex_common::types::ForkId;
-use ethrex_common::types::precompile::precompiles_for_fork;
+use ethrex_vm::{precompiles_for_fork, system_contracts::system_contracts_for_fork};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -150,24 +150,8 @@ async fn get_config_for_fork(
         H32::zero()
     };
     let mut system_contracts = BTreeMap::new();
-    system_contracts.insert("BEACON_ROOTS_ADDRESS".to_string(), *BEACON_ROOTS_ADDRESS);
-    if fork >= Fork::Prague {
-        system_contracts.insert(
-            "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
-            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-        );
-        system_contracts.insert(
-            "DEPOSIT_CONTRACT_ADDRESS".to_string(),
-            chain_config.deposit_contract_address,
-        );
-        system_contracts.insert(
-            "HISTORY_STORAGE_ADDRESS".to_string(),
-            *HISTORY_STORAGE_ADDRESS,
-        );
-        system_contracts.insert(
-            "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS".to_string(),
-            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-        );
+    for contract in system_contracts_for_fork(fork) {
+        system_contracts.insert(contract.name, contract.address);
     }
 
     let mut precompiles = BTreeMap::new();

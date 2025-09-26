@@ -9,7 +9,7 @@ use crate::backends::revm::db::EvmState;
 use crate::backends::revm::helpers::spec_id;
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use ethrex_common::system_contracts::{
+use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
@@ -140,8 +140,8 @@ impl REVM {
             block_header,
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             state,
-            *BEACON_ROOTS_ADDRESS,
-            *SYSTEM_ADDRESS,
+            BEACON_ROOTS_ADDRESS.address,
+            SYSTEM_ADDRESS.address,
         )?;
         Ok(())
     }
@@ -153,8 +153,8 @@ impl REVM {
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             state,
-            *HISTORY_STORAGE_ADDRESS,
-            *SYSTEM_ADDRESS,
+            HISTORY_STORAGE_ADDRESS.address,
+            SYSTEM_ADDRESS.address,
         )?;
         Ok(())
     }
@@ -167,8 +167,8 @@ impl REVM {
             block_header,
             Bytes::new(),
             state,
-            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS.address,
         )?;
 
         match tx_result {
@@ -201,8 +201,8 @@ impl REVM {
             block_header,
             Bytes::new(),
             state,
-            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS.address,
         )?;
 
         match tx_result {
@@ -605,7 +605,7 @@ pub(crate) fn generic_system_contract_revm(
 
     let transaction_result = evm.transact()?;
     let mut result_state = transaction_result.state;
-    result_state.remove(SYSTEM_ADDRESS.as_ref());
+    result_state.remove(SYSTEM_ADDRESS.address.as_ref());
     result_state.remove(&evm.block().coinbase);
 
     evm.context.evm.db.commit(result_state);

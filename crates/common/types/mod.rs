@@ -8,7 +8,6 @@ mod constants;
 mod fork_id;
 mod genesis;
 pub mod payload;
-pub mod precompile;
 mod receipt;
 pub mod requests;
 pub mod transaction;

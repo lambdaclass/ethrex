@@ -2,12 +2,12 @@ pub mod db;
 mod tracing;
 
 use super::BlockExecutionResult;
-use crate::{EvmError, ExecutionResult};
-use bytes::Bytes;
-use ethrex_common::system_contracts::{
+use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
+use crate::{EvmError, ExecutionResult};
+use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
     types::{
@@ -207,8 +207,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             db,
-            *BEACON_ROOTS_ADDRESS,
-            *SYSTEM_ADDRESS,
+            BEACON_ROOTS_ADDRESS.address,
+            SYSTEM_ADDRESS.address,
             vm_type,
         )?;
         Ok(())
@@ -229,8 +229,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             db,
-            *HISTORY_STORAGE_ADDRESS,
-            *SYSTEM_ADDRESS,
+            HISTORY_STORAGE_ADDRESS.address,
+            SYSTEM_ADDRESS.address,
             vm_type,
         )?;
         Ok(())
@@ -250,8 +250,8 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS.address,
             vm_type,
         )?;
 
@@ -279,8 +279,8 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS.address,
             vm_type,
         )?;
 
