@@ -1675,6 +1675,8 @@ async fn insert_storage_into_rocksdb(
         .collect();
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    db.compact_range(Option::<&[u8]>::None, Option::<&[u8]>::None);
+    let snapshot = db.snapshot();
 
     let account_with_storage_and_tries = accounts_with_storage
         .into_iter()
@@ -1707,7 +1709,7 @@ async fn insert_storage_into_rocksdb(
         ));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
             let write_pool = write_pool.clone();
-            let mut iter = db.raw_iterator();
+            let mut iter = snapshot.raw_iterator();
             let task = Box::new(move || {
                 let mut initial_key = account_hash.as_bytes().to_vec();
                 initial_key.extend([0_u8; 32]);
