@@ -42,6 +42,7 @@ impl Evm {
                 only_top_call,
                 with_log,
                 self.vm_type,
+                self.fee_vault,
             )
         }
     }
@@ -62,7 +63,13 @@ impl Evm {
 
         #[cfg(not(feature = "revm"))]
         {
-            LEVM::rerun_block(&mut self.db, block, stop_index, self.vm_type)
+            LEVM::rerun_block(
+                &mut self.db,
+                block,
+                stop_index,
+                self.vm_type,
+                self.fee_vault,
+            )
         }
     }
 }

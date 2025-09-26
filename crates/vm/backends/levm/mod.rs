@@ -42,6 +42,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
@@ -51,7 +52,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, fee_vault)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -129,9 +130,10 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, fee_vault)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -148,6 +150,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
@@ -155,7 +158,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type, fee_vault)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -298,18 +301,19 @@ impl LEVM {
         header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, db)?;
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, fee_vault)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, fee_vault)?;
 
         let report = vm.stateless_execute()?;
 
@@ -388,7 +392,7 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     });
     let mut vm =
-        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
+        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, None).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -515,6 +519,7 @@ fn vm_from_generic<'a>(
     env: Environment,
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
+    fee_vault: Option<Address>,
 ) -> Result<VM<'a>, VMError> {
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
@@ -549,5 +554,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, fee_vault)
 }

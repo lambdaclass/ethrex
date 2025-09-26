@@ -73,6 +73,8 @@ pub struct Blockchain {
     /// Mapping from a payload id to either a complete payload or a payload build task
     /// We need to keep completed payloads around in case consensus requests them twice
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// (L2 only) If set, collected base fees will be sent to this address instead of being burned
+    pub fee_vault: Option<Address>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +96,12 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_type: BlockchainType, perf_logs_enabled: bool) -> Self {
+    pub fn new(
+        store: Store,
+        blockchain_type: BlockchainType,
+        perf_logs_enabled: bool,
+        fee_vault: Option<Address>,
+    ) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(),
@@ -102,6 +109,7 @@ impl Blockchain {
             r#type: blockchain_type,
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             perf_logs_enabled,
+            fee_vault,
         }
     }
 
@@ -113,6 +121,7 @@ impl Blockchain {
             r#type: BlockchainType::default(),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             perf_logs_enabled: false,
+            fee_vault: None,
         }
     }
 
@@ -206,7 +215,7 @@ impl Blockchain {
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
+                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone(), self.fee_vault),
             };
 
             // Re-execute block with logger
@@ -885,7 +894,7 @@ impl Blockchain {
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
         let evm = match self.r#type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
+            BlockchainType::L2 => Evm::new_for_l2(vm_db, self.fee_vault)?,
         };
         Ok(evm)
     }

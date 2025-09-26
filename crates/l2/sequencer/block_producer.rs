@@ -21,7 +21,7 @@ use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BlockProducerConfig, SequencerConfig,
@@ -82,9 +82,19 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
         } = config;
+
+        if let Some(fee_vault) = fee_vault_address {
+            if fee_vault == coinbase_address {
+                warn!(
+                    "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
+                );
+            }
+        }
+
         Self {
             store,
             blockchain,

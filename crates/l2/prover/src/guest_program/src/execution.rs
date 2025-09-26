@@ -100,6 +100,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blocks,
         execution_witness,
         elasticity_multiplier,
+        fee_vault: _fee_vault,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
@@ -114,6 +115,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &blocks,
             execution_witness,
             elasticity_multiplier,
+            _fee_vault,
             blob_commitment,
             blob_proof,
             chain_id,
@@ -135,7 +137,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
@@ -157,6 +159,7 @@ pub fn stateless_validation_l2(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
+    fee_vault: Option<Address>,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
@@ -174,7 +177,7 @@ pub fn stateless_validation_l2(
         nodes_hashed,
         codes_hashed,
         parent_block_header,
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, fee_vault)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -258,6 +261,7 @@ fn execute_stateless(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
+    fee_vault: Option<Address>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let guest_program_state: GuestProgramState = execution_witness
         .try_into()
@@ -323,7 +327,7 @@ fn execute_stateless(
 
         // Execute block
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        let mut vm = Evm::new_for_l2(wrapped_db.clone(), fee_vault)?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let result = vm

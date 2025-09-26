@@ -239,6 +239,7 @@ pub fn prepare_vm_for_tx<'a>(
         &tx,
         LevmCallTracer::disabled(),
         VMType::L1, // TODO: Should we run the EF tests with L2?
+        None,
     )
     .map_err(|e| EFTestRunnerError::FailedToEnsurePreState(format!("Failed to initialize VM: {e}")))
 }

@@ -1,3 +1,4 @@
+use ethrex_common::Address;
 use ethrex_common::types::Block;
 use ethrex_common::types::ChainConfig;
 use ethrex_common::types::blobs_bundle;
@@ -21,6 +22,7 @@ pub struct L2Fields {
     pub blob_commitment: blobs_bundle::Commitment,
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
+    pub fee_vault: Option<Address>,
 }
 /// Structure holding input data needed to execute or prove blocks.
 /// Optional fields are included only when relevant (e.g. L2 or custom chain).
@@ -70,12 +72,14 @@ impl Cache {
         blocks: Vec<Block>,
         witness: RpcExecutionWitness,
         chain_config: ChainConfig,
+        fee_vault: Option<Address>,
     ) -> Self {
         let network = network_from_chain_id(chain_config.chain_id);
         #[cfg(feature = "l2")]
         let l2_fields = Some(L2Fields {
             blob_commitment: [0u8; 48],
             blob_proof: [0u8; 48],
+            fee_vault,
         });
         #[cfg(feature = "l2")]
         let chain_config = Some(chain_config);
@@ -84,6 +88,8 @@ impl Cache {
         let l2_fields = None;
         #[cfg(not(feature = "l2"))]
         let chain_config = None;
+        #[cfg(not(feature = "l2"))]
+        let _ = fee_vault; // avoid unused variable warning
         Self {
             blocks,
             witness,

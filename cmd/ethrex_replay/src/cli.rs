@@ -11,6 +11,7 @@ use ethrex_common::{
         ELASTICITY_MULTIPLIER, Receipt, block_execution_witness::GuestProgramState,
     },
 };
+use ethrex_l2_rpc::clients::get_fee_vault_address;
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::{
@@ -221,6 +222,8 @@ pub struct BatchOptions {
 pub struct CustomBlockOptions {
     #[arg(long, help = "Whether to prove the block instead of executing it.")]
     prove: bool,
+    #[arg(long, help = "Fee vault address to use in L2 blocks.")]
+    fee_vault: Option<Address>,
 }
 
 #[derive(Parser)]
@@ -229,6 +232,8 @@ pub struct CustomBatchOptions {
     n_blocks: u64,
     #[arg(long, help = "Whether to prove the batch instead of executing it.")]
     prove: bool,
+    #[arg(long, help = "Fee vault address to use in L2 blocks.")]
+    fee_vault: Option<Address>,
 }
 
 impl EthrexReplayCommand {
@@ -270,7 +275,7 @@ impl EthrexReplayCommand {
 
                 let block_identifier = or_latest(block)?;
 
-                get_blockdata(eth_client, network.clone(), block_identifier).await?;
+                get_blockdata(eth_client, network.clone(), block_identifier, None).await?;
 
                 if let Some(block_number) = block {
                     info!("Block {block_number} data cached successfully.");
@@ -294,6 +299,7 @@ impl EthrexReplayCommand {
                         eth_client.clone(),
                         network.clone(),
                         BlockIdentifier::Number(block_number),
+                        None,
                     )
                     .await?;
                 }
@@ -301,11 +307,12 @@ impl EthrexReplayCommand {
                 info!("Blocks data cached successfully.");
             }
             #[cfg(not(feature = "l2"))]
-            Self::Custom(CustomSubcommand::Block(CustomBlockOptions { prove })) => {
+            Self::Custom(CustomSubcommand::Block(CustomBlockOptions { prove, fee_vault })) => {
                 Box::pin(async move {
                     Self::Custom(CustomSubcommand::Batch(CustomBatchOptions {
                         n_blocks: 1,
                         prove,
+                        fee_vault,
                     }))
                     .run()
                     .await
@@ -313,7 +320,11 @@ impl EthrexReplayCommand {
                 .await?;
             }
             #[cfg(not(feature = "l2"))]
-            Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, prove })) => {
+            Self::Custom(CustomSubcommand::Batch(CustomBatchOptions {
+                n_blocks,
+                prove,
+                fee_vault: _,
+            })) => {
                 let opts = EthrexReplayOptions {
                     execute: !prove,
                     prove,
@@ -372,7 +383,9 @@ impl EthrexReplayCommand {
 
                 let (eth_client, network) = setup(&opts).await?;
 
-                let cache = get_batchdata(eth_client, network, batch).await?;
+                let fee_vault = get_fee_vault_address(&eth_client).await?;
+
+                let cache = get_batchdata(eth_client, network, batch, fee_vault).await?;
 
                 run_and_measure(replay(cache, &opts), opts.bench).await?;
             }
@@ -381,10 +394,15 @@ impl EthrexReplayCommand {
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Block(CustomBlockOptions {
                 prove,
+                fee_vault,
             }))) => {
                 Box::pin(async move {
                     Self::L2(L2Subcommand::Custom(CustomSubcommand::Batch(
-                        CustomBatchOptions { n_blocks: 1, prove },
+                        CustomBatchOptions {
+                            n_blocks: 1,
+                            prove,
+                            fee_vault,
+                        },
                     )))
                     .run()
                     .await
@@ -395,6 +413,7 @@ impl EthrexReplayCommand {
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Batch(CustomBatchOptions {
                 n_blocks,
                 prove,
+                fee_vault,
             }))) => {
                 let opts = EthrexReplayOptions {
                     execute: !prove,
@@ -407,7 +426,7 @@ impl EthrexReplayCommand {
                     cache_level: CacheLevel::default(),
                 };
 
-                let elapsed = replay_custom_l2_blocks(max(1, n_blocks), &opts).await?;
+                let elapsed = replay_custom_l2_blocks(max(1, n_blocks), fee_vault, &opts).await?;
 
                 if prove {
                     println!("Successfully proved L2 batch in {elapsed:.2} seconds.");
@@ -595,10 +614,17 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
         .await?
         .ok_or(eyre::Error::msg("error fetching transaction"))?;
 
+    let fee_vault = if cfg!(feature = "l2") {
+        get_fee_vault_address(&eth_client).await?
+    } else {
+        None
+    };
+
     let cache = get_blockdata(
         eth_client,
         network,
         BlockIdentifier::Number(tx.block_number.as_u64()),
+        fee_vault,
     )
     .await?;
 
@@ -624,7 +650,13 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+    let fee_vault = if cfg!(feature = "l2") {
+        get_fee_vault_address(&eth_client).await?
+    } else {
+        None
+    };
+
+    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?, fee_vault).await?;
 
     // Always write the cache after fetching from RPC.
     // It will be deleted later if not needed.
@@ -824,7 +856,12 @@ pub async fn replay_custom_l1_blocks(
         store_inner
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L1, false));
+    let blockchain = Arc::new(Blockchain::new(
+        store.clone(),
+        BlockchainType::L1,
+        false,
+        None,
+    ));
 
     let blocks = produce_l1_blocks(
         blockchain.clone(),
@@ -842,6 +879,7 @@ pub async fn replay_custom_l1_blocks(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         chain_config,
+        None,
     );
 
     let start = SystemTime::now();
@@ -940,6 +978,7 @@ use ethrex_vm::BlockExecutionResult;
 #[cfg(feature = "l2")]
 pub async fn replay_custom_l2_blocks(
     n_blocks: u64,
+    fee_vault: Option<Address>,
     opts: &EthrexReplayOptions,
 ) -> eyre::Result<f64> {
     let network = Network::LocalDevnetL2;
@@ -962,7 +1001,12 @@ pub async fn replay_custom_l2_blocks(
         rollup_store
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L2, false));
+    let blockchain = Arc::new(Blockchain::new(
+        store.clone(),
+        BlockchainType::L2,
+        false,
+        fee_vault,
+    ));
 
     let genesis_hash = genesis.get_block().hash();
 
@@ -982,6 +1026,7 @@ pub async fn replay_custom_l2_blocks(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         genesis.config,
+        fee_vault,
     );
 
     let start = SystemTime::now();

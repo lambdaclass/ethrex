@@ -31,6 +31,7 @@ For further configuration take a look at the [CLI document](../CLI.md#ethrex-l2)
 
 This will start an ethrex l2 sequencer with the RPC server listening at `http://localhost:1729` and the proof coordinator server listening at `http://localhost:3900`
 
+
 ## Starting a prover server
 
 ```sh
@@ -63,3 +64,6 @@ After starting the sequencer and prover, you can verify that your L2 node is run
   - Review the terminal output or log files for any errors or warnings.
 
 If all endpoints respond and there are no errors in the logs, your L2 node is running successfully.
+
+> [!NOTE]
+> For more information about the configuration options, see the [Configuration](./configuration.md) section.

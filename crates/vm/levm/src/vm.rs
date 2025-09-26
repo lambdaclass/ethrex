@@ -335,6 +335,7 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
+        fee_vault: Option<Address>,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -349,7 +350,7 @@ impl<'a> VM<'a> {
             substate,
             db,
             tx: tx.clone(),
-            hooks: get_hooks(&vm_type),
+            hooks: get_hooks(&vm_type, fee_vault),
             substate_backups: Vec::new(),
             storage_original_values: BTreeMap::new(),
             tracer,

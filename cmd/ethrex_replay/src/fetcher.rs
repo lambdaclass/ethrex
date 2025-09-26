@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime};
 
+use ethrex_common::Address;
 use ethrex_common::types::ChainConfig;
 use ethrex_config::networks::Network;
 use ethrex_levm::vm::VMType;
@@ -25,6 +26,7 @@ pub async fn get_blockdata(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
+    fee_vault: Option<Address>,
 ) -> eyre::Result<Cache> {
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
@@ -117,7 +119,7 @@ pub async fn get_blockdata(
                 requested_block_number - 1
             );
             let rpc_db = rpc_db
-                .to_execution_witness(&block)
+                .to_execution_witness(&block, fee_vault)
                 .wrap_err("failed to build execution db")?;
             info!(
                 "Finished building execution witness for block {}",
@@ -143,7 +145,12 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    Ok(Cache::new(vec![block], witness_rpc, chain_config))
+    Ok(Cache::new(
+        vec![block],
+        witness_rpc,
+        chain_config,
+        fee_vault,
+    ))
 }
 
 async fn fetch_rangedata_from_client(
@@ -151,6 +158,7 @@ async fn fetch_rangedata_from_client(
     chain_config: ChainConfig,
     from: u64,
     to: u64,
+    fee_vault: Option<Address>,
 ) -> eyre::Result<Cache> {
     info!("Validating RPC chain ID");
 
@@ -217,7 +225,7 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let cache = Cache::new(blocks, witness_rpc, chain_config);
+    let cache = Cache::new(blocks, witness_rpc, chain_config, fee_vault);
 
     Ok(cache)
 }
@@ -240,7 +248,7 @@ pub async fn get_rangedata(
 
     info!("Getting block range data from RPC");
 
-    let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to).await?;
+    let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to, None).await?;
 
     cache.write()?;
 
@@ -252,6 +260,7 @@ pub async fn get_batchdata(
     rollup_client: EthClient,
     network: Network,
     batch_number: u64,
+    fee_vault: Option<Address>,
 ) -> eyre::Result<Cache> {
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
@@ -269,6 +278,7 @@ pub async fn get_batchdata(
         network.get_genesis()?.config,
         rpc_batch.batch.first_block,
         rpc_batch.batch.last_block,
+        fee_vault,
     )
     .await?;
 
@@ -286,6 +296,7 @@ pub async fn get_batchdata(
             .proofs
             .first()
             .unwrap_or(&[0_u8; 48]),
+        fee_vault,
     });
 
     cache.write()?;

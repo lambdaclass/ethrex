@@ -170,7 +170,12 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
+    let blockchain = init_blockchain(
+        store.clone(),
+        BlockchainType::L2,
+        true,
+        opts.sequencer_opts.block_producer_opts.fee_vault_address,
+    );
 
     let signer = get_signer(&datadir);
 

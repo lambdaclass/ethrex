@@ -49,6 +49,7 @@ pub struct ProverInputData {
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
+    pub fee_vault: Option<Address>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -501,6 +502,7 @@ impl ProofCoordinator {
             blob_commitment,
             #[cfg(feature = "l2")]
             blob_proof,
+            fee_vault: self.blockchain.fee_vault,
         })
     }
 

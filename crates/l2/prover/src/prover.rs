@@ -120,6 +120,7 @@ impl Prover {
                 blob_commitment: input.blob_commitment,
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
+                fee_vault: input.fee_vault,
             },
         }))
     }

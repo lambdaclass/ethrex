@@ -111,7 +111,10 @@ pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<A
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        let mut vm = Evm::new_for_l2(
+            wrapped_db.clone(),
+            cache.l2_fields.clone().and_then(|f| f.fee_vault),
+        )?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
@@ -210,5 +213,6 @@ fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         blob_commitment: l2_fields.blob_commitment,
         blob_proof: l2_fields.blob_proof,
+        fee_vault: l2_fields.fee_vault,
     })
 }
