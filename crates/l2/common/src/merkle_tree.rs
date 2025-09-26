@@ -1,4 +1,4 @@
-use keccak_hash::H256;
+use ethrex_common::H256;
 use lambdaworks_crypto::merkle_tree::{merkle::MerkleTree, traits::IsMerkleTreeBackend};
 use sha3::{Digest, Keccak256};
 

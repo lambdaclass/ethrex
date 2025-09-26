@@ -9,7 +9,7 @@ use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
 use ethrex_prover_lib::backend::Backend;
 use ethrex_rpc::debug::execution_witness::execution_witness_from_rpc_chain_config;
 use ethrex_vm::{DynVmDatabase, Evm, GuestProgramStateWrapper, backends::levm::LEVM};
-use eyre::{Context, Ok};
+use eyre::Context;
 use guest_program::input::ProgramInput;
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
@@ -22,9 +22,26 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<()> {
     #[cfg(not(feature = "l2"))]
     let input = get_l1_input(cache)?;
 
-    ethrex_prover_lib::execute(backend, input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+    // Use catch_unwind to capture panics
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        ethrex_prover_lib::execute(backend, input)
+    }));
 
-    Ok(())
+    match result {
+        Ok(exec_result) => {
+            exec_result.map_err(|e| eyre::Error::msg(format!("Execution failed: {}", e)))?;
+            Ok(())
+        }
+        Err(panic_info) => {
+            // Try to extract meaningful error message from panic info
+            let panic_msg = extract_panic_message(&panic_info);
+
+            Err(eyre::Error::msg(format!(
+                "Execution panicked: {}",
+                panic_msg
+            )))
+        }
+    }
 }
 
 pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
@@ -33,12 +50,23 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<()> {
     #[cfg(not(feature = "l2"))]
     let input = get_l1_input(cache)?;
 
-    catch_unwind(AssertUnwindSafe(|| {
-        ethrex_prover_lib::prove(backend, input, false).map_err(|e| eyre::Error::msg(e.to_string()))
-    }))
-    .map_err(|_e| eyre::Error::msg("SP1 panicked while proving"))??;
+    // Use catch_unwind to capture panics
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        ethrex_prover_lib::prove(backend, input, false)
+    }));
 
-    Ok(())
+    match result {
+        Ok(prove_result) => {
+            prove_result.map_err(|e| eyre::Error::msg(format!("Proving failed: {}", e)))?;
+            Ok(())
+        }
+        Err(panic_info) => {
+            // Try to extract meaningful error message from panic info
+            let panic_msg = extract_panic_message(&panic_info);
+
+            Err(eyre::Error::msg(format!("Proving panicked: {}", panic_msg)))
+        }
+    }
 }
 
 pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
@@ -50,9 +78,7 @@ pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<A
     let mut remaining_gas = block.header.gas_limit;
 
     let execution_witness = cache.witness;
-    let network = cache
-        .network
-        .ok_or_else(|| eyre::Error::msg("missing network data in cache"))?;
+    let network = cache.network;
     let chain_config = network
         .get_genesis()
         .map_err(|_| eyre::Error::msg("Failed to get genesis block"))?
@@ -99,6 +125,7 @@ pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<A
     Err(eyre::Error::msg("transaction not found inside block"))
 }
 
+#[cfg(not(feature = "l2"))]
 fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
@@ -114,7 +141,6 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     if chain_config.is_some() {
         return Err(eyre::eyre!("Unexpected chain config in cache"));
     }
-    let network = network.ok_or_else(|| eyre::eyre!("Missing network in cache"))?;
     let chain_config = network
         .get_genesis()
         .map_err(|_| eyre::Error::msg("Failed to get genesis block"))?
@@ -145,21 +171,30 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
     })
 }
 
+/// Extract a meaningful error message from panic information.
+fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = panic_info.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+        s.to_string()
+    } else {
+        "Unknown panic occurred".to_string()
+    }
+}
+
 #[cfg(feature = "l2")]
 fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
         witness: db,
-        network,
         chain_config,
         l2_fields,
+        ..
     } = cache;
 
     let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
     let chain_config = chain_config.ok_or_else(|| eyre::eyre!("Missing chain config in cache"))?;
-    if network.is_some() {
-        return Err(eyre::eyre!("Unexpected network in cache"));
-    }
+
     let first_block_number = blocks
         .first()
         .ok_or_else(|| eyre::eyre!("No blocks in cache"))?

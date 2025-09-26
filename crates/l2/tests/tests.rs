@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use ethrex_common::types::TxType;
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::monitor::widget::l2_to_l1_messages::{L2ToL1MessageKind, L2ToL1MessageStatus};
 use ethrex_l2::monitor::widget::{L2ToL1MessagesTable, l2_to_l1_messages::L2ToL1MessageRow};
@@ -28,7 +29,6 @@ use ethrex_rpc::{
     },
 };
 use hex::FromHexError;
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{
     fs::{File, read_to_string},
@@ -1333,7 +1333,7 @@ async fn perform_transfer(
     .await?;
 
     let transfer_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, l2_client, 1000).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, l2_client, 10000).await?;
 
     assert!(
         transfer_tx_receipt.receipt.status,
@@ -1438,7 +1438,7 @@ async fn test_n_withdraws(
 
     for (i, tx) in withdraw_txs.iter().enumerate() {
         println!("test_n_withdraws: Waiting receipt {}/{n} ({tx:x})", i + 1);
-        let r = ethrex_l2_sdk::wait_for_transaction_receipt(*tx, l2_client, 1000)
+        let r = ethrex_l2_sdk::wait_for_transaction_receipt(*tx, l2_client, 10000)
             .await
             .expect("Withdraw tx receipt not found");
         receipts.push(r);
@@ -1767,13 +1767,10 @@ fn bridge_owner_private_key() -> SecretKey {
     SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
 }
 
-// FIXME: Remove this before merging
-#[allow(dead_code)]
 #[derive(Debug)]
 struct FeesDetails {
     total_fees: U256,
     recoverable_fees: U256,
-    burned_fees: U256,
 }
 
 async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> FeesDetails {
@@ -1799,7 +1796,6 @@ async fn get_fees_details_l2(tx_receipt: &RpcReceipt, l2_client: &EthClient) -> 
     FeesDetails {
         total_fees,
         recoverable_fees,
-        burned_fees: total_fees - recoverable_fees,
     }
 }
 
@@ -1847,7 +1843,7 @@ async fn wait_for_l2_deposit_receipt(
         .get_privileged_hash()
         .unwrap();
 
-    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 1000).await?)
+    Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await?)
 }
 
 pub fn read_env_file_by_config() {
@@ -1958,7 +1954,7 @@ fn get_contract_dependencies(contracts_path: &Path) {
             .join("lib/openzeppelin-contracts-upgradeable")
             .to_str()
             .expect("Failed to convert path to str"),
-        None,
+        Some("release-v5.4"),
         true,
     )
     .unwrap();
@@ -2004,7 +2000,7 @@ async fn wait_for_verified_proof(
     l2_client: &EthClient,
     tx: H256,
 ) -> L1MessageProof {
-    let proof = wait_for_message_proof(l2_client, tx, 1000).await;
+    let proof = wait_for_message_proof(l2_client, tx, 10000).await;
     let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
     loop {

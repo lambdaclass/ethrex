@@ -8,6 +8,7 @@ use std::{
 
 use bytes::Bytes;
 use clap::Parser;
+use ethrex_common::H256;
 use ethrex_common::{
     Address, U256,
     types::{Genesis, TxType},
@@ -25,7 +26,6 @@ use ethrex_rpc::{
     clients::Overrides,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use keccak_hash::H256;
 use tracing::{debug, error, info, trace, warn};
 
 use ethrex_l2_sdk::DeployError;
