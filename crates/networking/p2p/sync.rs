@@ -1707,11 +1707,12 @@ async fn insert_storage_into_rocksdb(
         })
         .collect::<Vec<(H256, Trie)>>();
 
-    use tokio::sync::Semaphore;
-    let semaphore = Semaphore::new(10_000);
-    scope(|scope| {
-        use std::num::NonZero;
+    use crossbeam::channel::unbounded;
 
+    let (sender, receiver) = unbounded::<()>();
+    let mut counter = 0;
+
+    scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(
             std::thread::available_parallelism()
                 .map(|num| num.into())
@@ -1719,14 +1720,14 @@ async fn insert_storage_into_rocksdb(
             scope,
         ));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
-            use tokio::runtime::Handle;
-
+            let sender = sender.clone();
+            if counter > 100_000 {
+                let _ = receiver.recv();
+                counter -= 1;
+            }
+            counter += 1;
             let pool_clone = pool.clone();
             let mut iter = snapshot.raw_iterator();
-            let permit = semaphore.acquire();
-            let permit = Handle::current()
-                .block_on(permit)
-                .expect("Should get a permit");
             let task = Box::new(move || {
                 let mut initial_key = account_hash.as_bytes().to_vec();
                 initial_key.extend([0_u8; 32]);
@@ -1748,7 +1749,7 @@ async fn insert_storage_into_rocksdb(
                 })
                 .map_err(SyncError::TrieGenerationError);
                 METRICS.storage_tries_state_roots_computed.inc();
-                permit.forget();
+                let _ = sender.send(());
             });
             pool.execute(task);
         }

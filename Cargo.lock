@@ -4320,6 +4320,7 @@ dependencies = [
  "bytes",
  "cfg-if 1.0.3",
  "concat-kdf",
+ "crossbeam 0.8.4",
  "ctr",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
