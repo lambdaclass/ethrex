@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use ethrex_common::H32;
 use ethrex_common::H160;
 use ethrex_common::serde_utils;
-use ethrex_common::system_contracts::*;
 use ethrex_common::types::Fork;
 use ethrex_common::types::ForkBlobSchedule;
 use ethrex_common::types::ForkId;
@@ -151,7 +150,7 @@ async fn get_config_for_fork(
     };
     let mut system_contracts = BTreeMap::new();
     for contract in system_contracts_for_fork(fork) {
-        system_contracts.insert(contract.name, contract.address);
+        system_contracts.insert(contract.name.to_string(), contract.address);
     }
 
     let mut precompiles = BTreeMap::new();
