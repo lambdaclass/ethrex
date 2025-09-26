@@ -562,11 +562,11 @@ mod tests {
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
-            "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
-            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
-            "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
-            "bpo1": { "target": 10, "max": 15, "baseFeeUpdateFraction": 8346193 },
-            "bpo2": { "target": 14, "max": 21, "baseFeeUpdateFraction": 11684671 },
+            "cancun": { "baseFeeUpdateFraction": 3338477, "max": 6, "target": 3,  },
+            "prague": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
+            "osaka": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
+            "bpo1": { "baseFeeUpdateFraction": 8346193, "max": 15, "target": 10,  },
+            "bpo2": { "baseFeeUpdateFraction": 11684671, "max": 21, "target": 14,  },
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",
@@ -774,6 +774,7 @@ mod tests {
                         "ID": "0x0000000000000000000000000000000000000004",
                         "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
                         "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "P256_VERIFICATION":"0x0000000000000000000000000000000000000100",
                         "RIPEMD160": "0x0000000000000000000000000000000000000003",
                         "SHA256": "0x0000000000000000000000000000000000000002"
                     },
