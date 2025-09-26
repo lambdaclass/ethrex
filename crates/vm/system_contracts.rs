@@ -12,7 +12,7 @@ pub const SYSTEM_ADDRESS: SystemContract<'_> = SystemContract {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
     ]),
     name: "SYSTEM_ADDRESS",
-    active_since_fork: Paris,
+    active_since_fork: Prague,
 };
 
 pub const BEACON_ROOTS_ADDRESS: SystemContract<'_> = SystemContract {
@@ -21,7 +21,7 @@ pub const BEACON_ROOTS_ADDRESS: SystemContract<'_> = SystemContract {
         0x22, 0xD0, 0xBE, 0xAC, 0x02,
     ]),
     name: "BEACON_ROOTS_ADDRESS",
-    active_since_fork: Prague,
+    active_since_fork: Paris,
 };
 
 pub const HISTORY_STORAGE_ADDRESS: SystemContract<'_> = SystemContract {
