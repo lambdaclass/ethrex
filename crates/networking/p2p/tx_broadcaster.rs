@@ -91,10 +91,10 @@ impl Default for BroadcastRecord {
 pub struct TxBroadcaster {
     kademlia: Kademlia,
     blockchain: Arc<Blockchain>,
-    // Assign each peer_id (H256) a u32 index used by PeerMask entries
-    peer_indexer: HashMap<H256, u32>,
     // tx_hash -> broadcast record (which peers know it and when it was last sent)
     known_txs: HashMap<H256, BroadcastRecord>,
+    // Assign each peer_id (H256) a u32 index used by PeerMask entries
+    peer_indexer: HashMap<H256, u32>,
     // Next index to assign to a new peer
     next_peer_idx: u32,
 }
@@ -340,10 +340,13 @@ impl GenServer for TxBroadcaster {
                 let before = self.known_txs.len();
                 let prune_window = Duration::from_secs(PRUNE_WAIT_TIME_SECS);
 
-                self.known_txs.retain(|_, record| {
-                    now.duration_since(record.last_sent) < prune_window
-                });
-                debug!(before = before, after = self.known_txs.len(), "Pruned old broadcasted transactions");
+                self.known_txs
+                    .retain(|_, record| now.duration_since(record.last_sent) < prune_window);
+                debug!(
+                    before = before,
+                    after = self.known_txs.len(),
+                    "Pruned old broadcasted transactions"
+                );
                 CastResponse::NoReply
             }
         }
