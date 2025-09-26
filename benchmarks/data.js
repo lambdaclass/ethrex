@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758919078914,
+  "lastUpdate": 1758920214149,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17005,6 +17005,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 90047413931,
             "range": "± 154734481",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ded305ae572b94343385b47baeba90500bba15f4",
+          "message": "feat(l1): use descriptive error when we fail to replace a mempool tx (#4656)\n\n**Motivation**\nWe currently return a \"NonceTooLow\" error when we fail to replace a\nmempool transaction (aka we receive a transaction with the same sender\nand nonce as an existing one but without a higher fee value). This\ndoesn't make any sense and can be quite confusing. This PR adds a\nMempoolError enum variant for this specific case.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Use a specific error variant when we fail to replace a mempool\ntransaction\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None",
+          "timestamp": "2025-09-26T20:05:28Z",
+          "tree_id": "5305314103b85b749e007aa043c97f8bb764a2d1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ded305ae572b94343385b47baeba90500bba15f4"
+        },
+        "date": 1758920192959,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 92752793857,
+            "range": "± 222258873",
             "unit": "ns/iter"
           }
         ]
