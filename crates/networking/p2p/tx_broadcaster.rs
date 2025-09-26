@@ -29,10 +29,10 @@ use crate::{
 const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 
 // Amount of seconds after which we prune broadcast records (We should fine tune this)
-const PRUNE_WAIT_TIME_SECS: u64 = 180; // 3 minutes
+const PRUNE_WAIT_TIME_SECS: u64 = 600; // 10 minutes
 
 // Amount of seconds between each prune
-const PRUNE_INTERVAL_SECS: u64 = 60; // 1 minute
+const PRUNE_INTERVAL_SECS: u64 = 300; // 5 minutes
 
 // Amount of seconds between each broadcast
 const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
@@ -336,23 +336,14 @@ impl GenServer for TxBroadcaster {
                 debug!(received = "PruneTxs");
                 let now = self.secs_since_start();
                 let before = self.known_txs.len();
-                let mempool_hashes = self
-                    .blockchain
-                    .mempool
-                    .tx_hashes()
-                    .inspect_err(|err| {
-                        error!(err = ?err, "Failed to fetch mempool hashes for pruning");
-                    })
-                    .ok();
-                self.known_txs.retain(|tx_hash, record| {
+                
+                self.known_txs.retain(|_, record| {
                     let recent = now.wrapping_sub(record.last_sent) < PRUNE_WAIT_TIME_SECS as u32;
                     if !recent {
                         return false;
-                    }
-                    match &mempool_hashes {
-                        Some(hashes) => hashes.contains(tx_hash),
-                        _ => true,
-                    }
+                    };
+
+                    true
                 });
                 debug!(before = before, after = self.known_txs.len(), "Pruned old broadcasted transactions");
                 CastResponse::NoReply
