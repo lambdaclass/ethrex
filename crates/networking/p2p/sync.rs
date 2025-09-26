@@ -1691,14 +1691,22 @@ async fn insert_storage_into_rocksdb(
     scope(|scope| {
         use std::num::NonZero;
 
-        let pool = Arc::new(ThreadPool::new(
+        let process_pool = ThreadPool::new(
             std::thread::available_parallelism()
                 .map(|num| num.into())
-                .unwrap_or(8),
+                .unwrap_or(8)
+                / 2,
+            scope,
+        );
+        let write_pool = Arc::new(ThreadPool::new(
+            std::thread::available_parallelism()
+                .map(|num| num.into())
+                .unwrap_or(8)
+                / 2,
             scope,
         ));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
-            let pool_clone = pool.clone();
+            let write_pool = write_pool.clone();
             let mut iter = db.raw_iterator();
             let task = Box::new(move || {
                 let mut initial_key = account_hash.as_bytes().to_vec();
@@ -1712,7 +1720,7 @@ async fn insert_storage_into_rocksdb(
                 let result = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter,
-                    pool_clone
+                    write_pool
                 )
                 .inspect_err(|err: &TrieGenerationError| {
                     error!(
@@ -1723,7 +1731,7 @@ async fn insert_storage_into_rocksdb(
                 METRICS.storage_tries_state_roots_computed.inc();
                 result;
             });
-            pool.execute(task);
+            process_pool.execute(task);
         }
     });
     Ok(())
