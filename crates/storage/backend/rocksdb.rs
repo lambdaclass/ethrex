@@ -3,7 +3,8 @@ use crate::api::{
 };
 use crate::error::StoreError;
 use rocksdb::{
-    ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode, Transaction,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, DBCompressionType, MultiThreaded, Options,
+    SliceTransform, SnapshotWithThreadMode, Transaction,
 };
 use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
 use std::collections::{HashMap, HashSet};
@@ -22,13 +23,23 @@ impl StorageBackend for RocksDBBackend {
     where
         Self: Sized,
     {
-        // Rocksdb optimizations options
+        // RocksDB options (DB-level)
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
         opts.set_max_open_files(-1);
         opts.set_max_background_jobs(8);
+        opts.set_level_compaction_dynamic_level_bytes(true);
+        opts.set_enable_pipelined_write(true);
+        opts.set_allow_concurrent_memtable_write(true);
+        opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+        opts.set_max_write_buffer_number(4);
+        opts.set_min_write_buffer_number_to_merge(2);
+        opts.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
+
+        // Shared block cache
+        let cache = Cache::new_lru_cache(512 * 1024 * 1024); // 512MB
 
         // Open all column families
         let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
@@ -38,9 +49,76 @@ impl StorageBackend for RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
+        // Per-CF tuning
         let cf_descriptors = all_cfs_to_open
             .iter()
-            .map(|cf| ColumnFamilyDescriptor::new(cf, Options::default()))
+            .map(|cf_name| {
+                let mut cf_opts = Options::default();
+
+                // Defaults for any CF
+                cf_opts.set_level_compaction_dynamic_level_bytes(true);
+                cf_opts.set_compression_type(DBCompressionType::Lz4);
+                cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                cf_opts.set_max_write_buffer_number(3);
+                cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+
+                // Block-based table options with shared cache
+                let mut bb = BlockBasedOptions::default();
+                bb.set_block_cache(&cache);
+                bb.set_block_size(16 * 1024); // 16KB por defecto
+                bb.set_cache_index_and_filter_blocks(true);
+
+                match cf_name.as_str() {
+                    "headers" | "bodies" => {
+                        cf_opts.set_compression_type(DBCompressionType::Zstd);
+                        cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
+                        cf_opts.set_max_write_buffer_number(4);
+                        cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+
+                        bb.set_block_size(32 * 1024); // 32KB
+                    }
+                    "canonical_block_hashes" | "block_numbers" => {
+                        cf_opts.set_write_buffer_size(64 * 1024 * 1024);
+                        cf_opts.set_max_write_buffer_number(3);
+                        cf_opts.set_target_file_size_base(128 * 1024 * 1024);
+                        bb.set_bloom_filter(10.0, false);
+                    }
+                    "state_trie_nodes" | "storage_trie_nodes" => {
+                        cf_opts.set_write_buffer_size(256 * 1024 * 1024); // 256MB
+                        cf_opts.set_max_write_buffer_number(6);
+                        cf_opts.set_min_write_buffer_number_to_merge(2);
+                        cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                        cf_opts.set_memtable_prefix_bloom_ratio(0.2);
+
+                        bb.set_bloom_filter(10.0, false);
+                        bb.set_pin_l0_filter_and_index_blocks_in_cache(true);
+
+                        if cf_name == "storage_trie_nodes" {
+                            cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(32));
+                        }
+                    }
+                    "transaction_locations" => {
+                        cf_opts.set_write_buffer_size(64 * 1024 * 1024);
+                        cf_opts.set_max_write_buffer_number(3);
+                        cf_opts.set_target_file_size_base(128 * 1024 * 1024);
+                        bb.set_bloom_filter(10.0, false);
+                        cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(32));
+                    }
+                    "receipts" | "account_codes" => {
+                        cf_opts.set_write_buffer_size(128 * 1024 * 1024);
+                        cf_opts.set_max_write_buffer_number(3);
+                        cf_opts.set_target_file_size_base(256 * 1024 * 1024);
+                        bb.set_block_size(32 * 1024);
+                    }
+                    _ => {
+                        // Default for other CFs
+                    }
+                }
+
+                cf_opts.set_block_based_table_factory(&bb);
+
+                ColumnFamilyDescriptor::new(cf_name, cf_opts)
+            })
             .collect::<Vec<_>>();
 
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
