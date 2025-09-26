@@ -86,11 +86,11 @@ services:
       apk add curl;
       mkdir -p /metrics/datasources;
       mkdir -p /metrics/dashboards/common_dashboards;
-      curl -L -o /metrics/dashboards/dashboards.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/grafana/dashboards/dashboard_config_l1.yaml;
-      curl -L -o /metrics/dashboards/common_dashboards/ethereum_metrics_exporter.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/grafana/dashboards/common_dashboards/ethereum_metrics_exporter.json;
-      curl -L -o /metrics/dashboards/common_dashboards/ethrex_l1_perf.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json;
-      curl -L -o /metrics/datasources/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/grafana/datasources/prometheus.yaml;
-      curl -L -o /metrics/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml;
+      curl -L -o /metrics/dashboards/dashboards.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/dashboard_config_l1.yaml;
+      curl -L -o /metrics/dashboards/common_dashboards/ethereum_metrics_exporter.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/common_dashboards/ethereum_metrics_exporter.json;
+      curl -L -o /metrics/dashboards/common_dashboards/ethrex_l1_perf.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json;
+      curl -L -o /metrics/datasources/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/datasources/prometheus.yaml;
+      curl -L -o /metrics/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml;
       sed -i /metrics/prometheus.yaml -e "s/host.docker.internal:3701/ethrex:3701/" -e "s/host.docker.internal:5054/lighthouse:5054/";
       '
     profiles:
