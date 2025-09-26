@@ -1371,7 +1371,7 @@ impl PeerHandler {
         loop {
             if current_account_storages
                 .values()
-                .map(|(accounts, storages)| 32 * accounts.len() + 32 * storages.len())
+                .map(|(accounts, storages)| 32 * accounts.len() + 64 * storages.len())
                 .sum::<usize>()
                 > RANGE_FILE_CHUNK_SIZE
             {
