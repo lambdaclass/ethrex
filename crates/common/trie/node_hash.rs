@@ -3,6 +3,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, st
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 use sha3::{Digest, Keccak256};
+use tiny_keccak::{Hasher, Keccak};
 
 /// Struct representing a trie node hash
 /// If the encoded node is less than 32 bits, contains the encoded node itself
@@ -28,8 +29,11 @@ impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
     pub fn from_encoded_raw(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
-            let hash = Keccak256::new_with_prefix(encoded).finalize();
-            NodeHash::Hashed(H256::from_slice(hash.as_slice()))
+            let mut hash = [0u8; 32];
+            let mut hasher = Keccak::v256();
+            hasher.update(encoded);
+            hasher.finalize(&mut hash);
+            NodeHash::Hashed(H256(hash))
         } else {
             NodeHash::from_slice(encoded)
         }

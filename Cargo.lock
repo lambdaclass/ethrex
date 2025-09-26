@@ -4591,6 +4591,7 @@ dependencies = [
  "smallvec",
  "tempfile",
  "thiserror 2.0.16",
+ "tiny-keccak",
  "tracing",
 ]
 

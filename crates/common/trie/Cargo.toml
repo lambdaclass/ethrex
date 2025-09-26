@@ -23,6 +23,8 @@ smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
 digest = "0.10.6"
 lazy_static.workspace = true
 
+tiny-keccak = { version = "2.0.0", features = ["keccak"] }
+
 [features]
 default = []
 libmdbx = ["dep:libmdbx"]
