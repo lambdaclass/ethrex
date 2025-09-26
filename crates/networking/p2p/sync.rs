@@ -1729,9 +1729,9 @@ async fn insert_storage_into_rocksdb(
             let pool_clone = pool.clone();
             let mut iter = snapshot.raw_iterator();
             let task = Box::new(move || {
-                let mut initial_key = account_hash.as_bytes().to_vec();
-                initial_key.extend([0_u8; 32]);
-                iter.seek(initial_key);
+                let mut buffer: [u8; 64] = [0_u8; 64];
+                buffer[..32].copy_from_slice(&account_hash.0);
+                iter.seek(buffer);
                 let mut iter = RocksDBIterator {
                     iter,
                     limit: *account_hash,
