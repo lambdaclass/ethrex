@@ -348,14 +348,44 @@ impl Syncer {
 
             debug!("Requesting Block Headers from {current_head}");
 
-            let Some(mut block_headers) = self
+            let mut block_headers = match self
                 .peers
                 .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
                 .await
-            else {
-                warn!("Sync failed to find target block header, aborting");
-                debug!("Sync Log 8: Sync failed to find target block header, aborting");
-                return Ok(());
+            {
+                Some(block_headers) => block_headers,
+                None => {
+                    let mut all_block_headers = vec![];
+                    let mut found_common_ancestor = false;
+                    loop {
+                        let Some(mut block_headers) = self
+                            .peers
+                            .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
+                            .await
+                        else {
+                            warn!("Sync failed to find target block header, aborting");
+                            debug!("Sync Log 8: Sync failed to find target block header, aborting");
+                            return Ok(());
+                        };
+                        for i in 0..block_headers.len() {
+                            if store
+                                .get_block_by_hash(block_headers[i].hash())
+                                .await?
+                                .is_some()
+                            {
+                                block_headers.drain(..i);
+                                found_common_ancestor = true;
+                                break;
+                            }
+                        }
+                        all_block_headers.extend(block_headers);
+                        if found_common_ancestor {
+                            break;
+                        }
+                    }
+                    all_block_headers.reverse();
+                    all_block_headers
+                }
             };
 
             debug!("Sync Log 9: Received {} block headers", block_headers.len());
