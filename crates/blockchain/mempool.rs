@@ -1,6 +1,6 @@
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::{Mutex, RwLock},
+    collections::{BTreeMap, HashMap, VecDeque},
+    sync::RwLock,
 };
 
 use crate::{
@@ -17,43 +17,86 @@ use ethrex_common::{
 };
 use ethrex_storage::error::StoreError;
 use std::collections::HashSet;
+use tracing::warn;
 
 #[derive(Debug, Default)]
-pub struct Mempool {
-    broadcast_pool: RwLock<HashSet<H256>>,
-    transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
-    blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
-    txs_by_sender_nonce: RwLock<BTreeMap<(H160, u64), H256>>,
-    txs_order: RwLock<Vec<H256>>,
+struct MempoolInner {
+    broadcast_pool: HashSet<H256>,
+    transaction_pool: HashMap<H256, MempoolTransaction>,
+    blobs_bundle_pool: HashMap<H256, BlobsBundle>,
+    txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
+    txs_order: VecDeque<H256>,
     max_mempool_size: usize,
+    // Max number of transactions to let the mempool order queue grow before pruning it
+    mempool_prune_threshold: usize,
 }
-impl Mempool {
-    pub fn new(max_mempool_size: usize) -> Self {
-        Mempool {
-            txs_order: RwLock::new(Vec::with_capacity(max_mempool_size)),
-            transaction_pool: RwLock::new(HashMap::with_capacity(max_mempool_size)),
+
+impl MempoolInner {
+    fn new(max_mempool_size: usize) -> Self {
+        MempoolInner {
+            txs_order: VecDeque::with_capacity(max_mempool_size * 2),
+            transaction_pool: HashMap::with_capacity(max_mempool_size),
             max_mempool_size,
+            mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
             ..Default::default()
         }
     }
 
-    /// Remove the oldest transaction in the pool
-    pub fn remove_oldest_transaction(
-        &self,
-        tx_pool: &mut std::sync::RwLockWriteGuard<'_, HashMap<H256, MempoolTransaction>>,
-    ) -> Result<(), StoreError> {
-        let oldest_entry = self
-            .txs_order
-            .read()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .first()
-            .cloned();
+    /// Remove a transaction from the pool with the transaction pool lock already taken
+    fn remove_transaction_with_lock(&mut self, hash: &H256) -> Result<(), StoreError> {
+        if let Some(tx) = self.transaction_pool.get(hash) {
+            if matches!(tx.tx_type(), TxType::EIP4844) {
+                self.blobs_bundle_pool.remove(hash);
+            }
 
-        if let Some(oldest_hash) = oldest_entry {
-            self.remove_transaction_with_lock(&oldest_hash, tx_pool)?;
+            self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
+            self.transaction_pool.remove(hash);
+            self.broadcast_pool.remove(hash);
+        };
+
+        Ok(())
+    }
+
+    /// Remove the oldest transaction in the pool
+    fn remove_oldest_transaction(&mut self) -> Result<(), StoreError> {
+        // Remove elements from the order queue until one is present in the pool
+        while self.transaction_pool.len() >= self.max_mempool_size {
+            if let Some(oldest_hash) = self.txs_order.pop_front() {
+                self.remove_transaction_with_lock(&oldest_hash)?;
+            } else {
+                warn!(
+                    "Mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
+                );
+                break;
+            }
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Mempool {
+    inner: RwLock<MempoolInner>,
+}
+
+impl Mempool {
+    pub fn new(max_mempool_size: usize) -> Self {
+        Mempool {
+            inner: RwLock::new(MempoolInner::new(max_mempool_size)),
+        }
+    }
+
+    fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
+        self.inner
+            .write()
+            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))
+    }
+
+    fn read(&self) -> Result<std::sync::RwLockReadGuard<'_, MempoolInner>, StoreError> {
+        self.inner
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
     /// Add transaction to the pool without doing validity checks
@@ -62,55 +105,46 @@ impl Mempool {
         hash: H256,
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
-        let mut transaction_pool = self
-            .transaction_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        if transaction_pool.len() >= self.max_mempool_size {
-            self.remove_oldest_transaction(&mut transaction_pool)?;
+        let mut inner = self.write()?;
+        // Prune the order queue if it has grown too much
+        if inner.txs_order.len() > inner.mempool_prune_threshold {
+            // NOTE: we do this to avoid borrow checker errors
+            let txpool = core::mem::take(&mut inner.transaction_pool);
+            inner.txs_order.retain(|tx| txpool.contains_key(tx));
+            inner.transaction_pool = txpool;
         }
-        self.txs_order
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .push(hash);
-        self.txs_by_sender_nonce
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
+        if inner.transaction_pool.len() >= inner.max_mempool_size {
+            inner.remove_oldest_transaction()?;
+        }
+        inner.txs_order.push_back(hash);
+        inner
+            .txs_by_sender_nonce
             .insert((transaction.sender(), transaction.nonce()), hash);
-        transaction_pool.insert(hash, transaction);
-        self.broadcast_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-            .insert(hash);
+        inner.transaction_pool.insert(hash, transaction);
+        inner.broadcast_pool.insert(hash);
 
         Ok(())
     }
 
     pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
-        let txs = self
+        let inner = self.read()?;
+        let txs = inner
             .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
-            .map(|pool| {
-                pool.iter()
-                    .filter_map(|(hash, tx)| {
-                        if !self.broadcast_pool.read().ok()?.contains(hash) {
-                            None
-                        } else {
-                            Some(tx.clone())
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })?;
+            .iter()
+            .filter_map(|(hash, tx)| {
+                if !inner.broadcast_pool.contains(hash) {
+                    None
+                } else {
+                    Some(tx.clone())
+                }
+            })
+            .collect::<Vec<_>>();
         Ok(txs)
     }
 
-    pub fn clear_broadcasted_txs(&self) {
-        self.broadcast_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))
-            .map(|mut pool| pool.clear())
-            .unwrap_or_default();
+    pub fn clear_broadcasted_txs(&self) -> Result<(), StoreError> {
+        self.write()?.broadcast_pool.clear();
+        Ok(())
     }
 
     /// Add a blobs bundle to the pool by its blob transaction hash
@@ -119,64 +153,21 @@ impl Mempool {
         tx_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
-        self.blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
+        self.write()?
+            .blobs_bundle_pool
             .insert(tx_hash, blobs_bundle);
         Ok(())
     }
 
     /// Get a blobs bundle to the pool given its blob transaction hash
     pub fn get_blobs_bundle(&self, tx_hash: H256) -> Result<Option<BlobsBundle>, StoreError> {
-        Ok(self
-            .blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
-            .get(&tx_hash)
-            .cloned())
+        Ok(self.read()?.blobs_bundle_pool.get(&tx_hash).cloned())
     }
 
     /// Remove a transaction from the pool
     pub fn remove_transaction(&self, hash: &H256) -> Result<(), StoreError> {
-        let mut tx_pool = self
-            .transaction_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        self.remove_transaction_with_lock(hash, &mut tx_pool)?;
-        Ok(())
-    }
-
-    /// Remove a transaction from the pool with the transaction pool lock already taken
-    fn remove_transaction_with_lock(
-        &self,
-        hash: &H256,
-        tx_pool: &mut HashMap<H256, MempoolTransaction>,
-    ) -> Result<(), StoreError> {
-        let mut broadcast_pool = self
-            .broadcast_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        let mut txs_order = self
-            .txs_order
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        if let Some(tx) = tx_pool.get(hash) {
-            if matches!(tx.tx_type(), TxType::EIP4844) {
-                self.blobs_bundle_pool
-                    .lock()
-                    .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(hash);
-            }
-
-            self.txs_by_sender_nonce
-                .write()
-                .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?
-                .remove(&(tx.sender(), tx.nonce()));
-            tx_pool.remove(hash);
-            broadcast_pool.remove(hash);
-            txs_order.retain(|h| h != hash);
-        };
-
+        let mut inner = self.write()?;
+        inner.remove_transaction_with_lock(hash)?;
         Ok(())
     }
 
@@ -225,10 +216,7 @@ impl Mempool {
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
             HashMap::with_capacity(128);
-        let tx_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let tx_pool = &self.read()?.transaction_pool;
 
         for (_, tx) in tx_pool.iter() {
             txs_by_sender
@@ -249,10 +237,7 @@ impl Mempool {
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
             HashMap::with_capacity(128);
-        let tx_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let tx_pool = &self.read()?.transaction_pool;
 
         for (_, tx) in tx_pool.iter() {
             if filter(tx) {
@@ -272,10 +257,7 @@ impl Mempool {
         &self,
         possible_hashes: &[H256],
     ) -> Result<Vec<H256>, StoreError> {
-        let tx_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let tx_pool = &self.read()?.transaction_pool;
 
         Ok(possible_hashes
             .iter()
@@ -289,9 +271,8 @@ impl Mempool {
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
         let tx = self
+            .read()?
             .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .get(&transaction_hash)
             .map(|e| e.transaction().clone());
 
@@ -300,9 +281,8 @@ impl Mempool {
 
     pub fn get_nonce(&self, address: &Address) -> Result<Option<u64>, MempoolError> {
         Ok(self
+            .read()?
             .txs_by_sender_nonce
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .range((*address, 0)..=(*address, u64::MAX))
             .last()
             .map(|((_address, nonce), _hash)| nonce + 1))
@@ -310,17 +290,11 @@ impl Mempool {
 
     pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
-            let pool_lock = self
-                .transaction_pool
-                .read()
-                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            let pool_lock = &self.read()?.transaction_pool;
             pool_lock.len()
         };
         let blobs_size = {
-            let pool_lock = self
-                .blobs_bundle_pool
-                .lock()
-                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            let pool_lock = &self.read()?.blobs_bundle_pool;
             pool_lock.len()
         };
 
@@ -329,10 +303,7 @@ impl Mempool {
 
     /// Returns all transactions currently in the pool
     pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
-        let pooled_transactions = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let pooled_transactions = &self.read()?.transaction_pool;
         Ok(pooled_transactions
             .values()
             .map(MempoolTransaction::transaction)
@@ -342,20 +313,14 @@ impl Mempool {
 
     /// Returns all blobs bundles currently in the pool
     pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
-        let blobs_bundle_pool = self
-            .blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let blobs_bundle_pool = &self.read()?.blobs_bundle_pool;
         Ok(blobs_bundle_pool.values().cloned().collect())
     }
 
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
     pub fn status(&self) -> Result<u64, MempoolError> {
-        let pool_lock = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let pool_lock = &self.read()?.transaction_pool;
 
         Ok(pool_lock.len() as u64)
     }
@@ -367,9 +332,8 @@ impl Mempool {
         received_hash: H256,
     ) -> Result<Option<MempoolTransaction>, MempoolError> {
         let Some(hash) = self
+            .read()?
             .txs_by_sender_nonce
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .get(&(sender, nonce))
             .cloned()
         else {
@@ -379,19 +343,14 @@ impl Mempool {
             return Ok(None);
         }
 
-        let transaction_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        let transaction_pool = &self.read()?.transaction_pool;
         let tx = transaction_pool.get(&hash).cloned();
         Ok(tx)
     }
 
     pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
-        self.transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()).into())
-            .map(|pool| pool.contains_key(&tx_hash))
+        let contains = self.read()?.transaction_pool.contains_key(&tx_hash);
+        Ok(contains)
     }
 
     pub fn find_tx_to_replace(
@@ -435,7 +394,7 @@ impl Mempool {
         };
 
         if !is_a_replacement_tx {
-            return Err(MempoolError::NonceTooLow);
+            return Err(MempoolError::UnderpricedReplacement);
         }
 
         Ok(Some(tx_in_pool.hash()))
