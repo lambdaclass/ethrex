@@ -421,8 +421,7 @@ pub async fn init_l1(
         log_filter_handler,
         // TODO (#4482): Make this configurable.
         None,
-        // TODO: Make this configurable.
-        "ethrex/0.2.0".into(),
+        opts.extra_data.clone(),
     )
     .await;
 
