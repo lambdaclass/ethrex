@@ -4,12 +4,13 @@ services:
     volumes:
       - lighthouse:/lighthouse
       - ethrex:/ethrex
+      - metrics:/metrics
     command: >
       sh -c '
       if [ -z "${KEEP_DATA:-}" ] || [ "${KEEP_DATA:-}" == "0" ] || [ "${KEEP_DATA:-}" == "false" ];
       then
         echo Removing previous data...;
-        rm -rf /lighthouse/* /ethrex/*;
+        rm -rf /lighthouse/* /ethrex/* /metrics/*;
         echo Previous data removed. Starting from scratch;
       else
         echo KEEP_DATA is set, skipping data reset;
@@ -85,15 +86,22 @@ services:
     command: >
       sh -c '
       apk add curl;
-      mkdir -p /metrics/datasources;
-      mkdir -p /metrics/dashboards/common_dashboards;
-      curl -L -o /metrics/dashboards/dashboards.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/dashboard_config_l1.yaml;
-      curl -L -o /metrics/dashboards/common_dashboards/ethereum_metrics_exporter.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/common_dashboards/ethereum_metrics_exporter.json;
-      curl -L -o /metrics/dashboards/common_dashboards/ethrex_l1_perf.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json;
-      curl -L -o /metrics/datasources/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/datasources/prometheus.yaml;
-      curl -L -o /metrics/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml;
-      sed -i /metrics/prometheus.yaml -e "s/host.docker.internal:3701/ethrex:3701/" -e "s/host.docker.internal:5054/lighthouse:5054/";
+      mkdir -p /metrics/grafana/data;
+      mkdir -p /metrics/grafana/provisioning/datasources;
+      mkdir -p /metrics/grafana/provisioning/dashboards/common_dashboards;
+      mkdir -p /metrics/prometheus/data;
+      chmod -R 777 /metrics/grafana/data;
+      chmod -R 777 /metrics/prometheus/data;
+      curl -L -o /metrics/grafana/provisioning/dashboards/dashboards.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/dashboard_config_l1.yaml;
+      curl -L -o /metrics/grafana/provisioning/dashboards/common_dashboards/ethereum_metrics_exporter.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/common_dashboards/ethereum_metrics_exporter.json;
+      curl -L -o /metrics/grafana/provisioning/dashboards/common_dashboards/ethrex_l1_perf.json https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json;
+      curl -L -o /metrics/grafana/provisioning/datasources/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/grafana/datasources/prometheus.yaml;
+      curl -L -o /metrics/prometheus/prometheus.yaml https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/${ETHREX_METRICS_BRANCH:-main}/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml;
+      sed -i /metrics/prometheus/prometheus.yaml -e "s/host.docker.internal:3701/ethrex:3701/" -e "s/host.docker.internal:5054/lighthouse:5054/";
       '
+    depends_on:
+      reset_volumes:
+        condition: service_completed_successfully
     profiles:
       - metrics
 
@@ -102,7 +110,16 @@ services:
     ports:
       - "9091:9090"
     volumes:
-      - metrics:/etc/prometheus
+      - type: volume
+        source: metrics
+        target: /etc/prometheus/prometheus.yaml
+        volume:
+          subpath: prometheus/prometheus.yaml
+      - type: volume
+        source: metrics
+        target: /prometheus/data
+        volume:
+          subpath: prometheus/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: --config.file=/etc/prometheus/prometheus.yaml
@@ -117,13 +134,26 @@ services:
     ports:
       - "3001:3000"
     volumes:
-      - metrics:/etc/grafana/provisioning
+      - type: volume
+        source: metrics
+        target: /etc/grafana/provisioning
+        volume:
+          subpath: grafana/provisioning
+      - type: volume
+        source: metrics
+        target: /data
+        volume:
+          subpath: grafana/data
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_PATHS_DATA=/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_started
+      download_metrics_files:
+        condition: service_completed_successfully
     profiles:
       - metrics
 
