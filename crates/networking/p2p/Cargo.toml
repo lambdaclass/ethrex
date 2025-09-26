@@ -31,8 +31,11 @@ spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
 futures.workspace = true
+cfg-if.workspace = true
+rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
+scoped_threadpool = "0.1.9"
 tokio-stream = "0.1.17"
 sha3 = "0.10.8"
 
@@ -57,6 +60,7 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
+rocksdb = ["dep:rocksdb"]
 
 [lints.clippy]
 unwrap_used = "deny"

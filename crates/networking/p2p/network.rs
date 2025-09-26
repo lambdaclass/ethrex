@@ -262,6 +262,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Storage leaves metrics
             let storage_leaves_downloaded =
                 METRICS.downloaded_storage_slots.load(Ordering::Relaxed);
+            let storage_accounts_inserted = METRICS.storage_tries_state_roots_computed.get();
             let storage_accounts = METRICS.storage_accounts_initial.load(Ordering::Relaxed);
             let storage_accounts_healed = METRICS.storage_accounts_healed.load(Ordering::Relaxed);
             let storage_leaves_time = format_duration({
@@ -366,7 +367,7 @@ headers progress: {headers_download_progress} (total: {headers_to_download}, dow
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
 account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {account_leaves_inserted_time}
 storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed} 
-storage leaves insertion: {storage_leaves_inserted_time}
+storage leaves insertion: {storage_accounts_inserted}, {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
 bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_download_time})"
             );
