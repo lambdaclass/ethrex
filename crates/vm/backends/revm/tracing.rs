@@ -7,6 +7,7 @@ use crate::{
 use ethrex_common::tracing::{CallLog, CallTrace, CallTraceFrame, CallType};
 use ethrex_common::types::{BlockHeader, Transaction};
 use ethrex_common::{Address, H256, U256, types::Block};
+use revm::primitives::hardfork::SpecId;
 use revm::{ExecuteCommitEvm, MainBuilder, MainContext};
 use revm::{
     context::{BlockEnv, TxEnv},
@@ -17,7 +18,6 @@ use revm_inspectors::tracing::{
     CallTraceArena, TracingInspectorConfig,
     types::{CallKind, CallLog as RevmCallLog, CallTraceNode},
 };
-use revm::primitives::hardfork::SpecId;
 
 use super::{REVM, block_env, db::EvmState, tx_env};
 

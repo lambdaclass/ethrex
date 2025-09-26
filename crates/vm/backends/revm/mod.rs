@@ -49,9 +49,8 @@ use ethrex_common::{
     },
 };
 use revm::primitives::{
-    Bytes,
-    Address as RevmAddress, FixedBytes, TxKind as RevmTxKind, U256 as RevmU256, hardfork::SpecId,
-    ruint::Uint,
+    Address as RevmAddress, Bytes, FixedBytes, TxKind as RevmTxKind, U256 as RevmU256,
+    hardfork::SpecId, ruint::Uint,
 };
 use std::cmp::min;
 
