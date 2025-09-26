@@ -9,10 +9,10 @@ ethrex-rpc.workspace = true
 ethrex-config.workspace = true
 guest_program = { path = "../../crates/l2/prover/src/guest_program" }
 
-ere-dockerized = { git = "https://github.com/eth-act/ere", package = "ere-dockerized" }
+ere-dockerized = { git = "https://github.com/eth-act/ere", package = "ere-dockerized", rev = "215a326" }
 zkvm-interface = { git = "https://github.com/eth-act/ere", package = "zkvm-interface", features = [
     "clap",
-] }
+], rev = "215a326" }
 
 tokio.workspace = true
 rkyv.workspace = true
