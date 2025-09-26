@@ -28,6 +28,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
+        # TODO (#4669): re-enable risc0
         # backend: ["sp1", "risc0"]
         backend: ["sp1"]
     steps:
