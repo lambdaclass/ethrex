@@ -229,20 +229,44 @@ impl fmt::Debug for Stack {
 #[repr(C, align(64))] // cache line aligned
 pub struct CallFrame {
     // Cache line 1
-    pub memory: Memory, // 24B
-    pub stack: Stack,   // 16B
+    pub memory: Memory,
+    pub stack: Stack,
     /// Keeps track of the remaining gas in the current context.
-    pub gas_remaining: u64, // 8B
+    pub gas_remaining: u64,
     /// Program Counter
-    pub pc: usize, // 8b
+    pub pc: usize,
 
     // Cache line 2
     /// Bytecode to execute
-    pub bytecode: Bytes, // 32B
+    pub bytecode: Bytes,
     /// Data sent along the transaction. Empty in CREATE transactions.
-    pub calldata: Bytes, // 32B
+    pub calldata: Bytes,
 
-    // Cache line 3
+    // Cache line 3: return buffers that are read/written together.
+    /// Return data of the CURRENT CONTEXT (see docs for more details)
+    pub output: Bytes,
+    /// Return data of the SUB-CONTEXT (see docs for more details)
+    pub sub_return_data: Bytes,
+
+    // Cache line 4
+    /// Value sent along the transaction
+    pub msg_value: U256,
+    /// Max gas a callframe can use
+    pub gas_limit: u64,
+    /// Call stack current depth
+    pub depth: usize,
+    /// Return data offset
+    pub ret_offset: usize,
+    /// Return data size
+    pub ret_size: usize,
+
+    // Cache line 5
+    /// If true then transfer value from caller to callee
+    pub should_transfer_value: bool,
+    /// Indicates if current context is static (if it is, it can't alter state)
+    pub is_static: bool,
+    /// This is set to true if the function that created this callframe is CREATE or CREATE2
+    pub is_create: bool,
     /// Address of the account that sent the message
     pub msg_sender: Address,
     /// Address of the code to execute. Usually the same as `to`, but can be different
@@ -250,34 +274,8 @@ pub struct CallFrame {
     /// Address of the recipient of the message
     pub to: Address,
 
-    // Cache line 4
-    /// Value sent along the transaction
-    pub msg_value: U256, // 32B
-    /// Return data of the CURRENT CONTEXT (see docs for more details)
-    pub output: Bytes, // 32B
-
-    // Cache line 5
-    /// Return data of the SUB-CONTEXT (see docs for more details)
-    pub sub_return_data: Bytes, // 32B
-    /// Max gas a callframe can use
-    pub gas_limit: u64, // 8B
-    /// Call stack current depth
-    pub depth: usize, // 8B
-    /// Return data offset
-    pub ret_offset: usize, // 8B
-    /// Return data size
-    pub ret_size: usize, // 8B
-
-    // Bools before so they are in the same cache line
-    /// If true then transfer value from caller to callee
-    pub should_transfer_value: bool,
-    /// Indicates if current context is static (if it is, it can't alter state)
-    pub is_static: bool,
-    /// This is set to true if the function that created this callframe is CREATE or CREATE2
-    pub is_create: bool,
-
-    // Rest
-    /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
+    // Cache line 6
+    /// Every time we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
 
     /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
@@ -344,29 +342,30 @@ impl CallFrame {
         memory: Memory,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
+        let jump_target_filter = JumpTargetFilter::new(bytecode.clone());
 
         Self {
-            gas_limit,
+            memory,
+            stack,
             gas_remaining: gas_limit,
-            msg_sender,
-            to,
-            code_address,
-            bytecode: bytecode.clone(),
-            msg_value,
+            pc: 0,
+            bytecode,
             calldata,
-            is_static,
+            output: Bytes::default(),
+            sub_return_data: Bytes::default(),
+            msg_value,
+            gas_limit,
             depth,
-            jump_target_filter: JumpTargetFilter::new(bytecode),
-            should_transfer_value,
-            is_create,
             ret_offset,
             ret_size,
-            stack,
-            memory,
+            should_transfer_value,
+            is_static,
+            is_create,
+            msg_sender,
+            code_address,
+            to,
             call_frame_backup: CallFrameBackup::default(),
-            output: Bytes::default(),
-            pc: 0,
-            sub_return_data: Bytes::default(),
+            jump_target_filter,
         }
     }
 
