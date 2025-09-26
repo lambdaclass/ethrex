@@ -376,7 +376,7 @@ impl Mempool {
         };
 
         if !is_a_replacement_tx {
-            return Err(MempoolError::NonceTooLow);
+            return Err(MempoolError::UnderpricedReplacement);
         }
 
         Ok(Some(tx_in_pool.hash()))
