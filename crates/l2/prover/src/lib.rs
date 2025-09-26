@@ -14,6 +14,7 @@ pub async fn init_client(config: ProverConfig) {
     warn!("Prover finished!");
 }
 
+/// Execute a program using the specified backend.
 pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     match backend {
         Backend::Exec => backend::exec::execute(input),
@@ -26,6 +27,7 @@ pub fn execute(backend: Backend, input: ProgramInput) -> Result<(), Box<dyn std:
     }
 }
 
+/// Generate a proof using the specified backend.
 pub fn prove(
     backend: Backend,
     input: ProgramInput,

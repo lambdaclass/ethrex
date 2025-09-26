@@ -42,6 +42,11 @@ default-members = ["cmd/ethrex"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = ["LambdaClass"]
+documentation = "https://docs.ethrex.xyz"
+
+[profile.dev]
+debug = 2
 
 [profile.release]
 opt-level = 3
@@ -94,14 +99,13 @@ tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
 cfg-if = "1.0.0"
-reqwest = { version = "0.12.7", features = ["json"] }
+reqwest = { version = "0.12.7", features = ["socks", "json"] }
 snap = "1.1.1"
 secp256k1 = { version = "0.29.1", default-features = false, features = [
   "global-context",
   "recovery",
   "rand",
 ] }
-keccak-hash = "0.11.0"
 axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
@@ -120,6 +124,7 @@ rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
+tower-http = { version = "0.6.2", features = ["cors"] }
 
 rocksdb = "0.24.0"
 

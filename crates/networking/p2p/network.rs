@@ -2,7 +2,6 @@ use crate::{
     discv4::server::{DiscoveryServer, DiscoveryServerError},
     kademlia::{Kademlia, PeerData},
     metrics::METRICS,
-    peer_score::PeerScores,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
         initiator::{RLPxInitiator, RLPxInitiatorError},
@@ -172,16 +171,14 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 pub async fn periodically_show_peer_stats(
     blockchain: Arc<Blockchain>,
     peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
-    peers_score: Arc<Mutex<PeerScores>>,
 ) {
-    periodically_show_peer_stats_during_syncing(blockchain, peers.clone(), peers_score).await;
+    periodically_show_peer_stats_during_syncing(blockchain, peers.clone()).await;
     periodically_show_peer_stats_after_sync(peers).await;
 }
 
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
     peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
-    peer_scores: Arc<Mutex<PeerScores>>,
 ) {
     let start = std::time::Instant::now();
     loop {
@@ -199,8 +196,8 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Common metrics
             let elapsed = format_duration(start.elapsed());
             let peer_number = peers.lock().await.len();
-            let peer_scores_number = peer_scores.lock().await.len();
             let current_step = METRICS.current_step.lock().await.clone();
+            let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
             let headers_to_download = METRICS.headers_to_download.load(Ordering::Relaxed);
@@ -361,8 +358,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
             info!(
                 "P2P Snap Sync:
 elapsed: {elapsed}
-{peer_number} peers. Scored peers {peer_scores_number}
+{peer_number} peers.
 \x1b[93mCurrent step:\x1b[0m {current_step}
+Current Header Hash: {current_header_hash:x}
 ---
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}

@@ -1,11 +1,11 @@
 name: Replay proving
 on:
-  # push:
-  #   branches: ["main"]
-  # pull_request:
-  #   branches: ["**"]
-  #   paths:
-  #     - ".github/workflows/main_prover_l1.yaml"
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/main_prover_l1.yaml"
   workflow_dispatch:
 
 concurrency:
@@ -43,7 +43,8 @@ jobs:
         # but it throws a "error decoding response body" in that case
         run: |
           curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 2.3.1
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
           ~/.risc0/bin/rzup install rust
       - name: RISC-V SP1 toolchain install
         env:
@@ -73,9 +74,9 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "http://eth-testnet-rpc:8547"
         run: |
-          cp fixtures/cache/rpc_prover/cache_hoodi_1145479.bin cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_hoodi_1265656.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=1145479 NETWORK=hoodi
+          make prove-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=1265656 NETWORK=hoodi
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1

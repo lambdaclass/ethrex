@@ -12,14 +12,14 @@ use ethrex_blockchain::{
     validate_block,
 };
 use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
-use keccak_hash::H256;
 pub use payload_builder::build_payload;
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+use serde::Serialize;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
 use tracing::{debug, error, info};
 
@@ -35,13 +35,19 @@ use ethrex_metrics::metrics;
 use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
 #[derive(Clone)]
+pub enum CallMessage {
+    Health,
+}
+
+#[derive(Clone)]
 pub enum InMessage {
     Produce,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum OutMessage {
     Done,
+    Health(BlockProducerHealth),
 }
 
 pub struct BlockProducer {
@@ -52,6 +58,17 @@ pub struct BlockProducer {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    // Needed to ensure privileged tx nonces are sequential
+    last_privileged_nonce: Option<u64>,
+    block_gas_limit: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct BlockProducerHealth {
+    sequencer_state: String,
+    block_time_ms: u64,
+    coinbase_address: Address,
+    elasticity_multiplier: u64,
 }
 
 impl BlockProducer {
@@ -66,6 +83,7 @@ impl BlockProducer {
             block_time_ms,
             coinbase_address,
             elasticity_multiplier,
+            block_gas_limit,
         } = config;
         Self {
             store,
@@ -75,6 +93,9 @@ impl BlockProducer {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
+            // FIXME: Initialize properly to the last privileged nonce in the chain
+            last_privileged_nonce: None,
+            block_gas_limit: *block_gas_limit,
         }
     }
 
@@ -84,7 +105,7 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
-    ) -> Result<(), BlockProducerError> {
+    ) -> Result<GenServerHandle<BlockProducer>, BlockProducerError> {
         let mut block_producer = Self::new(
             &cfg.block_producer,
             store,
@@ -97,7 +118,7 @@ impl BlockProducer {
             .cast(InMessage::Produce)
             .await
             .map_err(BlockProducerError::InternalError)?;
-        Ok(())
+        Ok(block_producer)
     }
 
     pub async fn produce_block(&mut self) -> Result<(), BlockProducerError> {
@@ -127,6 +148,7 @@ impl BlockProducer {
             beacon_root: Some(head_beacon_block_root),
             version,
             elasticity_multiplier: self.elasticity_multiplier,
+            gas_ceil: self.block_gas_limit,
         };
         let payload = create_payload(&args, &self.store)?;
 
@@ -135,7 +157,8 @@ impl BlockProducer {
             self.blockchain.clone(),
             payload,
             &self.store,
-            &self.rollup_store,
+            &mut self.last_privileged_nonce,
+            self.block_gas_limit,
         )
         .await?;
         info!(
@@ -195,7 +218,7 @@ impl BlockProducer {
 }
 
 impl GenServer for BlockProducer {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = BlockProducerError;
@@ -218,5 +241,20 @@ impl GenServer for BlockProducer {
             Self::CastMsg::Produce,
         );
         CastResponse::NoReply
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            CallMessage::Health => CallResponse::Reply(OutMessage::Health(BlockProducerHealth {
+                sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+                block_time_ms: self.block_time_ms,
+                coinbase_address: self.coinbase_address,
+                elasticity_multiplier: self.elasticity_multiplier,
+            })),
+        }
     }
 }

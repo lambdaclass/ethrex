@@ -7,9 +7,9 @@ use tracing::{error, info};
 use crate::slack::{SlackWebHookActionElement, SlackWebHookBlock, SlackWebHookRequest};
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ReplayerMode {
     Execute,
+    ExecuteNoZkvm,
     ExecuteSP1,
     ExecuteRISC0,
     ExecuteOpenVM,
@@ -41,6 +41,7 @@ impl Display for ReplayerMode {
             ReplayerMode::ProveSP1 => write!(f, "prove_sp1"),
             ReplayerMode::ProveRISC0 => write!(f, "prove_risc0"),
             ReplayerMode::ProveOpenVM => write!(f, "prove_openvm"),
+            ReplayerMode::ExecuteNoZkvm => write!(f, "execute_no_zkvm"),
         }
     }
 }
@@ -93,13 +94,46 @@ impl BlockRunReport {
     }
 
     pub fn to_slack_message(&self) -> SlackWebHookRequest {
+        let eth_proofs_button = SlackWebHookActionElement::Button {
+            text: SlackWebHookBlock::PlainText {
+                text: String::from("View on EthProofs"),
+                emoji: false,
+            },
+            url: format!("https://ethproofs.org/blocks/{}", self.number),
+        };
+
+        let mut slack_webhook_actions = vec![SlackWebHookActionElement::Button {
+            text: SlackWebHookBlock::PlainText {
+                text: String::from("View on Etherscan"),
+                emoji: false,
+            },
+            url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+                format!("https://etherscan.io/block/{}", self.number)
+            } else {
+                format!(
+                    "https://{}.etherscan.io/block/{}",
+                    self.network, self.number
+                )
+            },
+        }];
+
+        if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
+            // EthProofs only prove block numbers multiples of 100.
+            if self.number % 100 == 0 && self.replayer_mode.is_proving_mode() {
+                slack_webhook_actions.push(eth_proofs_button);
+            }
+        }
+
         SlackWebHookRequest {
             blocks: vec![
                 SlackWebHookBlock::Header {
                     text: Box::new(SlackWebHookBlock::PlainText {
                         text: match (&self.run_result, &self.replayer_mode) {
                             (Ok(_), ReplayerMode::Execute) => {
-                                String::from("✅ Successfully Executed Block")
+                                String::from("✅ Successfully Executed Block with Exec Backend")
+                            }
+                            (Ok(_), ReplayerMode::ExecuteNoZkvm) => {
+                                String::from("✅ Successfully Executed Block without zkVM")
                             }
                             (Ok(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("✅ Successfully Executed Block with SP1")
@@ -120,7 +154,10 @@ impl BlockRunReport {
                                 String::from("✅ Successfully Proved Block with OpenVM")
                             }
                             (Err(_), ReplayerMode::Execute) => {
-                                String::from("⚠️ Failed to Execute Block")
+                                String::from("⚠️ Failed to Execute Block with Exec Backend")
+                            }
+                            (Err(_), ReplayerMode::ExecuteNoZkvm) => {
+                                String::from("⚠️ Failed to Execute Block without zkVM")
                             }
                             (Err(_), ReplayerMode::ExecuteSP1) => {
                                 String::from("⚠️ Failed to Execute Block with SP1")
@@ -166,20 +203,7 @@ impl BlockRunReport {
                     }),
                 },
                 SlackWebHookBlock::Actions {
-                    elements: vec![SlackWebHookActionElement::Button {
-                        text: SlackWebHookBlock::PlainText {
-                            text: String::from("View on Etherscan"),
-                            emoji: false,
-                        },
-                        url: if let Network::PublicNetwork(PublicNetwork::Mainnet) = self.network {
-                            format!("https://etherscan.io/block/{}", self.number)
-                        } else {
-                            format!(
-                                "https://{}.etherscan.io/block/{}",
-                                self.network, self.number
-                            )
-                        },
-                    }],
+                    elements: slack_webhook_actions,
                 },
             ],
         }
@@ -237,7 +261,7 @@ impl Display for BlockRunReport {
     }
 }
 
-fn format_duration(duration: Duration) -> String {
+pub fn format_duration(duration: Duration) -> String {
     let total_seconds = duration.as_secs();
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;

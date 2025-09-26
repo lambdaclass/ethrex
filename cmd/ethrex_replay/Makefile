@@ -16,3 +16,8 @@ prove-risc0-gpu-ci:
 	cargo r -r --no-default-features --features "risc0,gpu,ci" -- block --prove ${REPLAY_BLOCK_ARGS}
 prove-openvm-gpu-ci:
 	cargo r -r --no-default-features --features "openvm,gpu,ci" -- block --prove ${REPLAY_BLOCK_ARGS}
+
+execute-sp1-ci:
+	cargo r -r --features "sp1,ci" -- block --execute ${REPLAY_BLOCK_ARGS}
+execute-risc0-ci:
+	cargo r -r --no-default-features --features "risc0,ci" -- block --execute ${REPLAY_BLOCK_ARGS}

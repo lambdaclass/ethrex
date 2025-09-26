@@ -1,18 +1,18 @@
 use std::{cmp::min, fmt::Display};
 
+use crate::utils::keccak;
 use bytes::Bytes;
-use ethereum_types::{Address, H256, Signature, U256};
+use ethereum_types::{Address, Signature, H256, U256};
 use k256::ecdsa::{RecoveryId, VerifyingKey};
-use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
-use serde::{Serialize, ser::SerializeStruct};
+use serde::{ser::SerializeStruct, Serialize};
 pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
 use sha3::{Digest, Keccak256};
 
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
+    decode::{get_rlp_bytes_item_payload, is_encoded_as_bytes, RLPDecode},
     encode::{PayloadRLPEncode, RLPEncode},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -1222,7 +1222,7 @@ impl Transaction {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
-        keccak_hash::keccak(self.encode_canonical_to_vec())
+        crate::utils::keccak(self.encode_canonical_to_vec())
     }
 
     pub fn hash(&self) -> H256 {
@@ -1335,7 +1335,7 @@ impl PrivilegedL2Transaction {
         let u256_nonce = U256::from(self.nonce);
         let nonce = u256_nonce.to_big_endian();
 
-        Some(keccak_hash::keccak(
+        Some(crate::utils::keccak(
             [
                 self.from.as_bytes(),
                 to.as_bytes(),
@@ -1497,7 +1497,7 @@ mod canonic_encoding {
 mod serde_impl {
     use ethereum_types::H160;
     use serde::Deserialize;
-    use serde::{Deserializer, de::Error};
+    use serde::{de::Error, Deserializer};
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
@@ -2616,7 +2616,7 @@ mod tests {
 
     use super::*;
     use crate::types::{
-        AuthorizationTuple, BlockBody, Receipt, compute_receipts_root, compute_transactions_root,
+        compute_receipts_root, compute_transactions_root, AuthorizationTuple, BlockBody, Receipt,
     };
     use ethereum_types::H160;
     use hex_literal::hex;
@@ -3095,12 +3095,10 @@ mod tests {
     fn test_eip2930_transaction_into_generic() {
         let access_list = vec![(
             Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
-            vec![
-                H256::from_str(
-                    "0x1234567890123456789012345678901234567890123456789012345678901234",
-                )
-                .unwrap(),
-            ],
+            vec![H256::from_str(
+                "0x1234567890123456789012345678901234567890123456789012345678901234",
+            )
+            .unwrap()],
         )];
 
         let eip2930_tx = EIP2930Transaction {

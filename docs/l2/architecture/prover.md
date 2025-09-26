@@ -35,7 +35,9 @@ Make sure to read each zkVM's install docs first to ensure you have all needed p
 
 - [RISC0](https://dev.risczero.com/api/zkvm/install)
   1. `curl -L https://risczero.com/install | bash`
-  2. `rzup install cargo-risczero 2.3.1`
+  2. `rzup install cargo-risczero 3.0.3`
+  3. `rzup install risc0-groth16`
+  4. `rzup install rust`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
   2. `sp1up --version 5.0.8`
@@ -71,7 +73,7 @@ make init-prover T="prover_type (risc0,sp1) G=true"
 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
-   - It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
+   - It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by [datadir](https://docs.rs/dirs/latest/dirs/fn.datadir.html).
 3. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
@@ -118,6 +120,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
   - `make init-prover T=(sp1,risc0) G=true`
 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
+
    1. `cd ethrex/crates/l2`
    2. Create a `.env` file with the following content:
 
@@ -150,19 +153,22 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.
 
 - `Finally`, to start the `proposer`/`l2 node`, run:
+
   - `make rm-db-l2 && make down`
   - `make deploy-l1 && make init-l2` (if running a risc0 prover, see the next step before invoking the L1 contract deployer)
 
 - If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions [here](https://github.com/risc0/risc0-ethereum/tree/main/contracts/script).
 - For a local L1 running with ethrex, we do the following:
-   1. clone the risc0-ethereum repo
-   1. edit the `risc0-ethereum/contracts/deployment.toml` file by adding
+
+  1.  clone the risc0-ethereum repo
+  1.  edit the `risc0-ethereum/contracts/deployment.toml` file by adding
       ```toml
       [chains.ethrex]
       name = "Ethrex local devnet"
       id = 9
       ```
-   1. export env. variables (we are using an ethrex's rich L1 account)
+  1.  export env. variables (we are using an ethrex's rich L1 account)
+
       ```bash
       export VERIFIER_ESTOP_OWNER="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
       export DEPLOYER_PRIVATE_KEY="0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
@@ -173,14 +179,16 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       export ETHERSCAN_URL="dummy"
       export ETHERSCAN_API_KEY="dummy"
       ```
+
       the last two variables need to be defined with some value even if not used, else the deployment script fails.
-   1. cd into `risc0-ethereum/`
-   1. run the deployment script
+
+  1.  cd into `risc0-ethereum/`
+  1.  run the deployment script
       ```bash
       bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
       ```
-   1. if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
-   if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
+  1.  if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
+      if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
 
 ## Configuration
 
@@ -235,25 +243,21 @@ These inputs are required for proof generation, but not all of them are committe
 
 The purpose of the execution witness is to allow executing the blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
 
-An execution witness (represented by the `ProverDB` type) contains:
-
-1. all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the blocks' execution.
-2. Merkle Patricia Trie (MPT) proofs that prove the inclusion or exclusion of each initial value in the initial world state trie.
+An execution witness contains all the initial state values (state nodes, codes, storage keys, block headers) that will be read or written to during the blocks' execution.
 
 An execution witness is created from a prior execution of the blocks. Before proving, we need to:
 
-1. execute the blocks (also called "pre-execution").
+1. execute the blocks (also called "pre-execution") to identify which state values will be accessed.
 2. log every initial state value accessed or updated during this execution.
-3. store each logged value in an in-memory key-value database (`ProverDB`, implemented just using hash maps).
-4. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.
+3. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.
 
-Steps 1-3 are straightforward. Step 4 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](#step-1-initial-state-validation) and [final state validation](#step-3-final-state-validation) we explain what are pruned tries and in which case they get restructured.
+Steps 1 and 2 are data collection steps only - no validation is performed at this stage. The actual validation happens later inside the zkVM guest program. Step 3 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](#step-1-initial-state-validation) and [final state validation](#step-3-final-state-validation) we explain what are pruned tries and in which case they get restructured.
 
 If a value is removed during block execution (meaning it existed initially but not finally), two pathological cases can occur where the witness lacks sufficient information to update the trie structure correctly:
 
 **Case 1**
 
-![Image showing restructuration for case 1](../../img/execw_case1.png)
+![Image showing restructuration for case 1](../img/execw_case1.png)
 
 Here, only **leaf 1** is part of the execution witness, so we lack the proof (and thus the node data) for **leaf 2**. After removing **leaf 1**, **branch 1** becomes redundant. During trie restructuring, it's replaced by **leaf 3**, whose path is the path of **leaf 2** concatenated with a prefix nibble (`k`) representing the choice taken at the original **branch 1**, and keeping **leaf 2**'s value.
 
@@ -267,7 +271,7 @@ Without **leaf 2**'s data, we cannot construct **leaf 3**. The solution is to fe
 
 **Case 2**
 
-![Image showing restructuration for case 2](../../img/execw_case2.png)
+![Image showing restructuration for case 2](../img/execw_case2.png)
 
 In this case, restructuring requires information about **branch/ext 2** (which could be a branch or extension node), but this node might not be in the witness. Checking the final **extension** node might seem sufficient to deduce **branch/ext 2** in simple scenarios. However, this fails if similar restructuring occurred at higher trie levels involving more removals, as the final **extension** node might combine paths from multiple original branches, making it ambiguous to reconstruct the specific missing **branch/ext 2** node.
 
@@ -303,13 +307,18 @@ There are two kinds of MPT proofs:
 
 These three components are specific additions for ethrex's L2 protocol, layered on top of standard Ethereum execution logic. They each require specific validation steps within the program.
 
-For more details, refer to [Overview](../../overview.md), [Withdrawals](../withdrawals.md), and [State diffs](../state_diffs.md).
+For more details, refer to [Overview](./overview.md), [Withdrawals](../fundamentals/withdrawals.md), and [State diffs](../fundamentals/state_diffs.md).
 
 #### Step 1: initial state validation
 
-The program validates the `ProverDB` by iterating over each provided state value (stored in hash maps) and verifying its MPT proof against the initial state hash (obtained from the first block's parent block header input). This is the role of the `verify_db()` function (to link the values with the proofs). We could instead directly decode the data from the MPT proofs on each EVM read/write, although this would incur performance costs.
+The program validates the initial state by converting the `ExecutionWitness` into a `GuestProgramState` and verifying that its trie structure correctly represents the expected state. This involves checking that the calculated state trie root hash matches the initial state hash (obtained from the first block's parent block header).
 
-Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries - a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
+The validation happens in several steps:
+1. The `ExecutionWitness` (collected during pre-execution) is converted to `GuestProgramState`
+2. A `GuestProgramStateWrapper` is created to provide database functionality
+3. The state trie root is calculated and compared against the parent block header's state root
+
+This validation ensures that all state values needed for execution are properly linked to the initial state via their MPT proofs. Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries - a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
 
 #### Step 2: blocks execution
 

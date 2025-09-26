@@ -1,25 +1,24 @@
 use crate::{
-    EVMConfig, Environment,
     account::{AccountStatus, LevmAccount},
     call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
-        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
+        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
+        BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
+        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
     vm::{Substate, VM},
+    EVMConfig, Environment,
 };
-use ExceptionalHalt::OutOfGas;
-use bytes::{Bytes, buf::IntoIter};
+use bytes::{buf::IntoIter, Bytes};
 use ethrex_common::{
-    Address, H256, U256,
     evm::calculate_create_address,
-    types::{Account, Fork, Transaction, tx_fields::*},
-    utils::u256_to_big_endian,
+    types::{tx_fields::*, Account, Fork, Transaction},
+    utils::{keccak, u256_to_big_endian},
+    Address, H256, U256,
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
@@ -28,6 +27,7 @@ use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use keccak_hash::keccak;
 use sha3::{Digest, Keccak256};
 use std::{collections::HashMap, iter::Enumerate};
+use ExceptionalHalt::OutOfGas;
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================

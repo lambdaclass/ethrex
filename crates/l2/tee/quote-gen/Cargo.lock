@@ -2074,6 +2074,7 @@ dependencies = [
  "ethrex-p2p",
  "hex",
  "keccak-hash",
+ "serde",
  "serde_json",
 ]
 
@@ -2133,6 +2134,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
+ "futures",
  "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
@@ -2254,6 +2256,7 @@ name = "ethrex-p2p"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "async-trait",
  "bytes",
  "concat-kdf",
  "ctr",
@@ -2443,6 +2446,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "lazy_static",
+ "rkyv",
  "serde",
  "sha3",
  "thiserror 2.0.16",
