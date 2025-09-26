@@ -328,6 +328,7 @@ jobs:
           make init-l1-docker;
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
+          ETHREX_TDX_DEV_MODE=true \
           make deploy-l1
 
       - name: Start Sequencer
