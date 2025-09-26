@@ -315,4 +315,11 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     assert_eq!(value_slot0, U256::zero());
     let value_slot1 = node1.get_storage_at(contract_address, slot_key1).await;
     assert_eq!(value_slot1, slot_value1);
+
+    node0.update_forkchoice(&base_chain).await;
+
+    let value_slot0 = node0.get_storage_at(contract_address, slot_key0).await;
+    assert_eq!(value_slot0, U256::zero());
+    let value_slot1 = node0.get_storage_at(contract_address, slot_key1).await;
+    assert_eq!(value_slot1, slot_value1);
 }
