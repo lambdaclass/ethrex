@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758915753218,
+  "lastUpdate": 1758919078914,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16975,6 +16975,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91238481502,
             "range": "± 368111599",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4e4949b9ae3c839a32ca956a3b80e6289c4e406e",
+          "message": "ci(l2): disable replay proving with risc0 (#4663)\n\n**Motivation**\n\nRunning the `Replay proving` workflow with both backends takes too much\ntime on our self-hosted runner.\n\n**Description**\n\nTemporarily disable replay proving with Risc0.\n\nCloses None",
+          "timestamp": "2025-09-26T19:45:51Z",
+          "tree_id": "b5c2e3ceba12494d2cd4e495c72f91f68032f670",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4e4949b9ae3c839a32ca956a3b80e6289c4e406e"
+        },
+        "date": 1758919056752,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90047413931,
+            "range": "± 154734481",
             "unit": "ns/iter"
           }
         ]
