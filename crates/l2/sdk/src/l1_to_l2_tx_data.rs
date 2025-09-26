@@ -4,6 +4,7 @@ use crate::{
     send_generic_transaction,
 };
 use bytes::Bytes;
+use ethrex_common::H256;
 use ethrex_common::{Address, U256, types::TxType};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::LocalSigner;
@@ -11,7 +12,6 @@ use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
 };
-use keccak_hash::H256;
 use secp256k1::SecretKey;
 
 #[derive(Debug)]

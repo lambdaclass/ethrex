@@ -1,8 +1,8 @@
 use std::sync::LazyLock;
 
 use ethereum_types::{Address, H256};
+use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
-use keccak_hash::keccak;
 
 use serde::{Deserialize, Serialize};
 

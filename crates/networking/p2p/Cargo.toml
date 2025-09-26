@@ -30,7 +30,6 @@ secp256k1.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
-keccak-hash.workspace = true
 futures.workspace = true
 cfg-if.workspace = true
 rocksdb = { workspace = true, optional = true }
