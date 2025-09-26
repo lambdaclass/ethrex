@@ -279,7 +279,11 @@ impl Trie {
 
                         if hash.is_valid() {
                             *choice = match all_nodes.get(&hash.finalize()) {
-                                Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
+                                Some(rlp) => {
+                                    let node_ref: NodeRef =
+                                        get_embedded_node(all_nodes, rlp)?.into();
+                                    node_ref.with_hash(hash)
+                                }
                                 None => hash.into(),
                             };
                         }
@@ -293,7 +297,10 @@ impl Trie {
                     };
 
                     node.child = match all_nodes.get(&hash.finalize()) {
-                        Some(rlp) => get_embedded_node(all_nodes, rlp)?.into(),
+                        Some(rlp) => {
+                            let node_ref: NodeRef = get_embedded_node(all_nodes, rlp)?.into();
+                            node_ref.with_hash(hash)
+                        }
                         None => hash.into(),
                     };
 
@@ -303,8 +310,8 @@ impl Trie {
             })
         }
 
-        let root = get_embedded_node(all_nodes, root_rlp)?;
-        Ok(root.into())
+        let root: NodeRef = get_embedded_node(all_nodes, root_rlp)?.into();
+        Ok(root.with_hash(root_hash.into()))
     }
 
     /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.

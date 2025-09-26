@@ -84,6 +84,16 @@ impl NodeRef {
             NodeRef::Hash(hash) => *hash,
         }
     }
+
+    /// # Warning
+    /// will lead to errors if setting the wrong hash, use only
+    /// when the hash was correctly precalculated
+    pub fn with_hash(self, hash: NodeHash) -> Self {
+        if let NodeRef::Node(_, node_hash) = &self {
+            let _ = node_hash.set(hash);
+        }
+        self
+    }
 }
 
 impl Default for NodeRef {
