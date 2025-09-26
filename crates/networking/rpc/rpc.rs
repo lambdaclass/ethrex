@@ -786,14 +786,14 @@ mod tests {
                     }
                 },
                 "last": {
-                    "activationTime": 1742999832,
+                    "activationTime": 1762955544,
                     "blobSchedule": {
-                        "baseFeeUpdateFraction": 5007716,
-                        "max": 9,
-                        "target": 6
+                        "baseFeeUpdateFraction": 11684671,
+                        "max": 21,
+                        "target": 14,
                     },
                     "chainId": "0x88bb0",
-                    "forkId": "0x0929e24e",
+                    "forkId": "0x23aa1351",
                     "precompiles": {
                         "BLAKE2F": "0x0000000000000000000000000000000000000009",
                         "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
