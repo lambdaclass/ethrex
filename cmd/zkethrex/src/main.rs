@@ -34,6 +34,7 @@ async fn main() {
         block,
         endless,
         slack_webhook_url,
+        only_eth_proofs_blocks,
     } = Options::parse();
 
     if endless && !matches!(block, BlockIdentifier::Tag(_)) {
@@ -68,7 +69,7 @@ async fn main() {
         // Prepare inputs
         println!("Preparing inputs...");
         let mut inputs = Input::new();
-        let input = get_program_input(block.clone()).await;
+        let input = get_program_input(block.clone(), only_eth_proofs_blocks).await;
         inputs.write_bytes(
             rkyv::to_bytes::<rkyv::rancor::Error>(&input)
                 .unwrap()
@@ -108,14 +109,17 @@ async fn main() {
     }
 }
 
-async fn get_program_input(mut block_identifier: BlockIdentifier) -> ProgramInput {
+async fn get_program_input(
+    mut block_identifier: BlockIdentifier,
+    only_eth_proofs_blocks: bool,
+) -> ProgramInput {
     let eth_client = EthClient::new("http://157.180.1.98:8545").unwrap(); // Temporary hardcode to a public node
 
     // Replay EthProofs latest blocks.
     if let BlockIdentifier::Tag(BlockTag::Latest) = block_identifier {
         let mut latest_block_number = eth_client.get_block_number().await.unwrap().as_u64();
 
-        while latest_block_number % 100 != 0 {
+        while only_eth_proofs_blocks && latest_block_number % 100 != 0 {
             tokio::time::sleep(Duration::from_secs(12)).await;
 
             latest_block_number = eth_client.get_block_number().await.unwrap().as_u64();

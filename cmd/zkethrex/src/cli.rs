@@ -24,6 +24,8 @@ pub struct Options {
     pub endless: bool,
     #[arg(long, value_name = "URL", env = "SLACK_WEBHOOK_URL")]
     pub slack_webhook_url: Option<Url>,
+    #[arg(long, default_value_t = false)]
+    pub only_eth_proofs_blocks: bool,
 }
 
 fn parse_block_identifier(s: &str) -> Result<BlockIdentifier, String> {
