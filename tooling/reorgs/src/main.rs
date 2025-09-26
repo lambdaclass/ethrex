@@ -33,7 +33,10 @@ async fn main() {
     info!("");
 
     run_test(&cmd_path, no_reorgs_full_sync_smoke_test).await;
-    run_test(&cmd_path, reorgs_full_sync_smoke_test).await;
+    // This test is flaky 50% of the time, check that it runs correctly 30 times in a row
+    for _ in 0..30 {
+        run_test(&cmd_path, reorgs_full_sync_smoke_test).await;
+    }
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_storage_slots_reorg).await;
 
