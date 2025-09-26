@@ -171,7 +171,7 @@ pub struct Options {
         long = "producer.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
-        help = format!("Block extra data message."),
+        help = "Block extra data message.",
         help_heading = "Block producer options"
     )]
     pub extra_data: String,
