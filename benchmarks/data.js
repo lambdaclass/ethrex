@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758905652972,
+  "lastUpdate": 1758907155256,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16885,6 +16885,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89674128388,
             "range": "± 128161083",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1554492b6ca9e5e77aa2dfbddd38d1dc22228763",
+          "message": "refactor(replay): `ethrex-replay` improvements (#4641)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n> [!NOTE]\n> Some of these changes were inspired by\n[`ere`](https://github.com/eth-act/ere) and\n[`zkevm-benchmark-workload`](https://github.com/eth-act/zkevm-benchmark-workload).\n> This PR settles the ground for adding `ere` as an alternative backend\nfor `ethrex-replay`.\n\n- Adds new options `--zkvm`, `--resource` (cpu, gpu), and `--action`\n(prove, execute).\n- Adds help heading for options.\n- Makes block number, batch number, tx hash positional args to avoid\nneeding to specify them with flags (could seem redundant in some\ncommands e.g. `ethrex-replay block --block`, `ethrex-replay batch\n--batch`, etc).\n- Executes using CPU and no ZKVM by default.\n- Removes the module `bench` as it was already replaced by the report.\n- Refactors the reports (both how it is printed in the console and as\nslack message, se the images below).\n\n**Old Messages/Console print**\n\n<img width=\"397\" height=\"323\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/16715acf-8feb-44e9-99c6-4166b51ce15b\"\n/>\n\n<img width=\"1406\" height=\"37\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/3ea6ef85-9e5d-4375-bd11-6ed16a9f4c01\"\n/>\n\n**New**\n\n<img width=\"486\" height=\"327\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/d85d97cd-2ff7-4027-9c6b-74cc8554fe7b\"\n/>\n\n<img width=\"464\" height=\"221\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/973ee4ba-b5d2-4c3f-8eb4-1c8390f4ac12\"\n/>\n\n---------\n\nCo-authored-by: Jeremías Salomón 🐃🐄🥚 <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-09-26T16:28:46Z",
+          "tree_id": "5a2b5a97d29ac0e1745d5b8b34c6252416b3974c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1554492b6ca9e5e77aa2dfbddd38d1dc22228763"
+        },
+        "date": 1758907134758,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 91279518647,
+            "range": "± 719974276",
             "unit": "ns/iter"
           }
         ]
