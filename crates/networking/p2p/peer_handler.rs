@@ -1308,6 +1308,7 @@ impl PeerHandler {
             }
         }
         let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
+        // TODO: Turn this into a stable sort for binary search.
         accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
         let chunk_size = 300;
         let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
