@@ -233,32 +233,28 @@ impl<'a> StorageRoTx for RocksDBRoTx<'a> {
             .clone();
 
         let iter = self.tx.prefix_iterator_cf(&cf, prefix);
-        let results: Vec<PrefixResult> = iter
-            .map(|result| {
-                result
-                    .map(|(k, v)| (k.to_vec(), v.to_vec()))
-                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-            })
-            .collect();
-
-        let rocks_iter = RocksDBPrefixIter {
-            results: results.into_iter(),
-        };
+        let rocks_iter = RocksDBStreamingIter { inner: iter };
         Ok(Box::new(rocks_iter))
     }
 }
 
-/// Prefix iterator for RocksDB
-pub struct RocksDBPrefixIter {
-    /// Vector of prefix results
-    results: std::vec::IntoIter<PrefixResult>,
+/// Iterator for RocksDB
+pub struct RocksDBStreamingIter<'a> {
+    inner: rocksdb::DBIteratorWithThreadMode<
+        'a,
+        rocksdb::Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
+    >,
 }
 
-impl Iterator for RocksDBPrefixIter {
-    type Item = Result<(Vec<u8>, Vec<u8>), StoreError>;
+impl<'a> Iterator for RocksDBStreamingIter<'a> {
+    type Item = PrefixResult;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.results.next()
+        self.inner.next().map(|result| {
+            result
+                .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+        })
     }
 }
 
@@ -298,17 +294,7 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
             .clone();
 
         let iter = self.tx.prefix_iterator_cf(&cf, prefix);
-        let results: Vec<PrefixResult> = iter
-            .map(|result| {
-                result
-                    .map(|(k, v)| (k.to_vec(), v.to_vec()))
-                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-            })
-            .collect();
-
-        let rocks_iter = RocksDBPrefixIter {
-            results: results.into_iter(),
-        };
+        let rocks_iter = RocksDBStreamingIter { inner: iter };
         Ok(Box::new(rocks_iter))
     }
 }
