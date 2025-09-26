@@ -32,6 +32,7 @@ async fn main() {
     info!("Starting test run");
     info!("");
 
+    run_test(&cmd_path, no_reorgs_full_sync_smoke_test).await;
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_storage_slots_reorg).await;
 
@@ -79,6 +80,20 @@ where
     }
     // Add a blank line after each test for readability
     info!("");
+}
+
+async fn no_reorgs_full_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+
+    // Start two ethrex nodes
+    let node0 = simulator.start_node().await;
+    let node1 = simulator.start_node().await;
+
+    // Create a chain and extend it with a few empty blocks
+    let base_chain = node0.extend_chain(simulator.get_base_chain(), 10).await;
+
+    // Try to fully sync node1 (which is a peer of node0)
+    node1.update_forkchoice(&base_chain).await;
 }
 
 async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
