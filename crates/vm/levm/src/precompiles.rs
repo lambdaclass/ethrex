@@ -106,13 +106,13 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
-pub struct Precompile<'a> {
+pub struct Precompile {
     pub address: H160,
-    pub name: &'a str,
+    pub name: &'static str,
     pub active_since_fork: Fork,
 }
 
-pub const ECRECOVER: Precompile<'_> = Precompile {
+pub const ECRECOVER: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x01,
@@ -121,7 +121,7 @@ pub const ECRECOVER: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const SHA2_256: Precompile<'_> = Precompile {
+pub const SHA2_256: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x02,
@@ -130,7 +130,7 @@ pub const SHA2_256: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const RIPEMD_160: Precompile<'_> = Precompile {
+pub const RIPEMD_160: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x03,
@@ -139,7 +139,7 @@ pub const RIPEMD_160: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const IDENTITY: Precompile<'_> = Precompile {
+pub const IDENTITY: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x04,
@@ -148,7 +148,7 @@ pub const IDENTITY: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const MODEXP: Precompile<'_> = Precompile {
+pub const MODEXP: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x05,
@@ -157,7 +157,7 @@ pub const MODEXP: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const ECADD: Precompile<'_> = Precompile {
+pub const ECADD: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x06,
@@ -166,7 +166,7 @@ pub const ECADD: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const ECMUL: Precompile<'_> = Precompile {
+pub const ECMUL: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x07,
@@ -175,7 +175,7 @@ pub const ECMUL: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const ECPAIRING: Precompile<'_> = Precompile {
+pub const ECPAIRING: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x08,
@@ -184,7 +184,7 @@ pub const ECPAIRING: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const BLAKE2F: Precompile<'_> = Precompile {
+pub const BLAKE2F: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x09,
@@ -193,7 +193,7 @@ pub const BLAKE2F: Precompile<'_> = Precompile {
     active_since_fork: Paris,
 };
 
-pub const POINT_EVALUATION: Precompile<'_> = Precompile {
+pub const POINT_EVALUATION: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0a,
@@ -202,7 +202,7 @@ pub const POINT_EVALUATION: Precompile<'_> = Precompile {
     active_since_fork: Cancun,
 };
 
-pub const BLS12_G1ADD: Precompile<'_> = Precompile {
+pub const BLS12_G1ADD: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0b,
@@ -211,7 +211,7 @@ pub const BLS12_G1ADD: Precompile<'_> = Precompile {
     active_since_fork: Prague,
 };
 
-pub const BLS12_G1MSM: Precompile<'_> = Precompile {
+pub const BLS12_G1MSM: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0c,
@@ -220,7 +220,7 @@ pub const BLS12_G1MSM: Precompile<'_> = Precompile {
     active_since_fork: Prague,
 };
 
-pub const BLS12_G2ADD: Precompile<'_> = Precompile {
+pub const BLS12_G2ADD: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0d,
@@ -229,7 +229,7 @@ pub const BLS12_G2ADD: Precompile<'_> = Precompile {
     active_since_fork: Prague,
 };
 
-pub const BLS12_G2MSM: Precompile<'_> = Precompile {
+pub const BLS12_G2MSM: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0e,
@@ -238,7 +238,7 @@ pub const BLS12_G2MSM: Precompile<'_> = Precompile {
     active_since_fork: Prague,
 };
 
-pub const BLS12_PAIRING_CHECK: Precompile<'_> = Precompile {
+pub const BLS12_PAIRING_CHECK: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0f,
@@ -247,7 +247,7 @@ pub const BLS12_PAIRING_CHECK: Precompile<'_> = Precompile {
     active_since_fork: Prague,
 };
 
-pub const BLS12_MAP_FP_TO_G1: Precompile<'_> = Precompile {
+pub const BLS12_MAP_FP_TO_G1: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x10,
@@ -256,7 +256,7 @@ pub const BLS12_MAP_FP_TO_G1: Precompile<'_> = Precompile {
     active_since_fork: Prague,
 };
 
-pub const BLS12_MAP_FP2_TO_G2: Precompile<'_> = Precompile {
+pub const BLS12_MAP_FP2_TO_G2: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x11,
@@ -265,7 +265,7 @@ pub const BLS12_MAP_FP2_TO_G2: Precompile<'_> = Precompile {
     active_since_fork: Prague,
 };
 
-pub const P256_VERIFICATION: Precompile<'_> = Precompile {
+pub const P256_VERIFICATION: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x01, 0x00,
@@ -274,7 +274,7 @@ pub const P256_VERIFICATION: Precompile<'_> = Precompile {
     active_since_fork: Osaka,
 };
 
-pub const PRECOMPILES: [Precompile<'_>; 19] = [
+pub const PRECOMPILES: [Precompile; 19] = [
     ECRECOVER,
     SHA2_256,
     RIPEMD_160,
@@ -296,7 +296,7 @@ pub const PRECOMPILES: [Precompile<'_>; 19] = [
     P256_VERIFICATION,
 ];
 
-pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile<'static>> {
+pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
     PRECOMPILES
         .into_iter()
         .filter(move |precompile| precompile.active_since_fork <= fork)

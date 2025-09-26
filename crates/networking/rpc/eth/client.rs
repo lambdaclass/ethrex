@@ -108,6 +108,13 @@ impl RpcHandler for Config {
             .header
             .timestamp;
         let current_fork = chain_config.get_fork(latest_block_timestamp);
+
+        if current_fork < Fork::Paris {
+            return Err(RpcErr::UnsuportedFork(
+                "eth-config is not supported for forks prior to Paris".to_string(),
+            ));
+        }
+
         let current = get_config_for_fork(current_fork, &context).await?;
         let next = if let Some(next_fork) = chain_config.next_fork(latest_block_timestamp) {
             Some(get_config_for_fork(next_fork, &context).await?)
