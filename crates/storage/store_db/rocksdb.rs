@@ -1493,6 +1493,27 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    async fn delete_subtree(
+        &self,
+        root: Nibbles,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
+            })?;
+
+            let from = root.as_ref().to_vec();
+            let mut to = root.as_ref().to_vec();
+            to.last_mut().map(|last| *last += 1);
+            println!("deleting subtree {from:?} - {to:?}");
+            db.delete_range_cf(&cf, from, to)
+                .map_err(|e| StoreError::Custom(format!("RocksDB range delete error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
     async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,

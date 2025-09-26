@@ -1312,6 +1312,13 @@ impl Store {
             .await
     }
 
+    pub async fn delete_subtree(
+        &self,
+        root: Nibbles,
+    ) -> Result<(), StoreError> {
+        self.engine.delete_subtree(root).await
+    }
+
     pub async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,

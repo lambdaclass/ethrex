@@ -656,6 +656,13 @@ impl StoreEngine for Store {
 
         Ok(())
     }
+
+    async fn delete_subtree(
+        &self,
+        root: Nibbles,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {

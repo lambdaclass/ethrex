@@ -976,6 +976,13 @@ impl StoreEngine for Store {
 
         self.write_batch::<AccountCodes>(account_codes).await
     }
+
+    async fn delete_subtree(
+        &self,
+        root: Nibbles,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {

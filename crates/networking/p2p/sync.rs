@@ -23,7 +23,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, Trie, TrieError};
+use ethrex_trie::{Nibbles, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -935,9 +935,7 @@ impl Syncer {
                         }
                         *METRICS.current_step.blocking_lock() =
                             "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
-                        let (current_state_root, mut changes) =
-                            trie.collect_changes_since_last_hash();
-                        changes.retain(|(path, _)| path.len() != 64);
+                        let (current_state_root, changes) = trie.collect_changes_since_last_hash();
                         trie.db().put_batch(changes)?;
                         Ok(current_state_root)
                     })
@@ -1133,48 +1131,6 @@ impl Syncer {
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
 
-        info!("Adding leaves...");
-        let trie = store.open_direct_state_trie(pivot_header.state_root)?;
-        let db = trie.db();
-        let mut nodes_to_write = Vec::new();
-        store
-            .open_direct_state_trie(pivot_header.state_root)?
-            .into_iter()
-            .try_for_each(|(path, node)| -> Result<(), SyncError> {
-                let Node::Leaf(node) = node else {
-                    return Ok(());
-                };
-
-                let account_state = AccountState::decode(&node.value)?;
-                let storage_trie = store.open_direct_storage_trie(
-                    H256::from_slice(&path.to_bytes()),
-                    account_state.storage_root,
-                )?;
-                let storage_db = storage_trie.db();
-                let mut storages_to_write = Vec::new();
-                store
-                    .open_direct_storage_trie(
-                        H256::from_slice(&path.to_bytes()),
-                        account_state.storage_root,
-                    )?
-                    .into_iter()
-                    .try_for_each(|(path, node)| -> Result<(), SyncError> {
-                        let Node::Leaf(node) = node else {
-                            return Ok(());
-                        };
-                        storages_to_write.push((path, node.encode_to_vec()));
-                        if storages_to_write.len() > 100_000 {
-                            storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
-                        }
-                        Ok(())
-                    })?;
-
-                nodes_to_write.push((path, node.encode_to_vec()));
-                if nodes_to_write.len() > 100_000 {
-                    db.put_batch(std::mem::take(&mut nodes_to_write))?;
-                }
-                Ok(())
-            })?;
         info!("Finished healing");
 
         // Finish code hash collection

@@ -330,7 +330,7 @@ async fn heal_state_batch(
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
     nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
         let path = batch.remove(0);
         let (missing_children_count, missing_children) =
@@ -338,6 +338,7 @@ async fn heal_state_batch(
         batch.extend(missing_children);
         if missing_children_count == 0 {
             commit_node(
+                &store,
                 node,
                 &path.path,
                 &path.parent_path,
@@ -356,13 +357,63 @@ async fn heal_state_batch(
     Ok(batch)
 }
 
+async fn perform_needed_deletions(
+    store: &Store,
+    node: Node,
+    node_path: &Nibbles,
+    nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
+) -> Result<(), SyncError> {
+    for i in 0..node_path.len() {
+        nodes_to_write.push((node_path.slice(i, node_path.len()), vec![]));
+    }
+    match node {
+        Node::Branch(node) => {
+            for (choice, child) in node.choices.iter().enumerate() {
+                if !child.is_valid() {
+                    store
+                        .delete_subtree(node_path.append_new(choice as u8))
+                        .await?;
+                }
+            }
+        }
+        Node::Extension(node) => {
+            let mut path = node_path.clone();
+            for window in node.prefix.as_ref().windows(2) {
+                let [current_nibble, next_nibble] = window else {
+                    break;
+                };
+                for i in 0..16u8 {
+                    if i == *next_nibble {
+                        if path.len() + 1 != node_path.len() + node.prefix.len() {
+                            nodes_to_write.push((path.append_new(i), vec![]));
+                        }
+                    } else {
+                        store.delete_subtree(path.append_new(i)).await?;
+                    }
+                }
+                path.append(*current_nibble as u8);
+            }
+        }
+        Node::Leaf(_) => {}
+    }
+    Ok(())
+}
+
 fn commit_node(
+    store: &Store,
     node: Node,
     path: &Nibbles,
     parent_path: &Nibbles,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
     nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
 ) {
+    futures::executor::block_on(perform_needed_deletions(
+        store,
+        node.clone(),
+        &path,
+        nodes_to_write,
+    ))
+    .unwrap();
     nodes_to_write.push((path.clone(), node.encode_to_vec()));
 
     if parent_path == path {
@@ -376,6 +427,7 @@ fn commit_node(
     membatch_entry.children_not_in_storage_count -= 1;
     if membatch_entry.children_not_in_storage_count == 0 {
         commit_node(
+            store,
             membatch_entry.node,
             parent_path,
             &membatch_entry.parent_path,

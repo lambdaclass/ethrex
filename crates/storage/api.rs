@@ -370,6 +370,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError>;
 
+    async fn delete_subtree(
+        &self,
+        root: Nibbles,
+    ) -> Result<(), StoreError>;
+
     async fn write_account_code_batch(
         &self,
         account_codes: Vec<(H256, Bytes)>,

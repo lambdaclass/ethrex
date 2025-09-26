@@ -6,7 +6,7 @@ use crate::{
         snap::{GetTrieNodes, TrieNodes},
     },
     sync::{
-        AccountStorageRoots,
+        AccountStorageRoots, SyncError,
         state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
     },
     utils::current_unix_time,
@@ -15,7 +15,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-use ethrex_storage::{Store, error::StoreError};
+use ethrex_storage::{Store, apply_prefix, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -482,9 +482,9 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
-                error!("{err} in commit node while committing {node_response:?}")
-            })?;
+            commit_node(&store, &node_response, membatch, roots_healed, to_write).inspect_err(
+                |err| error!("{err} in commit node while committing {node_response:?}"),
+            )?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -587,7 +587,7 @@ pub fn determine_missing_children(
     let trie = store
         .open_direct_storage_trie(
             H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
-            *EMPTY_TRIE_HASH
+            *EMPTY_TRIE_HASH,
         )
         .inspect_err(|_| {
             error!("Malformed data when opening the storage trie in determine missing children")
@@ -649,13 +649,78 @@ pub fn determine_missing_children(
     Ok((paths, count))
 }
 
+async fn perform_needed_deletions(
+    store: &Store,
+    node: Node,
+    hashed_account: H256,
+    node_path: &Nibbles,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Vec<u8>)>>,
+) -> Result<(), SyncError> {
+    for i in 0..node_path.len() {
+        to_write
+            .entry(hashed_account)
+            .or_default()
+            .push((node_path.slice(i, node_path.len()), vec![]));
+    }
+    match node {
+        Node::Branch(node) => {
+            for (choice, child) in node.choices.iter().enumerate() {
+                if !child.is_valid() {
+                    store
+                        .delete_subtree(apply_prefix(
+                            Some(hashed_account),
+                            node_path.append_new(choice as u8),
+                        ))
+                        .await?;
+                }
+            }
+        }
+        Node::Extension(node) => {
+            let mut path = node_path.clone();
+            for window in node.prefix.as_ref().windows(2) {
+                let [current_nibble, next_nibble] = window else {
+                    break;
+                };
+                for i in 0..16u8 {
+                    if i == *next_nibble {
+                        if path.len() + 1 != node_path.len() + node.prefix.len() {
+                            to_write
+                                .entry(hashed_account)
+                                .or_default()
+                                .push((path.append_new(i), vec![]));
+                        }
+                    } else {
+                        store
+                            .delete_subtree(apply_prefix(Some(hashed_account), path.append_new(i)))
+                            .await?;
+                    }
+                }
+                path.append(*current_nibble as u8);
+            }
+        }
+        Node::Leaf(_) => {}
+    }
+    Ok(())
+}
+
 fn commit_node(
+    store: &Store,
     node: &NodeResponse,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
     to_write: &mut HashMap<H256, Vec<(Nibbles, Vec<u8>)>>,
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
+
+    futures::executor::block_on(perform_needed_deletions(
+        store,
+        node.node.clone(),
+        hashed_account,
+        &node.node_request.storage_path,
+        to_write,
+    ))
+    .unwrap();
+
     to_write.entry(hashed_account).or_default().push((
         node.node_request.storage_path.clone(),
         node.node.encode_to_vec(),
@@ -689,6 +754,7 @@ fn commit_node(
 
     if parent_entry.missing_children_count == 0 {
         commit_node(
+            store,
             &parent_entry.node_response,
             membatch,
             roots_healed,
