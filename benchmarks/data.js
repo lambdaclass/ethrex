@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758873715801,
+  "lastUpdate": 1758881391589,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -34618,6 +34618,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0045484989669421485,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "158164b90f9831be742e44cb5392c0008b7d2828",
+          "message": "fix(l1): parse storage slots as numbers in `eth_getStorageAt` (#4644)\n\n**Motivation**\n\nStorage slot keys are numbers, and the JSON-RPC API treats them as such.\n\n**Description**\n\nThis PR changes the way the storage slot is deserialized in\n`eth_getStorageAt`, so numbers with less than 32 bytes, like \"1\" and\n\"0x1\", are accepted.",
+          "timestamp": "2025-09-25T17:06:48Z",
+          "tree_id": "90783729c98a7e679e9dc144c764dce91eec25cc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/158164b90f9831be742e44cb5392c0008b7d2828"
+        },
+        "date": 1758881390693,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0015837938848920865,
             "unit": "Mgas/s"
           }
         ]
