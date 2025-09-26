@@ -154,7 +154,7 @@ async fn get_program_input(mut block_identifier: BlockIdentifier) -> ProgramInpu
 
     ProgramInput {
         blocks: vec![block],
-        db: execution_witness,
+        execution_witness,
         elasticity_multiplier: 2,
         // The L2 specific fields (blob_commitment, blob_proof)
         // will be filled by Default::default() if the 'l2' feature of

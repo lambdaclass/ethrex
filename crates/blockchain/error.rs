@@ -1,6 +1,8 @@
 use ethrex_common::{
-    types::{BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError},
     H256,
+    types::{
+        BlobsBundleError, BlockHash, EcdsaError, InvalidBlockBodyError, InvalidBlockHeaderError,
+    },
 };
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;

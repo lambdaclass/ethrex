@@ -1,5 +1,6 @@
-use ethrex_common::utils::keccak;
 use ethrex_common::Address;
+use ethrex_common::utils::keccak;
+#[cfg(feature = "secp256k1")]
 use secp256k1::SecretKey;
 
 #[cfg(feature = "secp256k1")]
