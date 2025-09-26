@@ -1212,7 +1212,10 @@ impl StoreEngine for Store {
     }
 
     // TODO: REVIEW LOGIC AGAINST LIBMDBX
-    async fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
         let mut index = 0u64;
 
