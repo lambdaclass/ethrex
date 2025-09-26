@@ -86,6 +86,7 @@ pub struct TxBroadcaster {
     peer_indexer: HashMap<H256, u32>,
     // tx_hash -> broadcast record (which peers know it and when it was last sent)
     known_txs: HashMap<H256, BroadcastRecord>,
+    // Next index to assign to a new peer
     next_peer_idx: u32,
     start: Instant,
 }
@@ -140,13 +141,17 @@ impl TxBroadcaster {
         self.start.elapsed().as_secs().min(u32::MAX as u64) as u32
     }
 
+    // Get or assign a unique index to the peer_id
     #[inline]
     fn peer_index(&mut self, peer_id: H256) -> u32 {
         if let Some(&idx) = self.peer_indexer.get(&peer_id) {
             idx
         } else {
+            // We are assigning indexes sequentially, so next_peer_idx is always the next available one.
+            // self.peer_indexer.len() could be used instead of next_peer_idx but avoided here if we ever
+            // remove entries from peer_indexer in the future.
             let idx = self.next_peer_idx;
-            // In practice we won't exceed u32::MAX peers; wrap is acceptable but extremely unlikely
+            // In practice we won't exceed u32::MAX (~4.29 Billion) peers, wrapping_add could be unnecessary.
             self.next_peer_idx = self.next_peer_idx.wrapping_add(1);
             self.peer_indexer.insert(peer_id, idx);
             idx
@@ -212,7 +217,7 @@ impl TxBroadcaster {
                 .filter(|tx| {
                     let hash = tx.hash();
                     !self
-                        .peers_known_txs
+                        .known_txs
                         .get(&hash)
                         .map_or(false, |record| record.peers.is_set(peer_idx))
                 })
