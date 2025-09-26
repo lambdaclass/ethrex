@@ -676,7 +676,7 @@ impl FullBlockSyncState {
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
             block_batch,
-            sync_head_found,
+            sync_head_found || finished,
             cancel_token.clone(),
         )
         .await
