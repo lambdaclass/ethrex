@@ -27,13 +27,17 @@ impl AsRef<[u8]> for NodeHash {
 
 impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
+    #[inline]
     pub fn from_encoded_raw(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
-            let mut hash = [0u8; 32];
+            let mut hash = std::mem::MaybeUninit::<H256>::uninit();
             let mut hasher = Keccak::v256();
             hasher.update(encoded);
-            hasher.finalize(&mut hash);
-            NodeHash::Hashed(H256(hash))
+            unsafe {
+                let hash_ptr: *mut [u8; 32] = hash.as_mut_ptr().cast();
+                hasher.finalize(&mut *hash_ptr);
+                NodeHash::Hashed(hash.assume_init())
+            }
         } else {
             NodeHash::from_slice(encoded)
         }
