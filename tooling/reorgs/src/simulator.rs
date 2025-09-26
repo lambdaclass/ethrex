@@ -279,6 +279,14 @@ impl Node {
         chain
     }
 
+    pub async fn extend_chain(&self, mut chain: Chain, num_blocks: usize) -> Chain {
+        for _ in 0..num_blocks {
+            chain = self.build_payload(chain).await;
+            self.notify_new_payload(&chain).await;
+        }
+        chain
+    }
+
     pub async fn notify_new_payload(&self, chain: &Chain) {
         let head = chain.blocks.last().unwrap();
         let execution_payload = ExecutionPayload::from_block(head.clone());

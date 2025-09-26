@@ -34,6 +34,7 @@ async fn main() {
 
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_storage_slots_reorg).await;
+    run_test(&cmd_path, test_storage_tree_with_branches).await;
 
     // TODO: this test is failing
     // run_test(&cmd_path, test_many_blocks_reorg).await;
@@ -250,15 +251,18 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
         .send_contract_deploy(&signer, contract_deploy_bytecode)
         .await;
 
-    for _ in 0..10 {
-        let extended_base_chain = node0.build_payload(base_chain).await;
-        node0.notify_new_payload(&extended_base_chain).await;
-        node0.update_forkchoice(&extended_base_chain).await;
+    base_chain = node0.extend_chain(base_chain, 10).await;
+    // for _ in 0..10 {
+    //     let extended_base_chain = node0.build_payload(base_chain).await;
+    //     node0.notify_new_payload(&extended_base_chain).await;
+    //     node0.update_forkchoice(&extended_base_chain).await;
 
-        node1.notify_new_payload(&extended_base_chain).await;
-        node1.update_forkchoice(&extended_base_chain).await;
-        base_chain = extended_base_chain;
-    }
+    //     node1.notify_new_payload(&extended_base_chain).await;
+    //     node1.update_forkchoice(&extended_base_chain).await;
+    //     base_chain = extended_base_chain;
+    // }
+
+    node1.update_forkchoice(&base_chain).await;
 
     // Sanity check: storage slots are initially empty
     let initial_value = node0.get_storage_at(contract_address, slot_key0).await;
@@ -315,4 +319,16 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     assert_eq!(value_slot0, U256::zero());
     let value_slot1 = node1.get_storage_at(contract_address, slot_key1).await;
     assert_eq!(value_slot1, slot_value1);
+}
+
+async fn test_storage_tree_with_branches(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+
+    // These hash to the same 0x2b prefix, causing a branch in the storage trie
+    let slot0A = 15865164872778812924_u64;
+    let slot0B = 11566337052255443646_u64;
+
+    // These hash to the same 0x83 prefix, causing a branch in the storage trie
+    let slot1A = 5800641681667202032_u64;
+    let slot1B = 8343558256908705664_u64;
 }
