@@ -30,6 +30,12 @@ ETHREX_NETWORK=mainnet docker compose up
 
 This will start an ethrex node along with a Lighthouse consensus client that syncs with the Ethereum network.
 
+You can also start a Prometheus/Grafana stack for monitoring with:
+
+```sh
+ETHREX_NETWORK=mainnet docker compose --profile metrics up
+```
+
 ### L2: Run an L2 Node
 
 Follow these steps to quickly launch an L2 node using Docker. For advanced details, see the links at the end.

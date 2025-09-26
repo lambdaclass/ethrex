@@ -69,3 +69,9 @@ Or you can set a different network:
 ```sh
 ETHREX_NETWORK=hoodi docker compose up
 ```
+
+You can also start a Prometheus/Grafana stack for monitoring with:
+
+```sh
+docker compose --profile metrics up
+```
