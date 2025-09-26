@@ -14,6 +14,7 @@ use crate::{
     vm::{Substate, VM},
 };
 use ExceptionalHalt::OutOfGas;
+use bitvec::{bitvec, order::Msb0, vec::BitVec};
 use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
@@ -76,60 +77,52 @@ pub fn calculate_create2_address(
 /// offsets of bytes `0x5B` (`JUMPDEST`) within push constants.
 #[derive(Debug)]
 pub struct JumpTargetFilter {
-    /// The list of invalid jump target offsets.
-    filter: Vec<usize>,
-    /// The last processed offset, plus one.
-    offset: usize,
-
-    /// Program bytecode iterator.
-    iter: Enumerate<IntoIter<Bytes>>,
-    /// Number of bytes remaining to process from the last push instruction.
-    partial: usize,
+    bytecode: Bytes,
+    jumpdests: BitVec<u8, Msb0>,
 }
 
 impl JumpTargetFilter {
     /// Create an empty `JumpTargetFilter`.
     pub fn new(bytecode: Bytes) -> Self {
-        Self {
-            filter: Vec::new(),
-            offset: 0,
+        let mut this = Self {
+            bytecode,
+            jumpdests: bitvec![u8, Msb0; 0; 0],
+        };
 
-            iter: bytecode.into_iter().enumerate(),
-            partial: 0,
+        this.precompute();
+
+        this
+    }
+
+    pub fn precompute(&mut self) {
+        let code = &self.bytecode;
+        let len = code.len();
+        self.jumpdests = bitvec![u8, Msb0; 0; len]; // All false, size = len
+
+        let mut i = 0;
+        while i < len {
+            if self.jumpdests.len() < i + 1 {
+                self.jumpdests.resize(i + 1, false); // Rare, if len changes
+            }
+
+            let opcode = code[i];
+            if opcode == 0x5b {
+                self.jumpdests.set(i, true);
+            } else if opcode >= 0x60 && opcode <= 0x7f {
+                // PUSH1 (0x60) to PUSH32 (0x7f): skip 1 to 32 bytes
+                let skip = (opcode - 0x5f) as usize;
+                i += skip; // Advance past data bytes
+            }
+            i += 1;
         }
     }
 
     /// Check whether a target jump address is blacklisted or not.
-    ///
-    /// This method may potentially grow the filter if the requested address is out of range.
-    pub fn is_blacklisted(&mut self, address: usize) -> bool {
-        if let Some(delta) = address.checked_sub(self.offset) {
-            // It is not realistic to expect a bytecode offset to overflow an `usize`.
-            #[expect(clippy::arithmetic_side_effects)]
-            for (offset, value) in (&mut self.iter).take(delta + 1) {
-                match self.partial.checked_sub(1) {
-                    None => {
-                        // Neither the `as` conversions nor the subtraction can fail here.
-                        #[expect(clippy::as_conversions)]
-                        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&Opcode::from(value)) {
-                            self.partial = value as usize - Opcode::PUSH0 as usize;
-                        }
-                    }
-                    Some(partial) => {
-                        self.partial = partial;
-
-                        #[expect(clippy::as_conversions)]
-                        if value == Opcode::JUMPDEST as u8 {
-                            self.filter.push(offset);
-                        }
-                    }
-                }
-            }
-
-            self.filter.last() == Some(&address)
-        } else {
-            self.filter.binary_search(&address).is_ok()
+    pub fn is_blacklisted(&self, address: usize) -> bool {
+        if address >= self.bytecode.len() {
+            return true; // Or false, depending on if out-of-bounds is blacklisted
         }
+        !self.jumpdests[address] // True if NOT a valid JUMPDEST (blacklisted)
     }
 }
 

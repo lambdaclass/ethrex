@@ -41,6 +41,7 @@ ark-ec = "0.5.0"
 ark-ff = "0.5.0"
 strum = { version = "0.27.1", features = ["derive"] }
 k256.workspace = true
+bitvec = { version = "1.0.1", features = ["alloc"] }
 
 [dev-dependencies]
 hex.workspace = true
