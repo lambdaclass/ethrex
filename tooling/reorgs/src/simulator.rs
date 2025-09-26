@@ -284,6 +284,7 @@ impl Node {
             chain = self.build_payload(chain).await;
             self.notify_new_payload(&chain).await;
         }
+        self.update_forkchoice(&chain).await;
         chain
     }
 
