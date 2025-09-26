@@ -8,12 +8,9 @@ use bls12_381::{
 use bytes::{Buf, Bytes};
 use ethrex_common::utils::{keccak, u256_from_big_endian_const};
 use ethrex_common::{
-    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
-    utils::u256_from_big_endian,
+    Address, H160, H256, U256, serde_utils::bool, types::Fork, utils::u256_from_big_endian,
 };
-use ethrex_crypto::blake2f::blake2b_f;
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use k256::elliptic_curve::Field;
+use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use lambdaworks_math::{
     elliptic_curve::{
         short_weierstrass::{
@@ -300,6 +297,97 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
+pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+    // Use the ethrex implementation of ecrecover or the sp1 implementation.
+    // Switch to the sp1 implementation of ecrecover when we are in SP1 environment
+
+    #[cfg(feature = "c-kzg")]
+    {
+        ecrecover_ethrex(calldata, gas_remaining, _fork)
+    }
+
+    #[cfg(feature = "kzg-rs")]
+    {
+        ecrecover_sp1(calldata, gas_remaining, _fork)
+    }
+
+    #[cfg(feature = "openvm-kzg")]
+    {
+        unimplemented!()
+    }
+
+    #[cfg(not(any(feature = "c-kzg", feature = "kzg-rs", feature = "openvm-kzg")))]
+    {
+        compile_error!(
+            "Either feature `c-kzg`, `kzg-rs` or `openvm-kzg` must be enabled to compile this crate."
+        );
+    }
+}
+
+/// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
+/// Given a hash, a Signature and a recovery Id, returns the public key recovered by secp256k1
+pub fn ecrecover_ethrex(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
+    use secp256k1::{
+        Message,
+        ecdsa::{RecoverableSignature, RecoveryId},
+    };
+    let gas_cost = ECRECOVER_COST;
+
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+
+    // If calldata does not reach the required length, we should fill the rest with zeros
+    let calldata = fill_with_zeros(calldata, 128);
+
+    // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
+    let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let Ok(message) = Message::from_digest_slice(hash) else {
+        return Ok(Bytes::new());
+    };
+
+    let raw_v = calldata.get(32..64).ok_or(InternalError::Slicing)?;
+
+    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
+    let recovery_id_from_rpc = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(27) => 0,
+        Ok(28) => 1,
+        _ => return Ok(Bytes::new()),
+    };
+
+    let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc) else {
+        return Ok(Bytes::new());
+    };
+
+    // signature is made up of the parameters r and s
+    let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
+    let Ok(signature) = RecoverableSignature::from_compact(sig, recovery_id) else {
+        return Ok(Bytes::new());
+    };
+
+    // Recover the address using secp256k1
+    let Ok(public_key) = signature.recover(&message) else {
+        return Ok(Bytes::new());
+    };
+
+    let mut public_key = public_key.serialize_uncompressed();
+
+    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
+    #[allow(clippy::indexing_slicing)]
+    let xy = &mut public_key[1..65];
+
+    let xy = keccak(xy);
+
+    // Address is the last 20 bytes of the hash.
+    let mut out = [0u8; 32];
+    #[allow(clippy::indexing_slicing)]
+    out[12..32].copy_from_slice(&xy[12..32]);
+
+    Ok(Bytes::copy_from_slice(&out))
+}
+
 /// ## ECRECOVER precompile.
 /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
 ///
@@ -309,7 +397,13 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecrecover_sp1(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
+    use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;
@@ -355,7 +449,6 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     #[allow(clippy::indexing_slicing)]
     let xy = &mut uncompressed[1..65];
 
-    // keccak256(X||Y).
     let xy = keccak(xy);
 
     // Address is the last 20 bytes of the hash.
@@ -1178,6 +1271,8 @@ pub fn bls12_g1msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
+    use k256::elliptic_curve::Field;
+
     if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
         return Err(PrecompileError::ParsingInputError.into());
     }

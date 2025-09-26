@@ -10,7 +10,7 @@ name = "revm_comparison"
 path = "src/lib.rs"
 
 [dependencies]
-ethrex-levm = { path = "../../" }
+ethrex-levm = { path = "../../", features = ["c-kzg"] }
 ethrex-vm.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
