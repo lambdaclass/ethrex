@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758897793539,
+  "lastUpdate": 1758904183381,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16825,6 +16825,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 92470825239,
             "range": "± 451344976",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5b14a25d17c7364223bba199f1915b71982b25bb",
+          "message": "refactor(l1): mempool locks (#4615)\n\n**Motivation**\nThe mempool has several locks being used at the same time, which is\nprone to concurrency issues\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nUnify the mempool state in a single struct and use only one lock for it,\nsince we write everything at the same time, this shouldn't affect\nperformance, since we can still do concurrent readings\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4592\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-26T15:36:10Z",
+          "tree_id": "bc638ab8ec693ee719ee85eaafaa44fdfe010be3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5b14a25d17c7364223bba199f1915b71982b25bb"
+        },
+        "date": 1758904162284,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 90335173477,
+            "range": "± 439193528",
             "unit": "ns/iter"
           }
         ]
