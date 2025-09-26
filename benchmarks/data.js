@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758909563035,
+  "lastUpdate": 1758913505104,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16915,6 +16915,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91279518647,
             "range": "± 719974276",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bf6ccc0d6c42e655997e8598e73a1c64ece87b34",
+          "message": "chore(l1): update genesis files to include Fusaka fields (#4643)\n\n**Description**\n\n- Added the Fusaka timestamp and blob schedule to the genesis JSON\nfiles, for both testnets and mainnet\n\n- Updated genesis.rs with BPO forks for future-proofing\n\n- Updated the ForkID test cases to include de new forks. Also added test\ncases for hoodi given Holesky will be getting phased out.\n\nCloses #4598",
+          "timestamp": "2025-09-26T18:12:42Z",
+          "tree_id": "d4f792015f56edb03063cde4cf302d6aa1517bab",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bf6ccc0d6c42e655997e8598e73a1c64ece87b34"
+        },
+        "date": 1758913483687,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89930095553,
+            "range": "± 218684454",
             "unit": "ns/iter"
           }
         ]
