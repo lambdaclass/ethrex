@@ -64,8 +64,7 @@ impl<'de> Deserialize<'de> for Tests {
             // Parse the field value as a `RawTransaction`.
             let raw_tx: RawTransaction = serde_json::from_value(tx_field).map_err(|err| {
                 serde::de::Error::custom(format!(
-                    "Failed to deserialize `transaction` field in test {}. Serde error: {}",
-                    test_name, err
+                    "Failed to deserialize `transaction` field in test {test_name}. Serde error: {err}",
                 ))
             })?;
             // Obtain the value of the `post` field in the JSON.
@@ -76,8 +75,7 @@ impl<'de> Deserialize<'de> for Tests {
             // Parse the field value as a `RawPost`.
             let post: RawPost = serde_json::from_value(post_field).map_err(|err| {
                 serde::de::Error::custom(format!(
-                    "Failed to deserialize `post` field in test {}. Serde error: {}",
-                    test_name, err
+                    "Failed to deserialize `post` field in test {test_name}. Serde error: {err}",
                 ))
             })?;
 
@@ -95,7 +93,7 @@ impl<'de> Deserialize<'de> for Tests {
                 ))?;
                 for case in fork_test_cases {
                     let test_case = Self::build_test_case(&raw_tx, fork, case)
-                        .map_err(|e| serde::de::Error::custom(format!("{:?}", e)))?;
+                        .map_err(|e| serde::de::Error::custom(format!("{e:?}")))?;
                     test_cases.push(test_case);
                 }
             }
@@ -125,8 +123,7 @@ impl Tests {
         // Parse the field value as `Info`.
         let test_info = serde_json::from_value(info_field.clone()).map_err(|err| {
             serde::de::Error::custom(format!(
-                "Failed to deserialize `info` field in test {}. Serde error: {}",
-                test_name, err
+                "Failed to deserialize `info` field in test {test_name}. Serde error: {err}",
             ))
         })?;
         // Obtain the value of the `env` field in the JSON.
@@ -136,8 +133,7 @@ impl Tests {
         // Parse the field value as `Env`.
         let test_env = serde_json::from_value(env_field.clone()).map_err(|err| {
             serde::de::Error::custom(format!(
-                "Failed to deserialize `env` field in test {}. Serde error: {}",
-                test_name, err
+                "Failed to deserialize `env` field in test {test_name}. Serde error: {err}",
             ))
         })?;
         // Obtain the value of the `pre` field in the JSON.
@@ -147,8 +143,7 @@ impl Tests {
         // Parse the field value as a `HashMap<Address, AccountState>`.
         let test_pre = serde_json::from_value(pre_field.clone()).map_err(|err| {
             serde::de::Error::custom(format!(
-                "Failed to deserialize `pre` field in test {}. Serde error: {}",
-                test_name, err
+                "Failed to deserialize `pre` field in test {test_name}. Serde error: {err}",
             ))
         })?;
 

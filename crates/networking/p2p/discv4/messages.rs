@@ -73,7 +73,7 @@ impl Packet {
 
         let digest: [u8; 32] = Keccak256::digest(encoded_msg).into();
 
-        let rid = RecoveryId::from_i32(signature_bytes[64].into())
+        let rid = RecoveryId::try_from(signature_bytes[64] as i32)
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
 
         let peer_pk = secp256k1::SECP256K1
@@ -160,7 +160,7 @@ impl Message {
             .serialize_compact();
 
         data[..signature_size - 1].copy_from_slice(&signature);
-        data[signature_size - 1] = recovery_id.to_i32() as u8;
+        data[signature_size - 1] = Into::<i32>::into(recovery_id) as u8;
 
         let hash = Keccak256::digest(&data[..]);
         buf.put_slice(&hash);

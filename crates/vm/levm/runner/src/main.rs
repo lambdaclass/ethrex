@@ -76,16 +76,16 @@ fn main() {
             .write_all(hex_string.as_bytes())
             .expect("Failed to write bytecode to file");
 
-        info!("Bytecode emitted to file: {}", output_path);
+        info!("Bytecode emitted to file: {output_path}");
         return;
     }
 
     // Parse input
     // Input is mutable just to assign bytecode to the transaction recipient if provided
     let mut runner_input: RunnerInput = if let Some(input_file_path) = cli.input {
-        debug!("Reading input file: {}", input_file_path);
+        debug!("Reading input file: {input_file_path}");
         let input_file = File::open(&input_file_path)
-            .unwrap_or_else(|_| panic!("Input file '{}' not found", input_file_path));
+            .unwrap_or_else(|_| panic!("Input file '{input_file_path}' not found"));
         let reader = BufReader::new(input_file);
         serde_json::from_reader(reader).expect("Failed to parse input file")
     } else {
@@ -95,7 +95,7 @@ fn main() {
 
     // Parse bytecode, either from raw bytecode or mnemonics.
     let bytecode: Bytes = if let Some(code_file_path) = cli.code {
-        debug!("Reading file: {}", code_file_path);
+        debug!("Reading file: {code_file_path}");
         let file_content =
             fs::read_to_string(&code_file_path).expect("Failed to read bytecode file");
 
@@ -175,8 +175,8 @@ fn main() {
     // Print execution result
     info!("\n\nResult:");
     match result {
-        Ok(report) => info!(" {:?}\n", report),
-        Err(e) => error!(" Error: {}\n", e),
+        Ok(report) => info!(" {report:?}\n"),
+        Err(e) => error!(" Error: {e}\n"),
     }
 
     // Print final stack and memory
@@ -186,7 +186,7 @@ fn main() {
         &callframe.stack.values[callframe.stack.offset..]
             .iter()
             .rev()
-            .map(|value| format!("0x{:x}", value))
+            .map(|value| format!("0x{value:x}"))
             .collect::<Vec<_>>()
     );
     let final_memory: Vec<u8> = callframe.memory.buffer.borrow()[0..callframe.memory.len].to_vec();
@@ -215,7 +215,7 @@ fn compare_initial_and_current_accounts(
             a if *a == COINBASE => "Coinbase ",
             _ => "",
         };
-        info!("\n Checking {}Account: {:#x}", acc_type, addr);
+        info!("\n Checking {acc_type}Account: {addr:#x}");
 
         if let Some(prev) = initial_accounts.get(&addr) {
             if prev.info.balance != acc.info.balance {
@@ -249,10 +249,7 @@ fn compare_initial_and_current_accounts(
                 let default_value = U256::default();
                 let prev_value = prev.storage.get(slot).unwrap_or(&default_value);
                 if prev_value != value {
-                    info!(
-                        "    Storage slot {:?} changed: {:?} -> {:?}",
-                        slot, prev_value, value
-                    );
+                    info!("    Storage slot {slot:?} changed: {prev_value:?} -> {value:?}");
                 }
             }
         }
@@ -319,8 +316,7 @@ fn mnemonics_to_bytecode(mnemonics: Vec<String>) -> Bytes {
             };
             if decoded_value.len() > push_size {
                 panic!(
-                    "Value {} exceeds the maximum size of {} bytes for PUSH{}",
-                    value, push_size, push_size
+                    "Value {value} exceeds the maximum size of {push_size} bytes for PUSH{push_size}"
                 );
             }
             if decoded_value.len() < push_size {
@@ -332,7 +328,7 @@ fn mnemonics_to_bytecode(mnemonics: Vec<String>) -> Bytes {
 
             bytecode.append(&mut decoded_value);
         } else {
-            debug!("Parsed {}", symbol);
+            debug!("Parsed {symbol}");
         }
     }
 

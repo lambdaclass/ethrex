@@ -240,13 +240,10 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
         (
             "reject transactions from senders with deployed code",
             SENDER_NOT_EOA_REGEX
-        ) | (
-            "call gas cost exceeds the gas limit",
-            "Intrinsic gas too low"
         ) | ("gas floor exceeds the gas limit", "Intrinsic gas too low")
             | ("empty blobs", "Type 3 transaction without blobs")
             | (
-                "blob versioned hashes not supported",
+                "Eip4844 is not supported",
                 "Type 3 transactions are not supported before the Cancun fork"
             )
             | ("blob version not supported", "Invalid blob versioned hash")
@@ -264,6 +261,9 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
             )
             | ("create initcode size limit", "Initcode size exceeded")
     ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
+        || (msg.starts_with("call gas cost")
+            && msg.contains("exceeds the gas limit")
+            && expected_msg == "Intrinsic gas too low")
 }
 
 fn match_expected_regex(expected_error_regex: &str, error_msg: &str) -> bool {

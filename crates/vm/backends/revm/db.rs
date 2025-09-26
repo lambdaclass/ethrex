@@ -1,9 +1,10 @@
 use ethrex_common::types::ChainConfig;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
+use revm::context::DBErrorMarker;
 use revm::primitives::{
-    AccountInfo as RevmAccountInfo, Address as RevmAddress, B256 as RevmB256,
-    Bytecode as RevmBytecode, Bytes as RevmBytes, U256 as RevmU256,
+    Address as RevmAddress, B256 as RevmB256, Bytes as RevmBytes, U256 as RevmU256,
 };
+use revm::state::{AccountInfo as RevmAccountInfo, Bytecode as RevmBytecode};
 
 use crate::db::DynVmDatabase;
 use crate::{VmDatabase, errors::EvmError};
@@ -12,14 +13,14 @@ use crate::{VmDatabase, errors::EvmError};
 ///
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub struct EvmState {
-    pub inner: revm::db::State<DynVmDatabase>,
+    pub inner: revm::database::states::State<DynVmDatabase>,
 }
 
-// Needed because revm::db::State is not cloneable and we need to
+// Needed because revm::database::states::State is not cloneable and we need to
 // restore the previous EVM state after executing a transaction in L2 mode whose resulting state diff doesn't fit in a blob.
 impl Clone for EvmState {
     fn clone(&self) -> Self {
-        let inner = revm::db::State::<DynVmDatabase> {
+        let inner = revm::database::states::State::<DynVmDatabase> {
             cache: self.inner.cache.clone(),
             database: self.inner.database.clone(),
             transition_state: self.inner.transition_state.clone(),
@@ -41,13 +42,15 @@ impl EvmState {
 
 /// Builds EvmState from a Store
 pub fn evm_state(db: DynVmDatabase) -> EvmState {
-    let inner = revm::db::State::builder()
+    let inner = revm::database::states::State::builder()
         .with_database(db)
         .with_bundle_update()
         .without_state_clear()
         .build();
     EvmState { inner }
 }
+
+impl DBErrorMarker for EvmError {}
 
 impl revm::Database for DynVmDatabase {
     type Error = EvmError;

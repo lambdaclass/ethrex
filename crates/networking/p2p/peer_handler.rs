@@ -1846,8 +1846,7 @@ impl PeerHandler {
             .peers
             .lock()
             .await
-            .iter()
-            .map(|(_, peer)| peer)
+            .values()
             .cloned()
             .collect()
     }

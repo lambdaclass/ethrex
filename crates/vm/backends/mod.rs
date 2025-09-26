@@ -201,15 +201,13 @@ impl Evm {
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         #[cfg(feature = "revm")]
         {
-            use revm_primitives::SpecId;
-
             let chain_config = self.state.chain_config()?;
-            let spec_id = spec_id(&chain_config, block_header.timestamp);
-            if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+            let fork = chain_config.fork(block_header.timestamp);
+            if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                 REVM::beacon_root_contract_call(block_header, &mut self.state)?;
             }
 
-            if spec_id >= SpecId::PRAGUE {
+            if fork >= Fork::Prague {
                 REVM::process_block_hash_history(block_header, &mut self.state)?;
             }
 

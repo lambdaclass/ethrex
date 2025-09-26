@@ -1,7 +1,9 @@
 #[cfg(feature = "revm")]
 use ethrex_common::{Address, H256};
 #[cfg(feature = "revm")]
-use revm::primitives::{ExecutionResult as RevmExecutionResult, result::Output as RevmOutput};
+use revm::context_interface::result::{
+    ExecutionResult as RevmExecutionResult, Output as RevmOutput,
+};
 
 use bytes::Bytes;
 use ethrex_common::types::Log;

@@ -110,9 +110,9 @@ pub async fn run_test(
 
         print!(
             "\rTotal tests ran: {} - Total passed: {} - Total failed: {}",
-            format!("{}", total_run).blue(),
-            format!("{}", passing_tests).green(),
-            format!("{}", failing_tests).red()
+            format!("{total_run}").blue(),
+            format!("{passing_tests}").green(),
+            format!("{failing_tests}").red()
         );
     }
     add_test_to_report((test, failing_test_cases))?;

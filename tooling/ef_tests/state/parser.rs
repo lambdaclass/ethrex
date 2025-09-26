@@ -263,7 +263,7 @@ pub fn get_test_relative_path(full_path: PathBuf) -> String {
 
 fn print_parsed_directories(parsed_directory_tests: Vec<String>) {
     for dir in parsed_directory_tests {
-        println!("Parsed directory {}", dir);
+        println!("Parsed directory {dir}");
     }
 }
 
@@ -272,9 +272,9 @@ fn parse_ef_test_file(
     opts: &EFTestRunnerOptions,
 ) -> Result<Vec<EFTest>, EFTestParseError> {
     let test_file = std::fs::File::open(&full_path)
-        .map_err(|err| EFTestParseError::FailedToReadFile(format!("{:?}: {err}", full_path)))?;
+        .map_err(|err| EFTestParseError::FailedToReadFile(format!("{full_path:?}: {err}")))?;
     let mut tests_in_file: EFTests = simd_json::from_reader(test_file).map_err(|err| {
-        EFTestParseError::FailedToParseTestFile(format!("{:?} parse error: {err}", full_path))
+        EFTestParseError::FailedToParseTestFile(format!("{full_path:?} parse error: {err}"))
     })?;
     for test in tests_in_file.0.iter_mut() {
         test.dir = full_path.to_str().unwrap().to_string();

@@ -73,7 +73,7 @@ impl TryFrom<u64> for Network {
             HOLESKY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
             SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
             HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
-            _ => Err(format!("Unknown chain ID: {}", value)),
+            _ => Err(format!("Unknown chain ID: {value}")),
         }
     }
 }
@@ -99,7 +99,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
-            Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
+            Network::L2Chain(chain_id) => write!(f, "l2-chain-{chain_id}"),
             Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
         }
     }

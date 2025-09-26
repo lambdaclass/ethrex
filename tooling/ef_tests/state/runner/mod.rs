@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
 
 use crate::report::EFTestsReport;
 #[cfg(feature = "revm")]
@@ -62,6 +62,7 @@ pub struct EFTestRunnerOptions {
         long,
         value_name = "FORK",
         value_delimiter = ',',
+        value_parser=parse_fork,
         default_value = "Merge,Shanghai,Cancun,Prague,Osaka"
     )]
     pub forks: Option<Vec<SpecId>>,
@@ -85,6 +86,10 @@ pub struct EFTestRunnerOptions {
     /// For running particular tests that have their specified paths listed with the tests flag.
     #[arg(long, value_name = "PATHS", default_value = "false")]
     pub paths: bool,
+}
+
+fn parse_fork(value: &str) -> Result<SpecId, String> {
+    SpecId::from_str(value).map_err(|_| format!("Unknown fork: {value}"))
 }
 
 pub async fn run_ef_tests(
