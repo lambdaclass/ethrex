@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758921834769,
+  "lastUpdate": 1758928412964,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35092,6 +35092,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0045484989669421485,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "44d5c6c16db91d84cb2c201287eea6dfb53f3fa3",
+          "message": "chore(l1, l2): install protoc as a dependency for release workflows (#4646)\n\n**Motivation**\n\nOur last attempt at making a release failed because protobuf is now a\ndependency for building (see [this\naction](https://github.com/lambdaclass/ethrex/actions/runs/17991396735/job/51181982770)).\nThis should fix it.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-25T15:35:28Z",
+          "tree_id": "31737115014a18a85d0401a63f2ae83c9b22eea4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/44d5c6c16db91d84cb2c201287eea6dfb53f3fa3"
+        },
+        "date": 1758928388947,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001574730686695279,
             "unit": "Mgas/s"
           }
         ]
