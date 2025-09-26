@@ -168,7 +168,7 @@ pub struct Options {
     )]
     pub discovery_port: String,
     #[arg(
-        long = "producer.extra-data",
+        long = "block-producer.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
         help = "Block extra data message.",
