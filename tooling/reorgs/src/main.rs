@@ -33,6 +33,7 @@ async fn main() {
     info!("");
 
     run_test(&cmd_path, no_reorgs_full_sync_smoke_test).await;
+    run_test(&cmd_path, reorgs_full_sync_smoke_test).await;
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_storage_slots_reorg).await;
 
@@ -94,6 +95,28 @@ async fn no_reorgs_full_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
 
     // Try to fully sync node1 (which is a peer of node0)
     node1.update_forkchoice(&base_chain).await;
+}
+
+async fn reorgs_full_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+
+    // Start three ethrex nodes
+    let node0 = simulator.start_node().await; // Test_node
+    let node1 = simulator.start_node().await;
+    let node2 = simulator.start_node().await;
+
+    let base_chain = simulator.get_base_chain();
+    let side_chain = base_chain.fork();
+    // Create a chain and extend it with a few empty blocks
+    let base_chain = node1.extend_chain(base_chain, 10).await;
+
+    // Create another chain (a fork of the first one) and extend it with a few empty blocks
+    let _ = node2.extend_chain(side_chain, 10).await;
+
+    // Try to fully sync node0 to base chain (which is a peer of node1 and node2)
+    // It will ask peer1 sometimes and peer2 others, it has to work with both
+    // So if one fails, this test will fail 50% of the time
+    node0.update_forkchoice(&base_chain).await;
 }
 
 async fn test_one_block_reorg_and_back(simulator: Arc<Mutex<Simulator>>) {
