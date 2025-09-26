@@ -567,6 +567,8 @@ mod tests {
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
             "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
             "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "bpo1": { "target": 10, "max": 15, "baseFeeUpdateFraction": 8346193 },
+            "bpo2": { "target": 14, "max": 21, "baseFeeUpdateFraction": 11684671 },
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",

@@ -1,8 +1,8 @@
 use std::{cmp::min, fmt::Display};
 
+use crate::utils::keccak;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
-use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use secp256k1::{Message, ecdsa::RecoveryId};
@@ -1219,7 +1219,7 @@ impl Transaction {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
-        keccak_hash::keccak(self.encode_canonical_to_vec())
+        crate::utils::keccak(self.encode_canonical_to_vec())
     }
 
     pub fn hash(&self) -> H256 {
@@ -1332,7 +1332,7 @@ impl PrivilegedL2Transaction {
         let u256_nonce = U256::from(self.nonce);
         let nonce = u256_nonce.to_big_endian();
 
-        Some(keccak_hash::keccak(
+        Some(crate::utils::keccak(
             [
                 self.from.as_bytes(),
                 to.as_bytes(),

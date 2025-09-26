@@ -42,6 +42,12 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Setup Rust Environment
@@ -213,11 +219,11 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1 --docker.output
+        run: chmod +x hive && ./hive --client-file .github/config/hive/clients.yaml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 10 --sim.loglevel 1
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
-    # "Integration Test" is a required check, don't change the name
+    # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
     needs: [run-assertoor, run-hive]
@@ -235,3 +241,20 @@ jobs:
             echo "Job Hive failed"
             exit 1
           fi
+
+  reorg-tests:
+    name: Reorg Tests
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'merge_group' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Compile ethrex binary
+        run: cargo build --bin ethrex
+
+      - name: Run reorg tests
+        run: cd tooling/reorgs && cargo run

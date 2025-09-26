@@ -174,7 +174,7 @@ pub struct PayloadStatus {
     pub validation_error: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PayloadValidationStatus {
     Valid,

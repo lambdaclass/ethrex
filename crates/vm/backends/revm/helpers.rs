@@ -10,7 +10,7 @@ use revm::{
 };
 
 // Rename imported types for clarity
-use revm_primitives::hardfork::SpecId;
+use revm::primitives::hardfork::SpecId;
 
 use crate::{backends::revm::db::EvmState, errors::EvmError, execution_result::ExecutionResult};
 
@@ -115,6 +115,11 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::Cancun => SpecId::CANCUN,
         Fork::Prague => SpecId::PRAGUE,
         Fork::Osaka => SpecId::OSAKA,
+        Fork::BPO1 => SpecId::OSAKA,
+        Fork::BPO2 => SpecId::OSAKA,
+        Fork::BPO3 => SpecId::OSAKA,
+        Fork::BPO4 => SpecId::OSAKA,
+        Fork::BPO5 => SpecId::OSAKA,
     }
 }
 

@@ -944,7 +944,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "keccak-hash",
  "kzg-rs",
  "lazy_static",
  "once_cell",
@@ -976,7 +975,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "keccak-hash",
  "lambdaworks-crypto",
  "secp256k1",
  "serde",
@@ -999,7 +997,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "k256",
- "keccak-hash",
  "lambdaworks-math",
  "lazy_static",
  "malachite",
@@ -1298,7 +1295,6 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
- "keccak-hash",
  "rkyv",
  "serde",
  "serde_json",
@@ -1640,16 +1636,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
 dependencies = [
  "cpufeatures",
-]
-
-[[package]]
-name = "keccak-hash"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e1b8590eb6148af2ea2d75f38e7d29f5ca970d5a4df456b3ef19b8b415d0264"
-dependencies = [
- "primitive-types",
- "tiny-keccak",
 ]
 
 [[package]]
@@ -2480,19 +2466,19 @@ dependencies = [
 [[package]]
 name = "secp256k1"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b50c5943d326858130af85e049f2661ba3c78b26589b8ab98e65e80ae44a1252"
+source = "git+https://github.com/sp1-patches/rust-secp256k1?tag=patch-0.30.0-sp1-5.0.0#04d87db04bcc2dc5dd8e1ab3f046cc655440d07a"
 dependencies = [
  "bitcoin_hashes",
+ "cfg-if",
+ "k256",
  "rand",
  "secp256k1-sys",
 ]
 
 [[package]]
 name = "secp256k1-sys"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4387882333d3aa8cb20530a17c69a3752e97837832f34f6dccc760e715001d9"
+version = "0.10.0"
+source = "git+https://github.com/sp1-patches/rust-secp256k1?tag=patch-0.30.0-sp1-5.0.0#04d87db04bcc2dc5dd8e1ab3f046cc655440d07a"
 dependencies = [
  "cc",
 ]

@@ -48,10 +48,9 @@ use ethrex_common::{
         Transaction, TxKind, Withdrawal, requests::Requests,
     },
 };
-use revm_primitives::Bytes;
-use revm_primitives::{
-    Address as RevmAddress, FixedBytes, TxKind as RevmTxKind, U256 as RevmU256, hardfork::SpecId,
-    ruint::Uint,
+use revm::primitives::{
+    Address as RevmAddress, Bytes, FixedBytes, TxKind as RevmTxKind, U256 as RevmU256,
+    hardfork::SpecId, ruint::Uint,
 };
 use std::cmp::min;
 
