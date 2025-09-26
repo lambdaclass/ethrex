@@ -5,9 +5,9 @@ use std::{
 };
 
 use ethrex_blockchain::Blockchain;
+use ethrex_common::H256;
 use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_storage::error::StoreError;
-use keccak_hash::H256;
 use rand::{seq::SliceRandom, thread_rng};
 use spawned_concurrency::{
     messages::Unused,
@@ -241,7 +241,7 @@ impl TxBroadcaster {
             )
             .await?;
         }
-        self.blockchain.mempool.clear_broadcasted_txs();
+        self.blockchain.mempool.clear_broadcasted_txs()?;
         Ok(())
     }
 
