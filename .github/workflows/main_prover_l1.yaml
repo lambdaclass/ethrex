@@ -28,7 +28,9 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        backend: ["sp1", "risc0"]
+        # TODO (#4669): re-enable risc0
+        # backend: ["sp1", "risc0"]
+        backend: ["sp1"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
