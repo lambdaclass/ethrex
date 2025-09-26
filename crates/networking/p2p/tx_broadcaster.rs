@@ -216,7 +216,7 @@ impl TxBroadcaster {
                     !self
                         .known_txs
                         .get(&hash)
-                        .map_or(false, |record| record.peers.is_set(peer_idx))
+                        .is_some_and(|record| record.peers.is_set(peer_idx))
                 })
                 .cloned()
                 .collect::<Vec<Transaction>>();
@@ -262,7 +262,7 @@ impl TxBroadcaster {
                 !self
                     .known_txs
                     .get(&hash)
-                    .map_or(false, |record| record.peers.is_set(peer_idx))
+                    .is_some_and(|record| record.peers.is_set(peer_idx))
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
