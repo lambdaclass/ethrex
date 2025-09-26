@@ -63,13 +63,8 @@ pub async fn prove(backend: Backend, cache: Cache) -> eyre::Result<Duration> {
 
     match result {
         Ok(prove_result) => {
-<<<<<<< HEAD
             prove_result.map_err(|e| eyre::Error::msg(format!("Proving failed: {e}")))?;
-            Ok(())
-=======
-            prove_result.map_err(|e| eyre::Error::msg(format!("Proving failed: {}", e)))?;
             Ok(elapsed)
->>>>>>> bf6ccc0d6c42e655997e8598e73a1c64ece87b34
         }
         Err(panic_info) => {
             // Try to extract meaningful error message from panic info
