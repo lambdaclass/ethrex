@@ -39,7 +39,9 @@ pub fn verify_cell_kzg_proof_batch(
                 .iter()
                 .flat_map(|commitment| repeat_n((*commitment).into(), CELLS_PER_EXT_BLOB))
                 .collect::<Vec<_>>(),
-            &Vec::from_iter((0..blobs.len()).flat_map(|_| 0..CELLS_PER_EXT_BLOB as u64)),
+            &repeat_n(0..CELLS_PER_EXT_BLOB as u64, blobs.len())
+                .flatten()
+                .collect::<Vec<_>>(),
             &cells,
             &cell_proof
                 .iter()
