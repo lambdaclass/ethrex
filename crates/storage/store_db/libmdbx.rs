@@ -766,27 +766,31 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(key_values).await
     }
 
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let mut receipts = vec![];
-        let mut receipt_index = 0;
-        let mut key = (*block_hash, 0).into();
-        let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
-        let mut cursor = txn
-            .cursor::<Receipts>()
-            .map_err(|_| StoreError::CursorError("Receipts".to_owned()))?;
+    async fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+        let block_hash = *block_hash;
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut receipts = vec![];
+            let mut receipt_index = 0;
+            let mut key = (block_hash, 0).into();
+            let txn = db.begin_read().map_err(|_| StoreError::ReadError)?;
+            let mut cursor = txn
+                .cursor::<Receipts>()
+                .map_err(|_| StoreError::CursorError("Receipts".to_owned()))?;
 
-        // We're searching receipts for a block, the keys
-        // for the receipt table are of the kind: rlp((BlockHash, Index)).
-        // So we search for values in the db that match with this kind
-        // of key, until we reach an Index that returns None
-        // and we stop the search.
-        while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
-            receipts.push(receipt);
-            receipt_index += 1;
-            key = (*block_hash, receipt_index).into();
-        }
+            // We're searching receipts for a block, the keys
+            // for the receipt table are of the kind: rlp((BlockHash, Index)).
+            // So we search for values in the db that match with this kind
+            // of key, until we reach an Index that returns None
+            // and we stop the search.
+            while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
+                receipts.push(receipt);
+                receipt_index += 1;
+                key = (block_hash, receipt_index).into();
+            }
 
-        Ok(receipts)
+            Ok(receipts)
+        }).await.map_err(|e| StoreError::Custom(format!("Task panicked: {:?}", e)))?
     }
 
     async fn set_header_download_checkpoint(

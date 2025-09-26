@@ -481,7 +481,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+    async fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let store = self.inner()?;
         let Some(receipts_for_block) = store.receipts.get(block_hash) else {
             return Ok(vec![]);

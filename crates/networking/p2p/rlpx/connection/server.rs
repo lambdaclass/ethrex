@@ -843,7 +843,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             if let Some(eth) = &state.negotiated_eth_capability {
                 let mut receipts = Vec::new();
                 for hash in block_hashes.iter() {
-                    receipts.push(state.storage.get_receipts_for_block(hash)?);
+                    receipts.push(state.storage.get_receipts_for_block(hash).await?);
                 }
                 let response = match eth.version {
                     68 => Message::Receipts68(Receipts68::new(id, receipts)),

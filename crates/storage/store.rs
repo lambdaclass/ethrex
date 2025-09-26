@@ -1084,11 +1084,11 @@ impl Store {
         Ok(nodes)
     }
 
-    pub fn get_receipts_for_block(
+    pub async fn get_receipts_for_block(
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
-        self.engine.get_receipts_for_block(block_hash)
+        self.engine.get_receipts_for_block(block_hash).await
     }
 
     /// Creates a new state trie with an empty state root, for testing purposes only
