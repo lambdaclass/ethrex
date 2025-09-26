@@ -32,7 +32,7 @@ const NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT: usize = 4096;
 const PRUNE_WAIT_TIME_SECS: u64 = 600; // 10 minutes
 
 // Amount of seconds between each prune
-const PRUNE_INTERVAL_SECS: u64 = 300; // 5 minutes
+const PRUNE_INTERVAL_SECS: u64 = 360; // 6 minutes
 
 // Amount of seconds between each broadcast
 const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
