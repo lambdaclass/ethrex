@@ -7,3 +7,4 @@ edition = "2024"
 path = "src/myscope.rs"
 
 [dependencies]
+crossbeam = "0.8.4"

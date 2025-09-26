@@ -1,5 +1,5 @@
+use crossbeam::channel::{Receiver, Sender, unbounded};
 use std::marker::Send;
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::{Builder, Scope};
 
@@ -9,19 +9,15 @@ pub struct ThreadPool<'scope> {
 
 impl<'scope> ThreadPool<'scope> {
     pub fn new(thread_count: usize, scope: &'scope Scope<'scope, '_>) -> Self {
-        let (task_queue_sender, receiver) = channel::<Box<dyn 'scope + Send + FnOnce()>>();
-        let task_queue_rx = Arc::new(Mutex::new(receiver));
+        let (task_queue_sender, receiver) = unbounded::<Box<dyn 'scope + Send + FnOnce()>>();
 
         for i in 0..thread_count {
-            let task_queue_rx_clone = task_queue_rx.clone();
+            let task_queue_rx_clone = receiver.clone();
             let _ = Builder::new()
                 .name(format!("ThreadPool {i}"))
                 .spawn_scoped(scope, move || {
                     // Thread work goes here
-                    while let Ok(task) = {
-                        let rx = task_queue_rx_clone.lock().unwrap();
-                        rx.recv()
-                    } {
+                    while let Ok(task) = task_queue_rx_clone.recv() {
                         task();
                     }
                 });
