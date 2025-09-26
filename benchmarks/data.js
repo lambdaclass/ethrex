@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758913505104,
+  "lastUpdate": 1758914226053,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -34913,6 +34913,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0045721152647975076,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c5315cf07ca1745fbb6666ff53db889a8c4bde3",
+          "message": "fix(l1): use transactional database with RocksDB (#4599)\n\nRocksDB is non-transactional by default, meaning writes logically\ninterleave rather than behaving as a unit, which is prone to errors.\nThe optimistic transaction mode implements ACID behavior, with conflict\nresolution at commit time to improve parallelism.",
+          "timestamp": "2025-09-25T18:41:51Z",
+          "tree_id": "d2697ed3a6f7f3094ed4350852e9bb042f1aebff",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7c5315cf07ca1745fbb6666ff53db889a8c4bde3"
+        },
+        "date": 1758914202605,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0045484989669421485,
             "unit": "Mgas/s"
           }
         ]
