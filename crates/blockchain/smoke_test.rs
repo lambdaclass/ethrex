@@ -16,8 +16,6 @@ mod blockchain_integration_test {
     };
     use ethrex_storage::{EngineType, Store};
 
-    const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
-
     #[tokio::test]
     async fn test_small_to_long_reorg() {
         // Store and genesis
