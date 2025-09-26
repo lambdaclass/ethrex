@@ -35,6 +35,8 @@ mod blockchain_integration_test {
             .await
             .unwrap();
         let retrieved_1a = store.get_block_header(1).unwrap().unwrap();
+        // Compute hash for block header
+        retrieved_1a.hash();
 
         assert_eq!(retrieved_1a, block_1a.header);
         assert!(is_canonical(&store, 1, hash_1a).await.unwrap());
@@ -142,6 +144,8 @@ mod blockchain_integration_test {
             .await
             .unwrap();
         let retrieved_1b = store.get_block_header(1).unwrap().unwrap();
+        // Compute hash for block header
+        retrieved_1b.hash();
 
         assert_ne!(retrieved_1a, retrieved_1b);
         assert_eq!(retrieved_1b, block_1b.header);

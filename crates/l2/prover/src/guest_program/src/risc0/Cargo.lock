@@ -1273,6 +1273,7 @@ dependencies = [
  "serde_json",
  "sha3",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 

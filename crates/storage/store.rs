@@ -1,31 +1,27 @@
-use crate::api::StoreEngine;
-use crate::error::StoreError;
-use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "rocksdb")]
-use crate::store_db::rocksdb::Store as RocksDBStore;
+use crate::backend::rocksdb::RocksDBBackend;
+use crate::{
+    api::StorageBackend, backend::in_memory::InMemoryBackend, engine::StoreEngine,
+    error::StoreError,
+};
 use bytes::Bytes;
-
-use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
-    constants::EMPTY_TRIE_HASH,
+    Address, H256, U256,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
         code_hash,
     },
 };
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
-use sha3::{Digest as _, Keccak256};
-use std::sync::Arc;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
+use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::RwLock,
+    path::Path,
+    sync::Arc,
 };
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, sync::RwLock};
 use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -33,20 +29,9 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
 
-#[derive(Debug, Clone)]
-pub struct Store {
-    pub engine: Arc<dyn StoreEngine>,
-    pub chain_config: Arc<RwLock<ChainConfig>>,
-    pub latest_block_header: Arc<RwLock<BlockHeader>>,
-}
-
-pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
@@ -64,13 +49,36 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
-
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
-    pub storage_updates: StorageUpdates,
+    pub storage_updates: StorageTrieNodes,
     pub code_updates: Vec<(H256, Bytes)>,
+}
+
+pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+
+// Hash utility functions
+pub fn hash_address(address: &ethereum_types::Address) -> Vec<u8> {
+    use sha3::{Digest as _, Keccak256};
+    Keccak256::new_with_prefix(address.to_fixed_bytes())
+        .finalize()
+        .to_vec()
+}
+
+pub fn hash_key(key: &H256) -> Vec<u8> {
+    use sha3::{Digest as _, Keccak256};
+    Keccak256::new_with_prefix(key.to_fixed_bytes())
+        .finalize()
+        .to_vec()
+}
+
+// Store wrapper with business logic
+#[derive(Debug, Clone)]
+pub struct Store {
+    pub engine: Arc<StoreEngine>,
+    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 impl Store {
@@ -80,24 +88,17 @@ impl Store {
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
         let path = path.as_ref();
-        info!(engine = ?engine_type, ?path, "Opening storage engine");
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
-                engine: Arc::new(RocksDBStore::new(path)?),
+                engine: Arc::new(StoreEngine::new(Arc::new(RocksDBBackend::open(path)?))?),
                 chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                latest_block_header: Arc::new(std::sync::RwLock::new(BlockHeader::default())),
             },
             EngineType::InMemory => Self {
-                engine: Arc::new(InMemoryStore::new()),
+                engine: Arc::new(StoreEngine::new(Arc::new(InMemoryBackend::open(path)?))?),
                 chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                latest_block_header: Arc::new(std::sync::RwLock::new(BlockHeader::default())),
             },
         };
 
@@ -1328,24 +1329,12 @@ impl Iterator for AncestorIterator {
     }
 }
 
-pub fn hash_address(address: &Address) -> Vec<u8> {
-    Keccak256::new_with_prefix(address.to_fixed_bytes())
-        .finalize()
-        .to_vec()
-}
-
 fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
             .finalize()
             .into(),
     )
-}
-
-pub fn hash_key(key: &H256) -> Vec<u8> {
-    Keccak256::new_with_prefix(key.to_fixed_bytes())
-        .finalize()
-        .to_vec()
 }
 
 #[cfg(test)]
@@ -1365,12 +1354,6 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_store() {
         test_store_suite(EngineType::InMemory).await;
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[tokio::test]
-    async fn test_libmdbx_store() {
-        test_store_suite(EngineType::Libmdbx).await;
     }
 
     #[cfg(feature = "rocksdb")]

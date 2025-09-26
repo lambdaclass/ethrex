@@ -14,6 +14,7 @@ pub trait TrieDB: Send + Sync {
     }
 }
 
+/// TODO: Now we have BackendTrieDB, should we remove this?
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 #[derive(Default)]
 pub struct InMemoryTrieDB {

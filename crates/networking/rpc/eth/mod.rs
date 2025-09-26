@@ -166,15 +166,16 @@ pub mod test_utils {
         }
     }
 
-    pub async fn add_eip1559_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
-        for block_num in 1..=block_count {
-            let mut txs = vec![];
-            for nonce in 1..=tx_count {
-                txs.push(eip1559_tx_for_test(nonce));
-            }
-            add_blocks_with_transactions(storage, block_num, txs).await;
-        }
-    }
+    // FIXME: Uncomment this when tests are fixed
+    // pub async fn add_eip1559_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
+    //     for block_num in 1..=block_count {
+    //         let mut txs = vec![];
+    //         for nonce in 1..=tx_count {
+    //             txs.push(eip1559_tx_for_test(nonce));
+    //         }
+    //         add_blocks_with_transactions(storage, block_num, txs).await;
+    //     }
+    // }
 
     pub async fn add_mixed_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
         for block_num in 1..=block_count {
