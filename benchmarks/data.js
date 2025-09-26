@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758872126409,
+  "lastUpdate": 1758873715801,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -34589,6 +34589,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015803829863603733,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "316b9f3c5b16554299e7538b3bc9a50de4276b4c",
+          "message": "fix(replay): fix execution with eth_getProof (#4616)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nExecution with eth_getProof had some caveats regarding the trie. For\nmaking it work we need to do 2 things:\n1. Pre-inject possible nodes to the trie\n2. Make a modification to the MPT in case we don't find a missing node.\n\nThe `1` was already done in the code but wasn't working properly, the\nproblem was just that the root node wasn't being inserted into the nodes\nthat were used for building the trie that's used for getting potential\nchild nodes.\n\nThe 2 is a modification that we don't want in our MPT so we didn't carry\nalong [with that](https://github.com/lambdaclass/ethrex/pull/2952).\nHowever, in execution without zkVM we have the possibility of inserting\narbitrary nodes with the hashes that we want and RLP content that\ndoesn't necessarily match to that hash, so we can \"deceive\" the trie\ninto thinking it has some nodes when in fact they are just dummy nodes.\nHow can we use it to our advantage? We insert dummy branch nodes in\nevery single place where a storage node is being referenced but it's\nmissing. This way, if we want to do a trie restructuring we will find\nthe node that otherwise we wouldn't have found, and the good thing is\nthat we don't care about the contents of this node because they won't\nchange, in this particular case the node will be referenced by a one\nnibble extension node. For more info read\nhttps://github.com/kkrt-labs/zk-pig/blob/main/docs/modified-mpt.md#modified-mpt-implementation\n\n\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-25T15:53:32Z",
+          "tree_id": "4f24652e33e88f4d7e6f60cd39ec87d6f2a3c1ca",
+          "url": "https://github.com/lambdaclass/ethrex/commit/316b9f3c5b16554299e7538b3bc9a50de4276b4c"
+        },
+        "date": 1758873714915,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0045484989669421485,
             "unit": "Mgas/s"
           }
         ]
