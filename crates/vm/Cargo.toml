@@ -29,15 +29,15 @@ dyn-clone = "1.0"
 
 ethereum-types.workspace = true
 
-revm = { version = "29.0.0", features = [
+revm = { version = "27.0.3", features = [
     "serde",
     "std",
     "serde-json",
     "optional_no_base_fee",
     "optional_block_gas_limit",
 ], default-features = false, optional = true }
-revm-inspectors = { version = "0.29.2", optional = true }
-revm-primitives = { version = "20.2.1", features = [
+revm-inspectors = { version = "0.26.5", optional = true }
+revm-primitives = { version = "20.0.0", features = [
     "std",
 ], default-features = false, optional = true }
 
