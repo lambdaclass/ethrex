@@ -35,7 +35,7 @@ pub async fn exec(backend: Backend, cache: Cache) -> eyre::Result<Duration> {
     match result {
         Ok(exec_result) => {
             exec_result.map_err(|e| eyre::Error::msg(format!("Execution failed: {e}")))?;
-            Ok((elapsed))
+            Ok(elapsed)
         }
         Err(panic_info) => {
             // Try to extract meaningful error message from panic info
