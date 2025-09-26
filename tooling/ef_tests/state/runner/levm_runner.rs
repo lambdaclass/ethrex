@@ -4,6 +4,7 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, U256,
     types::{
@@ -20,7 +21,6 @@ use ethrex_levm::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
-use keccak_hash::keccak;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic

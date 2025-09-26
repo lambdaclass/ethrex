@@ -254,7 +254,8 @@ impl RLPDecode for IpAddr {
                 let octets: [u8; 16] = ip_bytes
                     .try_into()
                     .map_err(|_| RLPDecodeError::InvalidLength)?;
-                Ok((IpAddr::V6(Ipv6Addr::from(octets)), rest))
+                // Using to_canonical just in case it's an Ipv6-encoded Ipv4 address
+                Ok((IpAddr::V6(Ipv6Addr::from(octets)).to_canonical(), rest))
             }
             _ => Err(RLPDecodeError::InvalidLength),
         }

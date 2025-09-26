@@ -1237,7 +1237,7 @@ impl PeerHandler {
                     let validated_codes: Vec<Bytes> = codes
                         .into_iter()
                         .zip(hashes_to_request)
-                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
+                        .take_while(|(b, hash)| ethrex_common::utils::keccak(b) == *hash)
                         .map(|(b, _hash)| b)
                         .collect();
                     let result = TaskResult {
@@ -1337,6 +1337,7 @@ impl PeerHandler {
                     .clone()
                     .into_iter()
                     .zip(current_account_storages)
+                    .filter(|(_, storages)| !storages.is_empty())
                     .collect::<Vec<_>>()
                     .encode_to_vec();
 
@@ -1569,6 +1570,7 @@ impl PeerHandler {
             let snapshot = current_account_hashes
                 .into_iter()
                 .zip(current_account_storages)
+                .filter(|(_, storages)| !storages.is_empty())
                 .collect::<Vec<_>>()
                 .encode_to_vec();
 

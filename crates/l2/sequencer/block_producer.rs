@@ -12,10 +12,10 @@ use ethrex_blockchain::{
     validate_block,
 };
 use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
-use keccak_hash::H256;
 pub use payload_builder::build_payload;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
