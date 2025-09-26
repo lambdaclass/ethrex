@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::atomic::Ordering,
@@ -12,6 +12,7 @@ use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::seq::SliceRandom;
@@ -1279,16 +1280,18 @@ impl PeerHandler {
         account_storages_snapshots_dir: &Path,
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
+        store: Store,
     ) -> Result<u64, PeerHandlerError> {
         *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
         debug!("Starting request_storage_ranges function");
         // 1) split the range in chunks of same length
-        let chunk_size = 300;
+        let chunk_size = 1600;
         let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
+
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
@@ -1318,7 +1321,7 @@ impl PeerHandler {
         let mut completed_tasks = 0;
 
         // TODO: in a refactor, delete this replace with a structure that can handle removes
-        let mut accounts_done: Vec<H256> = Vec::new();
+        let mut accounts_done: HashMap<H256, Vec<(H256, H256)>> = HashMap::new();
         let current_account_hashes = account_storage_roots
             .accounts_with_storage_root
             .iter()
@@ -1385,8 +1388,10 @@ impl PeerHandler {
 
                 self.peer_table.free_peer(peer_id).await;
 
-                for account in &current_account_hashes[start_index..remaining_start] {
-                    accounts_done.push(*account);
+                for account in current_account_hashes[start_index..remaining_start].iter() {
+                    if !accounts_done.contains_key(account) {
+                        accounts_done.insert(*account, vec![]);
+                    }
                 }
 
                 if remaining_start < remaining_end {
@@ -1412,10 +1417,35 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
-                            accounts_done.push(current_account_hashes[remaining_start]);
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(&current_account_hashes[remaining_start]).ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                            for (old_start, end) in old_intervals {
+                                if end == &hash_end {
+                                    *old_start = hash_start;
+                                }
+                            }
                             account_storage_roots
                                 .healed_accounts
                                 .insert(current_account_hashes[start_index]);
+                        } else {
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(&current_account_hashes[remaining_start])
+                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                            old_intervals.remove(
+                                old_intervals
+                                    .iter()
+                                    .position(|(_old_start, end)| end == &hash_end)
+                                    .ok_or(PeerHandlerError::UnrecoverableError(
+                                        "Could not find an old interval that we were tracking"
+                                            .to_owned(),
+                                    ))?,
+                            );
+                            if old_intervals.is_empty() {
+                                accounts_done
+                                    .insert(current_account_hashes[remaining_start], vec![]);
+                            }
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
@@ -1446,27 +1476,95 @@ impl PeerHandler {
 
                         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
-                        for i in 0..chunk_count {
-                            let start_hash_u256 = start_hash_u256 + chunk_size * i;
-                            let start_hash = H256::from_uint(&start_hash_u256);
-                            let end_hash = if i == chunk_count - 1 {
-                                H256::repeat_byte(0xff)
-                            } else {
-                                let end_hash_u256 =
-                                    start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
-                                H256::from_uint(&end_hash_u256)
-                            };
+                        let maybe_old_intervals = account_storage_roots
+                            .accounts_with_storage_root
+                            .get(&current_account_hashes[remaining_start]);
 
-                            let task = StorageTask {
-                                start_index: remaining_start,
-                                end_index: remaining_start + 1,
-                                start_hash,
-                                end_hash: Some(end_hash),
-                            };
-                            tasks_queue_not_started.push_back(task);
-                            task_count += 1;
+                        if let Some((_, old_intervals)) = maybe_old_intervals {
+                            if !old_intervals.is_empty() {
+                                for (start_hash, end_hash) in old_intervals {
+                                    let task = StorageTask {
+                                        start_index: remaining_start,
+                                        end_index: remaining_start + 1,
+                                        start_hash: *start_hash,
+                                        end_hash: Some(*end_hash),
+                                    };
+
+                                    tasks_queue_not_started.push_back(task);
+                                    task_count += 1;
+                                }
+                            } else {
+                                // TODO: DRY
+                                account_storage_roots.accounts_with_storage_root.insert(
+                                    current_account_hashes[remaining_start],
+                                    (None, vec![]),
+                                );
+                                let (_, intervals) = account_storage_roots
+                                    .accounts_with_storage_root
+                                    .get_mut(&current_account_hashes[remaining_start])
+                                    .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+
+                                for i in 0..chunk_count {
+                                    let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                    let start_hash = H256::from_uint(&start_hash_u256);
+                                    let end_hash = if i == chunk_count - 1 {
+                                        H256::repeat_byte(0xff)
+                                    } else {
+                                        let end_hash_u256 = start_hash_u256
+                                            .checked_add(chunk_size)
+                                            .unwrap_or(U256::MAX);
+                                        H256::from_uint(&end_hash_u256)
+                                    };
+
+                                    let task = StorageTask {
+                                        start_index: remaining_start,
+                                        end_index: remaining_start + 1,
+                                        start_hash,
+                                        end_hash: Some(end_hash),
+                                    };
+
+                                    intervals.push((start_hash, end_hash));
+
+                                    tasks_queue_not_started.push_back(task);
+                                    task_count += 1;
+                                }
+                                debug!("Split big storage account into {chunk_count} chunks.");
+                            }
+                        } else {
+                            account_storage_roots
+                                .accounts_with_storage_root
+                                .insert(current_account_hashes[remaining_start], (None, vec![]));
+                            let (_, intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(&current_account_hashes[remaining_start])
+                                .ok_or(PeerHandlerError::UnrecoverableError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
+
+                            for i in 0..chunk_count {
+                                let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                let start_hash = H256::from_uint(&start_hash_u256);
+                                let end_hash = if i == chunk_count - 1 {
+                                    H256::repeat_byte(0xff)
+                                } else {
+                                    let end_hash_u256 = start_hash_u256
+                                        .checked_add(chunk_size)
+                                        .unwrap_or(U256::MAX);
+                                    H256::from_uint(&end_hash_u256)
+                                };
+
+                                let task = StorageTask {
+                                    start_index: remaining_start,
+                                    end_index: remaining_start + 1,
+                                    start_hash,
+                                    end_hash: Some(end_hash),
+                                };
+
+                                intervals.push((start_hash, end_hash));
+
+                                tasks_queue_not_started.push_back(task);
+                                task_count += 1;
+                            }
+                            debug!("Split big storage account into {chunk_count} chunks.");
                         }
-                        debug!("Split big storage account into {chunk_count} chunks.");
                     }
                 }
 
@@ -1537,7 +1635,17 @@ impl PeerHandler {
                     .iter()
                     .skip(task.start_index)
                     .take(task.end_index - task.start_index)
-                    .map(|(hash, root)| (*hash, *root))
+                    .map(|(hash, (root, _))| match root {
+                        Some(root) => (*hash, *root),
+                        None => (
+                            *hash,
+                            store
+                                .get_account_state_by_acc_hash(pivot_header.hash(), *hash)
+                                .expect("Failed to get account in state trie")
+                                .expect("Could not find account that should have been downloaded or healed")
+                                .storage_root,
+                        ),
+                    })
                     .unzip();
 
             if task_count - completed_tasks < 30 {
@@ -1596,10 +1704,12 @@ impl PeerHandler {
             .collect::<Result<Vec<()>, DumpError>>()
             .map_err(PeerHandlerError::DumpError)?;
 
-        for account_done in accounts_done {
-            account_storage_roots
-                .accounts_with_storage_root
-                .remove(&account_done);
+        for (account_done, intervals) in accounts_done {
+            if intervals.is_empty() {
+                account_storage_roots
+                    .accounts_with_storage_root
+                    .remove(&account_done);
+            }
         }
 
         // Dropping the task sender so that the recv returns None
@@ -1992,6 +2102,8 @@ pub enum PeerHandlerError {
     NoResponseFromPeer,
     #[error("Dumping snapshots to disk failed {0:?}")]
     DumpError(DumpError),
+    #[error("Encountered an unexpected error. This is a bug {0}")]
+    UnrecoverableError(String),
 }
 
 #[derive(Debug, Clone, std::hash::Hash)]
