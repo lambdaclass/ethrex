@@ -83,7 +83,7 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch_no_alloc(&self, key_values: Vec<ethrex_trie::Node>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
-        let mut batch = rocksdb::WriteBatch::default();
+        let mut batch = rocksdb::WriteBatchWithTransaction::default();
         let mut buffer = Vec::with_capacity(300);
 
         for node in key_values {
