@@ -7,12 +7,12 @@ mod tracing;
 use super::BlockExecutionResult;
 use crate::backends::revm::db::EvmState;
 use crate::backends::revm::helpers::spec_id;
-use crate::constants::{
+use crate::errors::EvmError;
+use crate::execution_result::ExecutionResult;
+use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::errors::EvmError;
-use crate::execution_result::ExecutionResult;
 use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
@@ -140,8 +140,8 @@ impl REVM {
             block_header,
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             state,
-            *BEACON_ROOTS_ADDRESS,
-            *SYSTEM_ADDRESS,
+            BEACON_ROOTS_ADDRESS.address,
+            SYSTEM_ADDRESS,
         )?;
         Ok(())
     }
@@ -153,8 +153,8 @@ impl REVM {
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             state,
-            *HISTORY_STORAGE_ADDRESS,
-            *SYSTEM_ADDRESS,
+            HISTORY_STORAGE_ADDRESS.address,
+            SYSTEM_ADDRESS,
         )?;
         Ok(())
     }
@@ -167,8 +167,8 @@ impl REVM {
             block_header,
             Bytes::new(),
             state,
-            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS,
         )?;
 
         match tx_result {
@@ -201,8 +201,8 @@ impl REVM {
             block_header,
             Bytes::new(),
             state,
-            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS,
         )?;
 
         match tx_result {
