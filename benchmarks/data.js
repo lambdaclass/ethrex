@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758914226053,
+  "lastUpdate": 1758915753218,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16945,6 +16945,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89930095553,
             "range": "± 218684454",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "82475e408c381c375236c88d5ad20c9b3a05645f",
+          "message": "chore(l1): enhance memory consumption tweaking chunk size to 64 (#4631)\n\n**Motivation**\n\nWe've seen some improvement when moving from 128MB to 64MB in chunk size\n\n**Description**\n\nThis PR simply change the constant and do a small follow up of a comment\nin a previous memory related PR.",
+          "timestamp": "2025-09-26T18:50:38Z",
+          "tree_id": "8dac0bda66ff624e2932a4d561ded965d2b00e60",
+          "url": "https://github.com/lambdaclass/ethrex/commit/82475e408c381c375236c88d5ad20c9b3a05645f"
+        },
+        "date": 1758915731016,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 91238481502,
+            "range": "± 368111599",
             "unit": "ns/iter"
           }
         ]
