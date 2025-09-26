@@ -163,7 +163,7 @@ where
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
-            scope.execute(Box::new(move || {
+            scope.execute_priority(Box::new(move || {
                 let _ = flush_nodes_to_write(nodes_to_write, db);
             }));
             nodes_to_write = Vec::with_capacity(SIZE_TO_WRITE_DB as usize + 65);
@@ -267,9 +267,7 @@ where
             .finalize()
     };
 
-    scope.execute(Box::new(move || {
-        let _ = flush_nodes_to_write(nodes_to_write, db);
-    }));
+    flush_nodes_to_write(nodes_to_write, db);
     Ok(hash)
 }
 
