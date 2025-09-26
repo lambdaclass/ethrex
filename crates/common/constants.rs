@@ -1,5 +1,5 @@
+use crate::H256;
 use ethrex_rlp::constants::RLP_NULL;
-use keccak_hash::H256;
 use sha3::{Digest as _, Keccak256};
 use std::{str::FromStr, sync::LazyLock};
 
