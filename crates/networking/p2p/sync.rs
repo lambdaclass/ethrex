@@ -307,7 +307,7 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store.clone(), &mut block_sync_state).await?;
+            self.snap_sync(&store, &mut block_sync_state).await?;
 
             store.clear_snap_state().await?;
 
@@ -816,7 +816,7 @@ async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
 impl Syncer {
     async fn snap_sync(
         &mut self,
-        store: Store,
+        store: &Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
