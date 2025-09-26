@@ -108,7 +108,7 @@ RPC options:
           [default: jwt.hex]
 
 Block producer options:
-      --producer.extra-data <EXTRA_DATA>
+      --block-producer.extra-data <EXTRA_DATA>
           Block extra data message.
 
           [default: "ethrex 0.1.0"]
