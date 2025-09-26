@@ -379,7 +379,7 @@ async fn build_payload(
     let payload_id = args
         .id()
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let payload = match create_payload(&args, &context.storage) {
+    let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         // Parent block is guaranteed to be present at this point,
