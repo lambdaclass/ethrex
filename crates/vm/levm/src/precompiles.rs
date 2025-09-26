@@ -6,7 +6,7 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 use bytes::{Buf, Bytes};
-use ethrex_common::utils::u256_from_big_endian_const;
+use ethrex_common::utils::{keccak, u256_from_big_endian_const};
 use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
@@ -14,7 +14,6 @@ use ethrex_common::{
 use ethrex_crypto::blake2f::blake2b_f;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::Field;
-use keccak_hash::keccak256;
 use lambdaworks_math::{
     elliptic_curve::{
         short_weierstrass::{
@@ -322,18 +321,15 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let (raw_v, raw_sig) = tail.split_at(WORD);
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let v = match u8::try_from(u256_from_big_endian(raw_v)) {
-        Ok(v @ (27 | 28)) => v,
+    let mut recid_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+        Ok(27) => 0,
+        Ok(28) => 1,
         _ => return Ok(Bytes::new()),
     };
 
-    #[allow(clippy::arithmetic_side_effects, reason = "v ∈ {27, 28}")]
-    let mut recid_byte = v - 27;
-
     // Parse signature (r||s). If malformed → empty return.
-    let mut sig = match Signature::from_slice(raw_sig) {
-        Ok(s) => s,
-        Err(_) => return Ok(Bytes::new()),
+    let Ok(mut sig) = Signature::from_slice(raw_sig) else {
+        return Ok(Bytes::new());
     };
 
     // k256 enforces canonical low-S for recovery.
@@ -344,15 +340,13 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     }
 
     // Recovery id from the adjusted byte.
-    let recid = match RecoveryId::from_byte(recid_byte) {
-        Some(id) => id,
-        None => return Ok(Bytes::new()),
+    let Some(recid) = RecoveryId::from_byte(recid_byte) else {
+        return Ok(Bytes::new());
     };
 
     // Recover the verifying key from the prehash (32-byte digest).
-    let vk = match VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) {
-        Ok(k) => k,
-        Err(_) => return Ok(Bytes::new()),
+    let Ok(vk) = VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
+        return Ok(Bytes::new());
     };
 
     // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
@@ -362,7 +356,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let xy = &mut uncompressed[1..65];
 
     // keccak256(X||Y).
-    keccak256(xy);
+    let xy = keccak(xy);
 
     // Address is the last 20 bytes of the hash.
     let mut out = [0u8; 32];

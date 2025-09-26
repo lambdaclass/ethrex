@@ -2,6 +2,8 @@
 name = "ethrex-trie"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
@@ -41,4 +43,3 @@ path = "./trie.rs"
 [[bench]]
 name = "trie_bench"
 harness = false
-
