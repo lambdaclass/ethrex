@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758920214149,
+  "lastUpdate": 1758920819984,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17035,6 +17035,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 92752793857,
             "range": "± 222258873",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ff49e35a7e327ba5f168f03c5fd37a7c377967c0",
+          "message": "refactor(l1): enhance mempool oldest removal (#4638)\n\n**Motivation**\nThe removal of elements from the mempool when it is full is not\nefficient.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nNow the array that represent the order of insertion to the mempool is a\nvecdeque, which is not changed when an arbitrary element is removed from\nthe mempool.\nOnly when the mempool is full, we remove from the vecdeque until we find\nan element present in the mempool.\nAlso if the vecdeque is greater than 150% of the maximum mempool size,\nwe prune it, keeping only the txs that are actually in the mempool,\npreserving the order.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses\nhttps://github.com/lambdaclass/ethrex/issues/4605?reload=1?reload=1\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-26T20:13:45Z",
+          "tree_id": "f420ecf104dc7e24e523fd69b3f93d79cd3eaf80",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ff49e35a7e327ba5f168f03c5fd37a7c377967c0"
+        },
+        "date": 1758920798725,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89639412061,
+            "range": "± 738888286",
             "unit": "ns/iter"
           }
         ]
