@@ -44,6 +44,8 @@ struct PeerMask {
 
 impl PeerMask {
     #[inline]
+    // Ensure that the internal bit vector can hold the given index
+    // If not, resize the vector.
     fn ensure(&mut self, idx: u32) {
         let word = (idx as usize) / 64;
         if self.bits.len() <= word {
@@ -80,10 +82,10 @@ struct BroadcastRecord {
 pub struct TxBroadcaster {
     kademlia: Kademlia,
     blockchain: Arc<Blockchain>,
-    // tx_hash -> broadcast information (peer mask + last sent timestamp)
-    sent_by_tx: HashMap<H256, BroadcastRecord>,
-    // Map peer_id (H256) to compact u32 index to shrink key size and avoid collisions
+    // Assign each peer_id (H256) a u32 index used by PeerMask entries
     peer_indexer: HashMap<H256, u32>,
+    // tx_hash -> broadcast record (which peers know it and when it was last sent)
+    known_txs: HashMap<H256, BroadcastRecord>,
     next_peer_idx: u32,
     start: Instant,
 }
@@ -110,7 +112,7 @@ impl TxBroadcaster {
         let state = TxBroadcaster {
             kademlia,
             blockchain,
-            sent_by_tx: HashMap::new(),
+            known_txs: HashMap::new(),
             peer_indexer: HashMap::new(),
             next_peer_idx: 0,
             start: Instant::now(),
@@ -152,7 +154,7 @@ impl TxBroadcaster {
     }
 
     fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
-        info!(total = self.sent_by_tx.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id));
+    info!(total = self.known_txs.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id));
 
         if txs.is_empty() {
             return;
@@ -160,13 +162,13 @@ impl TxBroadcaster {
 
         let len = txs.len();
         if len > 1 {
-            self.sent_by_tx.reserve(len);
+            self.known_txs.reserve(len);
         }
 
         let now = self.now_secs();
         let peer_idx = self.peer_index(peer_id);
         for tx in txs {
-            let record = self.sent_by_tx.entry(tx).or_default();
+            let record = self.known_txs.entry(tx).or_default();
             record.peers.set(peer_idx);
             record.last_sent = now;
         }
@@ -210,7 +212,7 @@ impl TxBroadcaster {
                 .filter(|tx| {
                     let hash = tx.hash();
                     !self
-                        .sent_by_tx
+                        .peers_known_txs
                         .get(&hash)
                         .map_or(false, |record| record.peers.is_set(peer_idx))
                 })
@@ -256,7 +258,7 @@ impl TxBroadcaster {
             .filter(|tx| {
                 let hash = tx.hash();
                 !self
-                    .sent_by_tx
+                    .known_txs
                     .get(&hash)
                     .map_or(false, |record| record.peers.is_set(peer_idx))
             })
@@ -333,7 +335,7 @@ impl GenServer for TxBroadcaster {
             Self::CastMsg::PruneTxs => {
                 debug!(received = "PruneTxs");
                 let now = self.now_secs();
-                let before = self.sent_by_tx.len();
+                let before = self.known_txs.len();
                 let mempool_hashes = self
                     .blockchain
                     .mempool
@@ -342,7 +344,7 @@ impl GenServer for TxBroadcaster {
                         error!(err = ?err, "Failed to fetch mempool hashes for pruning");
                     })
                     .ok();
-                self.sent_by_tx.retain(|tx_hash, record| {
+                self.known_txs.retain(|tx_hash, record| {
                     let recent = now.wrapping_sub(record.last_sent) < PRUNE_WAIT_TIME_SECS as u32;
                     if !recent {
                         return false;
@@ -352,7 +354,7 @@ impl GenServer for TxBroadcaster {
                         _ => true,
                     }
                 });
-                info!(before = before, after = self.sent_by_tx.len(), "Pruned old broadcasted transactions");
+                info!(before = before, after = self.known_txs.len(), "Pruned old broadcasted transactions");
                 CastResponse::NoReply
             }
         }
