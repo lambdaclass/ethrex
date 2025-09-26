@@ -3,7 +3,7 @@ use ethrex::{
     cli::{import_blocks, remove_db},
     utils::{default_datadir, init_datadir},
 };
-use ethrex_blockchain::BlockchainType;
+use ethrex_blockchain::{BlockchainOptions, BlockchainType};
 use ethrex_config::networks::Network;
 
 #[inline]
@@ -23,7 +23,10 @@ fn block_import() {
         "../../fixtures/blockchain/l2-1k-erc20.rlp",
         &datadir,
         genesis,
-        blockchain_type,
+        BlockchainOptions {
+            r#type: blockchain_type,
+            ..Default::default()
+        },
     ))
     .expect("Failed to import blocks on the Tokio runtime");
 }

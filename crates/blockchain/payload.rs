@@ -386,9 +386,10 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context = PayloadBuildContext::new(payload, &self.storage, self.r#type.clone())?;
+        let mut context =
+            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
 
-        if let BlockchainType::L1 = self.r#type {
+        if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
         self.apply_withdrawals(&mut context)?;
