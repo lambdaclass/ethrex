@@ -69,3 +69,9 @@ Or you can set a different network:
 ```sh
 ETHREX_NETWORK=hoodi docker compose up
 ```
+
+---
+
+For more details and configuration options see:
+- [Configuration](./configuration.md)
+- [CLI reference](../../CLI.md)
