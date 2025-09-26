@@ -208,7 +208,7 @@ impl LEVM {
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             db,
             BEACON_ROOTS_ADDRESS.address,
-            SYSTEM_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -230,7 +230,7 @@ impl LEVM {
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             db,
             HISTORY_STORAGE_ADDRESS.address,
-            SYSTEM_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -251,7 +251,7 @@ impl LEVM {
             Bytes::new(),
             db,
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
-            SYSTEM_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
 
@@ -280,7 +280,7 @@ impl LEVM {
             Bytes::new(),
             db,
             CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
-            SYSTEM_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
 

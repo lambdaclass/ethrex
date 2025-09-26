@@ -141,7 +141,7 @@ impl REVM {
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             state,
             BEACON_ROOTS_ADDRESS.address,
-            SYSTEM_ADDRESS.address,
+            SYSTEM_ADDRESS,
         )?;
         Ok(())
     }
@@ -154,7 +154,7 @@ impl REVM {
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             state,
             HISTORY_STORAGE_ADDRESS.address,
-            SYSTEM_ADDRESS.address,
+            SYSTEM_ADDRESS,
         )?;
         Ok(())
     }
@@ -168,7 +168,7 @@ impl REVM {
             Bytes::new(),
             state,
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
-            SYSTEM_ADDRESS.address,
+            SYSTEM_ADDRESS,
         )?;
 
         match tx_result {
@@ -202,7 +202,7 @@ impl REVM {
             Bytes::new(),
             state,
             CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
-            SYSTEM_ADDRESS.address,
+            SYSTEM_ADDRESS,
         )?;
 
         match tx_result {
@@ -605,7 +605,7 @@ pub(crate) fn generic_system_contract_revm(
 
     let transaction_result = evm.transact()?;
     let mut result_state = transaction_result.state;
-    result_state.remove(SYSTEM_ADDRESS.address.as_ref());
+    result_state.remove(SYSTEM_ADDRESS.as_ref());
     result_state.remove(&evm.block().coinbase);
 
     evm.context.evm.db.commit(result_state);
