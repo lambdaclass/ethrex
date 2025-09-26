@@ -744,7 +744,10 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(key_values).await
     }
 
-    async fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
         let mut index = 0u64;
 
