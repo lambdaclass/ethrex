@@ -54,7 +54,7 @@ pub fn prove(
     let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
     let env = ExecutorEnv::builder()
         .stdout(&mut stdout)
-        .write(&bytes.as_slice())?
+        .write_slice(bytes.as_slice())
         .build()?;
 
     let prover = default_prover();
