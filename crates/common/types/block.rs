@@ -2,6 +2,7 @@ use super::{
     BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
+use crate::utils::keccak;
 use crate::{
     Address, H256, U256,
     constants::{
@@ -10,6 +11,7 @@ use crate::{
     },
     types::{Receipt, Transaction},
 };
+use alloy_primitives::Bytes as AlloyBytes;
 use bytes::Bytes;
 use ethereum_types::Bloom;
 use ethrex_rlp::{
@@ -18,10 +20,8 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use risc0_ethereum_trie::CachedTrie as Trie;
-use alloy_primitives::Bytes as AlloyBytes;
-use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use risc0_ethereum_trie::CachedTrie as Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -268,26 +268,33 @@ pub fn compute_transactions_root(transactions: &[Transaction]) -> H256 {
         // Key: RLP(tx_index)
         // Value: tx_type || RLP(tx)  if tx_type != 0
         //                   RLP(tx)  else
-        (idx.encode_to_vec(), AlloyBytes::from(tx.encode_canonical_to_vec()))
+        (
+            idx.encode_to_vec(),
+            AlloyBytes::from(tx.encode_canonical_to_vec()),
+        )
     });
 
     H256(Trie::from_iter(iter).hash().0)
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
-    let iter = receipts
-        .iter()
-        .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), AlloyBytes::from(receipt.encode_inner_with_bloom())));
+    let iter = receipts.iter().enumerate().map(|(idx, receipt)| {
+        (
+            idx.encode_to_vec(),
+            AlloyBytes::from(receipt.encode_inner_with_bloom()),
+        )
+    });
     H256(Trie::from_iter(iter).hash().0)
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
-    let iter = withdrawals
-        .iter()
-        .enumerate()
-        .map(|(idx, withdrawal)| (idx.encode_to_vec(), AlloyBytes::from(withdrawal.encode_to_vec())));
+    let iter = withdrawals.iter().enumerate().map(|(idx, withdrawal)| {
+        (
+            idx.encode_to_vec(),
+            AlloyBytes::from(withdrawal.encode_to_vec()),
+        )
+    });
     H256(Trie::from_iter(iter).hash().0)
 }
 
