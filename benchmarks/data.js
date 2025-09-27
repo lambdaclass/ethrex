@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758939254173,
+  "lastUpdate": 1758940979013,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35150,6 +35150,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015849341252699785,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "35aa069e0d24eb4e697eb718e628aeccb8e17099",
+          "message": "feat(l1): handle non-canonical headers by hash in `GetBlockHeaders` (#4576)\n\n**Motivation**\n\nWe're currently returning empty header responses when we receive a\n`GetBlockHeaders` request specifying the start with the block's hash,\nand the hash isn't part of our canonical view of the chain.\n\n**Description**\n\nThis PR adds support for this case by simply looking for the starting\nblock in the DB and returning it. This stays simple enough and, though\nsuboptimal, should make the simple case of a peer asking for a sidechain\nto work.\n\nIt could be further extended by looking for the block's parent through\nthe parent hash, which should allow us to support cases where `reverse`\nis `true`.",
+          "timestamp": "2025-09-26T13:50:13Z",
+          "tree_id": "ff254059158793315a6ddae93136e344f13f40a0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/35aa069e0d24eb4e697eb718e628aeccb8e17099"
+        },
+        "date": 1758940978326,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004465463488843814,
             "unit": "Mgas/s"
           }
         ]
