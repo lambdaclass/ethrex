@@ -42,7 +42,7 @@ pub async fn get_blockdata(
             format_duration(time_for_next_eth_proofs_block)
         );
 
-        tokio::time::sleep(Duration::from_secs(time_for_next_eth_proofs_block)).await;
+        tokio::time::sleep(time_for_next_eth_proofs_block).await;
 
         latest_block_number = eth_client.get_block_number().await?.as_u64();
     }

@@ -253,7 +253,7 @@ pub enum CacheLevel {
     On,
 }
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 pub struct BlockOptions {
     #[arg(
         help = "Block to use. Uses the latest if not specified.",
@@ -297,6 +297,14 @@ pub struct BlocksOptions {
         help_heading = "Command Options"
     )]
     to: Option<u64>,
+    #[arg(
+        long,
+        help = "Only fetch Ethereum proofs blocks (i.e., no L2 blocks).",
+        help_heading = "Replay Options",
+        requires = "rpc_url",
+        conflicts_with = "blocks"
+    )]
+    pub only_eth_proofs_blocks: bool,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -340,11 +348,21 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(mut block_opts) => loop {
-                let _ = replay_block(block_opts).await;
+            Self::Block(block_opts) => loop {
+                let start = Instant::now();
+
+                let _ = replay_block(block_opts.clone()).await;
 
                 if !block_opts.endless {
                     break;
+                }
+
+                let elapsed = start.elapsed();
+
+                // Sleep until the next block time (12 seconds)
+                // If the replay took longer than 12 seconds, start immediately
+                if elapsed < Duration::from_secs(12) {
+                    tokio::time::sleep(Duration::from_secs(12) - elapsed).await;
                 }
             },
             #[cfg(not(feature = "l2"))]
@@ -352,6 +370,7 @@ impl EthrexReplayCommand {
                 blocks,
                 from,
                 to,
+                only_eth_proofs_blocks,
                 opts,
             }) => {
                 if opts.cached {
@@ -375,7 +394,7 @@ impl EthrexReplayCommand {
                     replay_block(BlockOptions {
                         block: Some(*block_number),
                         endless: false,
-                        only_eth_proofs_blocks: false,
+                        only_eth_proofs_blocks,
                         opts: opts.clone(),
                     })
                     .await?;
@@ -411,6 +430,7 @@ impl EthrexReplayCommand {
                 blocks,
                 from,
                 to,
+                only_eth_proofs_blocks,
                 opts,
             })) => {
                 let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
@@ -422,7 +442,7 @@ impl EthrexReplayCommand {
                         eth_client.clone(),
                         network.clone(),
                         BlockIdentifier::Number(block_number),
-                        opts.only_eth_proofs_blocks,
+                        only_eth_proofs_blocks,
                     )
                     .await?;
                 }
@@ -720,7 +740,7 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
         eth_client,
         network,
         BlockIdentifier::Number(tx.block_number.as_u64()),
-        tx_opts.opts.only_eth_proofs_blocks,
+        false,
     )
     .await?;
 
@@ -750,7 +770,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         eth_client,
         network.clone(),
         or_latest(block)?,
-        opts.only_eth_proofs_blocks,
+        block_opts.only_eth_proofs_blocks,
     )
     .await?;
 
