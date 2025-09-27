@@ -427,7 +427,7 @@ Monitor options:
 ```
 Initialize an ethrex prover
 
-Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>
+Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>...
 
 Options:
   -h, --help
@@ -437,10 +437,10 @@ Prover client options:
       --backend <BACKEND>
           [env: PROVER_CLIENT_BACKEND=]
           [default: exec]
-          [possible values: exec]
+          [possible values: exec, sp1, risc0]
 
-      --proof-coordinators <URL>
-          URL of the sequencer's proof coordinator
+      --proof-coordinators <URL>...
+          URLs of all the sequencers' proof coordinator
 
           [env: PROVER_CLIENT_PROOF_COORDINATOR_URL=]
 
@@ -459,4 +459,9 @@ Prover client options:
           Activate aligned proving system
 
           [env: PROVER_CLIENT_ALIGNED=]
+
+      --sp1-server <URL>
+          Url to the moongate server to use when using sp1 backend
+
+          [env: ETHREX_SP1_SERVER=]
 ```
