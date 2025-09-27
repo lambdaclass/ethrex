@@ -373,7 +373,7 @@ pub mod test_utils {
         let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
         let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
         let storage =
-            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+            Store::new("", EngineType::InMemory, true).expect("Failed to create in-memory storage");
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .await

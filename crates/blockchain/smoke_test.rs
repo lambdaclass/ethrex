@@ -324,8 +324,8 @@ mod blockchain_integration_test {
         let genesis = serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
 
         // Build store with genesis
-        let store =
-            Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+        let store = Store::new("store.db", EngineType::InMemory, true)
+            .expect("Failed to build DB for testing");
 
         store
             .add_initial_state(genesis)

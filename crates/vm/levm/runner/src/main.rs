@@ -140,7 +140,7 @@ fn main() {
 
     // DB
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
-    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory, true).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 

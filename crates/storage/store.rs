@@ -78,13 +78,23 @@ impl Store {
         self.engine.apply_updates(update_batch).await
     }
 
-    pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
+    pub fn new(
+        path: impl AsRef<Path>,
+        engine_type: EngineType,
+        is_primary: bool,
+    ) -> Result<Self, StoreError> {
         let path = path.as_ref();
         info!(engine = ?engine_type, ?path, "Opening storage engine");
+        // FIXME: this is quite hacky
+        if cfg!(not(feature = "rocksdb")) && !is_primary {
+            return Err(StoreError::Custom(
+                "secondary instances not supported for this engine".to_string(),
+            ));
+        }
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
-                engine: Arc::new(RocksDBStore::new(path)?),
+                engine: Arc::new(RocksDBStore::new(path, is_primary)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -108,15 +118,17 @@ impl Store {
         store_path: &Path,
         engine_type: EngineType,
         genesis_path: &str,
-    ) -> Result<Self, StoreError> {
+    ) -> Result<(Self, Self), StoreError> {
         let file = std::fs::File::open(genesis_path)
             .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
         let reader = std::io::BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let store = Self::new(store_path, engine_type)?;
-        store.add_initial_state(genesis).await?;
-        Ok(store)
+        let primary = Self::new(store_path, engine_type, true)?;
+        let secondary =
+            Self::new(store_path, engine_type, true).unwrap_or_else(|_| primary.clone());
+        primary.add_initial_state(genesis).await?;
+        Ok((primary, secondary))
     }
 
     pub async fn get_account_info(
@@ -1390,7 +1402,8 @@ mod tests {
             remove_test_dbs("store-test-db");
         };
         // Build a new store
-        let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
+        let store =
+            Store::new("store-test-db", engine_type, true).expect("Failed to create test db");
         // Run the test
         test_func(store).await;
         // Remove store (if needed)

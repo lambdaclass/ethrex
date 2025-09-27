@@ -40,7 +40,7 @@ pub async fn load_initial_state(
     fork: &Fork,
 ) -> (GeneralizedDatabase, H256, Store, Genesis) {
     let genesis = genesis_from_test_and_fork(test, fork);
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let storage = Store::new("./temp", EngineType::InMemory, true).expect("Failed to create Store");
 
     storage.add_initial_state(genesis.clone()).await.unwrap();
 

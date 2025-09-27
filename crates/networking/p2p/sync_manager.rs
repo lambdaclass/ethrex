@@ -74,7 +74,7 @@ impl SyncManager {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             syncer: Arc::new(Mutex::new(Syncer::dummy())),
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
-            store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
+            store: Store::new("temp.db", ethrex_storage::EngineType::InMemory, true)
                 .expect("Failed to start Storage Engine"),
         }
     }

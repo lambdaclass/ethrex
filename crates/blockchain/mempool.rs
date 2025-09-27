@@ -533,7 +533,7 @@ mod tests {
     use ethrex_storage::{Store, error::StoreError};
 
     async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
-        let store = Store::new("test", EngineType::InMemory)?;
+        let store = Store::new("test", EngineType::InMemory, true)?;
         let block_number = header.number;
         let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;

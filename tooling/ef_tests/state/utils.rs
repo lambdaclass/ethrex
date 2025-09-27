@@ -17,7 +17,7 @@ use ethrex_vm::{
 pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
     let genesis = Genesis::from(test);
 
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let storage = Store::new("./temp", EngineType::InMemory, true).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
     let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
@@ -32,7 +32,7 @@ pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
 pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let genesis = Genesis::from(test);
 
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let storage = Store::new("./temp", EngineType::InMemory, true).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
     let block_hash = genesis.get_block().hash();

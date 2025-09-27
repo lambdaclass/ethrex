@@ -52,7 +52,7 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
 
 fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     // The store type for this bench shouldn't matter as all operations use the LEVM cache
-    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory, true).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
 
     let cache = BTreeMap::from([

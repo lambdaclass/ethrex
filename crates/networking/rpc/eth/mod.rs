@@ -150,7 +150,7 @@ pub mod test_utils {
         let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
         let genesis: Genesis =
             serde_json::from_str(genesis).expect("Fatal: test config is invalid");
-        let store = Store::new("test-store", EngineType::InMemory)
+        let store = Store::new("test-store", EngineType::InMemory, true)
             .expect("Fail to create in-memory db test");
         store.add_initial_state(genesis).await.unwrap();
         store
