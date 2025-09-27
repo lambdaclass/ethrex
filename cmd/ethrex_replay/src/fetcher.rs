@@ -25,8 +25,27 @@ pub async fn get_blockdata(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
+    only_eth_proofs_blocks: bool,
 ) -> eyre::Result<Cache> {
-    let latest_block_number = eth_client.get_block_number().await?.as_u64();
+    let mut latest_block_number = eth_client.get_block_number().await?.as_u64();
+
+    while only_eth_proofs_blocks && latest_block_number % 100 != 0 {
+        let blocks_left_for_next_eth_proofs_block = 100 - (latest_block_number % 100);
+
+        let time_for_next_eth_proofs_block = Duration::from_secs(
+            blocks_left_for_next_eth_proofs_block * 12, // assuming 12s block time
+        );
+
+        info!(
+            "Latest block is {latest_block_number}, waiting for next eth proofs block ({}) in ~{}",
+            latest_block_number + blocks_left_for_next_eth_proofs_block,
+            format_duration(time_for_next_eth_proofs_block)
+        );
+
+        tokio::time::sleep(Duration::from_secs(time_for_next_eth_proofs_block)).await;
+
+        latest_block_number = eth_client.get_block_number().await?.as_u64();
+    }
 
     let requested_block_number = match block_number {
         BlockIdentifier::Number(some_number) => some_number,
