@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758951341507,
+  "lastUpdate": 1758961243437,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35266,6 +35266,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0015889379285456515,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1c414731792a32ba7d7982328c3ce12e84b0c9d3",
+          "message": "test(l1): add reorg testing framework (#4620)\n\n**Motivation**\n\nHive tests are good for wide coverage, but having our own suite will let\nus iterate faster, adding our own regression tests or even fuzzing.\n\n**Description**\n\nThis PR adds a new crate under `tooling/reorgs` with a reorgs testing\nframework. The README of the crate includes instructions on how to run:\n\n> First, compile the `ethrex` binary if you haven't already:\n>\n> ```bash\n> cargo build --workspace --bin ethrex\n>  ```\n>\n>Then, run the reorg tests using:\n>\n>```bash\n>cargo run\n>```\n>\n>You can run a custom binary by specifying the path:\n>\n>```bash\n>cargo run -- /path/to/your/binary\n>```\n\nThe package already includes a simple reorg test with two chains and a\nnode going back and forth between the two, and another test similar to\nthe reorg tests in Hive's \"ethereum/engine\" simulation, which does a\nreorg multiple blocks deep without sending all of the side-chain blocks\nto the node under test.",
+          "timestamp": "2025-09-26T16:05:34Z",
+          "tree_id": "912f8cd7037785124e0e8d49eb586de91aa72854",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1c414731792a32ba7d7982328c3ce12e84b0c9d3"
+        },
+        "date": 1758961242510,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.004553202688728025,
             "unit": "Mgas/s"
           }
         ]
