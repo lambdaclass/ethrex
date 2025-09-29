@@ -27,12 +27,26 @@ interface IOnChainProposer {
     /// @dev Event emitted when a batch is reverted.
     event BatchReverted(bytes32 indexed newStateRoot);
 
+    /// @notice A verification key has been upgraded.
+    /// @dev Event emitted when a verification key is upgraded.
+    /// @param verifier The name of the verifier whose key was upgraded.
+    /// @param newVerificationKey The new verification key.
+    event VerificationKeyUpgraded(string verifier, bytes32 newVerificationKey);
+
     /// @notice Set the bridge address for the first time.
     /// @dev This method is separated from initialize because both the CommonBridge
     /// and the OnChainProposer need to know the address of the other. This solves
     /// the circular dependency while allowing to initialize the proxy with the deploy.
     /// @param bridge the address of the bridge contract.
     function initializeBridgeAddress(address bridge) external;
+
+    /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
+    /// @param new_vk new verification key for SP1 verifier
+    function upgradeSP1VerificationKey(bytes32 new_vk) external;
+
+    /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
+    /// @param new_vk new verification key for RISC0 verifier
+    function upgradeRISC0VerificationKey(bytes32 new_vk) external;
 
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
@@ -77,6 +91,7 @@ interface IOnChainProposer {
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external;
+
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
 
