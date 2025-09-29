@@ -131,14 +131,14 @@ impl LeafNode {
         // calc total payload len
         let payload_len = {
             // ASSUMPTION: partial is never greater than 55 bytes (in particular it's at most 32 bytes)
-            let partial_len = if partial_encoded.len() == 1 {
+            let partial_len = if partial_encoded.len() == 1 && partial_encoded[0] < 0x80 {
                 1
             } else {
                 1 + partial_encoded.len()
             };
             let value_prefix_len = match self.value.len() {
                 ..56 => 1,
-                56..255 => 2,
+                56..256 => 2,
                 _ => 3, // ASSUMPTION: list len will never be >u16::MAX (2 bytes len)
             };
             partial_len + value_prefix_len + self.value.len()
