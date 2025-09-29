@@ -209,7 +209,7 @@ impl Report {
     ///
     /// # CAUTION
     ///
-    /// This functions is used to create a benchmark file that is used by our CI
+    /// This function is used to create a benchmark file that is used by our CI
     /// for updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
     ///
     /// Do not remove it under any circumstances, unless you are refactoring how
