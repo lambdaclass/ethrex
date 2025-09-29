@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758961243437,
+  "lastUpdate": 1759148342054,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17095,6 +17095,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 88520083268,
             "range": "± 196375709",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b889c6a4e8289be79153fb773702a16b4269e925",
+          "message": "docs(l1): add CLI reference links in L1 startup docs (#4677)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nCLI reference is hard to find across de docs.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd links to CLI reference at startup and configuration docs\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-29T11:12:17Z",
+          "tree_id": "4febd63b12f2d6d74248e3b5e16650bc15ef93f6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b889c6a4e8289be79153fb773702a16b4269e925"
+        },
+        "date": 1759148320462,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 91846452279,
+            "range": "± 283646418",
             "unit": "ns/iter"
           }
         ]
