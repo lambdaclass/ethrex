@@ -4,7 +4,7 @@ use crate::H256;
 
 use super::BlobsBundle;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct Batch {
     pub number: u64,
     pub first_block: u64,

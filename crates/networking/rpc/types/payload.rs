@@ -22,7 +22,7 @@ pub struct ExecutionPayload {
     logs_bloom: Bloom,
     prev_randao: H256,
     #[serde(with = "serde_utils::u64::hex_str")]
-    block_number: u64,
+    pub block_number: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
     gas_limit: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
@@ -125,8 +125,8 @@ impl ExecutionPayload {
             base_fee_per_gas: Some(self.base_fee_per_gas),
             withdrawals_root: body
                 .withdrawals
-                .clone()
-                .map(|w| compute_withdrawals_root(&w)),
+                .as_ref()
+                .map(|w| compute_withdrawals_root(w)),
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,
@@ -174,7 +174,7 @@ pub struct PayloadStatus {
     pub validation_error: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PayloadValidationStatus {
     Valid,

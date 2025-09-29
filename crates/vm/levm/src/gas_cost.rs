@@ -8,7 +8,8 @@ use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_common::{U256, types::Fork};
-use num_bigint::BigUint;
+use malachite::base::num::logic::traits::*;
+use malachite::{Natural, base::num::basic::traits::Zero as _};
 
 // Opcodes cost
 pub const STOP: u64 = 0;
@@ -87,6 +88,7 @@ pub const CODESIZE: u64 = 2;
 pub const CODECOPY_STATIC: u64 = 3;
 pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
+pub const CLZ: u64 = 5;
 
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
@@ -149,7 +151,7 @@ pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
 pub const COLD_ADDRESS_ACCESS_COST: u64 = 2600;
 pub const NON_ZERO_VALUE_COST: u64 = 9000;
-pub const BASIC_FALLBACK_FUNCTION_STIPEND: u64 = 2300;
+
 pub const VALUE_TO_EMPTY_ACCOUNT_COST: u64 = 25000;
 
 // Costs in gas for create opcodes
@@ -177,6 +179,7 @@ pub const BLS12_381_MAP_FP_TO_G1_COST: u64 = 5500;
 pub const BLS12_PAIRING_CHECK_MUL_COST: u64 = 32600;
 pub const BLS12_PAIRING_CHECK_FIXED_COST: u64 = 37700;
 pub const BLS12_381_MAP_FP2_TO_G2_COST: u64 = 23800;
+pub const P256_VERIFY_COST: u64 = 6900;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
@@ -191,8 +194,12 @@ pub const IDENTITY_STATIC_COST: u64 = 15;
 pub const IDENTITY_DYNAMIC_BASE: u64 = 3;
 
 pub const MODEXP_STATIC_COST: u64 = 200;
-pub const MODEXP_DYNAMIC_BASE: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
+pub const MODEXP_EXPONENT_FACTOR: u64 = 8;
+
+pub const MODEXP_STATIC_COST_OSAKA: u64 = 500;
+pub const MODEXP_DYNAMIC_QUOTIENT_OSAKA: u64 = 1;
+pub const MODEXP_EXPONENT_FACTOR_OSAKA: u64 = 16;
 
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
@@ -774,34 +781,50 @@ pub fn staticcall(
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
-pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
-    let mut i = U256::one();
+/// Approximates factor * e ** (numerator / denominator) using Taylor expansion
+/// https://eips.ethereum.org/EIPS/eip-4844#helpers
+pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Result<U256, VMError> {
+    if denominator == 0 {
+        return Err(InternalError::DivisionByZero.into());
+    }
+
+    if numerator.is_zero() {
+        return Ok(factor);
+    }
+
     let mut output: U256 = U256::zero();
+    let denominator_u256: U256 = denominator.into();
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
-        .checked_mul(denominator)
+        .checked_mul(denominator_u256)
         .ok_or(InternalError::Overflow)?;
 
-    while !numerator_accum.is_zero() {
-        // Safe addition to output
-        output = output
-            .checked_add(numerator_accum)
-            .ok_or(InternalError::Overflow)?;
+    let mut denominator_by_i = denominator_u256;
 
-        // Safe multiplication and division within loop
-        numerator_accum = numerator_accum
-            .checked_mul(numerator)
-            .ok_or(InternalError::Overflow)?
-            .checked_div(denominator.checked_mul(i).ok_or(InternalError::Overflow)?)
-            .ok_or(InternalError::DivisionByZero)?;
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "division can't overflow since denominator is not 0"
+    )]
+    {
+        while !numerator_accum.is_zero() {
+            // Safe addition to output
+            output = output
+                .checked_add(numerator_accum)
+                .ok_or(InternalError::Overflow)?;
 
-        i = i.checked_add(U256::one()).ok_or(InternalError::Overflow)?;
+            // Safe multiplication and division within loop
+            numerator_accum = numerator_accum
+                .checked_mul(numerator)
+                .ok_or(InternalError::Overflow)?
+                / denominator_by_i;
+
+            // denominator comes from a u64 value, will never overflow before other variables.
+            denominator_by_i += denominator_u256;
+        }
+
+        Ok(output / denominator)
     }
-
-    output
-        .checked_div(denominator)
-        .ok_or(InternalError::DivisionByZero.into())
 }
 
 pub fn sha2_256(data_size: usize) -> Result<u64, VMError> {
@@ -817,10 +840,11 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
 }
 
 pub fn modexp(
-    exponent_first_32_bytes: &BigUint,
+    exponent_first_32_bytes: &Natural,
     base_size: usize,
     exponent_size: usize,
     modulus_size: usize,
+    fork: Fork,
 ) -> Result<u64, VMError> {
     let base_size: u64 = base_size
         .try_into()
@@ -837,22 +861,39 @@ pub fn modexp(
     //https://eips.ethereum.org/EIPS/eip-2565
 
     let words = (max_length.checked_add(7).ok_or(OutOfGas)?) / 8;
-    let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGas)?;
+
+    let multiplication_complexity = if fork >= Fork::Osaka {
+        if max_length > 32 {
+            2_u64
+                .checked_mul(words.checked_pow(2).ok_or(OutOfGas)?)
+                .ok_or(OutOfGas)?
+        } else {
+            16
+        }
+    } else {
+        words.checked_pow(2).ok_or(OutOfGas)?
+    };
+
+    let modexp_exponent_factor = if fork >= Fork::Osaka {
+        MODEXP_EXPONENT_FACTOR_OSAKA
+    } else {
+        MODEXP_EXPONENT_FACTOR
+    };
 
     let calculate_iteration_count =
-        if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
+        if exponent_size <= 32 && *exponent_first_32_bytes != Natural::ZERO {
             exponent_first_32_bytes
-                .bits()
+                .significant_bits()
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?
         } else if exponent_size > 32 {
             let extra_size = (exponent_size
                 .checked_sub(32)
                 .ok_or(InternalError::Underflow)?)
-            .checked_mul(8)
+            .checked_mul(modexp_exponent_factor)
             .ok_or(OutOfGas)?;
             extra_size
-                .checked_add(exponent_first_32_bytes.bits().max(1))
+                .checked_add(exponent_first_32_bytes.significant_bits().max(1))
                 .ok_or(OutOfGas)?
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?
@@ -861,11 +902,24 @@ pub fn modexp(
         }
         .max(1);
 
-    let cost = MODEXP_STATIC_COST.max(
+    let modexp_static_cost = if fork >= Fork::Osaka {
+        MODEXP_STATIC_COST_OSAKA
+    } else {
+        MODEXP_STATIC_COST
+    };
+
+    let modexp_dynamic_quotient = if fork >= Fork::Osaka {
+        MODEXP_DYNAMIC_QUOTIENT_OSAKA
+    } else {
+        MODEXP_DYNAMIC_QUOTIENT
+    };
+
+    let cost = modexp_static_cost.max(
         multiplication_complexity
             .checked_mul(calculate_iteration_count)
             .ok_or(OutOfGas)?
-            / MODEXP_DYNAMIC_QUOTIENT,
+            .checked_div(modexp_dynamic_quotient)
+            .ok_or(OutOfGas)?,
     );
     Ok(cost)
 }

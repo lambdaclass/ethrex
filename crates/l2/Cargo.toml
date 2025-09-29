@@ -1,7 +1,9 @@
 [package]
 name = "ethrex-l2"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,6 +16,7 @@ serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
 ethrex-common.workspace = true
+ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
@@ -32,12 +35,12 @@ hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 envy = "0.4.2"
 rand.workspace = true
 thiserror.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
+futures.workspace = true
 directories = "5.0.1"
 bincode = "1.3.3"
 serde_with.workspace = true
@@ -47,19 +50,23 @@ ethers = "2.0"
 cfg-if.workspace = true
 chrono = "0.4.41"
 clap.workspace = true
-crossterm = {version = "0.29.0", features = ["event-stream"]}
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 ratatui = "0.29.0"
 tui-big-text = "0.7.1"
 tui-scrollview = "0.5.1"
 tui-logger.workspace = true
 tabwriter = "1.4.1"
 color-eyre = "0.6.5"
+axum.workspace = true
 
-zkvm_interface = { path = "./prover/zkvm/interface/" }
+guest_program = { path = "./prover/src/guest_program/" }
 
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
+
+[dev-dependencies]
+anyhow = "1.0.86"
 
 [lib]
 path = "./l2.rs"
@@ -75,4 +82,4 @@ panic = "deny"
 [features]
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics"]
-l2 = ["zkvm_interface/l2"]
+l2 = ["guest_program/l2"]

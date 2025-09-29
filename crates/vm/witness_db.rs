@@ -1,97 +1,97 @@
+use crate::{EvmError, VmDatabase};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, AccountState, block_execution_witness::ExecutionWitnessResult},
+    types::{
+        AccountInfo, AccountUpdate, Block, BlockHeader, ChainConfig,
+        block_execution_witness::{GuestProgramState, GuestProgramStateError},
+    },
 };
-use ethrex_rlp::decode::RLPDecode;
-use sha3::{Digest, Keccak256};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::{EvmError, VmDatabase};
+#[derive(Clone)]
+pub struct GuestProgramStateWrapper {
+    inner: Arc<Mutex<GuestProgramState>>,
+}
 
-impl VmDatabase for ExecutionWitnessResult {
-    fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
-        let state_trie = self.state_trie.as_ref().ok_or(EvmError::DB(
-            "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
-        ))?;
-        let state_trie_lock = state_trie
+impl GuestProgramStateWrapper {
+    pub fn new(db: GuestProgramState) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(db)),
+        }
+    }
+
+    pub fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, GuestProgramStateError> {
+        self.inner
             .lock()
-            .map_err(|_| EvmError::DB("Failed to lock state trie".to_string()))?;
-        let hashed_address = hash_address(&address);
-        let Ok(Some(encoded_state)) = state_trie_lock.get(&hashed_address) else {
-            return Ok(None);
-        };
-        let state = AccountState::decode(&encoded_state)
-            .map_err(|_| EvmError::DB("Failed to get decode account from trie".to_string()))?;
+            .map_err(|_| GuestProgramStateError::Database("Failed to lock DB".to_string()))
+    }
 
-        Ok(Some(AccountInfo {
-            balance: state.balance,
-            code_hash: state.code_hash,
-            nonce: state.nonce,
-        }))
+    pub fn apply_account_updates(
+        &mut self,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), GuestProgramStateError> {
+        self.lock_mutex()?.apply_account_updates(account_updates)
+    }
+
+    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
+        self.lock_mutex()?.state_trie_root()
+    }
+
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
+        self.lock_mutex()?.get_first_invalid_block_hash()
+    }
+
+    pub fn get_block_parent_header(
+        &self,
+        block_number: u64,
+    ) -> Result<BlockHeader, GuestProgramStateError> {
+        self.lock_mutex()?
+            .get_block_parent_header(block_number)
+            .cloned()
+    }
+
+    pub fn initialize_block_header_hashes(
+        &self,
+        blocks: &[Block],
+    ) -> Result<(), GuestProgramStateError> {
+        self.lock_mutex()?.initialize_block_header_hashes(blocks)
+    }
+}
+
+impl VmDatabase for GuestProgramStateWrapper {
+    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+        self.lock_mutex()
+            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+            .get_account_code(code_hash)
+            .map_err(|_| EvmError::DB("Failed to get account code".to_string()))
+    }
+
+    fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
+        self.lock_mutex()
+            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+            .get_account_info(address)
+            .map_err(|_| EvmError::DB("Failed to get account info".to_string()))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        self.block_headers
-            .get(&block_number)
-            .map(|header| header.hash())
-            .ok_or_else(|| {
-                EvmError::DB(format!(
-                    "Block hash not found for block number {block_number}"
-                ))
-            })
+        self.lock_mutex()
+            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+            .get_block_hash(block_number)
+            .map_err(|_| EvmError::DB("Failed get block hash".to_string()))
+    }
+
+    fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
+        self.lock_mutex()
+            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+            .get_chain_config()
+            .map_err(|_| EvmError::DB("Failed get chain config".to_string()))
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        let storage_tries_map = self.storage_tries.as_ref().ok_or(EvmError::DB(
-            "ExecutionWitness: Tried to get storage slot before rebuilding tries".to_string(),
-        ))?;
-
-        let storage_tries_lock = storage_tries_map
-            .lock()
-            .map_err(|_| EvmError::DB("Failed to lock storage tries".to_string()))?;
-
-        let Some(storage_trie) = storage_tries_lock.get(&address) else {
-            return Ok(None);
-        };
-        let hashed_key = hash_key(&key);
-        if let Some(encoded_key) = storage_trie
-            .get(&hashed_key)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-        {
-            U256::decode(&encoded_key)
-                .map_err(|_| EvmError::DB("failed to read storage from trie".to_string()))
-                .map(Some)
-        } else {
-            Ok(None)
-        }
+        self.lock_mutex()
+            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+            .get_storage_slot(address, key)
+            .map_err(|_| EvmError::DB("Failed get storage slot".to_string()))
     }
-
-    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, EvmError> {
-        Ok(self.chain_config)
-    }
-
-    fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, EvmError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
-            return Ok(Bytes::new());
-        }
-        match self.codes.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
-            None => Err(EvmError::DB(format!(
-                "Could not find code for hash {code_hash}"
-            ))),
-        }
-    }
-}
-
-fn hash_address(address: &Address) -> Vec<u8> {
-    Keccak256::new_with_prefix(address.to_fixed_bytes())
-        .finalize()
-        .to_vec()
-}
-
-pub fn hash_key(key: &H256) -> Vec<u8> {
-    Keccak256::new_with_prefix(key.to_fixed_bytes())
-        .finalize()
-        .to_vec()
 }

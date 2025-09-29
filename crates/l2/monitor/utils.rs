@@ -1,8 +1,8 @@
 use std::cmp::min;
 
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, U256};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
-use keccak_hash::keccak;
 
 use crate::sequencer::errors::MonitorError;
 
@@ -48,4 +48,10 @@ pub async fn get_logs(
     }
 
     Ok(batch_committed_logs)
+}
+
+pub trait SelectableScroller {
+    fn selected(&mut self, is_selected: bool);
+    fn scroll_up(&mut self);
+    fn scroll_down(&mut self);
 }

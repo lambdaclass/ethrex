@@ -17,6 +17,12 @@ jobs:
       matrix:
         backend: ["sp1", "risc0"]
     steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+          
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Add Rust Cache
@@ -30,7 +36,8 @@ jobs:
         # but it throws a "error decoding response body" in that case
         run: |
           curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install cargo-risczero 2.1.0
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
           ~/.risc0/bin/rzup install rust
 
       - name: RISC-V SP1 toolchain install
@@ -39,7 +46,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.0
+          ~/.sp1/bin/sp1up --version 5.0.8
 
       - name: Check ${{ matrix.backend }} backend
         run: |
@@ -52,7 +59,7 @@ jobs:
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |
-          git diff --exit-code -- crates/l2/prover/zkvm/interface/${{ matrix.backend }}/Cargo.lock
+          git diff --exit-code -- crates/l2/prover/src/guest_program/${{ matrix.backend }}/Cargo.lock
 
   lint_exec:
     name: Lint exec backend

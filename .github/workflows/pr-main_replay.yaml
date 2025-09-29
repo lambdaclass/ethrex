@@ -1,0 +1,100 @@
+name: Replay
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Execute an L1 block with ${{ matrix.backend }} backend
+    strategy:
+      fail-fast: true
+      matrix:
+        backend: ["sp1", "risc0"]
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: RISC-V Risc0 toolchain install
+        if: matrix.backend == 'risc0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # should be able to specify a version for `rzup install rust` (toolchain version)
+        # but it throws a "error decoding response body" in that case
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
+          ~/.risc0/bin/rzup install rust
+      - name: RISC-V SP1 toolchain install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: matrix.backend == 'sp1'
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 5.0.8
+
+      - name: Build Risc0
+        if: matrix.backend == 'risc0'
+        run: |
+          cd cmd/ethrex_replay
+          cargo b -r --no-default-features --features "${{ matrix.backend }}"
+
+      - name: Build SP1
+        if: matrix.backend == 'sp1'
+        run: |
+          cd cmd/ethrex_replay
+          cargo b -r --features "${{ matrix.backend }}"
+
+      - name: Run
+        env:
+          # TODO(): use RPC
+          # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
+          RPC_URL: "http://45.76.185.153:8545"
+        run: |
+          cp fixtures/cache/rpc_prover/cache_hoodi_1265656.json cmd/ethrex_replay
+          cd cmd/ethrex_replay
+          make execute-${{ matrix.backend }}-ci BLOCK_NUMBER=1265656 NETWORK=hoodi
+
+  run-replay-no-backend:
+    # "Test" is a required check, don't change the name
+    name: Test
+    # It is not working properly, skipping for now
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Build Replay
+        run: |
+          cd cmd/ethrex_replay
+          cargo b -r
+
+      - name: Execute Hoodi block with Replay
+        env:
+          # TODO(): use RPC
+          # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
+          RPC_URL: "http://45.76.185.153:8545"
+        run: |
+          # IMPORTANT: If you change the cache block number, remember to also change it in `main_prover_l1.yaml`
+          cp fixtures/cache/rpc_prover/cache_hoodi_1265656.json cmd/ethrex_replay
+          cd cmd/ethrex_replay
+          make execute BLOCK_NUMBER=1265656 NETWORK=hoodi

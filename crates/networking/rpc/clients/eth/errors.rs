@@ -1,4 +1,5 @@
 use crate::utils::RpcRequest;
+use ethrex_common::{FromStrRadixErr, types::transaction::GenericTransactionError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EthClientError {
@@ -22,6 +23,8 @@ pub enum EthClientError {
     GetBlockByHashError(#[from] GetBlockByHashError),
     #[error("eth_getBlockByNumber request error: {0}")]
     GetBlockByNumberError(#[from] GetBlockByNumberError),
+    #[error("net_peerCount request error: {0}")]
+    GetPeerCountError(#[from] GetPeerCountError),
     #[error("debug_getRawBlock request error: {0}")]
     GetRawBlockError(#[from] GetRawBlockError),
     #[error("eth_getLogs request error: {0}")]
@@ -60,6 +63,12 @@ pub enum EthClientError {
     FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
+    #[error("All RPC calls failed")]
+    FailedAllRPC,
+    #[error("Generic transaction error: {0}")]
+    GenericTransactionError(#[from] GenericTransactionError),
+    #[error("Failed to parse hex string: {0}")]
+    FromStrRadixError(#[from] FromStrRadixErr),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -157,6 +166,14 @@ pub enum GetBlockByNumberError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum GetPeerCountError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum GetRawBlockError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
@@ -236,6 +253,7 @@ pub enum CalldataEncodeError {
     InternalError,
 }
 
+// TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetMessageProofError {
     #[error("{0}")]
@@ -276,6 +294,7 @@ pub enum TxPoolContentError {
     RPCError(String),
 }
 
+// TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
     #[error("{0}")]

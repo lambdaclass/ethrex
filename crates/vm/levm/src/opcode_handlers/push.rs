@@ -1,9 +1,9 @@
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
+use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -11,7 +11,7 @@ use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
     pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
+        let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
         let current_pc = current_call_frame.pc;
@@ -55,16 +55,9 @@ impl<'a> VM<'a> {
 
     // PUSH0
     pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
-        // [EIP-3855] - PUSH0 is only available from SHANGHAI
-        if self.env.config.fork < Fork::Shanghai {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-        let current_call_frame = self.current_call_frame_mut()?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
-
-        current_call_frame.stack.push1(U256::zero())?;
-
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::PUSH0)?;
+        self.current_call_frame.stack.push_zero()?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 }

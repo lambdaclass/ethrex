@@ -1,0 +1,52 @@
+[package]
+name = "ef_tests-state"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+
+[dependencies]
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-storage.workspace = true
+ethrex-rlp.workspace = true
+ethrex-vm.workspace = true
+ethrex-levm.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+# Since we do heavy parsing of ef tests, simd-json is more than 2x faster than serde_json
+simd-json = "0.15.1"
+bytes.workspace = true
+hex.workspace = true
+colored = "2.1.0"
+spinoff = "0.8.0"
+thiserror.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+itertools = "0.13.0"
+revm = { version = "19.0.0", features = [
+    "serde",
+    "std",
+    "serde-json",
+    "optional_no_base_fee",
+    "optional_block_gas_limit",
+], default-features = false }
+alloy-rlp = "0.3.12"
+tokio = { workspace = true, features = ["full"] }
+rayon.workspace = true
+
+[dev-dependencies]
+hex = "0.4.3"
+
+[lib]
+path = "./lib.rs"
+
+[features]
+default = ["c-kzg", "revm"]
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+revm = ["ethrex-vm/revm"]
+
+[[test]]
+name = "all"
+harness = false

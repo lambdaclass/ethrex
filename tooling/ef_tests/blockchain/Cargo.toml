@@ -1,0 +1,38 @@
+[package]
+name = "ef_tests-blockchain"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+
+[dependencies]
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-storage.workspace = true
+ethrex-rlp.workspace = true
+ethrex-vm.workspace = true
+ethrex-prover = { path = "../../../crates/l2/prover", default-features = false }
+guest_program = { path = "../../../crates/l2/prover/src/guest_program", default-features = false }
+
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+hex.workspace = true
+lazy_static.workspace = true
+tokio = { workspace = true, features = ["full"] }
+datatest-stable = "0.2.9"
+regex = "1.11.1"
+
+[lib]
+path = "./lib.rs"
+
+[features]
+default = ["c-kzg"]
+c-kzg = ["ethrex-blockchain/c-kzg"]
+revm = ["ethrex-vm/revm"]
+sp1 = ["guest_program/sp1", "ethrex-prover/sp1"]
+stateless = []
+
+[[test]]
+name = "all"
+harness = false

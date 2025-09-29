@@ -1,15 +1,15 @@
 use ethrex_common::types::{BlockHash, batch::Batch};
 use ethrex_storage::Store;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     utils::RpcErr,
 };
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct RpcBatch {
     #[serde(flatten)]
     pub batch: Batch,
@@ -91,12 +91,36 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Requested batch with number: {}", self.batch_number);
+        debug!("Requested batch with number: {}", self.batch_number);
         let Some(batch) = context.rollup_store.get_batch(self.batch_number).await? else {
             return Ok(Value::Null);
         };
         let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage).await?;
 
         serde_json::to_value(&rpc_batch).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct BatchNumberRequest {}
+
+impl RpcHandler for BatchNumberRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        if params.as_ref().is_some_and(|params| !params.is_empty()) {
+            return Err(ethrex_rpc::RpcErr::BadParams(
+                "Expected 0 params".to_owned(),
+            ))?;
+        };
+
+        Ok(BatchNumberRequest {})
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Requested last batch number");
+        let Some(batch_number) = context.rollup_store.get_batch_number().await? else {
+            return Ok(Value::Null);
+        };
+
+        serde_json::to_value(format!("{batch_number:#x}"))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

@@ -6,7 +6,7 @@ services:
     command:
       - --execution-url=http://host.docker.internal:8545
       - --execution-modules="eth","net","web3","txpool"
-      - --consensus-url=http://host.docker.internal:5053
+      - --consensus-url=http://host.docker.internal:5052
       - --metrics-port=9093
     ports:
       - "9093:9093"
@@ -27,7 +27,7 @@ services:
     ports:
       - "3001:3000"
     volumes:
-      - ./provisioning/grafana_provisioning/datasources:/etc/grafana/provisioning/datasources
-      - ./provisioning/grafana_provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./provisioning/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./provisioning/grafana/dashboards:/etc/grafana/provisioning/dashboards
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin

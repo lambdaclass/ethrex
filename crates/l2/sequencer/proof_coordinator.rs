@@ -7,12 +7,13 @@ use crate::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -29,11 +30,18 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+#[cfg(feature = "metrics")]
+use ethrex_metrics::l2::metrics::METRICS;
+#[cfg(feature = "metrics")]
+use std::{collections::HashMap, time::SystemTime};
+#[cfg(feature = "metrics")]
+use tokio::sync::Mutex;
+
 #[serde_as]
 #[derive(Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub db: ExecutionWitnessResult,
+    pub execution_witness: ExecutionWitness,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
@@ -149,7 +157,17 @@ pub fn get_commit_hash() -> String {
 }
 
 #[derive(Clone)]
-pub struct ProofCoordinatorState {
+pub enum ProofCordInMessage {
+    Listen { listener: Arc<TcpListener> },
+}
+
+#[derive(Clone, PartialEq)]
+pub enum ProofCordOutMessage {
+    Done,
+}
+
+#[derive(Clone)]
+pub struct ProofCoordinator {
     listen_ip: IpAddr,
     port: u16,
     store: Store,
@@ -158,14 +176,16 @@ pub struct ProofCoordinatorState {
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     rpc_url: String,
-    tdx_private_key: SecretKey,
+    tdx_private_key: Option<SecretKey>,
     blockchain: Arc<Blockchain>,
     validium: bool,
     needed_proof_types: Vec<ProverType>,
     commit_hash: String,
+    #[cfg(feature = "metrics")]
+    request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
 }
 
-impl ProofCoordinatorState {
+impl ProofCoordinator {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         config: &ProofCoordinatorConfig,
@@ -210,23 +230,11 @@ impl ProofCoordinatorState {
             validium: config.validium,
             needed_proof_types,
             commit_hash: get_commit_hash(),
+            #[cfg(feature = "metrics")]
+            request_timestamp: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-}
 
-#[derive(Clone)]
-pub enum ProofCordInMessage {
-    Listen { listener: Arc<TcpListener> },
-}
-
-#[derive(Clone, PartialEq)]
-pub enum ProofCordOutMessage {
-    Done,
-}
-
-pub struct ProofCoordinator;
-
-impl ProofCoordinator {
     pub async fn spawn(
         store: Store,
         rollup_store: StoreRollup,
@@ -234,7 +242,7 @@ impl ProofCoordinator {
         blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofCoordinatorError> {
-        let state = ProofCoordinatorState::new(
+        let state = Self::new(
             &cfg.proof_coordinator,
             &cfg.l1_committer,
             &cfg.eth,
@@ -253,76 +261,372 @@ impl ProofCoordinator {
             .await;
         Ok(())
     }
+
+    async fn handle_listens(&mut self, listener: Arc<TcpListener>) {
+        info!("Starting TCP server at {}:{}.", self.listen_ip, self.port);
+        loop {
+            let res = listener.accept().await;
+            match res {
+                Ok((stream, addr)) => {
+                    // Cloning the ProofCoordinatorState structure to use the handle_connection() fn
+                    // in every spawned task.
+                    // The important fields are `Store` and `EthClient`
+                    // Both fields are wrapped with an Arc, making it possible to clone
+                    // the entire structure.
+                    let _ = ConnectionHandler::spawn(self.clone(), stream, addr)
+                        .await
+                        .inspect_err(|err| {
+                            error!("Error starting ConnectionHandler: {err}");
+                        });
+                }
+                Err(e) => {
+                    error!("Failed to accept connection: {e}");
+                }
+            }
+
+            debug!("Connection closed");
+        }
+    }
+
+    async fn handle_request(
+        &mut self,
+        stream: &mut TcpStream,
+        commit_hash: String,
+    ) -> Result<(), ProofCoordinatorError> {
+        info!("BatchRequest received");
+
+        if commit_hash != self.commit_hash {
+            error!(
+                "Code version mismatch: expected {}, got {}",
+                self.commit_hash, commit_hash
+            );
+
+            let response = ProofData::invalid_code_version(self.commit_hash.clone());
+            send_response(stream, &response).await?;
+            info!("InvalidCodeVersion sent");
+            return Ok(());
+        }
+
+        let batch_to_verify = 1 + get_latest_sent_batch(
+            self.needed_proof_types.clone(),
+            &self.rollup_store,
+            &self.eth_client,
+            self.on_chain_proposer_address,
+        )
+        .await
+        .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
+
+        let mut all_proofs_exist = true;
+        for proof_type in &self.needed_proof_types {
+            if self
+                .rollup_store
+                .get_proof_by_batch_and_type(batch_to_verify, *proof_type)
+                .await?
+                .is_none()
+            {
+                all_proofs_exist = false;
+                break;
+            }
+        }
+
+        let response =
+            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_verify).await? {
+                debug!("Sending empty BatchResponse");
+                ProofData::empty_batch_response()
+            } else {
+                let input = self.create_prover_input(batch_to_verify).await?;
+                debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+                metrics!(
+                    // First request starts a timer until a proof is received. The elapsed time will be
+                    // the estimated proving time.
+                    // This should be used for development only and runs on the assumption that:
+                    //   1. There's a single prover
+                    //   2. Communication does not fail
+                    //   3. Communication adds negligible overhead in comparison with proving time
+                    let mut lock = self.request_timestamp.lock().await;
+                    lock.entry(batch_to_verify).or_insert(SystemTime::now());
+                );
+                ProofData::batch_response(batch_to_verify, input)
+            };
+
+        send_response(stream, &response).await?;
+        info!("BatchResponse sent for batch number: {batch_to_verify}");
+
+        Ok(())
+    }
+
+    async fn handle_submit(
+        &mut self,
+        stream: &mut TcpStream,
+        batch_number: u64,
+        batch_proof: BatchProof,
+    ) -> Result<(), ProofCoordinatorError> {
+        info!("ProofSubmit received for batch number: {batch_number}");
+
+        // Check if we have a proof for this batch and prover type
+        let prover_type = batch_proof.prover_type();
+        if self
+            .rollup_store
+            .get_proof_by_batch_and_type(batch_number, prover_type)
+            .await?
+            .is_some()
+        {
+            info!(
+                ?batch_number,
+                ?prover_type,
+                "A proof was received for a batch and type that is already stored"
+            );
+        } else {
+            metrics!(
+                tracing::warn!("getting request timestamp for batch {batch_number}");
+                let mut request_timestamps = self.request_timestamp.lock().await;
+                let request_timestamp = request_timestamps.get(&batch_number).ok_or(
+                    ProofCoordinatorError::InternalError(
+                        "request timestamp could not be found".to_string(),
+                    ),
+                )?;
+                let proving_time = request_timestamp
+                    .elapsed()
+                    .map_err(|_| ProofCoordinatorError::InternalError("failed to compute proving time".to_string()))?
+                    .as_secs().try_into()
+                    .map_err(|_| ProofCoordinatorError::InternalError("failed to convert proving time to i64".to_string()))?;
+                METRICS.set_batch_proving_time(batch_number, proving_time)?;
+                tracing::warn!("removed request timestamp for batch {batch_number}");
+                let _ = request_timestamps.remove(&batch_number);
+            );
+            // If not, store it
+            self.rollup_store
+                .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
+                .await?;
+        }
+        let response = ProofData::proof_submit_ack(batch_number);
+        send_response(stream, &response).await?;
+        info!("ProofSubmit ACK sent");
+        Ok(())
+    }
+
+    async fn handle_setup(
+        &mut self,
+        stream: &mut TcpStream,
+        prover_type: ProverType,
+        payload: Bytes,
+    ) -> Result<(), ProofCoordinatorError> {
+        info!("ProverSetup received for {prover_type}");
+
+        match prover_type {
+            ProverType::TDX => {
+                let Some(key) = self.tdx_private_key.as_ref() else {
+                    return Err(ProofCoordinatorError::MissingTDXPrivateKey);
+                };
+                prepare_quote_prerequisites(
+                    &self.eth_client,
+                    &self.rpc_url,
+                    &hex::encode(key.secret_bytes()),
+                    &hex::encode(&payload),
+                )
+                .await
+                .map_err(|e| {
+                    ProofCoordinatorError::Custom(format!("Could not setup TDX key {e}"))
+                })?;
+                register_tdx_key(
+                    &self.eth_client,
+                    key,
+                    self.on_chain_proposer_address,
+                    payload,
+                )
+                .await?;
+            }
+            _ => {
+                warn!("Setup requested for {prover_type}, which doesn't need setup.")
+            }
+        }
+
+        let response = ProofData::prover_setup_ack();
+
+        send_response(stream, &response).await?;
+        info!("ProverSetupACK sent");
+        Ok(())
+    }
+
+    async fn create_prover_input(
+        &mut self,
+        batch_number: u64,
+    ) -> Result<ProverInputData, ProofCoordinatorError> {
+        // Get blocks in batch
+        let Some(block_numbers) = self
+            .rollup_store
+            .get_block_numbers_by_batch(batch_number)
+            .await?
+        else {
+            return Err(ProofCoordinatorError::ItemNotFoundInStore(format!(
+                "Batch number {batch_number} not found in store"
+            )));
+        };
+
+        let blocks = self.fetch_blocks(block_numbers).await?;
+
+        let witness = self
+            .blockchain
+            .generate_witness_for_blocks(&blocks)
+            .await
+            .map_err(ProofCoordinatorError::from)?;
+
+        // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
+        let (blob_commitment, blob_proof) = if self.validium {
+            ([0; 48], [0; 48])
+        } else {
+            let blob = self
+                .rollup_store
+                .get_blobs_by_batch(batch_number)
+                .await?
+                .ok_or(ProofCoordinatorError::MissingBlob(batch_number))?;
+            let BlobsBundle {
+                mut commitments,
+                mut proofs,
+                ..
+            } = BlobsBundle::create_from_blobs(&blob)?;
+            match (commitments.pop(), proofs.pop()) {
+                (Some(commitment), Some(proof)) => (commitment, proof),
+                _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
+            }
+        };
+
+        debug!("Created prover input for batch {batch_number}");
+
+        Ok(ProverInputData {
+            execution_witness: witness,
+            blocks,
+            elasticity_multiplier: self.elasticity_multiplier,
+            #[cfg(feature = "l2")]
+            blob_commitment,
+            #[cfg(feature = "l2")]
+            blob_proof,
+        })
+    }
+
+    async fn fetch_blocks(
+        &mut self,
+        block_numbers: Vec<u64>,
+    ) -> Result<Vec<Block>, ProofCoordinatorError> {
+        let mut blocks = vec![];
+        for block_number in block_numbers {
+            let header = self
+                .store
+                .get_block_header(block_number)?
+                .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
+            let body = self
+                .store
+                .get_block_body(block_number)
+                .await?
+                .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
+            blocks.push(Block::new(header, body));
+        }
+        Ok(blocks)
+    }
 }
 
 impl GenServer for ProofCoordinator {
     type CallMsg = Unused;
     type CastMsg = ProofCordInMessage;
     type OutMsg = ProofCordOutMessage;
-    type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             ProofCordInMessage::Listen { listener } => {
-                handle_listens(&state, listener).await;
+                self.handle_listens(listener).await;
             }
         }
         CastResponse::Stop
     }
 }
 
-async fn handle_listens(state: &ProofCoordinatorState, listener: Arc<TcpListener>) {
-    info!("Starting TCP server at {}:{}.", state.listen_ip, state.port);
-    loop {
-        let res = listener.accept().await;
-        match res {
-            Ok((stream, addr)) => {
-                // Cloning the ProofCoordinatorState structure to use the handle_connection() fn
-                // in every spawned task.
-                // The important fields are `Store` and `EthClient`
-                // Both fields are wrapped with an Arc, making it possible to clone
-                // the entire structure.
-                let _ = ConnectionHandler::spawn(state.clone(), stream, addr)
-                    .await
-                    .inspect_err(|err| {
-                        error!("Error starting ConnectionHandler: {err}");
-                    });
-            }
-            Err(e) => {
-                error!("Failed to accept connection: {e}");
-            }
-        }
-
-        debug!("Connection closed");
-    }
+#[derive(Clone)]
+struct ConnectionHandler {
+    proof_coordinator: ProofCoordinator,
 }
 
-struct ConnectionHandler;
-
 impl ConnectionHandler {
+    fn new(proof_coordinator: ProofCoordinator) -> Self {
+        Self { proof_coordinator }
+    }
+
     async fn spawn(
-        state: ProofCoordinatorState,
+        proof_coordinator: ProofCoordinator,
         stream: TcpStream,
         addr: SocketAddr,
     ) -> Result<(), ConnectionHandlerError> {
-        let mut connection_handler = ConnectionHandler::start(state);
+        let mut connection_handler = Self::new(proof_coordinator).start();
         connection_handler
             .cast(ConnInMessage::Connection {
                 stream: Arc::new(stream),
                 addr,
             })
             .await
-            .map_err(ConnectionHandlerError::GenServerError)
+            .map_err(ConnectionHandlerError::InternalError)
+    }
+
+    async fn handle_connection(
+        &mut self,
+        stream: Arc<TcpStream>,
+    ) -> Result<(), ProofCoordinatorError> {
+        let mut buffer = Vec::new();
+        // TODO: This should be fixed in https://github.com/lambdaclass/ethrex/issues/3316
+        // (stream should not be wrapped in an Arc)
+        if let Some(mut stream) = Arc::into_inner(stream) {
+            stream.read_to_end(&mut buffer).await?;
+
+            let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
+            match data {
+                Ok(ProofData::BatchRequest { commit_hash }) => {
+                    if let Err(e) = self
+                        .proof_coordinator
+                        .handle_request(&mut stream, commit_hash)
+                        .await
+                    {
+                        error!("Failed to handle BatchRequest: {e}");
+                    }
+                }
+                Ok(ProofData::ProofSubmit {
+                    batch_number,
+                    batch_proof,
+                }) => {
+                    if let Err(e) = self
+                        .proof_coordinator
+                        .handle_submit(&mut stream, batch_number, batch_proof)
+                        .await
+                    {
+                        error!("Failed to handle ProofSubmit: {e}");
+                    }
+                }
+                Ok(ProofData::ProverSetup {
+                    prover_type,
+                    payload,
+                }) => {
+                    if let Err(e) = self
+                        .proof_coordinator
+                        .handle_setup(&mut stream, prover_type, payload)
+                        .await
+                    {
+                        error!("Failed to handle ProverSetup: {e}");
+                    }
+                }
+                Ok(_) => {
+                    warn!("Invalid request");
+                }
+                Err(e) => {
+                    warn!("Failed to parse request: {e}");
+                }
+            }
+            debug!("Connection closed");
+        } else {
+            error!("Unable to use stream");
+        }
+        Ok(())
     }
 }
 
@@ -343,22 +647,16 @@ impl GenServer for ConnectionHandler {
     type CallMsg = Unused;
     type CastMsg = ConnInMessage;
     type OutMsg = ConnOutMessage;
-    type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             ConnInMessage::Connection { stream, addr } => {
-                if let Err(err) = handle_connection(&state, stream).await {
+                if let Err(err) = self.handle_connection(stream).await {
                     error!("Error handling connection from {addr}: {err}");
                 } else {
                     debug!("Connection from {addr} handled successfully");
@@ -367,258 +665,6 @@ impl GenServer for ConnectionHandler {
         }
         CastResponse::Stop
     }
-}
-
-async fn handle_connection(
-    state: &ProofCoordinatorState,
-    stream: Arc<TcpStream>,
-) -> Result<(), ProofCoordinatorError> {
-    let mut buffer = Vec::new();
-    // TODO: This should be fixed in https://github.com/lambdaclass/ethrex/issues/3316
-    // (stream should not be wrapped in an Arc)
-    if let Some(mut stream) = Arc::into_inner(stream) {
-        stream.read_to_end(&mut buffer).await?;
-
-        let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
-        match data {
-            Ok(ProofData::BatchRequest { commit_hash }) => {
-                if let Err(e) = handle_request(state, &mut stream, commit_hash).await {
-                    error!("Failed to handle BatchRequest: {e}");
-                }
-            }
-            Ok(ProofData::ProofSubmit {
-                batch_number,
-                batch_proof,
-            }) => {
-                if let Err(e) = handle_submit(state, &mut stream, batch_number, batch_proof).await {
-                    error!("Failed to handle ProofSubmit: {e}");
-                }
-            }
-            Ok(ProofData::ProverSetup {
-                prover_type,
-                payload,
-            }) => {
-                if let Err(e) = handle_setup(state, &mut stream, prover_type, payload).await {
-                    error!("Failed to handle ProverSetup: {e}");
-                }
-            }
-            Ok(_) => {
-                warn!("Invalid request");
-            }
-            Err(e) => {
-                warn!("Failed to parse request: {e}");
-            }
-        }
-        debug!("Connection closed");
-    } else {
-        error!("Unable to use stream");
-    }
-    Ok(())
-}
-
-async fn handle_request(
-    state: &ProofCoordinatorState,
-    stream: &mut TcpStream,
-    commit_hash: String,
-) -> Result<(), ProofCoordinatorError> {
-    info!("BatchRequest received");
-
-    if commit_hash != state.commit_hash {
-        error!(
-            "Code version mismatch: expected {}, got {}",
-            state.commit_hash, commit_hash
-        );
-
-        let response = ProofData::invalid_code_version(state.commit_hash.clone());
-        send_response(stream, &response).await?;
-        info!("InvalidCodeVersion sent");
-        return Ok(());
-    }
-
-    let batch_to_verify = 1 + get_latest_sent_batch(
-        state.needed_proof_types.clone(),
-        &state.rollup_store,
-        &state.eth_client,
-        state.on_chain_proposer_address,
-    )
-    .await
-    .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
-
-    let mut all_proofs_exist = true;
-    for proof_type in &state.needed_proof_types {
-        if state
-            .rollup_store
-            .get_proof_by_batch_and_type(batch_to_verify, *proof_type)
-            .await?
-            .is_none()
-        {
-            all_proofs_exist = false;
-            break;
-        }
-    }
-
-    let response =
-        if all_proofs_exist || !state.rollup_store.contains_batch(&batch_to_verify).await? {
-            debug!("Sending empty BatchResponse");
-            ProofData::empty_batch_response()
-        } else {
-            let input = create_prover_input(state, batch_to_verify).await?;
-            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-            ProofData::batch_response(batch_to_verify, input)
-        };
-
-    send_response(stream, &response).await?;
-    info!("BatchResponse sent for batch number: {batch_to_verify}");
-
-    Ok(())
-}
-
-async fn handle_submit(
-    state: &ProofCoordinatorState,
-    stream: &mut TcpStream,
-    batch_number: u64,
-    batch_proof: BatchProof,
-) -> Result<(), ProofCoordinatorError> {
-    info!("ProofSubmit received for batch number: {batch_number}");
-
-    // Check if we have a proof for this batch and prover type
-    let prover_type = batch_proof.prover_type();
-    if state
-        .rollup_store
-        .get_proof_by_batch_and_type(batch_number, prover_type)
-        .await?
-        .is_some()
-    {
-        info!(
-            ?batch_number,
-            ?prover_type,
-            "A proof was received for a batch and type that is already stored"
-        );
-    } else {
-        // If not, store it
-        state
-            .rollup_store
-            .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
-            .await?;
-    }
-    let response = ProofData::proof_submit_ack(batch_number);
-    send_response(stream, &response).await?;
-    info!("ProofSubmit ACK sent");
-    Ok(())
-}
-
-async fn handle_setup(
-    state: &ProofCoordinatorState,
-    stream: &mut TcpStream,
-    prover_type: ProverType,
-    payload: Bytes,
-) -> Result<(), ProofCoordinatorError> {
-    info!("ProverSetup received for {prover_type}");
-
-    match prover_type {
-        ProverType::TDX => {
-            prepare_quote_prerequisites(
-                &state.eth_client,
-                &state.rpc_url,
-                &hex::encode(state.tdx_private_key.as_ref()),
-                &hex::encode(&payload),
-            )
-            .await
-            .map_err(|e| ProofCoordinatorError::Custom(format!("Could not setup TDX key {e}")))?;
-            register_tdx_key(
-                &state.eth_client,
-                &state.tdx_private_key,
-                state.on_chain_proposer_address,
-                payload,
-            )
-            .await?;
-        }
-        _ => {
-            warn!("Setup requested for {prover_type}, which doesn't need setup.")
-        }
-    }
-
-    let response = ProofData::prover_setup_ack();
-
-    send_response(stream, &response).await?;
-    info!("ProverSetupACK sent");
-    Ok(())
-}
-
-async fn create_prover_input(
-    state: &ProofCoordinatorState,
-    batch_number: u64,
-) -> Result<ProverInputData, ProofCoordinatorError> {
-    // Get blocks in batch
-    let Some(block_numbers) = state
-        .rollup_store
-        .get_block_numbers_by_batch(batch_number)
-        .await?
-    else {
-        return Err(ProofCoordinatorError::ItemNotFoundInStore(format!(
-            "Batch number {batch_number} not found in store"
-        )));
-    };
-
-    let blocks = fetch_blocks(state, block_numbers).await?;
-
-    let witness = state
-        .blockchain
-        .generate_witness_for_blocks(&blocks)
-        .await
-        .map_err(ProofCoordinatorError::from)?;
-
-    // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
-    let (blob_commitment, blob_proof) = if state.validium {
-        ([0; 48], [0; 48])
-    } else {
-        let blob = state
-            .rollup_store
-            .get_blobs_by_batch(batch_number)
-            .await?
-            .ok_or(ProofCoordinatorError::MissingBlob(batch_number))?;
-        let BlobsBundle {
-            mut commitments,
-            mut proofs,
-            ..
-        } = BlobsBundle::create_from_blobs(&blob)?;
-        match (commitments.pop(), proofs.pop()) {
-            (Some(commitment), Some(proof)) => (commitment, proof),
-            _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
-        }
-    };
-
-    debug!("Created prover input for batch {batch_number}");
-
-    Ok(ProverInputData {
-        db: witness,
-        blocks,
-        elasticity_multiplier: state.elasticity_multiplier,
-        #[cfg(feature = "l2")]
-        blob_commitment,
-        #[cfg(feature = "l2")]
-        blob_proof,
-    })
-}
-
-async fn fetch_blocks(
-    state: &ProofCoordinatorState,
-    block_numbers: Vec<u64>,
-) -> Result<Vec<Block>, ProofCoordinatorError> {
-    let mut blocks = vec![];
-    for block_number in block_numbers {
-        let header = state
-            .store
-            .get_block_header(block_number)?
-            .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
-        let body = state
-            .store
-            .get_block_body(block_number)
-            .await?
-            .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
-        blocks.push(Block::new(header, body));
-    }
-    Ok(blocks)
 }
 
 async fn send_response(

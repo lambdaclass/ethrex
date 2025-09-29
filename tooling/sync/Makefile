@@ -1,150 +1,108 @@
-.PHONY = start_geth_holesky start_lighthouse_holesky gen_jwt
+.PHONY = help create_datadir gen_jwt sync start_geth_holesky flamegraph-main  flamegraph \
+flamegraph-branch flamegraph-inner flamegraph-mainnet flamegraph-sepolia flamegraph-holesky \
+flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-docker \
+start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
+start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics
 
 ETHREX_DIR ?= "../.."
 EVM ?= levm
 NODE_NAME ?= ethrex
 ENGINE_PORT ?= 8551
-HOLESKY_CHECKPOINT_SYNC_URL ?= https://checkpoint-sync.holesky.ethpandaops.io
 LIGHTHOUSE_PORT ?= 9099
 LIGHTHOUSE_DISCOVERY_PORT ?= 9999
-HOLESKY_BOOTNODES=enode://a37d916374b92440247c20434389904f0f1f4ddf65e00ba7d482b551824e094db99a90b89124cc6ed98b89a9d5549afc3c307443e109c366a8e060bf27430c88@65.21.237.42:30303
-HOODI_CHECKPOINT_SYNC_URL ?= https://hoodi.beaconstate.ethstaker.cc
-HOODI_BOOTNODES ?= enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303
 CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 OS = $(shell uname)
 ifeq ($(OS), Darwin)
-	DATA_PATH = ~/Library/Application\ Support
-else 
-	DATA_PATH = ~/.local/share
+	DATA_PATH = $(HOME)/Library/Application\ Support
+else
+	DATA_PATH = $(HOME)/.local/share
 endif
+
+# Set checkpoint sync url based on network
+NETWORK ?= mainnet# default network if not set
+ifeq ($(NETWORK), mainnet)
+CHECKPOINT_SYNC_URL ?= https://beaconstate.info
+endif
+ifeq ($(NETWORK), sepolia)
+CHECKPOINT_SYNC_URL ?= https://checkpoint-sync.sepolia.ethpandaops.io
+endif
+ifeq ($(NETWORK), holesky)
+CHECKPOINT_SYNC_URL ?= https://checkpoint-sync.holesky.ethpandaops.io
+endif
+ifeq ($(NETWORK), hoodi)
+CHECKPOINT_SYNC_URL ?= https://hoodi.beaconstate.ethstaker.cc
+endif
+
+# Set bootnodes flag only if we have bootnodes
+ifndef BOOTNODES
+BOOTNODES_FLAG ?=
+else 
+BOOTNODES_FLAG ?= --bootnodes ${BOOTNODES}
+endif
+
+default: help
 
 help: ## Display help for the makefile.
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[%a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-create_data_dir: ## Create the data folder for the network. NETWORK environment variable required.
-ifndef NETWORK
-	$(error "Sync network not provided")
-endif
+create_datadir: ## Create the data folder for the network. If NETWORK environment variable is not provided, mainnet will be used as default.
 	mkdir -p $(DATA_PATH)/$(NETWORK)_data
 
-gen-jwt: create_data_dir ## Create the jwt for a given network. NETWORK environment variable required.
-ifndef NETWORK
-	$(error "Sync network not provided")
-endif
+gen-jwt: create_datadir ## Create the jwt for a given network. NETWORK environment variable required.
 	openssl rand -hex 32 | tr -d "\n" | tee $(DATA_PATH)/$(NETWORK)_data/jwt.hex
 
-sync: create_data_dir ## Run the sync for a given network. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use.
+sync: create_datadir ## Run the sync for a given network. SYNC_BLOCK_NUM environment variable required (for block to start from).  If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
 endif	
-ifndef NETWORK
-	$(error "Sync network not provided")
-endif
 #	samply record --unstable-presymbolicate --save-only -- 
 	mkdir -p logs
 	make start-ethrex-$(NETWORK) >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
 
 
-flamegraph-main: ## Run flamegraph on main branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. Execution logs are output to log file.
+flamegraph-main: ## Run flamegraph on main branch. SYNC_BLOCK_NUM environment variable required (for block to start from). If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use. Execution logs are output to log file.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set)
-endif
-ifndef NETWORK
-	$(error "Sync network not provided")
 endif
 	cd $(ETHREX_DIR) && git checkout main
 	mkdir -p logs
-	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
+	make flamegraph-inner >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
-flamegraph: ## Run flamegraph on the currently checked out branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. Execution logs are output to log file.
+flamegraph: ## Run flamegraph on the currently checked out branch. SYNC_BLOCK_NUM environment variable required (for block to start from).  If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use. Execution logs are output to log file.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set)
 endif
-ifndef NETWORK
-	$(error "Sync network not provided")
-endif
 	mkdir -p logs
-	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
+	make flamegraph-inner >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
-flamegraph-branch: ## Run flamegraph on custom branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. xecution logs are output to log file.
+flamegraph-branch: ## Run flamegraph on custom branch. SYNC_BLOCK_NUM environment variable required (for block to start from).  If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use. Execution logs are output to log file.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
 endif
 ifndef BRANCH
 	$(error "Branch not specified")
 endif
-ifndef NETWORK
-	$(error "Sync network not provided")
-endif
 	cd $(ETHREX_DIR) && git checkout $(BRANCH)
 	mkdir -p logs
-	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
+	make flamegraph-inner >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
-flamegraph-holesky: ## Run flamegraph on holesky.
+
+flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flamegraph on the network given by NETWORK.
 	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
 		--discovery.port 30303 \
-		--network holesky \
-		--datadir holesky_data/ethrex/$(EVM) \
-		--authrpc.jwtsecret $(DATA_PATH)/holesky_data/jwt.hex \
-		--bootnodes $(HOLESKY_BOOTNODES) \
-		--evm $(EVM) \
+		--network $(NETWORK) \
+		--datadir $(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM) \
+		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+		$(BOOTNODES_FLAG) \
 
-flamegraph-hoodi: ## Run flamegraph on hoodi.
-	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
-		--http.port 8545 \
-		--authrpc.port 8551 \
-		--p2p.port 30303\
-		--discovery.port 30303 \
-		--network hoodi \
-		--datadir hoodi_data/ethrex/$(EVM) \
-		--authrpc.jwtsecret $(DATA_PATH)/hoodi_data/jwt.hex \
-		--bootnodes $(HOODI_BOOTNODES) \
-		--evm $(EVM)
+flamegraph-%: ## Run flamegraph on either mainnet, sepolia, holesky or hoodi network. For example, to run the flamgraph on hoodi, use `flamegraph-hoodi`
+	$(MAKE) flamegraph-inner NETWORK=$*
 
-start-lighthouse: ## Start lighthouse for a given network. NETWORK environment variable required.
-ifndef NETWORK
-	$(error "Sync network not provided")
-endif
-	make $(NETWORK)-lighthouse
-
-holesky-lighthouse: ## Start lighthouse for holesky.
-	lighthouse bn \
-		--network holesky \
-		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt $(DATA_PATH)/holesky_data/jwt.hex \
-		--checkpoint-sync-url $(HOLESKY_CHECKPOINT_SYNC_URL) \
-		--http \
-		--http-address 0.0.0.0 \
-		--http-allow-origin "*" \
-		--metrics \
-  		--metrics-address 0.0.0.0 \
-  		--metrics-port 5054 \
-		--datadir $(DATA_PATH)/holesky_data/lighthouse_${NODE_NAME}_$(EVM) \
-		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
-
-hoodi-lighthouse: ## Start lighthouse for hoodi.
-	lighthouse bn \
-		--network hoodi \
-		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt $(DATA_PATH)/hoodi_data/jwt.hex \
-		--checkpoint-sync-url $(HOODI_CHECKPOINT_SYNC_URL) \
-		--http \
-		--http-address 0.0.0.0 \
-		--http-allow-origin "*" \
-		--metrics \
-  		--metrics-address 0.0.0.0 \
-  		--metrics-port 5054 \
-		--datadir $(DATA_PATH)/hoodi_data/lighthouse_${NODE_NAME}_$(EVM) \
-		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
-
-backup-db: ## Back-up the store db. EVM and NETWORK environment variables need to be provided to select which DB to back up.
-ifndef NETWORK
-	$(error "Sync network not provided")
-endif
+backup-db: ## Back-up the store db. EVM and NETWORK environment variables need to be provided to select which DB to back up. If NETWORK environment variable is not provided, mainnet will be used as default.
 	mkdir -p $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
 ifeq ($(OS), Darwin)
 	rsync -ah --progress $(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
@@ -154,52 +112,19 @@ else
 	rsync -ah --info=progress2 ./logs/ethrex-sync-$(NETWORK)-$(EVM).log $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)/ethrex-sync-$(NETWORK)-$(EVM).log
 endif
 
-
-start-ethrex-hoodi: ## Start ethrex for hoodi
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
-    		--http.addr 0.0.0.0 \
-    		--http.port 8545 \
-    		--authrpc.port 8551 \
-    		--p2p.port 30303\
-    		--metrics \
-    		--metrics.port 3701 \
-    		--discovery.port 30303 \
-    		--network hoodi \
-    		--datadir "hoodi_data/ethrex/$(EVM)" \
-    		--authrpc.jwtsecret $(DATA_PATH)/hoodi_data/jwt.hex \
-    		--bootnodes $(HOODI_BOOTNODES) \
-    		--evm $(EVM)
-
-start-ethrex-holesky: ## Start ethrex for holesky
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
-    		--http.addr 0.0.0.0 \
-    		--http.port 8545 \
-    		--authrpc.port 8551 \
-    		--p2p.port 30303\
-    		--metrics \
-    		--metrics.port 3701 \
-    		--discovery.port 30303 \
-    		--network holesky \
-    		--datadir "holesky_data/ethrex/$(EVM)" \
-    		--authrpc.jwtsecret $(DATA_PATH)/holesky_data/jwt.hex \
-    		--bootnodes $(HOLESKY_BOOTNODES) \
-    		--evm $(EVM)
-
-start-hoodi-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for hoodi
+import-with-metrics: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
+ifndef RLP_FILE
+	$(error "RLP file with blocks not provided")
+endif
 	@echo "Starting L1 docker compose with metrics..."
 	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
-	@echo "Starting lighthouse in background..."
-	cd $(ETHREX_DIR)/tooling/sync && nohup make hoodi-lighthouse > /dev/null 2>&1 &
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR)/tooling/sync && make start-ethrex-hoodi
-
-start-holesky-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
-	@echo "Starting L1 docker compose with metrics..."
-	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
-	@echo "Starting lighthouse in background..."
-	cd $(ETHREX_DIR)/tooling/sync && nohup make holesky-lighthouse > /dev/null 2>&1 &
-	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR)/tooling/sync && make start-ethrex-holesky
+	cd $(ETHREX_DIR) && cargo run --release --features "metrics" --bin ethrex -- \
+	--network $(NETWORK) \
+	--metrics \
+	--metrics.port 3701 \
+	import $(RLP_FILE) \
+	--removedb 
 
 tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
 ifndef LOGNAME
@@ -219,3 +144,79 @@ ifeq ($(OS), Darwin)
 else
 	rsync -ah --info=progress2 $(ETHREX_DIR)/flamegraph.svg flamegraphs/flamegraph-$(GRAPHNAME).svg
 endif
+
+start-%-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for either mainnet, sepolia, holesky or hoodi network. For example, to run on hoodi, use `start-hoodi-metrics-docker`
+	$(MAKE) start-metrics-docker NETWORK=$*
+
+start-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for the network given by NETWORK.
+	@echo "Starting L1 docker compose with metrics..."
+	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	@echo "Starting lighthouse in background..."
+	cd $(ETHREX_DIR)/tooling/sync && nohup make start-lighthouse > /dev/null 2>&1 &
+	@echo "Starting ethrex..."
+	cd $(ETHREX_DIR)/tooling/sync && make start-ethrex
+
+start-lighthouse: ## Start lighthouse for the network given by NETWORK.
+	lighthouse bn \
+		--network $(NETWORK) \
+		--execution-endpoint http://localhost:${ENGINE_PORT} \
+		--execution-jwt $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+		--checkpoint-sync-url $(CHECKPOINT_SYNC_URL) \
+		--http \
+		--http-address 0.0.0.0 \
+		--http-allow-origin "*" \
+		--metrics \
+		--metrics-address 0.0.0.0 \
+		--metrics-port 5054 \
+		--datadir $(DATA_PATH)/${NETWORK}_data/lighthouse_${NODE_NAME}_$(EVM) \
+		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT)
+
+start-ethrex: ## Start ethrex for the network given by NETWORK.
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
+    		--http.addr 0.0.0.0 \
+    		--http.port 8545 \
+    		--authrpc.port 8551 \
+    		--p2p.port 30303\
+    		--discovery.port 30303 \
+    		--metrics \
+    		--metrics.port 3701 \
+    		--network $(NETWORK) \
+    		--datadir "$(DATA_PATH)/${NETWORK}_data/ethrex/$(EVM)" \
+    		--authrpc.jwtsecret $(DATA_PATH)/${NETWORK}_data/jwt.hex \
+    		$(BOOTNODES_FLAG) \
+
+SERVER_SYNC_BRANCH ?= main
+SERVER_SYNC_NETWORK ?= hoodi
+
+ifeq ($(SERVER_SYNC_NETWORK),hoodi)
+CHECKPOINT_URL = https://hoodi-checkpoint-sync.attestant.io/
+else ifeq ($(SERVER_SYNC_NETWORK),sepolia)
+CHECKPOINT_URL = https://checkpoint-sync.sepolia.ethpandaops.io
+else ifeq ($(SERVER_SYNC_NETWORK),mainnet)
+CHECKPOINT_URL = https://mainnet-checkpoint-sync.attestant.io
+else
+$(error Unknown network $(SERVER_SYNC_NETWORK))
+endif
+
+LOGS_FILE ?= output.log
+
+# Use make server-sync SERVER_SYNC_BRANCH=branch_name SERVER_SYNC_NETWORK=network_name LOGS_FILE=logs_file_name  HEALING=1 MEMORY=1 SNAP=1
+# SERVER_SYNC_BRANCH is the branch to checkout before syncing, SERVER_SYNC_NETWORK is the network to sync, LOGS_FILE is the file to output logs to, HEALING enables healing mode, MEMORY uses memory datadir, SNAP enables snap sync mode.
+server-sync:
+	git fetch --all
+
+	git checkout $(SERVER_SYNC_BRANCH)
+
+	git pull
+
+	tmux kill-session -t sync || true
+
+	sleep 5
+
+	tmux new-session -d -s sync -n htop "htop"
+
+	tmux new-window -t sync:1 -n lighthouse "lighthouse bn --network $(SERVER_SYNC_NETWORK) --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url $(CHECKPOINT_URL) --http-address 0.0.0.0 --purge-db-force "
+
+	sleep 0.2
+
+	tmux new-window -t sync:2 -n ethrex "cd ../../metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d && cd .. && ulimit -n 1000000 && rm -rf ~/.local/share/ethrex && RUST_LOG=info,ethrex_p2p::sync=debug $(if $(DEBUG_ASSERT),RUSTFLAGS='-C debug-assertions=yes') $(if $(HEALING),SKIP_START_SNAP_SYNC=1) cargo run --release --bin ethrex --features rocksdb --  --http.addr 0.0.0.0 --metrics --metrics.port 3701 --network $(SERVER_SYNC_NETWORK) $(if $(MEMORY),--datadir memory) --authrpc.jwtsecret ~/secrets/jwt.hex $(if $(or $(SNAP),$(HEALING)),--syncmode snap)  2>&1 | tee $(LOGS_FILE)"

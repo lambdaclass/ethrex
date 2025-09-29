@@ -8,7 +8,10 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    monitor::{
+        utils::SelectableScroller,
+        widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    },
     sequencer::errors::MonitorError,
 };
 
@@ -17,6 +20,7 @@ pub struct MempoolTable {
     pub state: TableState,
     // type | hash | sender | nonce
     pub items: Vec<(String, String, String, String)>,
+    selected: bool,
 }
 
 impl MempoolTable {
@@ -87,7 +91,11 @@ impl StatefulWidget for &mut MempoolTable {
             .header(Row::new(vec!["Type", "Hash", "Sender", "Nonce"]).style(Style::default()))
             .block(
                 Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(if self.selected {
+                        Color::Magenta
+                    } else {
+                        Color::Cyan
+                    }))
                     .title(Span::styled(
                         "Mempool",
                         Style::default().add_modifier(Modifier::BOLD),
@@ -95,5 +103,24 @@ impl StatefulWidget for &mut MempoolTable {
             );
 
         mempool_table.render(area, buf, state);
+    }
+}
+
+impl SelectableScroller for MempoolTable {
+    fn selected(&mut self, is_selected: bool) {
+        self.selected = is_selected;
+    }
+    fn scroll_up(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(selected.unwrap_or(0).saturating_sub(1))
+    }
+    fn scroll_down(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(
+            selected
+                .unwrap_or(0)
+                .saturating_add(1)
+                .min(self.items.len().saturating_sub(1)),
+        )
     }
 }

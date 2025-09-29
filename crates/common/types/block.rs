@@ -1,11 +1,13 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM,
-    INITIAL_BASE_FEE,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
+    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
+use crate::utils::keccak;
 use crate::{
     Address, H256, U256,
     constants::{
-        DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS,
+        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
+        MIN_BASE_FEE_PER_BLOB_GAS,
     },
     types::{Receipt, Transaction},
 };
@@ -18,8 +20,8 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{Ordering, max};
@@ -29,7 +31,9 @@ pub type BlockHash = H256;
 
 use once_cell::sync::OnceCell;
 
-#[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(
+    PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default, RSerialize, RDeserialize, Archive,
+)]
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
@@ -75,21 +79,32 @@ impl RLPDecode for Block {
 }
 
 /// Header part of a block on the chain.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize, RSerialize, RDeserialize, Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
     #[serde(skip)]
+    #[rkyv(with=rkyv::with::Skip)]
     pub hash: OnceCell<BlockHash>,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub parent_hash: H256,
     #[serde(rename = "sha3Uncles")]
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub ommers_hash: H256, // ommer = uncle
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     #[serde(rename = "miner")]
     pub coinbase: Address,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub state_root: H256,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub transactions_root: H256,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub receipts_root: H256,
+    #[rkyv(with=crate::rkyv_utils::BloomWrapper)]
     pub logs_bloom: Bloom,
     #[serde(default)]
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub difficulty: U256,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub number: BlockNumber,
@@ -100,13 +115,16 @@ pub struct BlockHeader {
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub timestamp: u64,
     #[serde(with = "crate::serde_utils::bytes")]
+    #[rkyv(with= crate::rkyv_utils::BytesWrapper)]
     pub extra_data: Bytes,
     #[serde(rename = "mixHash")]
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
     pub prev_randao: H256,
     #[serde(with = "crate::serde_utils::u64::hex_str_padding")]
     pub nonce: u64,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub base_fee_per_gas: Option<u64>,
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub withdrawals_root: Option<H256>,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -120,8 +138,10 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub excess_blob_gas: Option<u64>,
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub parent_beacon_block_root: Option<H256>,
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub requests_hash: Option<H256>,
 }
 
@@ -210,7 +230,9 @@ impl RLPDecode for BlockHeader {
 }
 
 // The body of a block on the chain
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive,
+)]
 pub struct BlockBody {
     pub transactions: Vec<Transaction>,
     // TODO: ommers list is always empty, so we can remove it
@@ -306,13 +328,16 @@ impl BlockHeader {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Deserialize, Serialize, RSerialize, RDeserialize, Archive,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct Withdrawal {
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub index: u64,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub validator_index: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub address: Address,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub amount: u64,
@@ -442,30 +467,36 @@ pub fn calculate_base_fee_per_gas(
 
     let parent_gas_target = parent_gas_limit / elasticity_multiplier;
 
-    Some(match parent_gas_used.cmp(&parent_gas_target) {
-        Ordering::Equal => parent_base_fee_per_gas,
+    match parent_gas_used.cmp(&parent_gas_target) {
+        Ordering::Equal => Some(parent_base_fee_per_gas),
         Ordering::Greater => {
             let gas_used_delta = parent_gas_used - parent_gas_target;
 
-            let parent_fee_gas_delta = parent_base_fee_per_gas * gas_used_delta;
-            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            let parent_fee_gas_delta =
+                u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
+            let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
             let base_fee_per_gas_delta =
                 max(target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR, 1);
 
-            parent_base_fee_per_gas + base_fee_per_gas_delta
+            (u128::from(parent_base_fee_per_gas) + base_fee_per_gas_delta)
+                .try_into()
+                .ok()
         }
         Ordering::Less => {
             let gas_used_delta = parent_gas_target - parent_gas_used;
 
-            let parent_fee_gas_delta = parent_base_fee_per_gas * gas_used_delta;
-            let target_fee_gas_delta = parent_fee_gas_delta / parent_gas_target;
+            let parent_fee_gas_delta =
+                u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
+            let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
             let base_fee_per_gas_delta = target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR;
 
-            parent_base_fee_per_gas - base_fee_per_gas_delta
+            (u128::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
+                .try_into()
+                .ok()
         }
-    })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -689,11 +720,7 @@ fn validate_excess_blob_gas(
     let expected_excess_blob_gas = chain_config
         .get_fork_blob_schedule(header.timestamp)
         .map(|schedule| {
-            calc_excess_blob_gas(
-                parent_header.excess_blob_gas.unwrap_or_default(),
-                parent_header.blob_gas_used.unwrap_or_default(),
-                schedule.target,
-            )
+            calc_excess_blob_gas(parent_header, schedule, chain_config.fork(header.timestamp))
         })
         .unwrap_or_default();
     if header
@@ -705,14 +732,31 @@ fn validate_excess_blob_gas(
     Ok(())
 }
 
-pub fn calc_excess_blob_gas(
-    parent_excess_blob_gas: u64,
-    parent_blob_gas_used: u64,
-    target: u64,
-) -> u64 {
+pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fork: Fork) -> u64 {
+    let parent_blob_gas_used = parent.blob_gas_used.unwrap_or_default();
+    let parent_base_fee_per_gas = parent.base_fee_per_gas.unwrap_or_default();
+    let parent_excess_blob_gas = parent.excess_blob_gas.unwrap_or_default();
+
     let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
-    let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    excess_blob_gas.saturating_sub(target_blob_gas_per_block)
+    let target_blob_gas_per_block = (schedule.target * GAS_PER_BLOB) as u64;
+    if excess_blob_gas < target_blob_gas_per_block {
+        return 0;
+    }
+
+    if fork >= Fork::Osaka
+        && BLOB_BASE_COST * parent_base_fee_per_gas
+            > (GAS_PER_BLOB as u64)
+                * calculate_base_fee_per_blob_gas(
+                    parent_excess_blob_gas,
+                    schedule.base_fee_update_fraction,
+                )
+    {
+        return parent_excess_blob_gas
+            + parent_blob_gas_used * (schedule.max as u64 - schedule.target as u64)
+                / schedule.max as u64;
+    }
+
+    excess_blob_gas - target_blob_gas_per_block
 }
 
 #[cfg(test)]
@@ -863,5 +907,80 @@ mod test {
                 .unwrap(),
         );
         assert_eq!(transactions_root, expected_root);
+    }
+
+    #[test]
+    // The values for this test were taken from sepolia testnet block number 6029872
+    // Where a silent overflow within base fee calculations led to the wrong expected base fee
+    fn test_calculate_base_fee_per_gas_big_numbers() {
+        let expected_base_fee = Some(1317727380375);
+        let block_gas_limit = 30000000;
+        let parent_gas_limit = 30000000;
+        let parent_gas_used = 1981764;
+        let parent_base_fee_per_gas = 1478077008012;
+        let calc_base_fee = calculate_base_fee_per_gas(
+            block_gas_limit,
+            parent_gas_limit,
+            parent_gas_used,
+            parent_base_fee_per_gas,
+            ELASTICITY_MULTIPLIER,
+        );
+        assert_eq!(calc_base_fee, expected_base_fee)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo1() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(5149252),
+            blob_gas_used: Some(1310720),
+            base_fee_per_gas: Some(30),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 9,
+            max: 14,
+            base_fee_update_fraction: 8832827,
+        };
+        let fork = Fork::Osaka;
+
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 5617366)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo3() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(19251039),
+            blob_gas_used: Some(2490368),
+            base_fee_per_gas: Some(50),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 21,
+            max: 32,
+            base_fee_update_fraction: 20609697,
+        };
+        let fork = Fork::Osaka;
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 20107103)
+    }
+
+    #[test]
+    fn test_calc_blob_fee_post_osaka_bpo1_ef() {
+        let parent = BlockHeader {
+            excess_blob_gas: Some(0x360000),
+            blob_gas_used: Some(0),
+            base_fee_per_gas: Some(0x11),
+            ..Default::default()
+        };
+        let schedule = ForkBlobSchedule {
+            target: 9,
+            max: 14,
+            base_fee_update_fraction: 0x86c73b,
+        };
+        let fork = Fork::Osaka;
+
+        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        assert_eq!(res, 3538944)
     }
 }

@@ -2,20 +2,19 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
-    TriePathsRLP, TupleRLP,
+    AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp,
 };
-use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store::STATE_TRIE_SEGMENTS;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
+use crate::trie_db::libmdbx_dupsort_locked::LibmdbxLockedDupsortTrieDB;
+use crate::trie_db::libmdbx_locked::LibmdbxLockedTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction, payload::PayloadBundle,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
@@ -38,7 +37,7 @@ pub struct Store {
     db: Arc<Database>,
 }
 impl Store {
-    pub fn new(path: &str) -> Result<Self, StoreError> {
+    pub fn new(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
         })
@@ -130,6 +129,7 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
+            let _span = tracing::trace_span!("Block DB update").entered();
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
@@ -139,8 +139,8 @@ impl StoreEngine for Store {
             }
 
             // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+            for (code_hash, code) in update_batch.code_updates {
+                tx.upsert::<AccountCodes>(code_hash.into(), code.into())
                     .map_err(StoreError::LibmdbxError)?;
             }
 
@@ -160,7 +160,7 @@ impl StoreEngine for Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
+                        transaction.hash().into(),
                         (number, hash, index as u64).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;
@@ -220,6 +220,11 @@ impl StoreEngine for Store {
     }
 
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        let hashes_and_numbers = block_headers
+            .iter()
+            .map(|header| (header.hash().into(), header.number))
+            .collect();
+        self.write_batch::<BlockNumbers>(hashes_and_numbers).await?;
         let hashes_and_headers = block_headers
             .into_iter()
             .map(|header| (header.hash().into(), header.into()))
@@ -261,7 +266,7 @@ impl StoreEngine for Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
+                        transaction.hash().into(),
                         (number, hash, index as u64).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;
@@ -287,17 +292,6 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    async fn mark_chain_as_canonical(
-        &self,
-        numbers_and_hashes: &[(BlockNumber, BlockHash)],
-    ) -> Result<(), StoreError> {
-        let key_values = numbers_and_hashes
-            .iter()
-            .map(|(n, h)| (*n, (*h).into()))
-            .collect();
-        self.write_batch::<CanonicalBlockHashes>(key_values).await
     }
 
     async fn get_block_body(
@@ -431,17 +425,13 @@ impl StoreEngine for Store {
 
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-            let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            let key = (hash, index).into();
-            IndexedChunk::read_from_db(&mut cursor, key)
-        } else {
-            Ok(None)
-        }
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+        let key = (block_hash, index).into();
+        IndexedChunk::read_from_db(&mut cursor, key)
     }
 
     async fn add_transaction_location(
@@ -492,18 +482,6 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        match self.read_sync::<ChainData>(ChainDataIndex::ChainConfig)? {
-            None => Err(StoreError::Custom("Chain config not found".to_string())),
-            Some(bytes) => {
-                let json = String::from_utf8(bytes).map_err(|_| StoreError::DecodeError)?;
-                let chain_config: ChainConfig =
-                    serde_json::from_str(&json).map_err(|_| StoreError::DecodeError)?;
-                Ok(chain_config)
-            }
-        }
-    }
-
     async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
@@ -513,6 +491,18 @@ impl StoreEngine for Store {
             block_number.encode_to_vec(),
         )
         .await
+    }
+
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read::<ChainData>(ChainDataIndex::LatestBlockNumber)
+            .await?
+        {
+            None => Ok(None),
+            Some(ref rlp) => RLPDecode::decode(rlp)
+                .map(Some)
+                .map_err(|_| StoreError::DecodeError),
+        }
     }
 
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -527,17 +517,6 @@ impl StoreEngine for Store {
         }
     }
 
-    async fn update_finalized_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.write::<ChainData>(
-            ChainDataIndex::FinalizedBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read::<ChainData>(ChainDataIndex::FinalizedBlockNumber)
@@ -550,40 +529,9 @@ impl StoreEngine for Store {
         }
     }
 
-    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.write::<ChainData>(
-            ChainDataIndex::SafeBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self
             .read::<ChainData>(ChainDataIndex::SafeBlockNumber)
-            .await?
-        {
-            None => Ok(None),
-            Some(ref rlp) => RLPDecode::decode(rlp)
-                .map(Some)
-                .map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    async fn update_latest_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.write::<ChainData>(
-            ChainDataIndex::LatestBlockNumber,
-            block_number.encode_to_vec(),
-        )
-        .await
-    }
-
-    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self
-            .read::<ChainData>(ChainDataIndex::LatestBlockNumber)
             .await?
         {
             None => Ok(None),
@@ -633,13 +581,27 @@ impl StoreEngine for Store {
         Ok(Trie::open(db, state_root))
     }
 
-    async fn set_canonical_block(
+    fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let db = Box::new(
+            LibmdbxLockedTrieDB::<StateTrieNodes>::new(self.db.clone())
+                .map_err(StoreError::Trie)?,
+        );
+        Ok(Trie::open(db, state_root))
+    }
+
+    fn open_locked_storage_trie(
         &self,
-        number: BlockNumber,
-        hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        self.write::<CanonicalBlockHashes>(number, hash.into())
-            .await
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        let db = Box::new(
+            LibmdbxLockedDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
+                self.db.clone(),
+                hashed_address.0,
+            )
+            .map_err(StoreError::Trie)?,
+        );
+        Ok(Trie::open(db, storage_root))
     }
 
     async fn get_canonical_block_hash(
@@ -663,28 +625,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::from)
     }
 
-    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.write::<Payloads>(payload_id, PayloadBundle::from_block(block).into())
-            .await
-    }
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        Ok(self
-            .read::<Payloads>(payload_id)
-            .await?
-            .map(|b| b.to())
-            .transpose()
-            .map_err(StoreError::from)?)
-    }
-
-    async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
-    ) -> Result<(), StoreError> {
-        self.write::<Payloads>(payload_id, payload.into()).await
-    }
-
     async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
@@ -700,16 +640,14 @@ impl StoreEngine for Store {
     async fn get_transaction_by_location(
         &self,
         block_hash: H256,
-        index: u64,
+        index: Index,
     ) -> Result<Option<Transaction>, StoreError> {
         let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
-        Ok(index
-            .try_into()
-            .ok()
-            .and_then(|index: usize| block_body.transactions.get(index).cloned()))
+        let index: usize = index.try_into()?;
+        Ok(block_body.transactions.get(index).cloned())
     }
 
     async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
@@ -724,14 +662,57 @@ impl StoreEngine for Store {
         Ok(Some(Block::new(header, body)))
     }
 
-    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+    async fn forkchoice_update(
+        &self,
+        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        head_number: BlockNumber,
+        head_hash: BlockHash,
+        safe: Option<BlockNumber>,
+        finalized: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        let latest = self.get_latest_block_number().await?.unwrap_or(0);
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            db.begin_readwrite()
-                .map_err(StoreError::LibmdbxError)?
-                .delete::<CanonicalBlockHashes>(number, None)
-                .map(|_| ())
-                .map_err(StoreError::LibmdbxError)
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // Update canonical block hashes
+            if let Some(new_canonical_blocks) = new_canonical_blocks {
+                for (number, hash) in new_canonical_blocks {
+                    tx.upsert::<CanonicalBlockHashes>(number, hash.into())
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+
+            // Remove anything after the head from the canonical chain.
+            for number in (head_number + 1)..(latest + 1) {
+                tx.delete::<CanonicalBlockHashes>(number, None)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            // Make head canonical and label all special blocks correctly
+            tx.upsert::<CanonicalBlockHashes>(head_number, head_hash.into())
+                .map_err(StoreError::LibmdbxError)?;
+
+            if let Some(finalized) = finalized {
+                tx.upsert::<ChainData>(
+                    ChainDataIndex::FinalizedBlockNumber,
+                    finalized.encode_to_vec(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            if let Some(safe) = safe {
+                tx.upsert::<ChainData>(ChainDataIndex::SafeBlockNumber, safe.encode_to_vec())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            tx.upsert::<ChainData>(
+                ChainDataIndex::LatestBlockNumber,
+                head_number.encode_to_vec(),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
@@ -852,134 +833,17 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    async fn set_storage_heal_paths(
-        &self,
-        paths: Vec<(H256, Vec<Nibbles>)>,
-    ) -> Result<(), StoreError> {
-        self.write_batch::<StorageHealPaths>(
-            paths
-                .into_iter()
-                .map(|(hash, paths)| (hash.into(), paths.into()))
-                .collect(),
-        )
-        .await
-    }
-
-    async fn take_storage_heal_paths(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StorageHealPaths>()
-            .map_err(StoreError::LibmdbxError)?;
-
-        let mut res = Vec::new();
-        let mut cursor_it = cursor.walk(None);
-        while let Some(Ok((hash, paths))) = cursor_it.next() {
-            res.push((hash.to()?, paths.to()?));
-        }
-
-        res = res.into_iter().take(limit).collect::<Vec<_>>();
-
-        // Delete fetched entries from the table
-        let txn = self
-            .db
-            .begin_readwrite()
-            .map_err(StoreError::LibmdbxError)?;
-        for (hash, _) in res.iter() {
-            txn.delete::<StorageHealPaths>((*hash).into(), None)
-                .map_err(StoreError::LibmdbxError)?;
-        }
-        txn.commit().map_err(StoreError::LibmdbxError)?;
-        Ok(res)
-    }
-
-    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+    async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError> {
         self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
             .await
     }
 
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
         self.read::<SnapState>(SnapStateIndex::StateHealPaths)
             .await?
-            .map(|ref h| <Vec<Nibbles>>::decode(h))
+            .map(|ref h| <Vec<(Nibbles, H256)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
-    }
-
-    async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-            txn.clear_table::<SnapState>()
-                .map_err(StoreError::LibmdbxError)?;
-            txn.clear_table::<StorageHealPaths>()
-                .map_err(StoreError::LibmdbxError)?;
-            txn.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    async fn write_snapshot_account_batch(
-        &self,
-        account_hashes: Vec<H256>,
-        account_states: Vec<AccountState>,
-    ) -> Result<(), StoreError> {
-        self.write_batch::<StateSnapShot>(
-            account_hashes
-                .into_iter()
-                .map(|h| h.into())
-                .zip(account_states.into_iter().map(|a| a.into()))
-                .collect(),
-        )
-        .await
-    }
-
-    async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-
-            for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
-                txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            txn.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-            for (account_hash, (storage_keys, storage_values)) in account_hashes
-                .into_iter()
-                .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
-            {
-                for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
-                    txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
-            txn.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
     async fn set_state_trie_rebuild_checkpoint(
@@ -1033,58 +897,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    async fn clear_snapshot(&self) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-            txn.clear_table::<StateSnapShot>()
-                .map_err(StoreError::LibmdbxError)?;
-            txn.clear_table::<StorageSnapShot>()
-                .map_err(StoreError::LibmdbxError)?;
-            txn.commit().map_err(StoreError::LibmdbxError)?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StateSnapShot>()
-            .map_err(StoreError::LibmdbxError)?;
-        let iter = cursor
-            .walk(Some(start.into()))
-            .map_while(|res| {
-                res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
-                    (Ok(hash), Ok(acc)) => Some((hash, acc)),
-                    _ => None,
-                })
-            })
-            .flatten()
-            .take(MAX_SNAPSHOT_READS);
-        Ok(iter.collect::<Vec<_>>())
-    }
-
-    async fn read_storage_snapshot(
-        &self,
-        account_hash: H256,
-        start: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StorageSnapShot>()
-            .map_err(StoreError::LibmdbxError)?;
-        let iter = cursor
-            .walk_key(account_hash.into(), Some(start.into()))
-            .map_while(|res| {
-                res.ok()
-                    .map(|(k, v)| (H256(k.0), U256::from_big_endian(&v.0)))
-            })
-            .take(MAX_SNAPSHOT_READS);
-        Ok(iter.collect::<Vec<_>>())
-    }
-
     async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
@@ -1103,6 +915,54 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
+    }
+
+    async fn write_storage_trie_nodes_batch(
+        &self,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            for (hashed_address, nodes) in storage_trie_nodes {
+                for (node_hash, node_data) in nodes {
+                    let key_1: [u8; 32] = hashed_address.into();
+                    let key_2 = node_hash_to_fixed_size(node_hash);
+
+                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn clear_snap_state(&self) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+            txn.clear_table::<SnapState>()
+                .map_err(StoreError::LibmdbxError)?;
+            txn.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn write_account_code_batch(
+        &self,
+        account_codes: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        let account_codes = account_codes
+            .into_iter()
+            .map(|(account_hash, account_code)| (account_hash.into(), account_code.into()))
+            .collect();
+
+        self.write_batch::<AccountCodes>(account_codes).await
     }
 }
 
@@ -1250,7 +1110,7 @@ table!(
 
 dupsort!(
     /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+    ( Receipts ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Receipt>
 );
 
 dupsort!(
@@ -1261,7 +1121,7 @@ dupsort!(
 
 dupsort!(
     /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+    ( TransactionLocations ) Rlp<H256> => Rlp<(BlockNumber, BlockHash, Index)>
 );
 
 table!(
@@ -1283,31 +1143,9 @@ table!(
     ( StateTrieNodes ) NodeHash => Vec<u8>
 );
 
-// Local Blocks
-
-table!(
-    /// payload id to payload table
-    ( Payloads ) u64 => PayloadBundleRLP
-);
-
 table!(
     /// Stores blocks that are pending validation.
     ( PendingBlocks ) BlockHashRLP => BlockRLP
-);
-
-table!(
-    /// State Snapshot used by an ongoing sync process
-    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
-);
-
-dupsort!(
-    /// Storage Snapshot used by an ongoing sync process
-    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
-);
-
-table!(
-    /// Storage trie paths in need of healing stored by hashed address
-    ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
 );
 
 table!(
@@ -1395,8 +1233,8 @@ impl Encodable for SnapStateIndex {
 const DB_PAGE_SIZE: usize = 4096;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
-// Maximum DB size, set to 2 TB
-const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
+// Maximum DB size, set to 8 TB
+const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 8; // 8 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
@@ -1412,12 +1250,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StateTrieNodes),
         table_info!(StorageTriesNodes),
         table_info!(CanonicalBlockHashes),
-        table_info!(Payloads),
         table_info!(PendingBlocks),
         table_info!(SnapState),
-        table_info!(StateSnapShot),
-        table_info!(StorageSnapShot),
-        table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
     ]
     .into_iter()
@@ -1437,7 +1271,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rlp::TupleRLP;
     use bytes::Bytes;
     use ethrex_common::{
         Address, H256,
@@ -1635,7 +1468,7 @@ mod tests {
     fn mdbx_indexed_chunks_test() {
         dupsort!(
             /// Receipts table.
-            ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+            ( Receipts ) Rlp<(BlockHash, Index)>[Index] => IndexedChunk<Receipt>
         );
 
         let tables = [table_info!(Receipts)].into_iter().collect();
@@ -1677,7 +1510,7 @@ mod tests {
         // now retrieve the values and assert they are the same
         let mut stored_receipts = vec![];
         let mut receipt_index = 0;
-        let mut key: TupleRLP<BlockHash, Index> = (block_hash, 0).into();
+        let mut key: Rlp<(BlockHash, Index)> = (block_hash, 0).into();
         let txn = db.begin_read().unwrap();
         let mut cursor = txn.cursor::<Receipts>().unwrap();
         while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key).unwrap() {

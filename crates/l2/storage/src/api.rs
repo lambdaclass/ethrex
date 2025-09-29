@@ -60,6 +60,8 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError>;
 
+    async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError>;
+
     async fn get_verify_tx_by_batch(
         &self,
         batch_number: u64,
@@ -82,6 +84,32 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     /// Returns whether the batch with the given number is present.
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError>;
+
+    /// Stores the sequencer signature for a given block hash.
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError>;
+
+    /// Retrieves the sequencer signature for a given block hash.
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
+
+    /// Stores the sequencer signature for a given batch number.
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError>;
+
+    /// Retrieves the sequencer signature for a given batch number.
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
 
@@ -111,6 +139,12 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
         proof_type: ProverType,
     ) -> Result<Option<BatchProof>, RollupStoreError>;
+
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError>;
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 }

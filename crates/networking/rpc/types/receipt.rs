@@ -1,13 +1,13 @@
 use ethrex_common::{
     Address, Bloom, Bytes, H256,
     constants::GAS_PER_BLOB,
+    evm::calculate_create_address,
     serde_utils,
     types::{
         BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
         bloom_from_logs,
     },
 };
-use ethrex_vm::create_contract_address;
 
 use serde::{Deserialize, Serialize};
 
@@ -172,21 +172,27 @@ impl RpcReceiptTxInfo {
         index: u64,
         gas_used: u64,
         block_blob_gas_price: u64,
+        base_fee_per_gas: Option<u64>,
     ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();
         let from = transaction.sender()?;
-        let transaction_hash = transaction.compute_hash();
-        let effective_gas_price = transaction.gas_price();
+        let transaction_hash = transaction.hash();
+        let effective_gas_price =
+            transaction
+                .effective_gas_price(base_fee_per_gas)
+                .ok_or(RpcErr::Internal(
+                    "Could not get effective gas price from tx".into(),
+                ))?;
         let transaction_index = index;
         let (blob_gas_price, blob_gas_used) = match &transaction {
             Transaction::EIP4844Transaction(tx) => (
                 Some(block_blob_gas_price),
-                Some(tx.blob_versioned_hashes.len() as u64 * GAS_PER_BLOB),
+                Some(tx.blob_versioned_hashes.len() as u64 * GAS_PER_BLOB as u64),
             ),
             _ => (None, None),
         };
         let (contract_address, to) = match transaction.to() {
-            TxKind::Create => (Some(create_contract_address(from, nonce)), None),
+            TxKind::Create => (Some(calculate_create_address(from, nonce)), None),
             TxKind::Call(addr) => (None, Some(addr)),
         };
         Ok(Self {

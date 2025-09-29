@@ -5,7 +5,7 @@ ETHREX_TDX_DEV_MODE ?= false
 ON_CHAIN_PROPOSER ?= 0x0
 
 deploy-p256:
-	rex send $(DETERMINISTIC_DEPLOYER) 0 $(PRIVATE_KEY) --calldata $(shell cat assets/p256.hex)
+	rex send $(DETERMINISTIC_DEPLOYER) -k $(PRIVATE_KEY) --calldata $(shell cat assets/p256.hex)
 
 deploydeps:
 	mkdir -p deploydeps
@@ -32,9 +32,9 @@ deploydeps/root_ca.hex:
 
 setup-pccs-ca: deploy-pccs deploydeps/root_ca.hex deploydeps/root_crl.hex
 	$(eval PCSDAO_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataPcsDao))
-	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertPcsCertificates(uint8,bytes)" 0 $(shell cat deploydeps/root_ca.hex)
-	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertRootCACrl(bytes)" $(shell cat deploydeps/root_crl.hex)
-	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertPcsCertificates(uint8,bytes)" 2 $(shell cat assets/platform_ca.hex)
+	rex send $(PCSDAO_ADDRESS) "upsertPcsCertificates(uint8,bytes)" 0 $(shell cat deploydeps/root_ca.hex) -k $(PRIVATE_KEY)
+	rex send $(PCSDAO_ADDRESS) "upsertRootCACrl(bytes)" $(shell cat deploydeps/root_crl.hex) -k $(PRIVATE_KEY)
+	rex send $(PCSDAO_ADDRESS) "upsertPcsCertificates(uint8,bytes)" 2 $(shell cat assets/platform_ca.hex) -k $(PRIVATE_KEY)
 
 lib/openzeppelin-contracts:
 	mkdir -p lib

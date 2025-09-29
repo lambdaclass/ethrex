@@ -10,9 +10,10 @@ mod blockchain_integration_test {
         payload::{BuildPayloadArgs, create_payload},
     };
 
+    use bytes::Bytes;
     use ethrex_common::{
         H160, H256,
-        types::{Block, BlockHeader, ELASTICITY_MULTIPLIER},
+        types::{Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
     };
     use ethrex_storage::{EngineType, Store};
 
@@ -30,7 +31,10 @@ mod blockchain_integration_test {
         let block_1a = new_block(&store, &genesis_header).await;
         let hash_1a = block_1a.hash();
         blockchain.add_block(&block_1a).await.unwrap();
-        store.set_canonical_block(1, hash_1a).await.unwrap();
+        store
+            .forkchoice_update(None, 1, hash_1a, None, None)
+            .await
+            .unwrap();
         let retrieved_1a = store.get_block_header(1).unwrap().unwrap();
 
         assert_eq!(retrieved_1a, block_1a.header);
@@ -302,12 +306,13 @@ mod blockchain_integration_test {
             beacon_root: Some(H256::random()),
             version: 1,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         };
 
         // Create blockchain
         let blockchain = Blockchain::default_with_store(store.clone().clone());
 
-        let block = create_payload(&args, store).unwrap();
+        let block = create_payload(&args, store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block).await.unwrap();
         result.payload
     }

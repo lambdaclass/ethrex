@@ -2,11 +2,116 @@
 
 ## Perf
 
+### 2025-09-24
+
+- Avoid dumping empty storage accounts to disk [#4590](https://github.com/lambdaclass/ethrex/pull/4590)
+
+
+### 2025-09-22
+
+- Improve instruction fetching, dynamic opcode table based on configured fork, specialized push_zero in stack #[4579](https://github.com/lambdaclass/ethrex/pull/4579)
+
+### 2025-09-17
+
+- Refactor `bls12_g1add` to use `lambdaworks` [#4500](https://github.com/lambdaclass/ethrex/pull/4500)
+- Refactor `bls12_g2add` to use `lambdaworks` [#4538](https://github.com/lambdaclass/ethrex/pull/4538)
+
+### 2025-09-15
+
+- Fix caching mechanism of the latest block's hash [#4479](https://github.com/lambdaclass/ethrex/pull/4479)
+- Add `jemalloc` as an optional global allocator used by default [#4301](https://github.com/lambdaclass/ethrex/pull/4301)
+
+- Improve time when downloading bytecodes from peers [#4487](https://github.com/lambdaclass/ethrex/pull/4487)
+
+### 2025-09-11
+
+- Add `RocksDB` as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)
+
+### 2025-09-10
+
+- Implement fast partition of `TrieIterator` and use it for quickly responding `GetAccountRanges` and `GetStorageRanges` [#4404](https://github.com/lambdaclass/ethrex/pull/4404)
+
+### 2025-09-09
+
+- Refactor substrate backup mechanism to avoid expensive clones [#4381](https://github.com/lambdaclass/ethrex/pull/4381)
+
+### 2025-09-02
+
+- Use x86-64-v2 cpu target on linux by default, dockerfile will use it too. [#4252](https://github.com/lambdaclass/ethrex/pull/4252)
+
+### 2025-09-01
+
+- Process JUMPDEST gas and pc together with the given JUMP JUMPI opcode, improving performance. #[4220](https://github.com/lambdaclass/ethrex/pull/4220)
+
+### 2025-08-29
+
+- Improve P2P mempool gossip performance [#4205](https://github.com/lambdaclass/ethrex/pull/4205)
+
+### 2025-08-28
+
+- Improve precompiles further: modexp, ecrecover [#4168](https://github.com/lambdaclass/ethrex/pull/4168)
+
+### 2025-08-27
+
+- Improve memory resize performance [#4117](https://github.com/lambdaclass/ethrex/pull/4177)
+
+### 2025-08-25
+
+- Improve calldatacopy opcode further [#4150](https://github.com/lambdaclass/ethrex/pull/4150)
+
+### 2025-08-22
+
+- Improve Memory::load_range by returning a Bytes directly, avoding a vec allocation [#4098](https://github.com/lambdaclass/ethrex/pull/4098)
+
+- Improve ecpairing (bn128) precompile [#4130](https://github.com/lambdaclass/ethrex/pull/4130)
+
+### 2025-08-20
+
+- Improve BLS12 precompile [#4073](https://github.com/lambdaclass/ethrex/pull/4073)
+
+- Improve blobbasefee opcode [#4092](https://github.com/lambdaclass/ethrex/pull/4092)
+
+- Make precompiles use a constant table [#4097](https://github.com/lambdaclass/ethrex/pull/4097)
+
+### 2025-08-19
+
+- Improve addmod and mulmod opcode performance [#4072](https://github.com/lambdaclass/ethrex/pull/4072)
+
+- Improve signextend opcode performance [#4071](https://github.com/lambdaclass/ethrex/pull/4071)
+
+- Improve performance of calldataload, calldatacopy, extcodecopy, codecopy, returndatacopy [#4070](https://github.com/lambdaclass/ethrex/pull/4070)
+
+### 2025-08-14
+
+- Use malachite crate to handle big integers in modexp, improving perfomance [#4045](https://github.com/lambdaclass/ethrex/pull/4045)
+
+### 2025-07-31
+
+- Cache chain config and latest canonical block header [#3878](https://github.com/lambdaclass/ethrex/pull/3878)
+
+- Batching of transaction hashes sent in a single NewPooledTransactionHashes message [#3912](https://github.com/lambdaclass/ethrex/pull/3912)
+
+- Make `JUMPDEST` blacklist lazily generated on-demand [#3812](https://github.com/lambdaclass/ethrex/pull/3812)
+- Rewrite Blake2 AVX2 implementation (avoid gather instructions and better loop handling).
+- Add Blake2 NEON implementation.
+
+### 2025-07-30
+
+- Add a secondary index keyed by sender+nonce to the mempool to avoid linear lookups [#3865](https://github.com/lambdaclass/ethrex/pull/3865)
+
+### 2025-07-24
+
+- Refactor current callframe to avoid handling avoidable errors, improving performance [#3816](https://github.com/lambdaclass/ethrex/pull/3816)
+
+- Add shortcut to avoid callframe creation on precompile invocations [#3802](https://github.com/lambdaclass/ethrex/pull/3802)
+
 ### 2025-07-21
 
 - Use `rayon` to recover the sender address from transactions [#3709](https://github.com/lambdaclass/ethrex/pull/3709)
 
 ### 2025-07-18
+
+- Migrate EcAdd and EcMul to Arkworks [#3719](https://github.com/lambdaclass/ethrex/pull/3719)
 
 - Add specialized push1 and pop1 to stack [#3705](https://github.com/lambdaclass/ethrex/pull/3705)
 

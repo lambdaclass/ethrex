@@ -1,10 +1,14 @@
 use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::types::TxType;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::clients::{deploy, send_eip1559_transaction};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
-use ethrex_l2_sdk::calldata::{self};
+use ethrex_l2_sdk::{
+    build_generic_tx,
+    calldata::{self},
+    create_deploy, send_generic_transaction, wait_for_transaction_receipt,
+};
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
@@ -89,7 +93,7 @@ async fn deploy_contract(
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
     let (_, contract_address) =
-        deploy(&client, deployer, contract.into(), Overrides::default()).await?;
+        create_deploy(&client, deployer, contract.into(), Overrides::default()).await?;
 
     eyre::Ok(contract_address)
 }
@@ -124,19 +128,20 @@ async fn claim_erc20_balances(
         tasks.spawn(async move {
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
 
-            let claim_tx = client
-                .build_eip1559_transaction(
-                    contract,
-                    account.address(),
-                    claim_balance_calldata.into(),
-                    Default::default(),
-                )
+            let claim_tx = build_generic_tx(
+                &client,
+                TxType::EIP1559,
+                contract,
+                account.address(),
+                claim_balance_calldata.into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+            let tx_hash = send_generic_transaction(&client, claim_tx, &account)
                 .await
                 .unwrap();
-            let tx_hash = send_eip1559_transaction(&client, &claim_tx, &account)
-                .await
-                .unwrap();
-            client.wait_for_transaction_receipt(tx_hash, RETRIES).await
+            wait_for_transaction_receipt(tx_hash, &client, RETRIES).await
         });
     }
     for response in tasks.join_all().await {
@@ -219,25 +224,26 @@ async fn load_test(
 
             for i in 0..tx_amount {
                 let (value, calldata, dst) = tx_builder.build_tx();
-                let tx = client
-                    .build_eip1559_transaction(
-                        dst,
-                        src,
-                        calldata.into(),
-                        Overrides {
-                            chain_id: Some(chain_id),
-                            value,
-                            nonce: Some(nonce + i),
-                            max_fee_per_gas: Some(u64::MAX),
-                            max_priority_fee_per_gas: Some(10_u64),
-                            gas_limit: Some(TX_GAS_COST * 100),
-                            ..Default::default()
-                        },
-                    )
-                    .await?;
+                let tx = build_generic_tx(
+                    &client,
+                    TxType::EIP1559,
+                    dst,
+                    src,
+                    calldata.into(),
+                    Overrides {
+                        chain_id: Some(chain_id),
+                        value,
+                        nonce: Some(nonce + i),
+                        max_fee_per_gas: Some(u64::MAX),
+                        max_priority_fee_per_gas: Some(10_u64),
+                        gas_limit: Some(TX_GAS_COST * 100),
+                        ..Default::default()
+                    },
+                )
+                .await?;
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
-                let _sent = send_eip1559_transaction(&client, &tx, &account).await?;
+                let _sent = send_generic_transaction(&client, tx, &account).await?;
             }
             println!("{tx_amount} transactions have been sent for {encoded_src}",);
             Ok::<(), EthClientError>(())

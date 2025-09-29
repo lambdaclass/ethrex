@@ -1,13 +1,14 @@
 use crate::{
+    account::LevmAccount,
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    utils::{get_invalid_jump_destinations, restore_cache_state},
+    utils::{JumpTargetFilter, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256, types::Account};
-use keccak_hash::H256;
+use ethrex_common::H256;
+use ethrex_common::{Address, U256};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
@@ -124,6 +125,31 @@ impl Stack {
         Ok(())
     }
 
+    #[inline]
+    pub fn push_zero(&mut self) -> Result<(), ExceptionalHalt> {
+        // Since the stack grows downwards, when an offset underflow is detected the stack is
+        // overflowing.
+        let next_offset = self
+            .offset
+            .checked_sub(1)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        // The following index cannot fail because `next_offset` has already been checked and
+        // `self.offset` is known to be within `STACK_LIMIT`.
+        #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
+        unsafe {
+            *self
+                .values
+                .get_unchecked_mut(next_offset)
+                .0
+                .as_mut_ptr()
+                .cast() = [0u64; 4];
+        }
+        self.offset = next_offset;
+
+        Ok(())
+    }
+
     pub fn len(&self) -> usize {
         // The following operation cannot underflow because `self.offset` is known to be less than
         // or equal to `self.values.len()` (aka. `STACK_LIMIT`).
@@ -194,7 +220,7 @@ impl fmt::Debug for Stack {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
 /// One context can trigger another with opcodes like CALL or CREATE.
@@ -228,9 +254,9 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Sorted blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
     /// push instructions).
-    pub invalid_jump_destinations: Box<[usize]>,
+    pub jump_target_filter: JumpTargetFilter,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -245,7 +271,7 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, Account>,
+    pub original_accounts_info: HashMap<Address, LevmAccount>,
     pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
 }
 
@@ -253,14 +279,14 @@ impl CallFrameBackup {
     pub fn backup_account_info(
         &mut self,
         address: Address,
-        account: &Account,
+        account: &LevmAccount,
     ) -> Result<(), InternalError> {
         self.original_accounts_info
             .entry(address)
-            .or_insert_with(|| Account {
+            .or_insert_with(|| LevmAccount {
                 info: account.info.clone(),
-                code: account.code.clone(),
                 storage: BTreeMap::new(),
+                status: account.status.clone(),
             });
 
         Ok(())
@@ -301,21 +327,20 @@ impl CallFrame {
         stack: Stack,
         memory: Memory,
     ) -> Self {
-        let invalid_jump_destinations =
-            get_invalid_jump_destinations(&bytecode).unwrap_or_default();
         // Note: Do not use ..Default::default() because it has runtime cost.
+
         Self {
             gas_limit,
             gas_remaining: gas_limit,
             msg_sender,
             to,
             code_address,
-            bytecode,
+            bytecode: bytecode.clone(),
             msg_value,
             calldata,
             is_static,
             depth,
-            invalid_jump_destinations,
+            jump_target_filter: JumpTargetFilter::new(bytecode),
             should_transfer_value,
             is_create,
             ret_offset,
@@ -331,13 +356,14 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        // 0 is the opcode stop.
-        self.bytecode.get(self.pc).copied().unwrap_or(0)
-    }
-
-    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.pc = self.pc.checked_add(count).ok_or(InternalError::Overflow)?;
-        Ok(())
+        if self.pc < self.bytecode.len() {
+            #[expect(unsafe_code, reason = "bounds checked above")]
+            unsafe {
+                *self.bytecode.get_unchecked(self.pc)
+            }
+        } else {
+            0
+        }
     }
 
     pub fn pc(&self) -> usize {
@@ -354,32 +380,42 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
+        self.jump_target_filter = JumpTargetFilter::new(code.clone());
         self.bytecode = code;
         Ok(())
     }
 }
 
 impl<'a> VM<'a> {
-    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
-        self.call_frames.last_mut().ok_or(InternalError::CallFrame)
+    /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
+    #[inline(always)]
+    pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        self.call_frames.push(new_call_frame);
+        #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
+        unsafe {
+            std::mem::swap(
+                &mut self.current_call_frame,
+                self.call_frames.last_mut().unwrap_unchecked(),
+            );
+        }
     }
 
-    pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
-        self.call_frames.last().ok_or(InternalError::CallFrame)
-    }
-
+    #[inline(always)]
     pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
-        self.call_frames.pop().ok_or(InternalError::CallFrame)
+        let mut new = self.call_frames.pop().ok_or(InternalError::CallFrame)?;
+
+        std::mem::swap(&mut new, &mut self.current_call_frame);
+
+        Ok(new)
     }
 
     pub fn is_initial_call_frame(&self) -> bool {
-        self.call_frames.len() == 1
+        self.call_frames.is_empty()
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        let callframe_backup = self.current_call_frame.call_frame_backup.clone();
         restore_cache_state(self.db, callframe_backup)
     }
 
@@ -392,7 +428,7 @@ impl<'a> VM<'a> {
         child_call_frame_backup: &CallFrameBackup,
     ) -> Result<(), VMError> {
         let parent_backup_accounts = &mut self
-            .current_call_frame_mut()?
+            .current_call_frame
             .call_frame_backup
             .original_accounts_info;
         for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
@@ -402,16 +438,14 @@ impl<'a> VM<'a> {
         }
 
         let parent_backup_storage = &mut self
-            .current_call_frame_mut()?
+            .current_call_frame
             .call_frame_backup
             .original_account_storage_slots;
         for (address, storage) in child_call_frame_backup
             .original_account_storage_slots
             .iter()
         {
-            let parent_storage = parent_backup_storage
-                .entry(*address)
-                .or_insert(HashMap::new());
+            let parent_storage = parent_backup_storage.entry(*address).or_default();
             for (key, value) in storage {
                 if parent_storage.get(key).is_none() {
                     parent_storage.insert(*key, *value);
@@ -422,7 +456,13 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame_mut()?.increment_pc_by(count)
+    #[inline(always)]
+    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
+        self.current_call_frame.pc = self
+            .current_call_frame
+            .pc
+            .checked_add(count)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
     }
 }

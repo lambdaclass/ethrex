@@ -34,6 +34,10 @@ struct StoreInner {
     lastest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
+    /// Map of signatures from the sequencer by block hashes
+    signatures_by_block: HashMap<H256, ethereum_types::Signature>,
+    /// Map of signatures from the sequencer by batch numbers
+    signatures_by_batch: HashMap<u64, ethereum_types::Signature>,
     /// Map of block number to account updates
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
@@ -169,6 +173,46 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.operations_counts)
     }
 
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .signatures_by_block
+            .insert(block_hash, signature);
+        Ok(())
+    }
+
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self.inner()?.signatures_by_block.get(&block_hash).cloned())
+    }
+
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .signatures_by_batch
+            .insert(batch_number, signature);
+        Ok(())
+    }
+
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .signatures_by_batch
+            .get(&batch_number)
+            .cloned())
+    }
+
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         Ok(self.inner()?.lastest_sent_batch_proof)
     }
@@ -275,6 +319,20 @@ impl StoreEngineRollup for Store {
             inner.verify_txs.insert(batch.number, verify_tx);
         }
         Ok(())
+    }
+
+    async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        let mut inner = self.inner()?;
+        inner.batch_proofs.remove(&(proof_type, batch_number));
+        Ok(())
+    }
+
+    async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self.inner()?.state_roots.keys().max().cloned())
     }
 }
 

@@ -4,6 +4,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
     error::ChainError,
@@ -12,14 +13,14 @@ use ethrex_blockchain::{
     validate_block,
 };
 use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
-use keccak_hash::H256;
-use payload_builder::build_payload;
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+pub use payload_builder::build_payload;
+use serde::Serialize;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
 use tracing::{debug, error, info};
 
@@ -35,7 +36,22 @@ use ethrex_metrics::metrics;
 use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
 #[derive(Clone)]
-pub struct BlockProducerState {
+pub enum CallMessage {
+    Health,
+}
+
+#[derive(Clone)]
+pub enum InMessage {
+    Produce,
+}
+
+#[derive(Clone)]
+pub enum OutMessage {
+    Done,
+    Health(BlockProducerHealth),
+}
+
+pub struct BlockProducer {
     store: Store,
     blockchain: Arc<Blockchain>,
     sequencer_state: SequencerState,
@@ -43,9 +59,20 @@ pub struct BlockProducerState {
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    // Needed to ensure privileged tx nonces are sequential
+    last_privileged_nonce: Option<u64>,
+    block_gas_limit: u64,
 }
 
-impl BlockProducerState {
+#[derive(Clone, Serialize)]
+pub struct BlockProducerHealth {
+    sequencer_state: String,
+    block_time_ms: u64,
+    coinbase_address: Address,
+    elasticity_multiplier: u64,
+}
+
+impl BlockProducer {
     pub fn new(
         config: &BlockProducerConfig,
         store: Store,
@@ -57,6 +84,7 @@ impl BlockProducerState {
             block_time_ms,
             coinbase_address,
             elasticity_multiplier,
+            block_gas_limit,
         } = config;
         Self {
             store,
@@ -66,166 +94,168 @@ impl BlockProducerState {
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
             rollup_store,
+            // FIXME: Initialize properly to the last privileged nonce in the chain
+            last_privileged_nonce: None,
+            block_gas_limit: *block_gas_limit,
         }
     }
-}
 
-#[derive(Clone)]
-pub enum InMessage {
-    Produce,
-}
-
-#[derive(Clone, PartialEq)]
-pub enum OutMessage {
-    Done,
-}
-
-pub struct BlockProducer;
-
-impl BlockProducer {
     pub async fn spawn(
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
-    ) -> Result<(), BlockProducerError> {
-        let state = BlockProducerState::new(
+    ) -> Result<GenServerHandle<BlockProducer>, BlockProducerError> {
+        let mut block_producer = Self::new(
             &cfg.block_producer,
             store,
             rollup_store,
             blockchain,
             sequencer_state,
-        );
-        let mut block_producer = BlockProducer::start(state);
+        )
+        .start_blocking();
         block_producer
             .cast(InMessage::Produce)
             .await
-            .map_err(BlockProducerError::GenServerError)?;
+            .map_err(BlockProducerError::InternalError)?;
+        Ok(block_producer)
+    }
+
+    pub async fn produce_block(&mut self) -> Result<(), BlockProducerError> {
+        let version = 3;
+        let head_header = {
+            let current_block_number = self.store.get_latest_block_number().await?;
+            self.store
+                .get_block_header(current_block_number)?
+                .ok_or(BlockProducerError::StorageDataIsNone)?
+        };
+        let head_hash = head_header.hash();
+        let head_beacon_block_root = H256::zero();
+
+        // The proposer leverages the execution payload framework used for the engine API,
+        // but avoids calling the API methods and unnecesary re-execution.
+
+        info!("Producing block");
+        debug!("Head block hash: {head_hash:#x}");
+
+        // Proposer creates a new payload
+        let args = BuildPayloadArgs {
+            parent: head_hash,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            fee_recipient: self.coinbase_address,
+            random: H256::zero(),
+            withdrawals: Default::default(),
+            beacon_root: Some(head_beacon_block_root),
+            version,
+            elasticity_multiplier: self.elasticity_multiplier,
+            gas_ceil: self.block_gas_limit,
+        };
+        let payload = create_payload(&args, &self.store, Bytes::new())?;
+
+        // Blockchain builds the payload from mempool txs and executes them
+        let payload_build_result = build_payload(
+            self.blockchain.clone(),
+            payload,
+            &self.store,
+            &mut self.last_privileged_nonce,
+            self.block_gas_limit,
+        )
+        .await?;
+        info!(
+            "Built payload for new block {}",
+            payload_build_result.payload.header.number
+        );
+
+        // Blockchain stores block
+        let block = payload_build_result.payload;
+        let chain_config = self.store.get_chain_config()?;
+        validate_block(
+            &block,
+            &head_header,
+            &chain_config,
+            self.elasticity_multiplier,
+        )?;
+
+        let account_updates = payload_build_result.account_updates;
+
+        let execution_result = BlockExecutionResult {
+            receipts: payload_build_result.receipts,
+            requests: Vec::new(),
+        };
+
+        let account_updates_list = self
+            .store
+            .apply_account_updates_batch(block.header.parent_hash, &account_updates)
+            .await?
+            .ok_or(ChainError::ParentStateNotFound)?;
+
+        self.blockchain
+            .store_block(&block, account_updates_list, execution_result)
+            .await?;
+        info!("Stored new block {:x}", block.hash());
+        // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
+
+        self.rollup_store
+            .store_account_updates_by_block_number(block.header.number, account_updates)
+            .await?;
+
+        // Make the new head be part of the canonical chain
+        apply_fork_choice(&self.store, block.hash(), block.hash(), block.hash()).await?;
+
+        metrics!(
+            let _ = METRICS_BLOCKS
+            .set_block_number(block.header.number)
+            .inspect_err(|e| {
+                tracing::error!("Failed to set metric: block_number {}", e.to_string())
+            });
+            #[allow(clippy::as_conversions)]
+            let tps = block.body.transactions.len() as f64 / (self.block_time_ms as f64 / 1000_f64);
+            METRICS_TX.set_transactions_per_second(tps);
+        );
+
         Ok(())
     }
 }
 
 impl GenServer for BlockProducer {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type State = BlockProducerState;
-
     type Error = BlockProducerError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Produce message, so we ignore the message
-        if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-            let _ = produce_block(&state)
+        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+            let _ = self
+                .produce_block()
                 .await
                 .inspect_err(|e| error!("Block Producer Error: {e}"));
         }
         send_after(
-            Duration::from_millis(state.block_time_ms),
+            Duration::from_millis(self.block_time_ms),
             handle.clone(),
             Self::CastMsg::Produce,
         );
-        CastResponse::NoReply(state)
+        CastResponse::NoReply
     }
-}
 
-pub async fn produce_block(state: &BlockProducerState) -> Result<(), BlockProducerError> {
-    let version = 3;
-    let head_header = {
-        let current_block_number = state.store.get_latest_block_number().await?;
-        state
-            .store
-            .get_block_header(current_block_number)?
-            .ok_or(BlockProducerError::StorageDataIsNone)?
-    };
-    let head_hash = head_header.hash();
-    let head_beacon_block_root = H256::zero();
-
-    // The proposer leverages the execution payload framework used for the engine API,
-    // but avoids calling the API methods and unnecesary re-execution.
-
-    info!("Producing block");
-    debug!("Head block hash: {head_hash:#x}");
-
-    // Proposer creates a new payload
-    let args = BuildPayloadArgs {
-        parent: head_hash,
-        timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-        fee_recipient: state.coinbase_address,
-        random: H256::zero(),
-        withdrawals: Default::default(),
-        beacon_root: Some(head_beacon_block_root),
-        version,
-        elasticity_multiplier: state.elasticity_multiplier,
-    };
-    let payload = create_payload(&args, &state.store)?;
-
-    // Blockchain builds the payload from mempool txs and executes them
-    let payload_build_result =
-        build_payload(state.blockchain.clone(), payload, &state.store).await?;
-    info!(
-        "Built payload for new block {}",
-        payload_build_result.payload.header.number
-    );
-
-    // Blockchain stores block
-    let block = payload_build_result.payload;
-    let chain_config = state.store.get_chain_config()?;
-    validate_block(
-        &block,
-        &head_header,
-        &chain_config,
-        state.elasticity_multiplier,
-    )?;
-
-    let account_updates = payload_build_result.account_updates;
-
-    let execution_result = BlockExecutionResult {
-        receipts: payload_build_result.receipts,
-        requests: Vec::new(),
-    };
-
-    let account_updates_list = state
-        .store
-        .apply_account_updates_batch(block.header.parent_hash, &account_updates)
-        .await?
-        .ok_or(ChainError::ParentStateNotFound)?;
-
-    state
-        .blockchain
-        .store_block(&block, account_updates_list, execution_result)
-        .await?;
-    info!("Stored new block {:x}", block.hash());
-    // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
-
-    state
-        .rollup_store
-        .store_account_updates_by_block_number(block.header.number, account_updates)
-        .await?;
-
-    // Make the new head be part of the canonical chain
-    apply_fork_choice(&state.store, block.hash(), block.hash(), block.hash()).await?;
-
-    metrics!(
-        let _ = METRICS_BLOCKS
-        .set_block_number(block.header.number)
-        .inspect_err(|e| {
-            tracing::error!("Failed to set metric: block_number {}", e.to_string())
-        });
-        #[allow(clippy::as_conversions)]
-        let tps = block.body.transactions.len() as f64 / (state.block_time_ms as f64 / 1000_f64);
-        METRICS_TX.set_transactions_per_second(tps);
-    );
-
-    Ok(())
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            CallMessage::Health => CallResponse::Reply(OutMessage::Health(BlockProducerHealth {
+                sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+                block_time_ms: self.block_time_ms,
+                coinbase_address: self.coinbase_address,
+                elasticity_multiplier: self.elasticity_multiplier,
+            })),
+        }
+    }
 }

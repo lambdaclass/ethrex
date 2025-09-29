@@ -1,8 +1,8 @@
 use std::sync::LazyLock;
 
 use ethereum_types::{Address, H256};
+use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
-use keccak_hash::keccak;
 
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +10,14 @@ pub const L1MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
 ]);
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct L1MessageProof {
+    pub batch_number: u64,
+    pub message_id: U256,
+    pub message_hash: H256,
+    pub merkle_proof: Vec<H256>,
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Represents a message from the L2 to the L1

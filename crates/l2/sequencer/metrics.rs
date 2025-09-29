@@ -1,20 +1,37 @@
 use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::MetricsGathererError};
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
+use ethrex_l2_sdk::{get_last_committed_batch, get_last_verified_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     l2::metrics::{METRICS, MetricsBlockType, MetricsOperationType},
     metrics_transactions::METRICS_TX,
 };
 use ethrex_rpc::clients::eth::EthClient;
+use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 use tracing::{debug, error};
 
 #[derive(Clone)]
-pub struct MetricsGathererState {
+pub enum CallMessage {
+    Health,
+}
+
+#[derive(Clone)]
+pub enum InMessage {
+    Gather,
+}
+
+#[derive(Clone)]
+pub enum OutMessage {
+    Done,
+    Health(MetricsGathererHealth),
+}
+
+pub struct MetricsGatherer {
     l1_eth_client: EthClient,
     l2_eth_client: EthClient,
     on_chain_proposer_address: Address,
@@ -22,7 +39,15 @@ pub struct MetricsGathererState {
     rollup_store: StoreRollup,
 }
 
-impl MetricsGathererState {
+#[derive(Clone, Serialize)]
+pub struct MetricsGathererHealth {
+    pub l1_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub l2_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub on_chain_proposer_address: Address,
+    pub check_interval: Duration,
+}
+
+impl MetricsGatherer {
     pub async fn new(
         rollup_store: StoreRollup,
         committer_config: &CommitterConfig,
@@ -36,136 +61,126 @@ impl MetricsGathererState {
             l2_eth_client,
             rollup_store,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
-            check_interval: Duration::from_millis(1000),
+            check_interval: Duration::from_millis(5000),
         })
     }
-}
 
-#[derive(Clone)]
-pub enum InMessage {
-    Gather,
-}
-
-#[derive(Clone, PartialEq)]
-pub enum OutMessage {
-    Done,
-}
-
-pub struct MetricsGatherer;
-
-impl MetricsGatherer {
     pub async fn spawn(
         cfg: &SequencerConfig,
         rollup_store: StoreRollup,
         l2_url: String,
-    ) -> Result<(), MetricsGathererError> {
-        let state =
-            MetricsGathererState::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)
-                .await?;
-        let mut metrics = MetricsGatherer::start(state);
+    ) -> Result<GenServerHandle<MetricsGatherer>, MetricsGathererError> {
+        let mut metrics = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)
+            .await?
+            .start();
         metrics
             .cast(InMessage::Gather)
             .await
-            .map_err(MetricsGathererError::GenServerError)
+            .map_err(MetricsGathererError::InternalError)?;
+        Ok(metrics)
+    }
+
+    async fn gather_metrics(&mut self) -> Result<(), MetricsGathererError> {
+        let last_committed_batch =
+            get_last_committed_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
+
+        let last_verified_batch =
+            get_last_verified_batch(&self.l1_eth_client, self.on_chain_proposer_address).await?;
+
+        let l1_gas_price = self.l1_eth_client.get_gas_price().await?;
+        let l2_gas_price = self.l2_eth_client.get_gas_price().await?;
+
+        if let Ok(Some(last_verified_batch_blocks)) = self
+            .rollup_store
+            .get_block_numbers_by_batch(last_verified_batch)
+            .await
+        {
+            if let Some(last_block) = last_verified_batch_blocks.last() {
+                METRICS.set_block_type_and_block_number(
+                    MetricsBlockType::LastVerifiedBlock,
+                    *last_block,
+                )?;
+            }
+        }
+
+        if let Ok(operations_metrics) = self.rollup_store.get_operations_count().await {
+            let (transactions, privileged_transactions, messages) = (
+                operations_metrics[0],
+                operations_metrics[1],
+                operations_metrics[2],
+            );
+            METRICS.set_operation_by_type(
+                MetricsOperationType::PrivilegedTransactions,
+                privileged_transactions,
+            )?;
+            METRICS.set_operation_by_type(MetricsOperationType::L1Messages, messages)?;
+            METRICS_TX.set_tx_count(transactions)?;
+        }
+
+        METRICS.set_block_type_and_block_number(
+            MetricsBlockType::LastCommittedBatch,
+            last_committed_batch,
+        )?;
+        METRICS.set_block_type_and_block_number(
+            MetricsBlockType::LastVerifiedBatch,
+            last_verified_batch,
+        )?;
+        METRICS.set_l1_gas_price(
+            l1_gas_price
+                .try_into()
+                .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
+        );
+        METRICS.set_l2_gas_price(
+            l2_gas_price
+                .try_into()
+                .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
+        );
+
+        debug!("L2 Metrics Gathered");
+        Ok(())
+    }
+
+    async fn health(&self) -> CallResponse<Self> {
+        let l1_rpc_healthcheck = self.l1_eth_client.test_urls().await;
+        let l2_rpc_healthcheck = self.l2_eth_client.test_urls().await;
+
+        CallResponse::Reply(OutMessage::Health(MetricsGathererHealth {
+            l1_rpc_healthcheck,
+            l2_rpc_healthcheck,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            check_interval: self.check_interval,
+        }))
     }
 }
 
 impl GenServer for MetricsGatherer {
-    type CallMsg = ();
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type State = MetricsGathererState;
 
     type Error = MetricsGathererError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_call(
         &mut self,
-        _message: Self::CallMsg,
+        message: Self::CallMsg,
         _handle: &GenServerHandle<Self>,
-        state: Self::State,
     ) -> CallResponse<Self> {
-        CallResponse::Reply(state, OutMessage::Done)
+        match message {
+            CallMessage::Health => self.health().await,
+        }
     }
 
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-        mut state: Self::State,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         // Right now we only have the Gather message, so we ignore the message
-        let _ = gather_metrics(&mut state)
+        let _ = self
+            .gather_metrics()
             .await
             .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
-        send_after(state.check_interval, handle.clone(), Self::CastMsg::Gather);
-        CastResponse::NoReply(state)
+        send_after(self.check_interval, handle.clone(), Self::CastMsg::Gather);
+        CastResponse::NoReply
     }
-}
-
-async fn gather_metrics(state: &mut MetricsGathererState) -> Result<(), MetricsGathererError> {
-    let last_committed_batch = state
-        .l1_eth_client
-        .get_last_committed_batch(state.on_chain_proposer_address)
-        .await?;
-
-    let last_verified_batch = state
-        .l1_eth_client
-        .get_last_verified_batch(state.on_chain_proposer_address)
-        .await?;
-
-    let l1_gas_price = state.l1_eth_client.get_gas_price().await?;
-    let l2_gas_price = state.l2_eth_client.get_gas_price().await?;
-
-    if let Ok(Some(last_verified_batch_blocks)) = state
-        .rollup_store
-        .get_block_numbers_by_batch(last_verified_batch)
-        .await
-    {
-        if let Some(last_block) = last_verified_batch_blocks.last() {
-            METRICS.set_block_type_and_block_number(
-                MetricsBlockType::LastVerifiedBlock,
-                *last_block,
-            )?;
-        }
-    }
-
-    if let Ok(operations_metrics) = state.rollup_store.get_operations_count().await {
-        let (transactions, privileged_transactions, messages) = (
-            operations_metrics[0],
-            operations_metrics[1],
-            operations_metrics[2],
-        );
-        METRICS.set_operation_by_type(
-            MetricsOperationType::PrivilegedTransactions,
-            privileged_transactions,
-        )?;
-        METRICS.set_operation_by_type(MetricsOperationType::L1Messages, messages)?;
-        METRICS_TX.set_tx_count(transactions)?;
-    }
-
-    METRICS.set_block_type_and_block_number(
-        MetricsBlockType::LastCommittedBatch,
-        last_committed_batch,
-    )?;
-    METRICS.set_block_type_and_block_number(
-        MetricsBlockType::LastVerifiedBatch,
-        last_verified_batch,
-    )?;
-    METRICS.set_l1_gas_price(
-        l1_gas_price
-            .try_into()
-            .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
-    );
-    METRICS.set_l2_gas_price(
-        l2_gas_price
-            .try_into()
-            .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
-    );
-
-    debug!("L2 Metrics Gathered");
-    Ok(())
 }

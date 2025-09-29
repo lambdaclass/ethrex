@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, HashMap};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
-use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
@@ -15,7 +14,10 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
+use crate::{
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    utils::keccak,
+};
 
 #[allow(unused)]
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,7 +82,7 @@ impl From<GenesisAccount> for Account {
 }
 
 pub fn code_hash(code: &Bytes) -> H256 {
-    keccak_hash::keccak(code.as_ref())
+    keccak(code.as_ref())
 }
 
 impl RLPEncode for AccountInfo {
@@ -169,28 +171,11 @@ impl Account {
             storage,
         }
     }
+}
 
-    pub fn has_nonce(&self) -> bool {
-        self.info.nonce != 0
-    }
-
-    pub fn has_code(&self) -> bool {
-        self.info.code_hash != *EMPTY_KECCACK_HASH
-    }
-
-    pub fn has_code_or_nonce(&self) -> bool {
-        self.has_code() || self.has_nonce()
-    }
-
+impl AccountInfo {
     pub fn is_empty(&self) -> bool {
-        self.info.balance.is_zero()
-            && self.info.nonce == 0
-            && self.info.code_hash == *EMPTY_KECCACK_HASH
-    }
-
-    pub fn set_code(&mut self, code: Bytes) {
-        self.info.code_hash = keccak(code.as_ref()).0.into();
-        self.code = code;
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
     }
 }
 

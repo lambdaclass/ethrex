@@ -6,6 +6,7 @@ use crossterm::{
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
+use futures::StreamExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -17,7 +18,10 @@ use ratatui::{
 };
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
+    tasks::{
+        CastResponse, GenServer, GenServerHandle, InitResult, Success, send_interval,
+        spawn_listener,
+    },
 };
 use std::io;
 use std::sync::Arc;
@@ -25,8 +29,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::based::sequencer_state::SequencerState;
+use crate::monitor::utils::SelectableScroller;
 use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
+use crate::sequencer::configs::MonitorConfig;
 use crate::{
     SequencerConfig,
     monitor::widget::{
@@ -35,18 +40,22 @@ use crate::{
     },
     sequencer::errors::MonitorError,
 };
+use crate::{
+    based::sequencer_state::SequencerState, monitor::widget::rich_accounts::RichAccountsTable,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
-#[derive(Clone)]
+
+const SCROLLABLE_WIDGETS: usize = 5;
 pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
-    pub tick_rate: u64,
+    pub cfg: MonitorConfig,
 
-    pub logger: Arc<TuiWidgetState>,
+    pub logger: TuiWidgetState,
     pub node_status: NodeStatusTable,
     pub global_chain_status: GlobalChainStatusTable,
     pub mempool: MempoolTable,
@@ -54,19 +63,14 @@ pub struct EthrexMonitorWidget {
     pub blocks_table: BlocksTable,
     pub l1_to_l2_messages: L1ToL2MessagesTable,
     pub l2_to_l1_messages: L2ToL1MessagesTable,
+    pub rich_accounts: RichAccountsTable,
 
     pub eth_client: EthClient,
     pub rollup_client: EthClient,
     pub store: Store,
     pub rollup_store: StoreRollup,
     pub last_scroll: Instant,
-}
-
-#[derive(Clone)]
-pub struct EthrexMonitorState {
-    widget: EthrexMonitorWidget,
-    terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
-    cancellation_token: CancellationToken,
+    pub overview_selected_widget: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -80,8 +84,11 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Default)]
-pub struct EthrexMonitor {}
+pub struct EthrexMonitor {
+    widget: EthrexMonitorWidget,
+    terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
+    cancellation_token: CancellationToken,
+}
 
 impl EthrexMonitor {
     pub async fn spawn(
@@ -92,12 +99,12 @@ impl EthrexMonitor {
         cancellation_token: CancellationToken,
     ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
-        let state = EthrexMonitorState {
+        let ethrex_monitor = EthrexMonitor {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
             cancellation_token,
         };
-        Ok(EthrexMonitor::start(state))
+        Ok(ethrex_monitor.start())
     }
 }
 
@@ -105,43 +112,33 @@ impl GenServer for EthrexMonitor {
     type CallMsg = Unused;
     type CastMsg = CastInMessage;
     type OutMsg = OutMessage;
-    type State = EthrexMonitorState;
     type Error = MonitorError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
-    async fn init(
-        &mut self,
-        handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> Result<Self::State, Self::Error> {
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
         // Tick handling
         send_interval(
-            Duration::from_millis(state.widget.tick_rate),
+            Duration::from_millis(self.widget.cfg.tick_rate),
             handle.clone(),
             Self::CastMsg::Tick,
         );
         // Event handling
         spawn_listener(
             handle.clone(),
-            |event: Event| Self::CastMsg::Event(event),
-            EventStream::new(),
+            EventStream::new()
+                .filter_map(|result| async move { result.ok().map(Self::CastMsg::Event) }),
         );
-        Ok(state)
+        Ok(Success(self))
     }
 
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-        mut state: Self::State,
-    ) -> CastResponse<Self> {
+    ) -> CastResponse {
         match message {
             // On event
             CastInMessage::Event(event) => {
-                let widget = &mut state.widget;
+                let widget = &mut self.widget;
                 if let Some(key) = event.as_key_press_event() {
                     widget.on_key_event(key.code);
                 }
@@ -151,7 +148,7 @@ impl GenServer for EthrexMonitor {
             }
             // Tick received
             CastInMessage::Tick => {
-                let _ = state
+                let _ = self
                     .widget
                     .on_tick()
                     .await
@@ -159,28 +156,24 @@ impl GenServer for EthrexMonitor {
             }
         }
 
-        if !state.widget.should_quit {
-            let _ = state
+        if !self.widget.should_quit {
+            let _ = self
                 .widget
-                .draw(&mut *state.terminal.lock().await)
+                .draw(&mut *self.terminal.lock().await)
                 .inspect_err(|err| error!("Render error: {err}"));
-            CastResponse::NoReply(state)
+            CastResponse::NoReply
         } else {
             CastResponse::Stop
         }
     }
 
-    async fn teardown(
-        &mut self,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> Result<(), Self::Error> {
-        let mut terminal = state.terminal.lock().await;
+    async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
+        let mut terminal = self.terminal.lock().await;
         let _ = restore_terminal(&mut terminal).inspect_err(|err| {
             error!("Error restoring terminal: {err}");
         });
         info!("Monitor has been cancelled");
-        state.cancellation_token.cancel();
+        self.cancellation_token.cancel();
         Ok(())
     }
 }
@@ -199,30 +192,31 @@ impl EthrexMonitorWidget {
             EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
 
         let mut monitor_widget = EthrexMonitorWidget {
-            title: if cfg.based.based {
+            title: if cfg.based.enabled {
                 "Based Ethrex Monitor".to_string()
             } else {
                 "Ethrex Monitor".to_string()
             },
             should_quit: false,
             tabs: TabsState::default(),
-            tick_rate: cfg.monitor.tick_rate,
+            cfg: cfg.monitor.clone(),
             global_chain_status: GlobalChainStatusTable::new(cfg),
-            logger: Arc::new(
-                TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            ),
-            node_status: NodeStatusTable::new(sequencer_state.clone()),
+            logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
+            node_status: NodeStatusTable::new(sequencer_state.clone(), cfg.based.enabled),
             mempool: MempoolTable::new(),
             batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
             blocks_table: BlocksTable::new(),
             l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.l1_watcher.bridge_address),
             l2_to_l1_messages: L2ToL1MessagesTable::new(cfg.l1_watcher.bridge_address),
+            rich_accounts: RichAccountsTable::new(&rollup_client).await?,
             eth_client,
             rollup_client,
             store,
             rollup_store,
             last_scroll: Instant::now(),
+            overview_selected_widget: 0,
         };
+        monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;
         Ok(monitor_widget)
     }
@@ -232,6 +226,19 @@ impl EthrexMonitorWidget {
             frame.render_widget(self, frame.area());
         })?;
         Ok(())
+    }
+
+    fn selected_table(&mut self) -> &mut dyn SelectableScroller {
+        let widgets: [&mut dyn SelectableScroller; SCROLLABLE_WIDGETS] = [
+            &mut self.batches_table,
+            &mut self.blocks_table,
+            &mut self.mempool,
+            &mut self.l1_to_l2_messages,
+            &mut self.l2_to_l1_messages,
+        ];
+        // index always within bounds
+        #[expect(clippy::indexing_slicing)]
+        widgets[self.overview_selected_widget % SCROLLABLE_WIDGETS]
     }
 
     pub fn on_key_event(&mut self, code: KeyCode) {
@@ -252,8 +259,39 @@ impl EthrexMonitorWidget {
             (TabsState::Logs, KeyCode::Char('-')) => {
                 self.logger.transition(TuiWidgetEvent::MinusKey)
             }
-            (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => self.should_quit = true,
-            (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
+            (TabsState::Overview, KeyCode::Up) => {
+                self.selected_table().selected(false);
+                self.overview_selected_widget = self
+                    .overview_selected_widget
+                    .wrapping_add(SCROLLABLE_WIDGETS - 1)
+                    % SCROLLABLE_WIDGETS;
+                self.selected_table().selected(true);
+            }
+            (TabsState::Overview, KeyCode::Down) => {
+                self.selected_table().selected(false);
+                self.overview_selected_widget =
+                    self.overview_selected_widget.wrapping_add(1) % SCROLLABLE_WIDGETS;
+                self.selected_table().selected(true);
+            }
+            (TabsState::Overview, KeyCode::Char('w')) => {
+                self.selected_table().scroll_up();
+            }
+            (TabsState::Overview, KeyCode::Char('s')) => {
+                self.selected_table().scroll_down();
+            }
+            (
+                TabsState::Overview | TabsState::Logs | TabsState::RichAccounts,
+                KeyCode::Char('Q'),
+            ) => self.should_quit = true,
+            (TabsState::Overview | TabsState::Logs | TabsState::RichAccounts, KeyCode::Tab) => {
+                self.tabs.next()
+            }
+            (TabsState::RichAccounts, KeyCode::Char('w')) => {
+                self.rich_accounts.scroll_up();
+            }
+            (TabsState::RichAccounts, KeyCode::Char('s')) => {
+                self.rich_accounts.scroll_down();
+            }
             _ => {}
         }
     }
@@ -278,7 +316,9 @@ impl EthrexMonitorWidget {
     }
 
     pub async fn on_tick(&mut self) -> Result<(), MonitorError> {
-        self.node_status.on_tick(&self.store).await?;
+        self.node_status
+            .on_tick(&self.store, &self.rollup_client)
+            .await?;
         self.global_chain_status
             .on_tick(&self.eth_client, &self.store, &self.rollup_store)
             .await?;
@@ -293,6 +333,7 @@ impl EthrexMonitorWidget {
         self.l2_to_l1_messages
             .on_tick(&self.eth_client, &self.rollup_client)
             .await?;
+        self.rich_accounts.on_tick(&self.rollup_client).await?;
 
         Ok(())
     }
@@ -303,7 +344,11 @@ impl EthrexMonitorWidget {
     {
         let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
         let tabs = Tabs::default()
-            .titles([TabsState::Overview.to_string(), TabsState::Logs.to_string()])
+            .titles([
+                TabsState::Overview.to_string(),
+                TabsState::Logs.to_string(),
+                TabsState::RichAccounts.to_string(),
+            ])
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(Color::Cyan))
@@ -321,7 +366,11 @@ impl EthrexMonitorWidget {
             TabsState::Overview => {
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
-                    Constraint::Fill(1),
+                    if let Some(height) = self.cfg.batch_widget_height {
+                        Constraint::Length(height)
+                    } else {
+                        Constraint::Fill(1)
+                    },
                     Constraint::Fill(1),
                     Constraint::Fill(1),
                     Constraint::Fill(1),
@@ -401,7 +450,9 @@ impl EthrexMonitorWidget {
                     &mut l2_to_l1_messages_state,
                 );
 
-                let help = Line::raw("tab: switch tab |  Q: quit").centered();
+                let help =
+                    Line::raw("↑/↓: select table | w/s: scroll table | tab: switch tab | Q: quit")
+                        .centered();
 
                 help.render(*chunks.get(6).ok_or(MonitorError::Chunks)?, buf);
             }
@@ -425,8 +476,20 @@ impl EthrexMonitorWidget {
 
                 log_widget.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
 
-                let help = Line::raw("tab: switch tab |  Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
+                let help = Line::raw("↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector | tab: switch tab | Q: quit").centered();
 
+                help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
+            }
+            TabsState::RichAccounts => {
+                let chunks = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
+                    .split(*chunks.get(1).ok_or(MonitorError::Chunks)?);
+                let mut accounts = self.rich_accounts.state.clone();
+                self.rich_accounts.render(
+                    *chunks.first().ok_or(MonitorError::Chunks)?,
+                    buf,
+                    &mut accounts,
+                );
+                let help = Line::raw("w/s: scroll table | tab: switch tab | Q: quit").centered();
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
         };

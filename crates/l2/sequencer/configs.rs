@@ -15,6 +15,7 @@ pub struct SequencerConfig {
     pub based: BasedConfig,
     pub aligned: AlignedConfig,
     pub monitor: MonitorConfig,
+    pub admin_server: AdminConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -23,12 +24,15 @@ pub struct BlockProducerConfig {
     pub block_time_ms: u64,
     pub coinbase_address: Address,
     pub elasticity_multiplier: u64,
+    pub block_gas_limit: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct CommitterConfig {
     pub on_chain_proposer_address: Address,
+    pub first_wake_up_time_ms: u64,
     pub commit_time_ms: u64,
+    pub batch_gas_limit: Option<u64>,
     pub arbitrary_base_blob_gas_price: u64,
     pub validium: bool,
     pub signer: Signer,
@@ -58,15 +62,14 @@ pub struct ProofCoordinatorConfig {
     pub listen_ip: IpAddr,
     pub listen_port: u16,
     pub proof_send_interval_ms: u64,
-    pub dev_mode: bool,
     pub signer: Signer,
     pub validium: bool,
-    pub tdx_private_key: SecretKey,
+    pub tdx_private_key: Option<SecretKey>,
 }
 
 #[derive(Clone, Debug)]
 pub struct BasedConfig {
-    pub based: bool,
+    pub enabled: bool,
     pub state_updater: StateUpdaterConfig,
     pub block_fetcher: BlockFetcherConfig,
 }
@@ -98,4 +101,12 @@ pub struct MonitorConfig {
     pub enabled: bool,
     /// time in ms between two ticks.
     pub tick_rate: u64,
+    /// height in lines of the batch widget
+    pub batch_widget_height: Option<u16>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AdminConfig {
+    pub listen_ip: IpAddr,
+    pub listen_port: u16,
 }

@@ -24,15 +24,15 @@ pub const TX_DATA_NON_ZERO_GAS: u64 = 68;
 // === EIP-170 constants ===
 
 // Max bytecode size
-pub const MAX_CODE_SIZE: usize = 0x6000;
+pub const MAX_CODE_SIZE: u32 = 0x6000;
 
 // === EIP-3860 constants ===
 
 // Max contract creation bytecode size
-pub const MAX_INITCODE_SIZE: usize = 2 * MAX_CODE_SIZE;
+pub const MAX_INITCODE_SIZE: u32 = 2 * MAX_CODE_SIZE;
 
 // Max non-contract creation bytecode size
-pub const MAX_TRANSACTION_DATA_SIZE: usize = 4 * 32 * 1024; // 128 Kb
+pub const MAX_TRANSACTION_DATA_SIZE: u32 = 4 * 32 * 1024; // 128 Kb
 
 // === EIP-2028 constants ===
 
@@ -44,3 +44,7 @@ pub const TX_DATA_NON_ZERO_GAS_EIP2028: u64 = 16;
 pub const GAS_LIMIT_BOUND_DIVISOR: u64 = 1024;
 
 pub const MIN_GAS_LIMIT: u64 = 5000;
+
+// === EIP-7825 constants ===
+// https://eips.ethereum.org/EIPS/eip-7825
+pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;

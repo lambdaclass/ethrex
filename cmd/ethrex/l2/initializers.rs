@@ -1,32 +1,45 @@
 use std::fs::read_to_string;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
-use ethrex_p2p::kademlia::KademliaTable;
+use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
+use ethrex_l2::SequencerConfig;
+use ethrex_p2p::kademlia::Kademlia;
+use ethrex_p2p::network::peer_table;
 use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use secp256k1::SecretKey;
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use tracing::warn;
-use tracing_subscriber::EnvFilter;
+use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::{EnvFilter, Registry, reload};
 use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 
 use crate::cli::Options as L1Options;
-use crate::initializers::{self, get_authrpc_socket_addr, get_http_socket_addr};
+use crate::initializers::{
+    self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
+    get_network, get_signer, init_blockchain, init_network, init_store,
+};
 use crate::l2::L2Options;
-use crate::utils::{get_client_version, read_jwtsecret_file};
+use crate::utils::{
+    NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
+};
 
 #[allow(clippy::too_many_arguments)]
-pub async fn init_rpc_api(
+async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -34,8 +47,12 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     rollup_store: StoreRollup,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
+
+    init_datadir(&opts.datadir);
 
     // Create SyncManager
     let syncer = SyncManager::new(
@@ -44,6 +61,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        opts.datadir.clone(),
     )
     .await;
 
@@ -61,12 +79,14 @@ pub async fn init_rpc_api(
         get_valid_delegation_addresses(l2_opts),
         l2_opts.sponsor_private_key,
         rollup_store,
+        log_filter_handler,
+        gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
     );
 
     tracker.spawn(rpc_api);
 }
 
-pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
+fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     let Some(ref path) = l2_opts.sponsorable_addresses_file_path else {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
         return Vec::new();
@@ -84,20 +104,17 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     addresses
 }
 
-pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
+pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rollup_storage_sql")] {
             let engine_type = EngineTypeRollup::SQL;
-        } else if #[cfg(feature = "rollup_storage_redb")] {
-            let engine_type = EngineTypeRollup::RedB;
-        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
-            let engine_type = EngineTypeRollup::Libmdbx;
-        } else {
+        }
+        else {
             let engine_type = EngineTypeRollup::InMemory;
         }
     }
     let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+        StoreRollup::new(datadir, engine_type).expect("Failed to create StoreRollup");
     rollup_store
         .init()
         .await
@@ -105,7 +122,7 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     rollup_store
 }
 
-pub fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
+fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracing::info!(
         "Starting metrics server on {}:{}",
         opts.metrics_addr,
@@ -118,8 +135,8 @@ pub fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_tracing(opts: &L2Options) {
-    if opts.sequencer_opts.monitor {
+pub fn init_tracing(opts: &L2Options) -> Option<reload::Handle<EnvFilter, Registry>> {
+    if !opts.sequencer_opts.no_monitor {
         let level_filter = EnvFilter::builder()
             .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
         let subscriber = tracing_subscriber::registry()
@@ -128,7 +145,155 @@ pub fn init_tracing(opts: &L2Options) {
         tracing::subscriber::set_global_default(subscriber)
             .expect("setting default subscriber failed");
         tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
+
+        // Monitor already registers all log levels
+        None
     } else {
-        initializers::init_tracing(&opts.node_opts);
+        Some(initializers::init_tracing(&opts.node_opts))
     }
+}
+
+pub async fn init_l2(
+    opts: L2Options,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+) -> eyre::Result<()> {
+    #[cfg(feature = "revm")]
+    panic!("L2 doesn't support REVM");
+
+    let datadir = opts.node_opts.datadir.clone();
+    init_datadir(&opts.node_opts.datadir);
+    let rollup_store_dir = datadir.join("rollup_store");
+
+    let network = get_network(&opts.node_opts);
+
+    let genesis = network.get_genesis()?;
+    let store = init_store(&datadir, genesis).await;
+    let rollup_store = init_rollup_store(&rollup_store_dir).await;
+
+    let blockchain_opts = ethrex_blockchain::BlockchainOptions {
+        max_mempool_size: opts.node_opts.mempool_max_size,
+        r#type: BlockchainType::L2,
+        perf_logs_enabled: true,
+    };
+
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+
+    let signer = get_signer(&datadir);
+
+    let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
+
+    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+        &datadir,
+        &local_p2p_node,
+        &signer,
+    )));
+
+    let peer_handler = PeerHandler::new(peer_table());
+
+    // TODO: Check every module starts properly.
+    let tracker = TaskTracker::new();
+    let mut join_set = JoinSet::new();
+
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    init_rpc_api(
+        &opts.node_opts,
+        &opts,
+        peer_handler.peer_table.clone(),
+        local_p2p_node.clone(),
+        local_node_record.lock().await.clone(),
+        store.clone(),
+        blockchain.clone(),
+        cancel_token.clone(),
+        tracker.clone(),
+        rollup_store.clone(),
+        log_filter_handler,
+        Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
+    )
+    .await;
+
+    // Initialize metrics if enabled
+    if opts.node_opts.metrics_enabled {
+        init_metrics(&opts.node_opts, tracker.clone());
+    }
+
+    let l2_sequencer_cfg = SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
+        error!("{err}");
+    })?;
+    let cancellation_token = CancellationToken::new();
+
+    // TODO: This should be handled differently, the current problem
+    // with using opts.node_opts.p2p_enabled is that with the removal
+    // of the l2 feature flag, p2p_enabled is set to true by default
+    // prioritizing the L1 UX.
+    if l2_sequencer_cfg.based.enabled {
+        init_network(
+            &opts.node_opts,
+            &network,
+            &datadir,
+            local_p2p_node,
+            local_node_record.clone(),
+            signer,
+            peer_handler.clone(),
+            store.clone(),
+            tracker,
+            blockchain.clone(),
+            Some(P2PBasedContext {
+                store_rollup: rollup_store.clone(),
+                // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
+                // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
+                // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
+                // This should be replaced with the Signer enum once the refactor is complete.
+                committer_key: Arc::new(
+                    SecretKey::from_slice(
+                        &hex::decode(
+                            "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+                        )
+                        .expect("Invalid committer key"),
+                    )
+                    .expect("Failed to create committer key"),
+                ),
+            }),
+        )
+        .await;
+    } else {
+        info!("P2P is disabled");
+    }
+
+    let l2_sequencer = ethrex_l2::start_l2(
+        store,
+        rollup_store,
+        blockchain,
+        l2_sequencer_cfg,
+        cancellation_token.clone(),
+        #[cfg(feature = "metrics")]
+        format!(
+            "http://{}:{}",
+            opts.node_opts.http_addr, opts.node_opts.http_port
+        ),
+    )
+    .into_future();
+
+    join_set.spawn(l2_sequencer);
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            join_set.abort_all();
+        }
+        _ = cancellation_token.cancelled() => {
+        }
+    }
+    info!("Server shut down started...");
+    let node_config_path = datadir.join("node_config.json");
+    info!(path = %node_config_path.display(), "Storing node config");
+    cancel_token.cancel();
+    let node_config = NodeConfigFile::new(
+        peer_handler.peer_table,
+        local_node_record.lock().await.clone(),
+    )
+    .await;
+    store_node_config_file(node_config, node_config_path).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    info!("Server shutting down!");
+    Ok(())
 }

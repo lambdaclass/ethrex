@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CI_ETHREX_WORKDIR: /usr/local/bin
+  DOCKER_ETHREX_WORKDIR: /usr/local/bin
 
 jobs:
   lint:
@@ -24,12 +24,31 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
+
+      - name: Install RISC0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 3.0.3
+          ~/.risc0/bin/rzup install risc0-groth16
+          ~/.risc0/bin/rzup install rust
+
+      - name: Create placeholder SP1 ELF
+        run: |
+          mkdir -p crates/l2/prover/src/guest_program/src/sp1/out
+          touch crates/l2/prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -43,25 +62,49 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+  build-docker:
+    name: Build docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build L1 docker image
+        uses: ./.github/actions/build-docker
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          tags: ethrex:main
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp/ethrex_image.tar
+
   integration-test:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
+    needs: build-docker
     strategy:
       matrix:
         include:
           - name: "Validium"
             validium: true
             web3signer: false
-            compose_targets: [docker-compose-l2.yaml]
+            compose_targets: [docker-compose.yaml]
           - name: "Vanilla"
             validium: false
             web3signer: false
-            compose_targets: [docker-compose-l2.yaml]
+            compose_targets: [docker-compose.yaml]
           - name: "Vanilla with Web3signer"
             validium: false
             web3signer: true
             compose_targets:
-              [docker-compose-l2.yaml, docker-compose-l2-web3signer.yaml]
+              [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -69,7 +112,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: pontem-network/get-solc@master
+        uses: lambdaclass/get-solc@master
         with:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
@@ -79,7 +122,7 @@ jobs:
         run: |
           cd crates/l2
           make build-prover
-          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Build test
         run: |
@@ -91,33 +134,37 @@ jobs:
           cd crates/l2
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach web3signer
 
-      - name: Build L1 docker image
-        uses: docker/build-push-action@v6
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          file: crates/blockchain/dev/Dockerfile
-          tags: ethrex_dev:latest
-          push: false
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
 
       - name: Start L1 & Deploy contracts
         run: |
+          touch cmd/.env
           cd crates/l2
-          touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          docker compose up contract_deployer
 
       - name: Start Sequencer
         run: |
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
-          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach ethrex_l2
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
 
       - name: Run test
         run: |
@@ -126,11 +173,12 @@ jobs:
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           docker logs --follow ethrex_l2 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex_prover -s SIGINT
+          killall ethrex -s SIGINT
 
   integration-test-based:
     name: Integration Test - Based
     runs-on: ubuntu-latest
+    needs: build-docker
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -138,52 +186,53 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Install solc
-        uses: pontem-network/get-solc@master
+        uses: lambdaclass/get-solc@master
         with:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
-      - name: Build L1 docker image
-        uses: docker/build-push-action@v6
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          file: crates/blockchain/dev/Dockerfile
-          tags: ethrex_dev:latest
-          push: false
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
           cd crates/l2
           make build-prover
-          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p prover/src/guest_program/src/sp1/out && touch prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Start L1 & Deploy contracts
         run: |
+          touch cmd/.env
           cd crates/l2
-          touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           COMPILE_CONTRACTS=true \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          docker compose up contract_deployer
 
       - name: Install rex
         run: |
           cd ..
-          rustup install nightly # Install the nightly toolchain needed by rex, change this in the future
-          rustup default nightly
           git clone https://github.com/lambdaclass/rex.git
           cd rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
           make cli
           echo "rex install successfully at $(which rex)"
 
       - name: Register sequencer
         run: |
-          cd crates/l2
+          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
 
@@ -191,64 +240,164 @@ jobs:
             echo "Failed to get SEQUENCER_REGISTRY from .env file"
             exit 1
           fi
-          rex send "$SEQUENCER_REGISTRY" 1000000000000000000 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-          rex call "$SEQUENCER_REGISTRY" -- "leaderSequencer()"
+          rex send "$SEQUENCER_REGISTRY" "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b --value 1000000000000000000 -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+          rex call "$SEQUENCER_REGISTRY" "leaderSequencer()"
 
       - name: Start Sequencer
         run: |
-          cd crates/l2
+          cd cmd
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
+          cd ../crates/l2
 
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
-          docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          docker compose up --detach --no-deps ethrex_l2
 
       - name: Run test
         run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
+          docker logs --follow ethrex_l2 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex_prover -s SIGINT
+          killall ethrex -s SIGINT
+
+  integration-test-tdx:
+    name: Integration Test - TDX
+    runs-on: ubuntu-latest
+    needs: build-docker
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
+
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Set up QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils
+
+      - name: Install rex
+        run: |
+          cd /tmp
+          git clone https://github.com/lambdaclass/rex
+          cd rex
+          git checkout 18466ec1c3dbcbbf22a68fc1f850d660cb2fbf1f
+          cargo build --release
+          cp target/release/rex /usr/local/bin
+
+      - name: Build prover
+        run: |
+          sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
+          sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
+          cd crates/l2/tee/quote-gen
+          make image.raw
+
+      - name: Start L1 & Deploy contracts
+        run: |
+          touch cmd/.env
+          cd crates/l2
+          make init-l1-docker;
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
+          ETHREX_TDX_DEV_MODE=true \
+          make deploy-l1
+
+      - name: Start Sequencer and test
+        run: |
+          cd crates/l2
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+          make init-l2 &
+          sleep 30
+          cd tee/quote-gen/
+          qemu-system-x86_64 \
+            -daemonize \
+            -serial file:tdx_prover.log \
+            -name guest=ethrex_tdx_prover \
+            -machine q35,kernel_irqchip=split,hpet=off -smp 2 -m 2G \
+            -accel kvm -cpu host -nographic -nodefaults \
+            -bios OVMF.fd \
+            -no-user-config \
+            -netdev user,id=net0,net=192.168.76.0/24 -device e1000,netdev=net0 \
+            -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
+          tail -f tdx_prover.log &
+          cd ../../
+          docker logs --follow ethrex_l1 &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          pkill -9 -f ethrex_tdx_prover
 
   state-diff-test:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
+    needs: build-docker
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
-      - name: Build L1 docker image
-        uses: docker/build-push-action@v6
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          file: crates/blockchain/dev/Dockerfile
-          tags: ethrex_dev:latest
-          push: false
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: |
+          docker load --input /tmp/ethrex_image.tar
 
       - name: Install solc
-        uses: pontem-network/get-solc@master
+        uses: lambdaclass/get-solc@master
         with:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Start L1 & Deploy contracts
         run: |
+          touch cmd/.env
           cd crates/l2
-          touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           COMPILE_CONTRACTS=true \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          docker compose up contract_deployer
 
       - name: Run tests
         run: |
@@ -260,7 +409,13 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [integration-test, state-diff-test, integration-test-based]
+    needs:
+      [
+        integration-test,
+        state-diff-test,
+        integration-test-based,
+        integration-test-tdx,
+      ]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' }}
     steps:

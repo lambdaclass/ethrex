@@ -1,12 +1,8 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use crate::api::StoreEngineRollup;
 use crate::error::RollupStoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
-#[cfg(feature = "redb")]
-use crate::store_db::redb::RedBStoreRollup;
 #[cfg(feature = "sql")]
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
@@ -29,32 +25,19 @@ impl Default for Store {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
-    #[cfg(feature = "redb")]
-    RedB,
     #[cfg(feature = "sql")]
     SQL,
 }
 
 impl Store {
-    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, RollupStoreError> {
+    pub fn new(_path: &Path, engine_type: EngineType) -> Result<Self, RollupStoreError> {
         info!("Starting l2 storage engine ({engine_type:?})");
         let store = match engine_type {
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStoreRollup::new(_path)?),
-            },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-            },
-            #[cfg(feature = "redb")]
-            EngineType::RedB => Self {
-                engine: Arc::new(RedBStoreRollup::new()?),
             },
             #[cfg(feature = "sql")]
             EngineType::SQL => Self {
@@ -166,6 +149,10 @@ impl Store {
             .await
     }
 
+    pub async fn get_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
+        self.engine.get_last_batch_number().await
+    }
+
     pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, RollupStoreError> {
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
@@ -252,6 +239,53 @@ impl Store {
         self.engine.contains_batch(batch_number).await
     }
 
+    /// Stores the sequencer signature for a given block hash.
+    /// When the lead sequencer sends a block by P2P, it signs the message and it is validated
+    /// If we want to gossip or broadcast the message, we need to store the signature for later use
+    pub async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_signature_by_block(block_hash, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given block hash.
+    /// We want to retrieve the validated signature to broadcast or gossip the block to the peers
+    /// So they can also validate the message
+    pub async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        self.engine.get_signature_by_block(block_hash).await
+    }
+
+    /// Stores the sequencer signature for a given batch number.
+    /// When the lead sequencer sends a batch by P2P, it
+    /// should also sign it, this will map a batch number
+    /// to the batch's signature.
+    pub async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_signature_by_batch(batch_number, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given batch number.
+    /// This is used mostly in P2P to avoid signing an
+    /// already known batch.
+    pub async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        self.engine.get_signature_by_batch(batch_number).await
+    }
+
     /// Returns the lastest sent batch proof
     pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         self.engine.get_lastest_sent_batch_proof().await
@@ -310,5 +344,15 @@ impl Store {
     /// Reverts to a previous batch, discarding operations in them
     pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.engine.revert_to_batch(batch_number).await
+    }
+
+    pub async fn delete_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .delete_proof_by_batch_and_type(batch_number, proof_type)
+            .await
     }
 }

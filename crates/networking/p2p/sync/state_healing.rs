@@ -8,163 +8,426 @@
 //! This process will stop once it has fixed all trie inconsistencies or when the pivot becomes stale, in which case it can be resumed on the next cycle
 //! All healed accounts will also have their bytecodes and storages healed by the corresponding processes
 
-use std::{cmp::min, time::Instant};
+use std::{
+    cmp::min,
+    collections::HashMap,
+    sync::atomic::Ordering,
+    time::{Duration, Instant},
+};
 
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
-use tokio::sync::mpsc::{Sender, channel};
-use tracing::{debug, info};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
+use tracing::{debug, error, info};
 
 use crate::{
-    peer_handler::PeerHandler,
-    sync::{
-        MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE,
-        SHOW_PROGRESS_INTERVAL_DURATION, bytecode_fetcher, node_missing_children,
-    },
+    metrics::METRICS,
+    peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
+    rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
+    sync::{AccountStorageRoots, code_collector::CodeHashCollector},
+    utils::current_unix_time,
 };
+
+/// Max size of a bach to start a storage fetch request in queues
+pub const STORAGE_BATCH_SIZE: usize = 300;
+/// Max size of a bach to start a node fetch request in queues
+pub const NODE_BATCH_SIZE: usize = 500;
+/// Pace at which progress is shown via info tracing
+pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
 
 use super::SyncError;
 
-/// Heals the trie given its state_root by fetching any missing nodes in it via p2p
-/// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
-pub(crate) async fn heal_state_trie(
+#[derive(Debug)]
+pub struct MembatchEntryValue {
+    node: Node,
+    children_not_in_storage_count: u64,
+    parent_path: Nibbles,
+}
+
+pub async fn heal_state_trie_wrap(
     state_root: H256,
     store: Store,
-    peers: PeerHandler,
+    peers: &PeerHandler,
+    staleness_timestamp: u64,
+    global_leafs_healed: &mut u64,
+    storage_accounts: &mut AccountStorageRoots,
+    code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
-    let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
-    // Spawn a bytecode fetcher for this block
-    let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-        bytecode_receiver,
-        peers.clone(),
-        store.clone(),
-    ));
-    // Add the current state trie root to the pending paths
-    paths.push(Nibbles::default());
-    let mut last_update = Instant::now();
-    while !paths.is_empty() {
-        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
-            last_update = Instant::now();
-            info!("State Healing in Progress, pending paths: {}", paths.len());
-        }
-        // Spawn multiple parallel requests
-        let mut state_tasks = tokio::task::JoinSet::new();
-        for _ in 0..MAX_PARALLEL_FETCHES {
-            // Spawn fetcher for the batch
-            let batch = paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
-            state_tasks.spawn(heal_state_batch(
-                state_root,
-                batch,
-                peers.clone(),
-                store.clone(),
-                bytecode_sender.clone(),
-            ));
-            // End loop if we have no more paths to fetch
-            if paths.is_empty() {
-                break;
-            }
-        }
-        // Process the results of each batch
-        let mut stale = false;
-        for res in state_tasks.join_all().await {
-            let (return_paths, is_stale) = res?;
-            stale |= is_stale;
-            paths.extend(return_paths);
-        }
-        if stale {
+    let mut healing_done = false;
+    *METRICS.current_step.lock().await = "Healing State".to_string();
+    info!("Starting state healing");
+    while !healing_done {
+        healing_done = heal_state_trie(
+            state_root,
+            store.clone(),
+            peers.clone(),
+            staleness_timestamp,
+            global_leafs_healed,
+            HashMap::new(),
+            storage_accounts,
+            code_hash_collector,
+        )
+        .await?;
+        if current_unix_time() > staleness_timestamp {
+            info!("Stopped state healing due to staleness");
             break;
         }
     }
-    debug!("State Healing stopped, signaling storage healer");
-    // Save paths for the next cycle
-    if !paths.is_empty() {
-        debug!("Caching {} paths for the next cycle", paths.len());
-        store.set_state_heal_paths(paths.clone()).await?;
+    info!("Stopped state healing");
+    Ok(healing_done)
+}
+
+/// Heals the trie given its state_root by fetching any missing nodes in it via p2p
+/// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
+/// This method also stores modified storage roots in the db for heal_storage_trie
+/// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
+#[allow(clippy::too_many_arguments)]
+async fn heal_state_trie(
+    state_root: H256,
+    store: Store,
+    peers: PeerHandler,
+    staleness_timestamp: u64,
+    global_leafs_healed: &mut u64,
+    mut membatch: HashMap<Nibbles, MembatchEntryValue>,
+    storage_accounts: &mut AccountStorageRoots,
+    code_hash_collector: &mut CodeHashCollector,
+) -> Result<bool, SyncError> {
+    // Add the current state trie root to the pending paths
+    let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
+        hash: state_root,
+        path: Nibbles::default(), // We need to be careful, the root parent is a special case
+        parent_path: Nibbles::default(),
+    }];
+    let mut last_update = Instant::now();
+    let mut inflight_tasks: u64 = 0;
+    let mut is_stale = false;
+    let mut longest_path_seen = 0;
+    let mut downloads_success = 0;
+    let mut downloads_fail = 0;
+    let mut leafs_healed = 0;
+    let mut empty_try_recv: u64 = 0;
+    let mut nodes_to_write: Vec<Node> = Vec::new();
+    let mut db_joinset = tokio::task::JoinSet::new();
+
+    // channel to send the tasks to the peers
+    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+        H256,
+        Result<Vec<Node>, RequestStateTrieNodesError>,
+        Vec<RequestMetadata>,
+    )>(1000);
+    // Contains both nodes and their corresponding paths to heal
+    let mut nodes_to_heal = Vec::new();
+    loop {
+        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            let num_peers = peers
+                .peer_table
+                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+                .await
+                .len();
+            last_update = Instant::now();
+            let downloads_rate =
+                downloads_success as f64 / (downloads_success + downloads_fail) as f64;
+
+            METRICS
+                .global_state_trie_leafs_healed
+                .store(*global_leafs_healed, Ordering::Relaxed);
+            METRICS
+                .healing_empty_try_recv
+                .store(empty_try_recv, Ordering::Relaxed);
+            if is_stale {
+                debug!(
+                    "State Healing stopping due to staleness, snap peers available {num_peers}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
+                    global_leafs_healed,
+                    paths.len(),
+                    membatch.len()
+                );
+            } else {
+                debug!(
+                    "State Healing in Progress, snap peers available {num_peers}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
+                    global_leafs_healed,
+                    paths.len(),
+                    membatch.len()
+                );
+            }
+            downloads_success = 0;
+            downloads_fail = 0;
+        }
+
+        // Attempt to receive a response from one of the peers
+        // TODO: this match response should score the appropiate peers
+        let res = task_receiver.try_recv();
+        if res.is_err() {
+            empty_try_recv += 1;
+        }
+        if let Ok((peer_id, response, batch)) = res {
+            inflight_tasks -= 1;
+            // Mark the peer as available
+            peers.peer_table.free_peer(peer_id).await;
+            match response {
+                // If the peers responded with nodes, add them to the nodes_to_heal vector
+                Ok(nodes) => {
+                    for (node, meta) in nodes.iter().zip(batch.iter()) {
+                        if let Node::Leaf(node) = node {
+                            let account = AccountState::decode(&node.value)?;
+                            let account_hash = H256::from_slice(
+                                &meta.path.concat(node.partial.clone()).to_bytes(),
+                            );
+
+                            // // Collect valid code hash
+                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                                code_hash_collector.add(account.code_hash);
+                                code_hash_collector.flush_if_needed().await?;
+                            }
+
+                            storage_accounts.healed_accounts.insert(account_hash);
+                            storage_accounts
+                                .accounts_with_storage_root
+                                .remove(&account_hash);
+                        }
+                    }
+                    leafs_healed += nodes
+                        .iter()
+                        .filter(|node| matches!(node, Node::Leaf(_)))
+                        .count();
+                    *global_leafs_healed += nodes
+                        .iter()
+                        .filter(|node| matches!(node, Node::Leaf(_)))
+                        .count() as u64;
+                    nodes_to_heal.push((nodes, batch));
+                    downloads_success += 1;
+                    peers.peer_table.record_success(peer_id).await;
+                }
+                // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
+                Err(_) => {
+                    // TODO: Check if it's faster to reach the leafs of the trie
+                    // by doing batch.extend(paths);paths = batch
+                    // Or with a VecDequeue
+                    paths.extend(batch);
+                    downloads_fail += 1;
+                    peers.peer_table.record_failure(peer_id).await;
+                }
+            }
+        }
+
+        if !is_stale {
+            let batch: Vec<RequestMetadata> =
+                paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+            if !batch.is_empty() {
+                longest_path_seen = usize::max(
+                    batch
+                        .iter()
+                        .map(|request_metadata| request_metadata.path.len())
+                        .max()
+                        .unwrap_or_default(),
+                    longest_path_seen,
+                );
+                let Some((peer_id, mut peer_channel)) = peers
+                    .peer_table
+                    .get_peer_channel_with_highest_score_and_mark_as_used(
+                        &SUPPORTED_SNAP_CAPABILITIES,
+                    )
+                    .await
+                else {
+                    // If there are no peers available, re-add the batch to the paths vector, and continue
+                    paths.extend(batch);
+                    continue;
+                };
+
+                let tx = task_sender.clone();
+                inflight_tasks += 1;
+
+                tokio::spawn(async move {
+                    // TODO: check errors to determine whether the current block is stale
+                    let response = PeerHandler::request_state_trienodes(
+                        &mut peer_channel,
+                        state_root,
+                        batch.clone(),
+                    )
+                    .await;
+                    // TODO: add error handling
+                    tx.send((peer_id, response, batch))
+                        .await
+                        .inspect_err(|err| {
+                            error!("Failed to send state trie nodes response. Error: {err}")
+                        })
+                });
+                tokio::task::yield_now().await;
+            }
+        }
+
+        // If there is at least one "batch" of nodes to heal, heal it
+        if let Some((nodes, batch)) = nodes_to_heal.pop() {
+            let return_paths = heal_state_batch(
+                batch,
+                nodes,
+                store.clone(),
+                &mut membatch,
+                &mut nodes_to_write,
+            )
+            .await
+            .inspect_err(|err| {
+                error!("We have found a sync error while trying to write to DB a batch: {err}")
+            })?;
+            paths.extend(return_paths);
+        }
+
+        let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
+
+        if nodes_to_write.len() > 100_000 || is_done || is_stale {
+            let to_write = nodes_to_write;
+            nodes_to_write = Vec::new();
+            let store = store.clone();
+            if db_joinset.len() > 3 {
+                db_joinset.join_next().await;
+            }
+            db_joinset.spawn_blocking(|| {
+                spawned_rt::tasks::block_on(async move {
+                    // TODO: replace put batch with the async version
+                    let trie_db = store
+                        .open_state_trie(*EMPTY_TRIE_HASH)
+                        .expect("Store should open");
+                    let db = trie_db.db();
+                    db.put_batch(
+                        to_write
+                            .into_iter()
+                            .filter_map(|node| match node.compute_hash() {
+                                hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                                NodeHash::Inline(_) => None,
+                            })
+                            .collect(),
+                    )
+                    .expect("The put batch on the store failed");
+                })
+            });
+        }
+
+        // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
+        if is_done {
+            info!("Nothing more to heal found");
+            db_joinset.join_all().await;
+            break;
+        }
+
+        // We check with a clock if we are stale
+        if !is_stale && current_unix_time() > staleness_timestamp {
+            info!("state healing is stale");
+            is_stale = true;
+        }
+
+        if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
+            info!("Finisehd inflight tasks");
+            db_joinset.join_all().await;
+            break;
+        }
     }
+    info!("State Healing stopped, signaling storage healer");
+    // Save paths for the next cycle. If there are no paths left, clear it in case pivot becomes stale during storage
     // Send empty batch to signal that no more batches are incoming
-    bytecode_sender.send(vec![]).await?;
-    bytecode_fetcher_handle.await??;
+    // bytecode_sender.send(vec![]).await?;
+    // bytecode_fetcher_handle.await??;
     Ok(paths.is_empty())
 }
 
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,
 /// and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
-/// Also returns a boolean indicating if the pivot became stale during the request
 async fn heal_state_batch(
-    state_root: H256,
-    mut batch: Vec<Nibbles>,
-    peers: PeerHandler,
+    mut batch: Vec<RequestMetadata>,
+    nodes: Vec<Node>,
     store: Store,
-    bytecode_sender: Sender<Vec<H256>>,
-) -> Result<(Vec<Nibbles>, bool), SyncError> {
-    if let Some(nodes) = peers
-        .request_state_trienodes(state_root, batch.clone())
-        .await
-    {
-        debug!("Received {} state nodes", nodes.len());
-        let mut hashed_addresses = vec![];
-        let mut code_hashes = vec![];
-        // For each fetched node:
-        // - Add its children to the queue (if we don't have them already)
-        // - If it is a leaf, request its bytecode & storage
-        // - If it is a leaf, add its path & value to the trie
-        {
-            let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
-            for node in nodes.iter() {
-                let path = batch.remove(0);
-                batch.extend(node_missing_children(node, &path, trie.db())?);
-                if let Node::Leaf(node) = &node {
-                    // Fetch bytecode & storage
-                    let account = AccountState::decode(&node.value)?;
-                    // By now we should have the full path = account hash
-                    let path = &path.concat(node.partial.clone()).to_bytes();
-                    if path.len() != 32 {
-                        // Something went wrong
-                        return Err(SyncError::CorruptPath);
-                    }
-                    let account_hash = H256::from_slice(path);
-                    if account.storage_root != *EMPTY_TRIE_HASH
-                        && !store.contains_storage_node(account_hash, account.storage_root)?
-                    {
-                        hashed_addresses.push(account_hash);
-                    }
-                    if account.code_hash != *EMPTY_KECCACK_HASH
-                        && store.get_account_code(account.code_hash)?.is_none()
-                    {
-                        code_hashes.push(account.code_hash);
-                    }
+    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    nodes_to_write: &mut Vec<Node>, // TODO: change tuple to struct
+) -> Result<Vec<RequestMetadata>, SyncError> {
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    for node in nodes.into_iter() {
+        let path = batch.remove(0);
+        let (missing_children_count, missing_children) =
+            node_missing_children(&node, &path.path, trie.db())?;
+        batch.extend(missing_children);
+        if missing_children_count == 0 {
+            commit_node(
+                node,
+                &path.path,
+                &path.parent_path,
+                membatch,
+                nodes_to_write,
+            );
+        } else {
+            let entry = MembatchEntryValue {
+                node: node.clone(),
+                children_not_in_storage_count: missing_children_count,
+                parent_path: path.parent_path.clone(),
+            };
+            membatch.insert(path.path.clone(), entry);
+        }
+    }
+    Ok(batch)
+}
+
+fn commit_node(
+    node: Node,
+    path: &Nibbles,
+    parent_path: &Nibbles,
+    membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
+    nodes_to_write: &mut Vec<Node>,
+) {
+    nodes_to_write.push(node);
+
+    if parent_path == path {
+        return; // Case where we're saving the root
+    }
+
+    let mut membatch_entry = membatch.remove(parent_path).unwrap_or_else(|| {
+        panic!("The parent should exist. Parent: {parent_path:?}, path: {path:?}")
+    });
+
+    membatch_entry.children_not_in_storage_count -= 1;
+    if membatch_entry.children_not_in_storage_count == 0 {
+        commit_node(
+            membatch_entry.node,
+            parent_path,
+            &membatch_entry.parent_path,
+            membatch,
+            nodes_to_write,
+        );
+    } else {
+        membatch.insert(parent_path.clone(), membatch_entry);
+    }
+}
+
+/// Returns the partial paths to the node's children if they are not already part of the trie state
+pub fn node_missing_children(
+    node: &Node,
+    path: &Nibbles,
+    trie_state: &dyn TrieDB,
+) -> Result<(u64, Vec<RequestMetadata>), TrieError> {
+    let mut paths: Vec<RequestMetadata> = Vec::new();
+    let mut missing_children_count = 0_u64;
+    match &node {
+        Node::Branch(node) => {
+            for (index, child) in node.choices.iter().enumerate() {
+                if child.is_valid() && child.get_node(trie_state)?.is_none() {
+                    missing_children_count += 1;
+                    paths.extend(vec![RequestMetadata {
+                        hash: child.compute_hash().finalize(),
+                        path: path.clone().append_new(index as u8),
+                        parent_path: path.clone(),
+                    }]);
                 }
             }
-            // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .into_iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
         }
-        // Send storage & bytecode requests
-        if !hashed_addresses.is_empty() {
-            store
-                .set_storage_heal_paths(
-                    hashed_addresses
-                        .into_iter()
-                        .map(|hash| (hash, vec![Nibbles::default()]))
-                        .collect(),
-                )
-                .await?;
+        Node::Extension(node) => {
+            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
+                missing_children_count += 1;
+
+                paths.extend(vec![RequestMetadata {
+                    hash: node.child.compute_hash().finalize(),
+                    path: path.concat(node.prefix.clone()),
+                    parent_path: path.clone(),
+                }]);
+            }
         }
-        if !code_hashes.is_empty() {
-            bytecode_sender.send(code_hashes).await?;
-        }
-        Ok((batch, false))
-    } else {
-        Ok((batch, true))
+        _ => {}
     }
+    Ok((missing_children_count, paths))
 }

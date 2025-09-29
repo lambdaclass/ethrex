@@ -1,7 +1,10 @@
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
-use keccak_hash::keccak;
+use ethrex_common::utils::keccak;
 use serde::{Deserialize, Serialize};
+
+/// Max privileged tx to allow per batch
+pub const PRIVILEGED_TX_BUDGET: u64 = 300;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PrivilegedTransactionLog {

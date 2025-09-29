@@ -1,10 +1,10 @@
 use std::fmt::Display;
 
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
+use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, get_pending_privileged_transactions};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
-use keccak_hash::keccak;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::{self, widget::HASH_LENGTH_IN_DIGITS},
+    monitor::{self, utils::SelectableScroller, widget::HASH_LENGTH_IN_DIGITS},
     sequencer::{errors::MonitorError, l1_watcher::PrivilegedTransactionData},
 };
 
@@ -27,6 +27,7 @@ pub struct L1ToL2MessagesTable {
     pub items: Vec<L1ToL2MessagesRow>,
     last_l1_block_fetched: U256,
     common_bridge_address: Address,
+    selected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -47,8 +48,7 @@ impl L1ToL2MessageStatus {
     ) -> Result<Self, MonitorError> {
         if let Ok(Some(_tx)) = store.get_transaction_by_hash(l2_tx_hash).await {
             Ok(Self::ProcessedOnL2)
-        } else if eth_client
-            .get_pending_privileged_transactions(common_bridge_address)
+        } else if get_pending_privileged_transactions(eth_client, common_bridge_address)
             .await
             .map_err(|_| MonitorError::GetPendingPrivilegedTx)?
             .contains(&l2_tx_hash)
@@ -238,7 +238,11 @@ impl StatefulWidget for &mut L1ToL2MessagesTable {
             )
             .block(
                 Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(if self.selected {
+                        Color::Magenta
+                    } else {
+                        Color::Cyan
+                    }))
                     .title(Span::styled(
                         "L1 to L2 Messages",
                         Style::default().add_modifier(Modifier::BOLD),
@@ -246,5 +250,24 @@ impl StatefulWidget for &mut L1ToL2MessagesTable {
             );
 
         l1_to_l2_messages_table.render(area, buf, state);
+    }
+}
+
+impl SelectableScroller for L1ToL2MessagesTable {
+    fn selected(&mut self, is_selected: bool) {
+        self.selected = is_selected;
+    }
+    fn scroll_up(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(selected.unwrap_or(0).saturating_sub(1))
+    }
+    fn scroll_down(&mut self) {
+        let selected = self.state.selected_mut();
+        *selected = Some(
+            selected
+                .unwrap_or(0)
+                .saturating_add(1)
+                .min(self.items.len().saturating_sub(1)),
+        )
     }
 }
