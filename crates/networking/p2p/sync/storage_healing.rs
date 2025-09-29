@@ -175,7 +175,7 @@ pub async fn heal_storage_trie(
                 .store(state.empty_count as u64, Ordering::Relaxed);
             state.last_update = Instant::now();
             debug!(
-                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
+                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Downloads {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
                 peers
                     .peer_table
                     .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
@@ -186,6 +186,7 @@ pub async fn heal_storage_trie(
                 state.maximum_length_seen,
                 state.leafs_healed,
                 state.roots_healed,
+                state.succesful_downloads,
                 state.succesful_downloads as f64
                     / (state.succesful_downloads as f64 + state.failed_downloads as f64),
                 state.empty_count,
