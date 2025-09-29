@@ -11,8 +11,6 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Fork};
 
-use std::cmp::max;
-
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
 
 pub struct DefaultHook;
