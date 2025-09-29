@@ -998,6 +998,9 @@ async fn make_deposits(
             .unwrap_or(U256::zero());
 
         let native_token_is_eth = opts.native_token_l1_address == Address::zero();
+        let nonce = eth_client
+            .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
+            .await?;
 
         // approve the transfer in the L1 token contract if not ETH
         if !native_token_is_eth {
@@ -1008,7 +1011,8 @@ async fn make_deposits(
                 signer.address(),
                 encode_calldata("freeMint()", &[])?.into(),
                 Overrides {
-                    // nonce: Some(0),
+                    nonce: Some(nonce),
+                    gas_limit: Some(100_000u64), // This is for not estimating the gas and use an outdated nonce
                     ..Default::default()
                 },
             )
@@ -1020,7 +1024,6 @@ async fn make_deposits(
                         ?hash,
                         "Mint transaction sent to L1 token contract"
                     );
-                    wait_for_transaction_receipt(hash, eth_client, 100).await?;
                 }
                 Err(e) => {
                     error!(address =? signer.address(), "Failed to mint");
@@ -1040,8 +1043,8 @@ async fn make_deposits(
                 calldata.into(),
                 Overrides {
                     from: Some(signer.address()),
-                    // gas_limit: Some(100_000u64),
-                    // nonce: Some(1),
+                    gas_limit: Some(100_000u64),
+                    nonce: Some(nonce + 1),
                     ..Default::default()
                 },
             )
@@ -1053,7 +1056,6 @@ async fn make_deposits(
                         ?hash,
                         "Approve transaction sent to L1 token contract"
                     );
-                    wait_for_transaction_receipt(hash, eth_client, 100).await?;
                 }
                 Err(e) => {
                     error!(address =? signer.address(), "Failed to approve");
@@ -1089,8 +1091,12 @@ async fn make_deposits(
         let overrides = Overrides {
             value: native_token_is_eth.then_some(value_to_deposit).or(None),
             from: Some(signer.address()),
-            // nonce: dbg!(native_token_is_eth.then_some(2)),
-            // gas_limit: Some(100_000u64),
+            nonce: if !native_token_is_eth {
+                Some(nonce + 2)
+            } else {
+                None
+            },
+            gas_limit: Some(100_000u64),
             ..Overrides::default()
         };
 
@@ -1103,8 +1109,6 @@ async fn make_deposits(
             overrides,
         )
         .await?;
-
-        dbg!(build.nonce);
 
         match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {
