@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759160737782,
+  "lastUpdate": 1759173066383,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17305,6 +17305,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89274447761,
             "range": "± 137015464",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f1ebd9c4b1658ca5eda2682072e4bf983c8d78e8",
+          "message": "chore(l1): optimize the structure for tracking known txs sent to peers in `TxBroadcaster` (#4675)\n\n**Motivation**\n\nWe were seeing spikes of 3~10Gb on post-sync execution, most of it was\ndue to `resize_rehash` during the `add_txs` of the `TxBroadcaster`.\n\n**Description**\n\nThis PR replace the current hashmap of `(tx_hash, peer_id) -> Instant`\nfor a less duplicated `tx_hash -> (peer_bitmap, last_seen)` + another\n`peer_id -> peer_index`. This removes orders of magnitud of entries,\ngoing from 27M to less than 100k. Now all the memory taken from the\nTxBroadcaster disappeared from our memory flamegraphs.\n\nWIP: ~I'm right now analyzing the execution of the client throughout the\nweekend, we still appear to have a memory issue.~ This was related to a\nchange in rocksdb that enabled transaction. It didn't affected this fix.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-29T18:17:30Z",
+          "tree_id": "e72e40b25234966749879e3fc54af77c04c6521e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f1ebd9c4b1658ca5eda2682072e4bf983c8d78e8"
+        },
+        "date": 1759173045106,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 91251502642,
+            "range": "± 512333932",
             "unit": "ns/iter"
           }
         ]
