@@ -11,6 +11,8 @@ When wanting to execute a historical block we tend to use the `eth_getProof` met
 
 If instead we want to execute a recent block we use it against synced ethrex or reth nodes that expose the `debug_executionWitness` endpoint, this way retrieval of data will be instant and it will be way faster than the other method, because it won't be doing thousands of RPC requests, just one.
 
+More information regarding the execution witness in [the prover docs](https://github.com/lambdaclass/ethrex/blob/38e0ffc/docs/l2/architecture/prover.md#execution-witness).
+
 ### Why stateless execution of some blocks doesn't work with `eth_getProof`
 
 With this method of execution we get the proof of all the accounts and storage slots accessed during execution, but the problem arises when we want to delete a node from the Merkle Patricia Trie (MPT) when applying the account updates of the block. This is for a particular case in which a tree restructuring happens and we have a missing node that wasn't accessed but we need to know in order to restructure the trie.
