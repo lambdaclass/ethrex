@@ -75,3 +75,9 @@ You can also start a Prometheus/Grafana stack for monitoring with:
 ```sh
 docker compose --profile metrics up
 ```
+
+---
+
+For more details and configuration options:
+- [Configuration](./configuration.md)
+- [CLI reference](../../CLI.md)
