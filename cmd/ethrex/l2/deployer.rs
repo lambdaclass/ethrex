@@ -505,7 +505,7 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,a
 // deposit(uint256 _amount, address _token, address _l2Recipient)
 const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address,address)";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ContractAddresses {
     pub on_chain_proposer_address: Address,
     pub bridge_address: Address,
@@ -543,6 +543,7 @@ pub async fn deploy_l1_contracts(
                 warn!("Failed to make deposits: {err}");
             });
     }
+    // Ok(ContractAddresses::default())
 
     write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
     info!("Deployer binary finished successfully");
@@ -998,6 +999,70 @@ async fn make_deposits(
 
         let native_token_is_eth = opts.native_token_l1_address == Address::zero();
 
+        // approve the transfer in the L1 token contract if not ETH
+        if !native_token_is_eth {
+            let mint_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                opts.native_token_l1_address,
+                signer.address(),
+                encode_calldata("freeMint()", &[])?.into(),
+                Overrides {
+                    // nonce: Some(0),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            match send_generic_transaction(eth_client, mint_tx, &signer).await {
+                Ok(hash) => {
+                    info!(
+                        address =? signer.address(),
+                        ?hash,
+                        "Mint transaction sent to L1 token contract"
+                    );
+                    wait_for_transaction_receipt(hash, eth_client, 100).await?;
+                }
+                Err(e) => {
+                    error!(address =? signer.address(), "Failed to mint");
+                    return Err(DeployerError::EthClientError(e));
+                }
+            }
+
+            let calldata = encode_calldata(
+                "approve(address,uint256)",
+                &[Value::Address(bridge), Value::Uint(value_to_deposit * 2)],
+            )?;
+            let approve_tx = build_generic_tx(
+                eth_client,
+                TxType::EIP1559,
+                opts.native_token_l1_address,
+                signer.address(),
+                calldata.into(),
+                Overrides {
+                    from: Some(signer.address()),
+                    // gas_limit: Some(100_000u64),
+                    // nonce: Some(1),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            match send_generic_transaction(eth_client, approve_tx, &signer).await {
+                Ok(hash) => {
+                    info!(
+                        address =? signer.address(),
+                        ?hash,
+                        "Approve transaction sent to L1 token contract"
+                    );
+                    wait_for_transaction_receipt(hash, eth_client, 100).await?;
+                }
+                Err(e) => {
+                    error!(address =? signer.address(), "Failed to approve");
+                    return Err(DeployerError::EthClientError(e));
+                }
+            }
+        }
+
+        // TODO: there is no need of this if, always use native_l1_address
         let calldata_values = if native_token_is_eth {
             vec![
                 // uint256 _amount: 0 means deposit all ETH sent with the tx
@@ -1024,6 +1089,8 @@ async fn make_deposits(
         let overrides = Overrides {
             value: native_token_is_eth.then_some(value_to_deposit).or(None),
             from: Some(signer.address()),
+            // nonce: dbg!(native_token_is_eth.then_some(2)),
+            // gas_limit: Some(100_000u64),
             ..Overrides::default()
         };
 
@@ -1036,6 +1103,8 @@ async fn make_deposits(
             overrides,
         )
         .await?;
+
+        dbg!(build.nonce);
 
         match send_generic_transaction(eth_client, build, &signer).await {
             Ok(hash) => {
