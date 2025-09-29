@@ -3,8 +3,6 @@ name: Workflow Failure Alerts
 on:
   workflow_run:
     workflows:
-      - Block Import Benchmark
-      - Flamegraph Reporter
       - L1
       - L2 (SP1 Backend)
       - L2 (without proving)
