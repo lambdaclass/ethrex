@@ -307,10 +307,10 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, &mut block_sync_state).await?;
+            self.snap_sync(&store, &mut block_sync_state).await?;
 
-            // Next sync will be full-sync
-            block_sync_state.into_fullsync().await?;
+            store.clear_snap_state().await?;
+
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -816,7 +816,7 @@ async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
 impl Syncer {
     async fn snap_sync(
         &mut self,
-        store: Store,
+        store: &Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
@@ -1325,6 +1325,7 @@ pub async fn update_pivot(
         } else {
             return Err(SyncError::NotInSnapSync);
         }
+        *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
     }
 }

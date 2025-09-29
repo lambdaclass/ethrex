@@ -1,3 +1,10 @@
+use std::{
+    cmp::max,
+    fmt::Display,
+    sync::{Arc, RwLock},
+    time::{Duration, Instant},
+};
+
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use ethrex_blockchain::{
     Blockchain, BlockchainType,
@@ -21,41 +28,34 @@ use ethrex_rpc::{
 use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
 };
-use ethrex_trie::{InMemoryTrieDB, Node, NodeHash, NodeRef, node::LeafNode};
-use eyre::OptionExt;
-use reqwest::Url;
-use std::{
-    cmp::max,
-    collections::HashSet,
-    io::Write,
-    sync::{Arc, RwLock},
-    time::{Instant, SystemTime},
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::EngineTypeRollup;
+use ethrex_trie::{
+    InMemoryTrieDB, Node,
+    node::{BranchNode, LeafNode},
 };
+use reqwest::Url;
+#[cfg(feature = "l2")]
+use std::path::Path;
 use tracing::info;
 
-use crate::bench::run_and_measure;
-use crate::fetcher::{get_blockdata, get_rangedata};
+#[cfg(feature = "l2")]
+use crate::fetcher::get_batchdata;
+#[cfg(not(feature = "l2"))]
+use crate::fetcher::get_rangedata;
+#[cfg(not(feature = "l2"))]
 use crate::plot_composition::plot;
-use crate::run::{exec, prove, run_tx};
+use crate::{cache::Cache, report::Report};
+use crate::{fetcher::get_blockdata, helpers::get_referenced_hashes};
 use crate::{
-    block_run_report::{BlockRunReport, ReplayerMode},
-    cache::Cache,
+    run::{exec, prove, run_tx},
+    slack::try_send_report_to_slack,
 };
 use ethrex_config::networks::{
     HOLESKY_CHAIN_ID, HOODI_CHAIN_ID, MAINNET_CHAIN_ID, Network, PublicNetwork, SEPOLIA_CHAIN_ID,
 };
 
-#[cfg(feature = "l2")]
-use crate::fetcher::get_batchdata;
-
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
-
-#[cfg(feature = "sp1")]
-pub const BACKEND: Backend = Backend::SP1;
-#[cfg(all(feature = "risc0", not(feature = "sp1")))]
-pub const BACKEND: Backend = Backend::RISC0;
-#[cfg(not(any(feature = "sp1", feature = "risc0")))]
-pub const BACKEND: Backend = Backend::Exec;
 
 #[derive(Parser)]
 #[command(name="ethrex-replay", author, version=VERSION_STRING, about, long_about = None)]
@@ -137,29 +137,112 @@ pub enum CustomSubcommand {
 }
 
 #[derive(Parser, Clone)]
-#[clap(group = ArgGroup::new("replay_mode").required(true))]
-#[clap(group = ArgGroup::new("data_source").required(true))]
-pub struct EthrexReplayOptions {
-    #[arg(long, group = "replay_mode")]
-    pub execute: bool,
-    #[arg(long, group = "replay_mode")]
-    pub prove: bool,
-    #[arg(long, group = "data_source")]
-    pub rpc_url: Url,
-    #[arg(long, group = "data_source")]
-    pub cached: bool,
-    #[arg(long, help = "Execute with `add_block`, without using zkvm as backend")]
-    pub no_zkvm: bool,
-    #[arg(long, required = false)]
-    pub bench: bool,
-    #[arg(long, required = false)]
-    pub to_csv: bool,
+pub struct CommonOptions {
     #[arg(
         long,
-        help = "Block cache level: off, failed, on (default: on)",
-        default_value = "on"
+        value_enum,
+        help_heading = "Replay Options",
+        conflicts_with = "no_zkvm"
     )]
+    pub zkvm: Option<ZKVM>,
+    #[arg(long, value_enum, default_value_t = Resource::default(), help_heading = "Replay Options")]
+    pub resource: Resource,
+    #[arg(long, value_enum, default_value_t = Action::default(), help_heading = "Replay Options")]
+    pub action: Action,
+}
+
+#[derive(Parser, Clone)]
+#[clap(group = ArgGroup::new("data_source").required(true))]
+pub struct EthrexReplayOptions {
+    #[command(flatten)]
+    pub common: CommonOptions,
+    #[arg(long, group = "data_source", help_heading = "Replay Options")]
+    pub rpc_url: Url,
+    #[arg(long, group = "data_source", help_heading = "Replay Options")]
+    pub cached: bool,
+    #[arg(long, required = false, help_heading = "Replay Options")]
+    pub to_csv: bool,
+    #[arg(long, default_value = "on", help_heading = "Replay Options")]
     pub cache_level: CacheLevel,
+    #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
+    pub slack_webhook_url: Option<Url>,
+    #[arg(
+        long,
+        help = "Execute with `Blockchain::add_block`, without using zkvm as backend",
+        help_heading = "Replay Options",
+        conflicts_with = "zkvm"
+    )]
+    pub no_zkvm: bool,
+    #[arg(
+        long,
+        short,
+        help = "Enable verbose logging",
+        help_heading = "Replay Options",
+        required = false
+    )]
+    pub verbose: bool,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ZKVM {
+    Jolt,
+    Nexus,
+    OpenVM,
+    Pico,
+    Risc0,
+    SP1,
+    Ziren,
+    Zisk,
+}
+
+impl Display for ZKVM {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ZKVM::Jolt => "Jolt",
+            ZKVM::Nexus => "Nexus",
+            ZKVM::OpenVM => "OpenVM",
+            ZKVM::Pico => "Pico",
+            ZKVM::Risc0 => "RISC0",
+            ZKVM::SP1 => "SP1",
+            ZKVM::Ziren => "Ziren",
+            ZKVM::Zisk => "ZisK",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum, Default)]
+pub enum Resource {
+    #[default]
+    CPU,
+    GPU,
+}
+
+impl Display for Resource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Resource::CPU => "CPU",
+            Resource::GPU => "GPU",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum, PartialEq, Eq, Default)]
+pub enum Action {
+    #[default]
+    Execute,
+    Prove,
+}
+
+impl Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Action::Execute => "Execute",
+            Action::Prove => "Prove",
+        };
+        write!(f, "{s}")
+    }
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Eq, Default)]
@@ -172,7 +255,10 @@ pub enum CacheLevel {
 
 #[derive(Parser)]
 pub struct BlockOptions {
-    #[arg(long, help = "Block to use. Uses the latest if not specified.")]
+    #[arg(
+        help = "Block to use. Uses the latest if not specified.",
+        help_heading = "Command Options"
+    )]
     pub block: Option<u64>,
     #[command(flatten)]
     pub opts: EthrexReplayOptions,
@@ -182,11 +268,20 @@ pub struct BlockOptions {
 #[derive(Parser)]
 #[command(group(ArgGroup::new("block_list").required(true).args(["blocks", "from"])))]
 pub struct BlocksOptions {
-    #[arg(long, help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"])]
+    #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"], help_heading = "Command Options")]
     blocks: Vec<u64>,
-    #[arg(long, help = "Starting block. (Inclusive)")]
+    #[arg(
+        long,
+        help = "Starting block. (Inclusive)",
+        help_heading = "Command Options"
+    )]
     from: Option<u64>,
-    #[arg(long, help = "Ending block. (Inclusive)", requires = "from")]
+    #[arg(
+        long,
+        help = "Ending block. (Inclusive)",
+        requires = "from",
+        help_heading = "Command Options"
+    )]
     to: Option<u64>,
     #[command(flatten)]
     opts: EthrexReplayOptions,
@@ -194,7 +289,7 @@ pub struct BlocksOptions {
 
 #[derive(Parser)]
 pub struct TransactionOpts {
-    #[arg(long, help = "Transaction hash.")]
+    #[arg(help = "Transaction hash.", help_heading = "Command Options")]
     tx_hash: H256,
     #[command(flatten)]
     opts: EthrexReplayOptions,
@@ -203,7 +298,7 @@ pub struct TransactionOpts {
 #[cfg(feature = "l2")]
 #[derive(Parser)]
 pub struct BatchOptions {
-    #[arg(long, help = "Batch number to use.")]
+    #[arg(long, help = "Batch number to use.", help_heading = "Command Options")]
     batch: u64,
     #[command(flatten)]
     opts: EthrexReplayOptions,
@@ -211,16 +306,20 @@ pub struct BatchOptions {
 
 #[derive(Parser)]
 pub struct CustomBlockOptions {
-    #[arg(long, help = "Whether to prove the block instead of executing it.")]
-    prove: bool,
+    #[command(flatten)]
+    common: CommonOptions,
 }
 
 #[derive(Parser)]
 pub struct CustomBatchOptions {
-    #[arg(long, help = "Number of blocks to include in the batch.")]
+    #[arg(
+        long,
+        help = "Number of blocks to include in the batch.",
+        help_heading = "Command Options"
+    )]
     n_blocks: u64,
-    #[arg(long, help = "Whether to prove the batch instead of executing it.")]
-    prove: bool,
+    #[command(flatten)]
+    common: CommonOptions,
 }
 
 impl EthrexReplayCommand {
@@ -244,7 +343,11 @@ impl EthrexReplayCommand {
                 for (i, block_number) in blocks.iter().enumerate() {
                     info!(
                         "{} block {}/{}: {block_number}",
-                        if opts.execute { "Executing" } else { "Proving" },
+                        if opts.common.action == Action::Execute {
+                            "Executing"
+                        } else {
+                            "Proving"
+                        },
                         i + 1,
                         blocks.len()
                     );
@@ -293,11 +396,11 @@ impl EthrexReplayCommand {
                 info!("Blocks data cached successfully.");
             }
             #[cfg(not(feature = "l2"))]
-            Self::Custom(CustomSubcommand::Block(CustomBlockOptions { prove })) => {
+            Self::Custom(CustomSubcommand::Block(CustomBlockOptions { common })) => {
                 Box::pin(async move {
                     Self::Custom(CustomSubcommand::Batch(CustomBatchOptions {
                         n_blocks: 1,
-                        prove,
+                        common,
                     }))
                     .run()
                     .await
@@ -305,31 +408,21 @@ impl EthrexReplayCommand {
                 .await?;
             }
             #[cfg(not(feature = "l2"))]
-            Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, prove })) => {
+            Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, common })) => {
                 let opts = EthrexReplayOptions {
-                    execute: !prove,
-                    prove,
                     rpc_url: Url::parse("http://localhost:8545")?,
                     cached: false,
-                    bench: false,
                     to_csv: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
+                    common,
+                    slack_webhook_url: None,
+                    verbose: false,
                 };
 
-                let elapsed = replay_custom_l1_blocks(max(1, n_blocks), &opts).await?;
+                let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
 
-                if prove {
-                    println!(
-                        "Successfully proved {} in {elapsed:.2} seconds.",
-                        if n_blocks > 1 { "batch" } else { "block" }
-                    );
-                } else {
-                    println!(
-                        "Successfully executed {} in {elapsed:.2} seconds.",
-                        if n_blocks > 1 { "batch" } else { "block" }
-                    );
-                }
+                println!("{report}");
             }
             #[cfg(not(feature = "l2"))]
             Self::Transaction(opts) => replay_transaction(opts).await?,
@@ -366,17 +459,33 @@ impl EthrexReplayCommand {
 
                 let cache = get_batchdata(eth_client, network, batch).await?;
 
-                run_and_measure(replay(cache, &opts), opts.bench).await?;
+                let backend = backend(&opts.common.zkvm)?;
+
+                let execution_result = exec(backend, cache.clone()).await;
+
+                let proving_result = match opts.common.action {
+                    Action::Execute => None,
+                    Action::Prove => Some(prove(backend, cache).await),
+                };
+
+                println!("Batch {batch} execution result: {execution_result:?}");
+
+                if let Some(proving_result) = proving_result {
+                    println!("Batch {batch} proving result: {proving_result:?}");
+                }
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Block(block_opts)) => replay_block(block_opts).await?,
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Block(CustomBlockOptions {
-                prove,
+                common,
             }))) => {
                 Box::pin(async move {
                     Self::L2(L2Subcommand::Custom(CustomSubcommand::Batch(
-                        CustomBatchOptions { n_blocks: 1, prove },
+                        CustomBatchOptions {
+                            n_blocks: 1,
+                            common,
+                        },
                     )))
                     .run()
                     .await
@@ -386,25 +495,21 @@ impl EthrexReplayCommand {
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Custom(CustomSubcommand::Batch(CustomBatchOptions {
                 n_blocks,
-                prove,
+                common,
             }))) => {
                 let opts = EthrexReplayOptions {
-                    execute: !prove,
-                    prove,
+                    common,
                     rpc_url: Url::parse("http://localhost:8545")?,
                     cached: false,
-                    bench: false,
                     to_csv: false,
+                    no_zkvm: false,
                     cache_level: CacheLevel::default(),
+                    slack_webhook_url: None,
                 };
 
-                let elapsed = replay_custom_l2_blocks(max(1, n_blocks), &opts).await?;
+                let report = replay_custom_l2_blocks(max(1, n_blocks), opts).await?;
 
-                if prove {
-                    println!("Successfully proved L2 batch in {elapsed:.2} seconds.");
-                } else {
-                    println!("Successfully executed L2 batch in {elapsed:.2} seconds.");
-                }
+                println!("{report}");
             }
         }
 
@@ -419,20 +524,12 @@ async fn setup(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)>
     Ok((eth_client, network))
 }
 
-async fn replay(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
-    let gas_used = get_total_gas_used(&cache.blocks);
-
-    if opts.execute {
-        exec(BACKEND, cache).await?;
-    } else {
-        prove(BACKEND, cache).await?;
+async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<Duration> {
+    let b = backend(&opts.common.zkvm)?;
+    if !matches!(b, Backend::Exec) {
+        eyre::bail!("Tried to execute without zkVM but backend was set to {b:?}");
     }
-
-    Ok(gas_used)
-}
-
-async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Result<f64> {
-    if opts.prove {
+    if opts.common.action == Action::Prove {
         eyre::bail!("Proving not enabled without backend");
     }
     if cache.blocks.len() > 1 {
@@ -444,19 +541,18 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 
     let chain_config = cache.get_chain_config()?;
     let block = cache.blocks[0].clone();
-    let gas_used = block.header.gas_used as f64;
 
     let witness = execution_witness_from_rpc_chain_config(
         cache.witness.clone(),
         chain_config,
         cache.get_first_block_number()?,
     )?;
-    let network = &cache.network.ok_or_eyre("Network should be set for L1")?;
+    let network = &cache.network;
 
     let guest_program = GuestProgramState::try_from(witness.clone())?;
 
     // This will contain all code hashes with the corresponding bytecode
-    // For the code hashes that we don't have we'll will it with <CodeHash, Bytes::new()>
+    // For the code hashes that we don't have we'll fill it with <CodeHash, Bytes::new()>
     let mut all_codes_hashed = guest_program.codes_hashed.clone();
 
     let in_memory_store = InMemoryStore::new();
@@ -472,42 +568,16 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         //   2. Get all code hashes that exist in the accounts that we have so that if we don't have the code we set it to empty bytes.
         // We do these things because sometimes the witness may be incomplete and in those cases we don't want failures for missing data.
         // This only applies when we use the InMemoryDatabase and not when we use the ExecutionWitness as database, that's because in the latter failures are dismissed and we fall back to default values.
-        let mut nodes = state_trie_nodes.lock().unwrap();
-        let mut referenced_node_hashes: HashSet<NodeHash> = HashSet::new(); // All hashes referenced in the trie (by Branch or Ext nodes).
+        let mut state_nodes = state_trie_nodes.lock().unwrap();
+        let referenced_node_hashes = get_referenced_hashes(&state_nodes)?;
 
-        for (_node_hash, node_rlp) in nodes.iter() {
-            let node = Node::decode(node_rlp)?;
-            match node {
-                Node::Branch(node) => {
-                    for choice in &node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
-
-                        referenced_node_hashes.insert(hash);
-                    }
-                }
-                Node::Extension(node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    referenced_node_hashes.insert(hash);
-                }
-                Node::Leaf(node) => {
-                    let info = AccountState::decode(&node.value)?;
-                    all_codes_hashed.entry(info.code_hash).or_insert(vec![]);
-                }
-            }
-        }
-
+        let dummy_leaf = Node::from(LeafNode::default()).encode_to_vec();
         // Insert arbitrary leaf nodes to state trie.
         for hash in referenced_node_hashes {
-            let dummy_leaf: Node = LeafNode::default().into();
-            nodes.entry(hash).or_insert(dummy_leaf.encode_to_vec());
+            state_nodes.entry(hash).or_insert(dummy_leaf.clone());
         }
 
-        drop(nodes);
+        drop(state_nodes);
 
         let mut inner_store = in_memory_store.inner()?;
 
@@ -534,12 +604,32 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
                 continue;
             };
 
-            let storage_root = AccountState::decode(&account_state_rlp)?.storage_root;
+            let account_state = AccountState::decode(&account_state_rlp)?;
 
+            // If code hash of account isn't present insert empty code so that if not found the execution doesn't break.
+            let code_hash = account_state.code_hash;
+            all_codes_hashed.entry(code_hash).or_insert(vec![]);
+
+            let storage_root = account_state.storage_root;
             let storage_trie = match InMemoryTrieDB::from_nodes(storage_root, all_nodes) {
                 Ok(trie) => trie.inner,
                 Err(_) => continue,
             };
+
+            // Fill storage trie with dummy branch nodes that have the hash of the missing nodes
+            // This is useful for eth_getProofs when we want to restructure the trie after removing a node whose sibling isn't known
+            // We assume the sibling is a branch node because we already covered the cases in which it's a Leaf or Extension node by injecting nodes in the witness.
+            // For more info read: https://github.com/kkrt-labs/zk-pig/blob/v0.8.0/docs/modified-mpt.md
+            {
+                let mut storage_nodes = storage_trie.lock().unwrap();
+                let dummy_branch = Node::from(BranchNode::default()).encode_to_vec();
+
+                let referenced_storage_node_hashes = get_referenced_hashes(&storage_nodes)?;
+
+                for hash in referenced_storage_node_hashes {
+                    storage_nodes.entry(hash).or_insert(dummy_branch.clone());
+                }
+            }
 
             inner_store
                 .storage_trie_nodes
@@ -574,7 +664,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
     let duration = start_time.elapsed();
     info!("add_block execution time: {:.2?}", duration);
 
-    Ok(gas_used)
+    Ok(duration)
 }
 
 async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
@@ -621,13 +711,6 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    #[cfg(feature = "l2")]
-    if network != Network::LocalDevnetL2 {
-        return Err(eyre::Error::msg(
-            "L2 mode is only supported on LocalDevnetL2 network",
-        ));
-    }
-
     let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
     // Always write the cache after fetching from RPC.
@@ -639,28 +722,39 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
-    let replayer_mode = replayer_mode(opts.execute, opts.no_zkvm)?;
-
-    let start = SystemTime::now();
-
-    let block_run_result = if opts.no_zkvm {
-        run_and_measure(replay_no_zkvm(cache.clone(), &opts), opts.bench).await
+    let (execution_result, proving_result) = if opts.no_zkvm {
+        (replay_no_zkvm(cache.clone(), &opts).await, None)
     } else {
-        run_and_measure(replay(cache.clone(), &opts), opts.bench).await
+        // Always execute
+        let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
+
+        let proving_result = if opts.common.action == Action::Prove {
+            // Only prove if requested
+            Some(prove(backend(&opts.common.zkvm)?, cache.clone()).await)
+        } else {
+            None
+        };
+
+        (execution_result, proving_result)
     };
 
-    // We save this because block_run_result (Result<u64, Report>) is not clonable.
-    let block_run_failed = block_run_result.is_err();
-
-    let block_run_report = BlockRunReport::new_for(
+    let report = Report::new_for(
+        opts.common.zkvm,
+        opts.common.resource,
+        opts.common.action,
         block,
-        network.clone(),
-        block_run_result,
-        replayer_mode.clone(),
-        start.elapsed()?,
+        network,
+        execution_result,
+        proving_result,
     );
 
-    block_run_report.log();
+    if opts.verbose {
+        println!("{report}");
+    } else {
+        report.log();
+    }
+
+    try_send_report_to_slack(&report, opts.slack_webhook_url).await?;
 
     // Apply cache level rules
     match opts.cache_level {
@@ -668,7 +762,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         CacheLevel::On => {}
         // Only save the cache if the block run failed
         CacheLevel::Failed => {
-            if !block_run_failed {
+            if report.execution_result.is_ok() || report.proving_result.is_some_and(|r| r.is_ok()) {
                 cache.delete()?;
             }
         }
@@ -676,22 +770,28 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         CacheLevel::Off => cache.delete()?,
     }
 
-    if opts.to_csv {
-        let file_name = format!("ethrex_replay_{network}_{replayer_mode}.csv");
-
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(file_name)?;
-
-        file.write_all(block_run_report.to_csv().as_bytes())?;
-
-        file.write_all(b"\n")?;
-
-        file.flush()?;
-    }
-
     Ok(())
+}
+
+pub fn backend(zkvm: &Option<ZKVM>) -> eyre::Result<Backend> {
+    match zkvm {
+        Some(ZKVM::SP1) => {
+            #[cfg(feature = "sp1")]
+            return Ok(Backend::SP1);
+            #[cfg(not(feature = "sp1"))]
+            return Err(eyre::Error::msg("SP1 feature not enabled"));
+        }
+        Some(ZKVM::Risc0) => {
+            #[cfg(feature = "risc0")]
+            return Ok(Backend::RISC0);
+            #[cfg(not(feature = "risc0"))]
+            return Err(eyre::Error::msg("RISC0 feature not enabled"));
+        }
+        Some(_other) => Err(eyre::Error::msg(
+            "Only SP1 and RISC0 backends are supported currently",
+        )),
+        None => Ok(Backend::Exec),
+    }
 }
 
 pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
@@ -702,45 +802,12 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
         SEPOLIA_CHAIN_ID => Network::PublicNetwork(PublicNetwork::Sepolia),
         _ => {
             if cfg!(feature = "l2") {
-                Network::LocalDevnetL2
+                Network::L2Chain(chain_id)
             } else {
                 Network::LocalDevnet
             }
         }
     }
-}
-
-pub fn replayer_mode(execute: bool, no_zkvm: bool) -> eyre::Result<ReplayerMode> {
-    if no_zkvm {
-        if cfg!(any(feature = "sp1", feature = "risc0")) {
-            return Err(eyre::Error::msg(
-                "no-zkvm mode is not supported with SP1 or RISC0 features enabled",
-            ));
-        } else {
-            return Ok(ReplayerMode::ExecuteNoZkvm);
-        }
-    }
-    if execute {
-        #[cfg(feature = "sp1")]
-        return Ok(ReplayerMode::ExecuteSP1);
-        #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return Ok(ReplayerMode::ExecuteRISC0);
-        #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return Ok(ReplayerMode::Execute);
-    } else {
-        #[cfg(feature = "sp1")]
-        return Ok(ReplayerMode::ProveSP1);
-        #[cfg(all(feature = "risc0", not(feature = "sp1")))]
-        return Ok(ReplayerMode::ProveRISC0);
-        #[cfg(not(any(feature = "sp1", feature = "risc0")))]
-        return Err(eyre::Error::msg(
-            "proving mode is not supported without SP1 or RISC0 features",
-        ));
-    }
-}
-
-fn get_total_gas_used(blocks: &[Block]) -> f64 {
-    blocks.iter().map(|b| b.header.gas_used).sum::<u64>() as f64
 }
 
 fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
@@ -750,6 +817,7 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
     })
 }
 
+#[cfg(not(feature = "l2"))]
 async fn resolve_blocks(
     mut blocks: Vec<u64>,
     from: Option<u64>,
@@ -815,8 +883,8 @@ fn print_receipt(receipt: Receipt) {
 
 pub async fn replay_custom_l1_blocks(
     n_blocks: u64,
-    opts: &EthrexReplayOptions,
-) -> eyre::Result<f64> {
+    opts: EthrexReplayOptions,
+) -> eyre::Result<Report> {
     let network = Network::LocalDevnet;
 
     let genesis = network.get_genesis()?;
@@ -839,24 +907,36 @@ pub async fn replay_custom_l1_blocks(
     .await?;
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
-
-    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
+    let chain_config = execution_witness.chain_config;
 
     let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        Some(network),
+        chain_config,
     );
 
-    let start = SystemTime::now();
+    let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
 
-    run_and_measure(replay(cache, opts), false).await?;
+    let proving_result = if opts.common.action == Action::Prove {
+        // Only prove if requested
+        Some(prove(backend(&opts.common.zkvm)?, cache.clone()).await)
+    } else {
+        None
+    };
 
-    let elapsed = start.elapsed()?.as_secs_f64();
+    let report = Report::new_for(
+        opts.common.zkvm,
+        opts.common.resource,
+        opts.common.action,
+        cache.blocks.first().cloned().ok_or_else(|| {
+            eyre::Error::msg("no block found in the cache, this should never happen")
+        })?,
+        network,
+        execution_result,
+        proving_result,
+    );
 
-    Ok(elapsed)
+    Ok(report)
 }
 
 pub async fn produce_l1_blocks(
@@ -935,8 +1015,6 @@ pub async fn produce_l1_block(
 }
 
 #[cfg(feature = "l2")]
-use crate::cache::L2Fields;
-#[cfg(feature = "l2")]
 use ethrex_blockchain::validate_block;
 #[cfg(feature = "l2")]
 use ethrex_l2::sequencer::block_producer::build_payload;
@@ -948,8 +1026,8 @@ use ethrex_vm::BlockExecutionResult;
 #[cfg(feature = "l2")]
 pub async fn replay_custom_l2_blocks(
     n_blocks: u64,
-    opts: &EthrexReplayOptions,
-) -> eyre::Result<f64> {
+    opts: EthrexReplayOptions,
+) -> eyre::Result<Report> {
     let network = Network::LocalDevnetL2;
 
     let genesis = network.get_genesis()?;
@@ -961,9 +1039,7 @@ pub async fn replay_custom_l2_blocks(
     };
 
     let rollup_store = {
-        use ethrex_storage_rollup::EngineTypeRollup;
-
-        let rollup_store = StoreRollup::new("./", EngineTypeRollup::InMemory)
+        let rollup_store = StoreRollup::new(Path::new("./"), EngineTypeRollup::InMemory)
             .expect("Failed to create StoreRollup");
         rollup_store
             .init()
@@ -988,28 +1064,34 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
-    let network = Network::try_from(execution_witness.chain_config.chain_id).map_err(|e| {
-        eyre::Error::msg(format!("Failed to determine network from chain ID: {}", e))
-    })?;
-
-    let mut cache = Cache::new(
+    let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
-        Some(network),
+        genesis.config,
     );
 
-    cache.l2_fields = Some(L2Fields {
-        blob_commitment: [0_u8; 48],
-        blob_proof: [0_u8; 48],
-    });
+    let backend = backend(&opts.common.zkvm)?;
 
-    let start = SystemTime::now();
+    let execution_result = exec(backend, cache.clone()).await;
 
-    run_and_measure(replay(cache, opts), false).await?;
+    let proving_result = match opts.common.action {
+        Action::Execute => None,
+        Action::Prove => Some(prove(backend, cache.clone()).await),
+    };
 
-    let elapsed = start.elapsed()?.as_secs_f64();
+    let report = Report::new_for(
+        opts.common.zkvm,
+        opts.common.resource,
+        opts.common.action,
+        cache.blocks.first().cloned().ok_or_else(|| {
+            eyre::Error::msg("no block found in the cache, this should never happen")
+        })?,
+        network,
+        execution_result,
+        proving_result,
+    );
 
-    Ok(elapsed)
+    Ok(report)
 }
 
 #[cfg(feature = "l2")]
@@ -1024,6 +1106,7 @@ pub async fn produce_custom_l2_blocks(
     let mut blocks = Vec::new();
     let mut current_parent_hash = head_block_hash;
     let mut current_timestamp = initial_timestamp;
+    let mut last_privilege_nonce = None;
 
     for _ in 0..n_blocks {
         let block = produce_custom_l2_block(
@@ -1032,6 +1115,7 @@ pub async fn produce_custom_l2_blocks(
             rollup_store,
             current_parent_hash,
             current_timestamp,
+            &mut last_privilege_nonce,
         )
         .await?;
         current_parent_hash = block.hash();
@@ -1049,6 +1133,7 @@ pub async fn produce_custom_l2_block(
     rollup_store: &StoreRollup,
     head_block_hash: H256,
     timestamp: u64,
+    last_privilege_nonce: &mut Option<u64>,
 ) -> eyre::Result<Block> {
     let build_payload_args = BuildPayloadArgs {
         parent: head_block_hash,
@@ -1059,12 +1144,19 @@ pub async fn produce_custom_l2_block(
         beacon_root: Some(H256::zero()),
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
     let payload = create_payload(&build_payload_args, store)?;
 
-    let payload_build_result =
-        build_payload(blockchain.clone(), payload, store, rollup_store).await?;
+    let payload_build_result = build_payload(
+        blockchain.clone(),
+        payload,
+        store,
+        last_privilege_nonce,
+        DEFAULT_BUILDER_GAS_CEIL,
+    )
+    .await?;
 
     let new_block = payload_build_result.payload;
 
@@ -1108,6 +1200,7 @@ pub async fn produce_custom_l2_block(
     Ok(new_block)
 }
 
+#[cfg(not(feature = "l2"))]
 async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
     let eth_client = EthClient::new(rpc_url.as_str())?;
 

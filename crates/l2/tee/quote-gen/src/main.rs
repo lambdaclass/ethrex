@@ -9,7 +9,7 @@ use ethrex_l2_common::{
     utils::get_address_from_secret_key,
 };
 use guest_program::input::ProgramInput;
-use keccak_hash::keccak;
+use ethrex_common::utils::keccak;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;
