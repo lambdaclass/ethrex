@@ -458,7 +458,7 @@ fn retrieve_remote_ephemeral_key(
 ) -> Result<PublicKey, RLPxError> {
     let signature_prehash = shared_secret ^ remote_nonce;
     let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
-    let rid = RecoveryId::try_from(Into::<i32>::into(signature[64]))?;
+    let rid = RecoveryId::from_i32(signature[64].into())?;
     let sig = RecoverableSignature::from_compact(&signature[0..64], rid)?;
     Ok(secp256k1::SECP256K1.recover_ecdsa(&msg, &sig)?)
 }
@@ -474,7 +474,8 @@ fn sign_shared_secret(
     let (rid, signature) = sig.serialize_compact();
     let mut signature_bytes = [0; 65];
     signature_bytes[..64].copy_from_slice(&signature);
-    signature_bytes[64] = Into::<i32>::into(rid)
+    signature_bytes[64] = rid
+        .to_i32()
         .try_into()
         .map_err(|_| RLPxError::CryptographyError("Invalid recovery id".into()))?;
     Ok(signature_bytes.into())
