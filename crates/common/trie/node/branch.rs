@@ -279,50 +279,35 @@ impl BranchNode {
     pub fn encode_raw(&self) -> Vec<u8> {
         // 16 items * 33 bytes, assuming branches don't have values
         // in a state or storage trie.
-        // plus a 3 byte headroom for the payload prefix
+        // plus a 3 byte headroom for the first prefix and payload len
         const MAX_RLP_ENCODED_SIZE: usize = 528 + 3;
-
         let mut buf = Vec::with_capacity(MAX_RLP_ENCODED_SIZE);
-        let mut hashes = Vec::with_capacity(self.choices.len());
 
-        // calculate payload len
-        let mut payload_len = 1;
-        for child in self.choices.iter() {
-            let hash = child.compute_hash();
-            match hash {
-                NodeHash::Hashed(_) => {
-                    payload_len += 33;
-                }
-                NodeHash::Inline(raw) if raw.1 != 0 => {
-                    payload_len += 1 + raw.1 as usize;
-                }
-                _ => {
-                    payload_len += 1;
-                }
-            }
-            hashes.push(hash);
-        }
-        // push payload prefix
+        let payload_len = self.choices.iter().fold(1, |payload_len, child| {
+            payload_len + if child.is_valid() { 33 } else { 1 }
+        });
         if payload_len < 56 {
             buf.push(0xc0 + payload_len as u8);
         } else if payload_len < u8::MAX as usize {
-            buf.push(0xf8);
-            buf.push(payload_len as u8);
+            buf.extend([0xf8, payload_len as u8]);
         } else {
-            buf.push(0xf9);
-            buf.push(((payload_len as u16) >> 8) as u8);
-            buf.push((payload_len & 0xff) as u8);
+            buf.extend([
+                0xf9,
+                ((payload_len as u16) >> 8) as u8,
+                (payload_len & 0xff) as u8,
+            ]);
         }
-        // push payload
-        for hash in hashes {
-            match hash {
+
+        for child in self.choices.iter() {
+            match child.compute_hash() {
                 NodeHash::Hashed(hash) => {
                     buf.push(0xa0);
                     buf.extend(hash.0);
                 }
                 NodeHash::Inline(raw) if raw.1 != 0 => {
-                    buf.push(0x80 + raw.1);
-                    buf.extend_from_slice(&raw.0[..raw.1 as usize]);
+                    unreachable!();
+                    // buf.push(0x80 + raw.1);
+                    // buf.extend_from_slice(&raw.0[..raw.1 as usize]);
                 }
                 _ => {
                     buf.push(0x80);
