@@ -10,7 +10,6 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::PayloadRLPEncode;
 use reqwest::{Client, StatusCode, Url};
-use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
 use serde::Serialize;
 use url::ParseError;
@@ -143,7 +142,7 @@ impl RemoteSigner {
                 .text()
                 .await?
                 .parse::<Signature>()
-                .map_err(SignerError::FromHexError),
+                .map_err(|_| SignerError::FromHexError),
             StatusCode::NOT_FOUND => Err(SignerError::Web3SignerError(
                 "Private key not found in web3signer server".to_string(),
             )),
@@ -187,8 +186,8 @@ pub enum SignerError {
     ParseError(#[from] ParseError),
     #[error("Failed with a reqwest error: {0}")]
     ReqwestError(#[from] reqwest::Error),
-    #[error("Failed to parse value: {0}")]
-    FromHexError(#[from] FromHexError),
+    #[error("Failed to parse value")]
+    FromHexError,
     #[error("Tried to sign Privileged L2 transaction")]
     PrivilegedL2TxUnsupported,
     #[error("Web3signer error: {0}")]

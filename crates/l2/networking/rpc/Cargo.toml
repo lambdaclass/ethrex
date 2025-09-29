@@ -30,7 +30,6 @@ secp256k1.workspace = true
 reqwest.workspace = true
 ethereum-types.workspace = true
 hex.workspace = true
-rustc-hex.workspace = true
 url.workspace = true
 
 [lib]
