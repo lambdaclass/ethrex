@@ -1503,8 +1503,6 @@ impl StoreEngine for Store {
                 StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
             })?;
 
-            let from = from.as_ref().to_vec();
-            let to = to.as_ref().to_vec();
             println!("deleting subtree {from:?} - {to:?}");
             db.delete_range_cf(&cf, from, to)
                 .map_err(|e| StoreError::Custom(format!("RocksDB range delete error: {}", e)))
