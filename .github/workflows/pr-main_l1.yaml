@@ -247,6 +247,11 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'merge_group' }}
     steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
       - name: Checkout sources
         uses: actions/checkout@v4
 
