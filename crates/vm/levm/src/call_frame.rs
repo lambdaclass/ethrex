@@ -25,6 +25,7 @@ use std::{
 /// A few opcodes require pushing and/or popping multiple elements. The [`push`](Self::push) and
 /// [`pop`](Self::pop) methods support working with multiple elements instead of a single one,
 /// reducing the number of checks performed on the stack.
+#[repr(C, align(16))] // align 16 so there is padding in callframe to align to cache
 pub struct Stack {
     pub values: Box<[U256; STACK_LIMIT]>,
     pub offset: usize,
@@ -225,48 +226,61 @@ impl fmt::Debug for Stack {
 /// the EVM is currently executing.
 /// One context can trigger another with opcodes like CALL or CREATE.
 /// Call frames relationships can be thought of as a parent-child relation.
+#[repr(C, align(64))] // cache line aligned
 pub struct CallFrame {
-    /// Max gas a callframe can use
-    pub gas_limit: u64,
+    // Cache line 1
+    pub memory: Memory,
+    pub stack: Stack,
     /// Keeps track of the remaining gas in the current context.
     pub gas_remaining: u64,
     /// Program Counter
     pub pc: usize,
-    /// Address of the account that sent the message
-    pub msg_sender: Address,
-    /// Address of the recipient of the message
-    pub to: Address,
-    /// Address of the code to execute. Usually the same as `to`, but can be different
-    pub code_address: Address,
+
+    // Cache line 2
     /// Bytecode to execute
     pub bytecode: Bytes,
-    /// Value sent along the transaction
-    pub msg_value: U256,
-    pub stack: Stack,
-    pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
     pub calldata: Bytes,
+
+    // Cache line 3: return buffers that are read/written together.
     /// Return data of the CURRENT CONTEXT (see docs for more details)
     pub output: Bytes,
     /// Return data of the SUB-CONTEXT (see docs for more details)
     pub sub_return_data: Bytes,
-    /// Indicates if current context is static (if it is, it can't alter state)
-    pub is_static: bool,
+
+    // Cache line 4
+    /// Value sent along the transaction
+    pub msg_value: U256,
+    /// Max gas a callframe can use
+    pub gas_limit: u64,
     /// Call stack current depth
     pub depth: usize,
-    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
-    /// push instructions).
-    pub jump_target_filter: JumpTargetFilter,
-    /// This is set to true if the function that created this callframe is CREATE or CREATE2
-    pub is_create: bool,
-    /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
-    pub call_frame_backup: CallFrameBackup,
     /// Return data offset
     pub ret_offset: usize,
     /// Return data size
     pub ret_size: usize,
+
+    // Cache line 5
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
+    /// Indicates if current context is static (if it is, it can't alter state)
+    pub is_static: bool,
+    /// This is set to true if the function that created this callframe is CREATE or CREATE2
+    pub is_create: bool,
+    /// Address of the account that sent the message
+    pub msg_sender: Address,
+    /// Address of the code to execute. Usually the same as `to`, but can be different
+    pub code_address: Address,
+    /// Address of the recipient of the message
+    pub to: Address,
+
+    // Cache line 6
+    /// Every time we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
+    pub call_frame_backup: CallFrameBackup,
+
+    /// Lazy blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// push instructions).
+    pub jump_target_filter: JumpTargetFilter,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -328,29 +342,30 @@ impl CallFrame {
         memory: Memory,
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
+        let jump_target_filter = JumpTargetFilter::new(bytecode.clone());
 
         Self {
-            gas_limit,
+            memory,
+            stack,
             gas_remaining: gas_limit,
-            msg_sender,
-            to,
-            code_address,
-            bytecode: bytecode.clone(),
-            msg_value,
+            pc: 0,
+            bytecode,
             calldata,
-            is_static,
+            output: Bytes::default(),
+            sub_return_data: Bytes::default(),
+            msg_value,
+            gas_limit,
             depth,
-            jump_target_filter: JumpTargetFilter::new(bytecode),
-            should_transfer_value,
-            is_create,
             ret_offset,
             ret_size,
-            stack,
-            memory,
+            should_transfer_value,
+            is_static,
+            is_create,
+            msg_sender,
+            code_address,
+            to,
             call_frame_backup: CallFrameBackup::default(),
-            output: Bytes::default(),
-            pc: 0,
-            sub_return_data: Bytes::default(),
+            jump_target_filter,
         }
     }
 
