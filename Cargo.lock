@@ -80,6 +80,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if 1.0.3",
+ "getrandom 0.3.3",
  "once_cell",
  "version_check",
  "zerocopy 0.8.27",
@@ -581,7 +582,6 @@ dependencies = [
  "ethrex-storage",
  "eyre",
  "hex",
- "keccak-hash",
  "lazy_static",
  "reqwest 0.12.23",
  "serde",
@@ -2791,6 +2791,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if 1.0.3",
+ "crossbeam-utils 0.8.21",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core 0.9.11",
+]
+
+[[package]]
 name = "dashu"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3331,12 +3345,12 @@ dependencies = [
 [[package]]
 name = "ecdsa"
 version = "0.16.9"
-source = "git+https://github.com/sp1-patches/signatures.git?tag=patch-16.9-sp1-4.1.0#1880299a48fe7ef249edaa616fd411239fb5daf1"
+source = "git+https://github.com/sp1-patches/signatures?tag=patch-16.9-sp1-4.1.0#1880299a48fe7ef249edaa616fd411239fb5daf1"
 dependencies = [
  "der",
  "digest 0.10.7",
  "elliptic-curve",
- "rfc6979 0.4.0 (git+https://github.com/sp1-patches/signatures.git?tag=patch-16.9-sp1-4.1.0)",
+ "rfc6979 0.4.0 (git+https://github.com/sp1-patches/signatures?tag=patch-16.9-sp1-4.1.0)",
  "signature",
  "spki",
 ]
@@ -3391,7 +3405,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "itertools 0.13.0",
- "keccak-hash",
  "rayon",
  "revm 19.7.0",
  "serde",
@@ -3419,7 +3432,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
- "keccak-hash",
  "secp256k1",
  "serde",
  "serde_json",
@@ -4030,7 +4042,6 @@ dependencies = [
  "genesis-tool",
  "hex",
  "itertools 0.14.0",
- "keccak-hash",
  "lazy_static",
  "local-ip-address",
  "rand 0.8.5",
@@ -4040,6 +4051,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.16",
+ "tikv-jemallocator",
  "tokio",
  "tokio-util",
  "tracing",
@@ -4082,7 +4094,6 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
- "keccak-hash",
  "kzg-rs",
  "lazy_static",
  "once_cell",
@@ -4106,7 +4117,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-p2p",
  "hex",
- "keccak-hash",
  "serde",
  "serde_json",
 ]
@@ -4125,7 +4135,6 @@ dependencies = [
  "ethrex-rpc",
  "hex",
  "jsonwebtoken 9.3.1",
- "keccak-hash",
  "reqwest 0.12.23",
  "serde",
  "serde_json",
@@ -4173,7 +4182,6 @@ dependencies = [
  "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
- "keccak-hash",
  "lazy_static",
  "rand 0.8.5",
  "ratatui",
@@ -4206,7 +4214,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "keccak-hash",
  "lambdaworks-crypto 0.11.0",
  "secp256k1",
  "serde",
@@ -4230,7 +4237,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-storage-rollup",
  "hex",
- "keccak-hash",
  "reqwest 0.12.23",
  "rustc-hex",
  "secp256k1",
@@ -4261,7 +4267,6 @@ dependencies = [
  "ethrex-rlp",
  "hex",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "keccak-hash",
  "lambdaworks-math 0.11.0",
  "lazy_static",
  "malachite 0.6.1",
@@ -4313,7 +4318,6 @@ dependencies = [
  "hex",
  "hex-literal",
  "hmac",
- "keccak-hash",
  "lazy_static",
  "prometheus 0.14.0",
  "rand 0.8.5",
@@ -4396,7 +4400,6 @@ dependencies = [
  "futures-util",
  "guest_program",
  "hex",
- "jemallocator",
  "lazy_static",
  "reqwest 0.12.23",
  "rkyv",
@@ -4404,6 +4407,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sha3",
+ "tikv-jemallocator",
  "tokio",
  "tokio-utils",
  "tracing",
@@ -4466,8 +4470,8 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "hex-literal",
+ "jemalloc_pprof",
  "jsonwebtoken 9.3.1",
- "keccak-hash",
  "rand 0.8.5",
  "reqwest 0.12.23",
  "secp256k1",
@@ -4499,7 +4503,6 @@ dependencies = [
  "eyre",
  "hex",
  "itertools 0.13.0",
- "keccak-hash",
  "lazy_static",
  "reqwest 0.12.23",
  "secp256k1",
@@ -5332,7 +5335,6 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
- "keccak-hash",
  "risc0-build",
  "risc0-zkvm",
  "rkyv",
@@ -6197,6 +6199,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f4c7245a08504955605670dbf141fceab975f15ca21570696aebe9d2e71576bd"
 
 [[package]]
+name = "inferno"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e96d2465363ed2d81857759fc864cf6bb7997f79327aec028d65bd7989393685"
+dependencies = [
+ "ahash",
+ "clap 4.5.47",
+ "crossbeam-channel 0.5.15",
+ "crossbeam-utils 0.8.21",
+ "dashmap 6.1.0",
+ "env_logger 0.11.8",
+ "indexmap 2.11.0",
+ "itoa",
+ "log",
+ "num-format",
+ "once_cell",
+ "quick-xml",
+ "rgb",
+ "str_stack",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6333,23 +6357,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
-name = "jemalloc-sys"
-version = "0.5.4+5.3.0-patched"
+name = "jemalloc_pprof"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac6c1946e1cea1788cbfde01c993b52a10e2da07f4bac608228d1bed20bfebf2"
+checksum = "74ff642505c7ce8d31c0d43ec0e235c6fd4585d9b8172d8f9dd04d36590200b5"
 dependencies = [
- "cc",
+ "anyhow",
  "libc",
-]
-
-[[package]]
-name = "jemallocator"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0de374a9f8e63150e6f5e8a60cc14c668226d7a347d8aee1a45766e3c4dd3bc"
-dependencies = [
- "jemalloc-sys",
- "libc",
+ "mappings",
+ "once_cell",
+ "pprof_util",
+ "tempfile",
+ "tikv-jemalloc-ctl",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -6480,7 +6501,7 @@ version = "0.13.4"
 source = "git+https://github.com/sp1-patches/elliptic-curves?tag=patch-k256-13.4-sp1-5.0.0#f7d8998e05d8cbcbd8e543eba1030a7385011fa8"
 dependencies = [
  "cfg-if 1.0.3",
- "ecdsa 0.16.9 (git+https://github.com/sp1-patches/signatures.git?tag=patch-16.9-sp1-4.1.0)",
+ "ecdsa 0.16.9 (git+https://github.com/sp1-patches/signatures?tag=patch-16.9-sp1-4.1.0)",
  "elliptic-curve",
  "hex",
  "once_cell",
@@ -6506,16 +6527,6 @@ checksum = "505d1856a39b200489082f90d897c3f07c455563880bc5952e38eabf731c83b6"
 dependencies = [
  "digest 0.10.7",
  "sha3-asm",
-]
-
-[[package]]
-name = "keccak-hash"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e1b8590eb6148af2ea2d75f38e7d29f5ca970d5a4df456b3ef19b8b415d0264"
-dependencies = [
- "primitive-types 0.13.1",
- "tiny-keccak",
 ]
 
 [[package]]
@@ -6961,7 +6972,6 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
- "keccak-hash",
  "secp256k1",
  "tokio",
 ]
@@ -7162,6 +7172,19 @@ name = "managed"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ca88d725a0a943b096803bd34e73a4437208b6077654cc4ecb2947a5f91618d"
+
+[[package]]
+name = "mappings"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db4d277bb50d4508057e7bddd7fcd19ef4a4cc38051b6a5a36868d75ae2cbeb9"
+dependencies = [
+ "anyhow",
+ "libc",
+ "once_cell",
+ "pprof_util",
+ "tracing",
+]
 
 [[package]]
 name = "matchers"
@@ -8613,6 +8636,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
+name = "pprof_util"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9aba4251d95ac86f14c33e688d57a9344bfcff29e9b0c5a063fc66b5facc8a1"
+dependencies = [
+ "anyhow",
+ "backtrace",
+ "flate2",
+ "inferno",
+ "num",
+ "paste",
+ "prost 0.13.5",
+]
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8999,6 +9037,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9374,6 +9421,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "reorgs"
+version = "0.1.0"
+dependencies = [
+ "ethrex",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-config",
+ "ethrex-l2-common",
+ "ethrex-l2-rpc",
+ "ethrex-rpc",
+ "hex",
+ "nix",
+ "rand 0.8.5",
+ "secp256k1",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9668,7 +9736,7 @@ dependencies = [
 [[package]]
 name = "rfc6979"
 version = "0.4.0"
-source = "git+https://github.com/sp1-patches/signatures.git?tag=patch-16.9-sp1-4.1.0#1880299a48fe7ef249edaa616fd411239fb5daf1"
+source = "git+https://github.com/sp1-patches/signatures?tag=patch-16.9-sp1-4.1.0#1880299a48fe7ef249edaa616fd411239fb5daf1"
 dependencies = [
  "hmac",
  "subtle",
@@ -11875,6 +11943,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "str_stack"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9091b6114800a5f2141aee1d1b9d6ca3592ac062dc5decb3764ec5895a47b4eb"
+
+[[package]]
 name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12306,6 +12380,37 @@ dependencies = [
  "flate2",
  "jpeg-decoder",
  "weezl",
+]
+
+[[package]]
+name = "tikv-jemalloc-ctl"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f21f216790c8df74ce3ab25b534e0718da5a1916719771d3fec23315c99e468b"
+dependencies = [
+ "libc",
+ "paste",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.6.0+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd3c60906412afa9c2b5b5a48ca6a5abe5736aec9eb48ad05037a677e52e4e2d"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cec5ff18518d81584f477e9bfdf957f5bb0979b0bac3af4ca30b5b3ae2d2865"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]

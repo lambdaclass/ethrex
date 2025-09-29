@@ -1,7 +1,9 @@
 [package]
 name = "ethrex-l2"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -33,7 +35,6 @@ hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 envy = "0.4.2"
 rand.workspace = true
 thiserror.workspace = true

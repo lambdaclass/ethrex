@@ -6,6 +6,7 @@ use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
 use ethrex_common::types::BlockHash;
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
 use ethrex_common::{
@@ -16,12 +17,12 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
-use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -689,12 +690,12 @@ struct Args {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        default_value_t = default_datadir(),
+        default_value = default_datadir().into_os_string(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: PathBuf,
     #[arg(
         long = "ipc_path",
         value_name = "IPC_PATH",
@@ -734,8 +735,8 @@ pub async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
-    let data_dir = init_datadir(&args.datadir);
-    let store = open_store(&data_dir);
+    init_datadir(&args.datadir);
+    let store = open_store(&args.datadir);
     archive_sync(
         args.ipc_path,
         args.block_number,

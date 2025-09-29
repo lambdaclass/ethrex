@@ -1,6 +1,7 @@
 use std::{
     collections::{HashSet, VecDeque},
     io::ErrorKind,
+    path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
@@ -53,7 +54,7 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 // How much we store in memory of request_account_range and request_storage_ranges
 // before we dump it into the file. This tunes how much memory ethrex uses during
 // the first steps of snap sync
-pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 512; // 512MB
+pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64; // 64MB
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -722,7 +723,7 @@ impl PeerHandler {
         &mut self,
         start: H256,
         limit: H256,
-        account_state_snapshots_dir: String,
+        account_state_snapshots_dir: &Path,
         pivot_header: &mut BlockHeader,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), PeerHandlerError> {
@@ -783,22 +784,22 @@ impl PeerHandler {
                     .collect::<Vec<(H256, AccountState)>>()
                     .encode_to_vec();
 
-                if !std::fs::exists(&account_state_snapshots_dir)
+                if !std::fs::exists(account_state_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
                 {
-                    std::fs::create_dir_all(&account_state_snapshots_dir)
+                    std::fs::create_dir_all(account_state_snapshots_dir)
                         .map_err(|_| PeerHandlerError::CreateStateSnapshotsDir)?;
                 }
 
-                let account_state_snapshots_dir_cloned = account_state_snapshots_dir.clone();
+                let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
                 let dump_account_result_sender_cloned = dump_account_result_sender.clone();
                 tokio::task::spawn(async move {
                     let path = get_account_state_snapshot_file(
-                        account_state_snapshots_dir_cloned,
+                        &account_state_snapshots_dir_cloned,
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result = dump_to_file(path, account_state_chunk);
+                    let result = dump_to_file(&path, account_state_chunk);
                     dump_account_result_sender_cloned
                         .send(result)
                         .await
@@ -868,7 +869,7 @@ impl PeerHandler {
                 tokio::task::spawn(async move {
                     let DumpError { path, contents, .. } = dump_account_data;
                     // Dump the account data
-                    let result = dump_to_file(path, contents);
+                    let result = dump_to_file(&path, contents);
                     // Send the result through the channel
                     dump_account_result_sender_cloned
                         .send(result)
@@ -934,10 +935,10 @@ impl PeerHandler {
                 .collect::<Vec<(H256, AccountState)>>()
                 .encode_to_vec();
 
-            if !std::fs::exists(&account_state_snapshots_dir)
+            if !std::fs::exists(account_state_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
             {
-                std::fs::create_dir_all(&account_state_snapshots_dir)
+                std::fs::create_dir_all(account_state_snapshots_dir)
                     .map_err(|_| PeerHandlerError::CreateStateSnapshotsDir)?;
             }
 
@@ -1236,7 +1237,7 @@ impl PeerHandler {
                     let validated_codes: Vec<Bytes> = codes
                         .into_iter()
                         .zip(hashes_to_request)
-                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
+                        .take_while(|(b, hash)| ethrex_common::utils::keccak(b) == *hash)
                         .map(|(b, _hash)| b)
                         .collect();
                     let result = TaskResult {
@@ -1275,7 +1276,7 @@ impl PeerHandler {
     pub async fn request_storage_ranges(
         &mut self,
         account_storage_roots: &mut AccountStorageRoots,
-        account_storages_snapshots_dir: String,
+        account_storages_snapshots_dir: &Path,
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
     ) -> Result<u64, PeerHandlerError> {
@@ -1336,16 +1337,18 @@ impl PeerHandler {
                     .clone()
                     .into_iter()
                     .zip(current_account_storages)
+                    .filter(|(_, storages)| !storages.is_empty())
                     .collect::<Vec<_>>()
                     .encode_to_vec();
 
-                if !std::fs::exists(&account_storages_snapshots_dir)
+                if !std::fs::exists(account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
                 {
-                    std::fs::create_dir_all(&account_storages_snapshots_dir)
+                    std::fs::create_dir_all(account_storages_snapshots_dir)
                         .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
                 }
-                let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
+                let account_storages_snapshots_dir_cloned =
+                    account_storages_snapshots_dir.to_path_buf();
                 if !disk_joinset.is_empty() {
                     debug!("Writing to disk");
                     disk_joinset
@@ -1360,10 +1363,10 @@ impl PeerHandler {
                 }
                 disk_joinset.spawn(async move {
                     let path = get_account_storages_snapshot_file(
-                        account_storages_snapshots_dir_cloned,
+                        &account_storages_snapshots_dir_cloned,
                         chunk_index,
                     );
-                    dump_to_file(path, snapshot)
+                    dump_to_file(&path, snapshot)
                 });
 
                 chunk_index += 1;
@@ -1567,20 +1570,18 @@ impl PeerHandler {
             let snapshot = current_account_hashes
                 .into_iter()
                 .zip(current_account_storages)
+                .filter(|(_, storages)| !storages.is_empty())
                 .collect::<Vec<_>>()
                 .encode_to_vec();
 
-            if !std::fs::exists(&account_storages_snapshots_dir)
+            if !std::fs::exists(account_storages_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
             {
-                std::fs::create_dir_all(&account_storages_snapshots_dir)
+                std::fs::create_dir_all(account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
             }
-            let account_storages_snapshots_dir_cloned = account_storages_snapshots_dir.clone();
-            let path = get_account_storages_snapshot_file(
-                account_storages_snapshots_dir_cloned,
-                chunk_index,
-            );
+            let path =
+                get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
             std::fs::write(path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
@@ -1599,6 +1600,13 @@ impl PeerHandler {
             account_storage_roots
                 .accounts_with_storage_root
                 .remove(&account_done);
+        }
+
+        // Dropping the task sender so that the recv returns None
+        drop(task_sender);
+
+        while let Some(result) = task_receiver.recv().await {
+            self.peer_table.free_peer(result.peer_id).await;
         }
 
         Ok(chunk_index + 1)
@@ -1927,7 +1935,7 @@ fn format_duration(duration: Duration) -> String {
 }
 
 pub struct DumpError {
-    pub path: String,
+    pub path: PathBuf,
     pub contents: Vec<u8>,
     pub error: ErrorKind,
 }
