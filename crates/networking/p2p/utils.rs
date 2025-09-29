@@ -8,7 +8,6 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{H256, H512, U256, types::AccountState};
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_trie::Node;
-use itertools::{Itertools, iproduct};
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::error::GenServerError;
 
@@ -146,9 +145,17 @@ pub fn dump_accounts_to_file(
     }
 }
 
+/// Struct representing the storage slots of certain accounts that share the same storage root
+pub struct AccountsWithStorage {
+    /// Accounts with the same storage root
+    pub accounts: Vec<H256>,
+    /// All slots in the trie from the accounts
+    pub storages: Vec<(H256, U256)>,
+}
+
 pub fn dump_storages_to_file(
     path: &Path,
-    storages: Vec<(Vec<H256>, Vec<(H256, U256)>)>,
+    storages: Vec<AccountsWithStorage>,
 ) -> Result<(), DumpError> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rocksdb")] {
@@ -156,9 +163,9 @@ pub fn dump_storages_to_file(
                 path,
                 storages
                     .into_iter()
-                    .flat_map(|(accounts, slots)| {
-                        accounts.into_iter().map(|hash| {
-                            slots.iter().map(move |(slot_hash, slot_value)| {
+                    .flat_map(|accounts_with_slots| {
+                        accounts_with_slots.accounts.into_iter().map(|hash| {
+                            accounts_with_slots.storages.iter().map(move |(slot_hash, slot_value)| {
                                 let key = [hash.as_bytes(), slot_hash.as_bytes()].concat();
                                 (key, slot_value.encode_to_vec())
                             }).collect::<Vec<_>>()
@@ -172,7 +179,7 @@ pub fn dump_storages_to_file(
                     error: std::io::ErrorKind::Other,
                 })
         } else {
-            dump_to_file(path, storages.encode_to_vec())
+            dump_to_file(path, storages.into_iter().map(|accounts_with_slots| (accounts_with_slots.accounts, accounts_with_slots.storages)).collect::<Vec<_>>().encode_to_vec())
         }
     }
 }

@@ -1,6 +1,5 @@
-use crossbeam::channel::{Receiver, Select, Sender, select_biased, unbounded};
+use crossbeam::channel::{Sender, select_biased, unbounded};
 use std::marker::Send;
-use std::sync::{Arc, Mutex};
 use std::thread::{Builder, Scope};
 
 pub struct ThreadPool<'scope> {
@@ -26,6 +25,8 @@ impl<'scope> ThreadPool<'scope> {
                     } {
                         task();
                     }
+                    // If one of the senders closes because the threadpool is dropped, the other one
+                    // channel may still exist and have data
                     while let Ok(task) = priority_receiver.recv() {
                         task();
                     }

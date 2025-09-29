@@ -25,7 +25,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Trie, TrieError};
-use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 #[cfg(not(feature = "rocksdb"))]
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashSet};
@@ -1514,9 +1514,13 @@ async fn insert_storages_into_db(
     maybe_big_account_storage_state_roots: &Arc<Mutex<HashMap<H256, H256>>>,
     pivot_header: &BlockHeader,
 ) -> Result<(), SyncError> {
+    use rayon::iter::IntoParallelIterator;
+
     for entry in std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
     {
+        use crate::utils::AccountsWithStorage;
+
         let entry = entry.map_err(|err| {
             SyncError::SnapshotReadError(account_storages_snapshots_dir.into(), err)
         })?;
@@ -1527,8 +1531,15 @@ async fn insert_storages_into_db(
         let snapshot_contents = std::fs::read(&snapshot_path)
             .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
 
-        let account_storages_snapshot: Vec<(Vec<H256>, Vec<(H256, U256)>)> =
+        #[expect(clippy::type_complexity)]
+        let account_storages_snapshot: Vec<AccountsWithStorage> =
             RLPDecode::decode(&snapshot_contents)
+                .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
+                    all_accounts
+                        .into_iter()
+                        .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
+                        .collect()
+                })
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
         let maybe_big_account_storage_state_roots_clone =
@@ -1541,30 +1552,22 @@ async fn insert_storages_into_db(
 
             account_storages_snapshot
                 .into_par_iter()
-                .flat_map(|(accounts, storages)| {
-                    let storages: Arc<[_]> = storages.into();
-                    accounts
+                .flat_map(|account_storages| {
+                    let storages: Arc<[_]> = account_storages.storages.into();
+                    account_storages
+                        .accounts
                         .into_par_iter()
                         // FIXME: we probably want to make storages an Arc
                         .map(move |account| (account, storages.clone()))
                 })
                 .map(|(account, storages)| {
-                    let start = Instant::now();
-                    let n_keys = storages.len();
-                    let changes = compute_storage_roots(
+                    compute_storage_roots(
                         maybe_big_account_storage_state_roots_clone.clone(),
                         store.clone(),
                         account,
                         &storages,
                         pivot_hash_moved,
-                    );
-                    let duration = Instant::now() - start;
-                    // debug!(
-                    //     duration = duration.as_micros(),
-                    //     keys = n_keys,
-                    //     "Computed Storage Root"
-                    // );
-                    changes
+                    )
                 })
                 .collect::<Result<Vec<_>, SyncError>>()
         })
@@ -1641,8 +1644,8 @@ async fn insert_storage_into_rocksdb(
     account_state_snapshots_dir: &Path,
     temp_db_dir: &Path,
 ) -> Result<(), SyncError> {
+    use ethrex_threadpool::ThreadPool;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts;
-    use pool_test::ThreadPool;
     use std::thread::scope;
 
     struct RocksDBIterator<'a> {
@@ -1718,7 +1721,7 @@ async fn insert_storage_into_rocksdb(
 
     let (buffer_sender, buffer_receiver) = bounded::<Vec<Node>>(1001);
     for _ in 0..1_000 {
-        buffer_sender.send(Vec::with_capacity(20_065));
+        let _ = buffer_sender.send(Vec::with_capacity(20_065));
     }
 
     scope(|scope| {

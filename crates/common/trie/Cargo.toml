@@ -7,6 +7,7 @@ documentation.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
+ethrex-threadpool.workspace = true
 
 ethereum-types.workspace = true
 anyhow = "1.0.86"
@@ -23,7 +24,6 @@ smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
 digest = "0.10.6"
 lazy_static.workspace = true
 rayon.workspace = true
-pool_test.workspace = true
 crossbeam.workspace = true
 
 [features]

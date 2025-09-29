@@ -39,7 +39,7 @@ use crate::{
     snap::encodable_to_proof,
     sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
-        SendMessageError, dump_accounts_to_file, dump_storages_to_file,
+        AccountsWithStorage, SendMessageError, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
     },
 };
@@ -1339,22 +1339,18 @@ impl PeerHandler {
         let mut accounts_done: HashMap<H256, Vec<(H256, H256)>> = HashMap::new();
         // Maps storage root to vector of hashed addresses matching that root and
         // vector of hashed storage keys and storage values.
-        let mut current_account_storages: BTreeMap<H256, (Vec<H256>, Vec<(H256, U256)>)> =
-            BTreeMap::new();
+        let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
 
         debug!("Starting request_storage_ranges loop");
         loop {
             if current_account_storages
                 .values()
-                .map(|(accounts, storages)| 32 * accounts.len() + 32 * storages.len())
+                .map(|accounts| 32 * accounts.accounts.len() + 32 * accounts.storages.len())
                 .sum::<usize>()
                 > RANGE_FILE_CHUNK_SIZE
             {
                 let current_account_storages = std::mem::take(&mut current_account_storages);
-                let snapshot = current_account_storages
-                    .into_iter()
-                    .map(|(_, (accounts, storages))| (accounts, storages))
-                    .collect::<Vec<_>>();
+                let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
                 if !std::fs::exists(account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
@@ -1452,7 +1448,7 @@ impl PeerHandler {
                             for account in accounts_by_root_hash[remaining_start].1.iter() {
                                 if let Some((_, old_intervals)) = account_storage_roots
                                     .accounts_with_storage_root
-                                    .get(&account)
+                                    .get(account)
                                 {
                                     if !old_intervals.is_empty() {
                                         acc_hash = *account;
@@ -1640,13 +1636,22 @@ impl PeerHandler {
                     // We downloaded a big storage account
                     current_account_storages
                         .entry(*root_hash)
-                        .or_insert_with(|| (accounts.clone(), Vec::new()))
-                        .1
+                        .or_insert_with(|| AccountsWithStorage {
+                            accounts: accounts.clone(),
+                            storages: Vec::new(),
+                        })
+                        .storages
                         .extend(account_storages.remove(0));
                 } else {
-                    for (i, storage) in account_storages.into_iter().enumerate() {
+                    for (i, storages) in account_storages.into_iter().enumerate() {
                         let (root_hash, accounts) = &accounts_by_root_hash[start_index + i];
-                        current_account_storages.insert(*root_hash, (accounts.clone(), storage));
+                        current_account_storages.insert(
+                            *root_hash,
+                            AccountsWithStorage {
+                                accounts: accounts.clone(),
+                                storages,
+                            },
+                        );
                     }
                 }
             }
@@ -1701,10 +1706,7 @@ impl PeerHandler {
         }
 
         {
-            let snapshot = current_account_storages
-                .into_iter()
-                .map(|(_, (accounts, storages))| (accounts, storages))
-                .collect::<Vec<_>>();
+            let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
             if !std::fs::exists(account_storages_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?

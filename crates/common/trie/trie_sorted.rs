@@ -2,9 +2,9 @@ use crate::{
     EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
-use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
+use crossbeam::channel::{Receiver, Sender, bounded};
 use ethereum_types::H256;
-use pool_test::ThreadPool;
+use ethrex_threadpool::ThreadPool;
 use std::{sync::Arc, thread::scope};
 use tracing::debug;
 
@@ -132,7 +132,7 @@ fn flush_nodes_to_write(
     db.put_batch_no_alloc(&nodes_to_write)
         .map_err(TrieGenerationError::FlushToDbError)?;
     nodes_to_write.clear();
-    sender.send(nodes_to_write);
+    let _ = sender.send(nodes_to_write);
     Ok(())
 }
 
@@ -279,7 +279,7 @@ where
             .finalize()
     };
 
-    flush_nodes_to_write(nodes_to_write, db, buffer_sender);
+    let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
     Ok(hash)
 }
 
@@ -292,7 +292,7 @@ where
 {
     let (buffer_sender, buffer_receiver) = bounded::<Vec<Node>>(1001);
     for _ in 0..1_000 {
-        buffer_sender.send(Vec::with_capacity(20_065));
+        let _ = buffer_sender.send(Vec::with_capacity(20_065));
     }
     scope(|s| {
         let pool = ThreadPool::new(12, s);
