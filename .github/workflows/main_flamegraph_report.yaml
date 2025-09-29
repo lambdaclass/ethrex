@@ -6,8 +6,9 @@ permissions:
   id-token: write
 
 on:
-  push:
-    branches: ["main"]
+  # This workflow is broken, uncomment when fixed
+  # push:
+  #   branches: ["main"]
   workflow_dispatch:
 
 env:

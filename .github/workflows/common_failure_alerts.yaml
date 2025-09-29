@@ -3,6 +3,8 @@ name: Workflow Failure Alerts
 on:
   workflow_run:
     workflows:
+      - Block Import Benchmark
+      - Flamegraph Reporter
       - L1
       - L2 (SP1 Backend)
       - L2 (without proving)
@@ -11,6 +13,8 @@ on:
       - L2 TDX build
       - LEVM
       - Publish Docker
+      - Publish Ethrex docs page
+      - Replay
       - Replay proving
     branches:
       - main
