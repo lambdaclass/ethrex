@@ -162,7 +162,7 @@ impl ExtensionNode {
         // ASSUMPTION: there are no inline node refs, so child len is 1 + 32 bytes
         // ASSUMPTION: prefix is never greater than 55 bytes (in particular it's at most 32 bytes)
         let payload_len = {
-            let prefix_len = if prefix_encoded.len() == 1 {
+            let prefix_len = if prefix_encoded.len() == 1 && prefix_encoded[0] < 0x80 {
                 1
             } else {
                 1 + prefix_encoded.len()
