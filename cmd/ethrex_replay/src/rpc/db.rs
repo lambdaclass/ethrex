@@ -353,9 +353,12 @@ impl RpcDB {
             .collect();
 
         // fetch all of them, both before and after block execution
-        let initial_accounts = self.fetch_accounts_blocking(&index, false).unwrap();
-        let final_accounts = self.fetch_accounts_blocking(&index, true).unwrap();
-        // TODO: remove unwraps
+        let initial_accounts = self
+            .fetch_accounts_blocking(&index, false)
+            .wrap_err("failed to fetch initial accounts")?;
+        let final_accounts = self
+            .fetch_accounts_blocking(&index, true)
+            .wrap_err("failed to fetch final accounts")?;
 
         let initial_account_proofs = initial_accounts
             .values()
@@ -496,10 +499,14 @@ impl LevmDatabase for RpcDB {
                 .fetch_accounts_blocking(&[(address, vec![])], false)
                 .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
                 .get(&address)
-                .unwrap()
-                .clone();
-            self.cache.lock().unwrap().insert(address, account.clone());
-            account
+                .cloned();
+            if let Some(account) = account.clone() {
+                self.cache.lock().unwrap().insert(address, account.clone());
+                account
+            } else {
+                // If the RPC did not return the account, consider it non-existing
+                return Ok(AccountInfo::default());
+            }
         };
         if let Account::Existing {
             account_state,
@@ -538,17 +545,13 @@ impl LevmDatabase for RpcDB {
             .fetch_accounts_blocking(&[(address, vec![key])], false)
             .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
             .get(&address)
-            .unwrap()
-            .clone();
-        if let Account::Existing { storage, .. } = account {
+            .cloned();
+        if let Some(Account::Existing { storage, .. }) = account {
             if let Some(value) = storage.get(&key) {
-                Ok(*value)
-            } else {
-                Ok(U256::zero())
+                return Ok(*value);
             }
-        } else {
-            Ok(U256::zero())
         }
+        Ok(U256::zero())
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
