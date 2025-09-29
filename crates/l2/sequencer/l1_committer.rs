@@ -304,6 +304,7 @@ impl L1Committer {
         }
     }
 
+    #[allow(unused_variables)]
     async fn prepare_batch_from_block(
         &mut self,
         mut last_added_block_number: BlockNumber,
