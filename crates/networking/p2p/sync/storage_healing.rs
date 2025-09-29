@@ -681,21 +681,27 @@ async fn perform_needed_deletions(
             }
         }
         Node::Extension(node) => {
-            // An extension node is equivalent to a series of branch nodes with only
-            // one valid child each, so we remove all the empty siblings on the path.
-            let first_path = node_path.append_new(0);
-            let mut extended_path = node_path.clone();
-            extended_path.extend(&node.prefix);
-            let mut last_path = node_path.slice(0, first_path.len() - 1);
-            last_path.append(node_path.at(node_path.len() - 1) as u8 + 1);
-
-            let mut extended_next_path = extended_path.slice(0, first_path.len() - 1);
-            extended_next_path.append(extended_path.at(first_path.len() - 1) as u8);
-
-            // Remove all nodes from [node_path.., 0] to [node_path.., node.prefix]
-            store.delete_range(first_path, extended_path).await?;
-            // Remove all nodes from [node_path.., node.prefix++] to [node_path++]
-            store.delete_range(extended_next_path, last_path).await?;
+            let mut path = node_path.clone();
+            for window in node.prefix.as_ref().windows(2) {
+                let [current_nibble, next_nibble] = window else {
+                    break;
+                };
+                for i in 0..16u8 {
+                    if i == *next_nibble {
+                        if path.len() + 1 != node_path.len() + node.prefix.len() {
+                            to_write
+                                .entry(hashed_account)
+                                .or_default()
+                                .push((path.append_new(i), vec![]));
+                        }
+                    } else {
+                        store
+                            .delete_subtree(apply_prefix(Some(hashed_account), path.append_new(i)))
+                            .await?;
+                    }
+                }
+                path.append(*current_nibble as u8);
+            }
         }
         Node::Leaf(_) => {}
     }

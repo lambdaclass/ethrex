@@ -80,7 +80,7 @@ impl StoreEngine for Store {
     fn open_direct_state_trie(&self, _: H256) -> Result<Trie, StoreError> {
         todo!()
     }
-
+    
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {
@@ -657,7 +657,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
+    async fn delete_subtree(
+        &self,
+        root: Nibbles,
+    ) -> Result<(), StoreError> {
         todo!()
     }
 }
