@@ -4,6 +4,16 @@ use ethrex_common::utils::keccak;
 /// secp256k1 > k256
 #[allow(clippy::needless_return)]
 pub fn get_address_from_secret_key(secret_key: &secp256k1::SecretKey) -> Result<Address, String> {
+    #[cfg(all(
+        not(feature = "secp256k1"),
+        not(feature = "k256")
+    ))]
+    {
+        compile_error!(
+            "Either the `secp256k1` or `k256` feature must be enabled to use KZG functionality."
+        );
+        return Ok(false);
+    }
     #[cfg(feature = "secp256k1")]
     {
         let public_key = secret_key
