@@ -261,20 +261,6 @@ pub struct BlockOptions {
         help_heading = "Command Options"
     )]
     pub block: Option<u64>,
-    #[arg(
-        long,
-        help = "Run blocks endlessly, starting from the specified block or the latest if not specified.",
-        help_heading = "Replay Options",
-        conflicts_with = "block"
-    )]
-    pub endless: bool,
-    #[arg(
-        long,
-        help = "Only fetch Ethereum proofs blocks (i.e., no L2 blocks).",
-        help_heading = "Replay Options",
-        conflicts_with = "block"
-    )]
-    pub only_eth_proofs_blocks: bool,
     #[command(flatten)]
     pub opts: EthrexReplayOptions,
 }
@@ -356,26 +342,10 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(block_opts) => loop {
-                let start = Instant::now();
-
-                let _ = replay_block(block_opts.clone()).await;
-
-                if !block_opts.endless {
-                    break;
-                }
-
-                let elapsed = start.elapsed();
-
-                // Sleep until the next block time (12 seconds)
-                // If the replay took longer than 12 seconds, start immediately
-                if elapsed < Duration::from_secs(12) {
-                    tokio::time::sleep(Duration::from_secs(12) - elapsed).await;
-                }
-            },
+            Self::Block(block_opts) => replay_block(block_opts.clone()).await?,
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions {
-                blocks,
+                mut blocks,
                 from,
                 to,
                 endless,
@@ -386,142 +356,230 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                if endless {
-                    // Replay the from
-                    Box::pin(async {
-                        Self::Block(BlockOptions {
-                            block: from,
-                            endless: false,
-                            only_eth_proofs_blocks,
-                            opts: opts.clone(),
-                        })
-                    })
-                    .await;
+                if !blocks.is_empty() {
+                    blocks.sort();
 
-                    // Replay endlessly
-                    Box::pin(async {
-                        Self::Block(BlockOptions {
-                            block: None,
-                            endless,
-                            only_eth_proofs_blocks,
-                            opts: opts.clone(),
-                        })
-                    })
-                    .await;
-                } else {
-                    let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
-
-                    for (i, block_number) in blocks.iter().enumerate() {
+                    for block in blocks.clone() {
                         info!(
-                            "{} block {}/{}: {block_number}",
+                            "{} block: {block}",
                             if opts.common.action == Action::Execute {
                                 "Executing"
                             } else {
                                 "Proving"
-                            },
-                            i + 1,
-                            blocks.len()
+                            }
                         );
 
                         Box::pin(async {
                             Self::Block(BlockOptions {
-                                block: Some(*block_number),
-                                endless: false,
-                                only_eth_proofs_blocks,
+                                block: Some(block),
                                 opts: opts.clone(),
                             })
+                            .run()
+                            .await
                         })
-                        .await;
+                        .await?;
+                    }
+
+                    return Ok(());
+                }
+
+                // Case --from is set:
+                // * --endless and --to cannot be set together (constraint by clap).
+                // * If --endless is set, we start from --from and keep checking for new blocks.
+                // * If --to is set, we run from --from to --to and stop.
+                // * If neither is set, we run from --from to latest and stop.
+                if let Some(from) = from {
+                    let mut to = if let Some(to) = to {
+                        to
+                    } else {
+                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                            .await?
+                    };
+
+                    if from > to {
+                        return Err(eyre::Error::msg(
+                            "starting point can't be greater than ending point",
+                        ));
+                    }
+
+                    let mut block = from;
+
+                    while block <= to {
+                        Box::pin(async {
+                            Self::Block(BlockOptions {
+                                block: Some(block),
+                                opts: opts.clone(),
+                            })
+                            .run()
+                            .await
+                        })
+                        .await?;
+
+                        block += 1;
+
+                        // We only want to update the `to` if we're in endless mode
+                        while endless && block > to {
+                            tokio::time::sleep(Duration::from_secs(12)).await;
+                            to = fetch_latest_block_number(
+                                opts.rpc_url.clone(),
+                                only_eth_proofs_blocks,
+                            )
+                            .await?;
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                // Case --from is not set:
+                // * --to cannot be set (constraint by clap).
+                // * If --endless is set, we keep checking for new blocks.
+                if endless {
+                    loop {
+                        let latest_block_number =
+                            fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                                .await?;
+
+                        let start = Instant::now();
+
+                        Box::pin(async {
+                            Self::Block(BlockOptions {
+                                block: Some(latest_block_number),
+                                opts: opts.clone(),
+                            })
+                            .run()
+                            .await
+                        })
+                        .await?;
+
+                        let elapsed = start.elapsed();
+
+                        // Sleep until the next block time (12 seconds)
+                        if elapsed < Duration::from_secs(12) {
+                            tokio::time::sleep(Duration::from_secs(12) - elapsed).await;
+                        }
                     }
                 }
             }
             #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::Block(BlockOptions {
-                block,
-                endless,
-                only_eth_proofs_blocks,
-                opts,
-            })) => {
+            Self::Cache(CacheSubcommand::Block(BlockOptions { block, opts })) => {
                 let (eth_client, network) = setup(&opts).await?;
 
-                loop {
-                    let block_identifier = or_latest(block)?;
+                let block_identifier = or_latest(block)?;
 
-                    let start = Instant::now();
+                get_blockdata(eth_client.clone(), network.clone(), block_identifier).await?;
 
-                    get_blockdata(
-                        eth_client.clone(),
-                        network.clone(),
-                        block_identifier,
-                        only_eth_proofs_blocks,
-                    )
-                    .await?;
-
-                    let elapsed = start.elapsed();
-
-                    if let Some(block_number) = block {
-                        info!("Block {block_number} data cached successfully.");
-                    } else {
-                        info!("Latest block data cached successfully.");
-                    }
-
-                    if !endless {
-                        break;
-                    }
-
-                    // Sleep until the next block time (12 seconds)
-                    if elapsed < Duration::from_secs(12) {
-                        tokio::time::sleep(Duration::from_secs(12) - elapsed).await;
-                    }
+                if let Some(block_number) = block {
+                    info!("Block {block_number} data cached successfully.");
+                } else {
+                    info!("Latest block data cached successfully.");
                 }
             }
             #[cfg(not(feature = "l2"))]
             Self::Cache(CacheSubcommand::Blocks(BlocksOptions {
-                blocks,
+                mut blocks,
                 from,
                 to,
                 endless,
                 only_eth_proofs_blocks,
                 opts,
             })) => {
-                if endless {
-                    // Cache the from
-                    Box::pin(async {
-                        Self::Cache(CacheSubcommand::Block(BlockOptions {
-                            block: from,
-                            endless: false,
-                            only_eth_proofs_blocks,
-                            opts: opts.clone(),
-                        }))
-                    })
-                    .await;
+                if !blocks.is_empty() {
+                    blocks.sort();
 
-                    // Cache endlessly
-                    Box::pin(async {
-                        Self::Cache(CacheSubcommand::Block(BlockOptions {
-                            block: None,
-                            endless,
-                            only_eth_proofs_blocks,
-                            opts: opts.clone(),
-                        }))
-                    })
-                    .await;
-                } else {
-                    let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
+                    for block in blocks.clone() {
+                        info!("Caching block: {block}",);
 
-                    for block_number in blocks {
                         Box::pin(async {
                             Self::Cache(CacheSubcommand::Block(BlockOptions {
-                                block: Some(block_number),
-                                endless: false,
-                                only_eth_proofs_blocks,
+                                block: Some(block),
                                 opts: opts.clone(),
                             }))
+                            .run()
+                            .await
                         })
-                        .await;
+                        .await?;
                     }
 
-                    info!("Blocks data cached successfully.");
+                    return Ok(());
+                }
+
+                // Case --from is set:
+                // * --endless and --to cannot be set together (constraint by clap).
+                // * If --endless is set, we start from --from and keep checking for new blocks.
+                // * If --to is set, we run from --from to --to and stop.
+                // * If neither is set, we run from --from to latest and stop.
+                if let Some(from) = from {
+                    let mut to = if let Some(to) = to {
+                        to
+                    } else {
+                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                            .await?
+                    };
+
+                    if from > to {
+                        return Err(eyre::Error::msg(
+                            "starting point can't be greater than ending point",
+                        ));
+                    }
+
+                    let mut block = from;
+
+                    while block <= to {
+                        Box::pin(async {
+                            Self::Cache(CacheSubcommand::Block(BlockOptions {
+                                block: Some(block),
+                                opts: opts.clone(),
+                            }))
+                            .run()
+                            .await
+                        })
+                        .await?;
+
+                        block += 1;
+
+                        // We only want to update the `to` if we're in endless mode
+                        while endless && block > to {
+                            tokio::time::sleep(Duration::from_secs(12)).await;
+                            to = fetch_latest_block_number(
+                                opts.rpc_url.clone(),
+                                only_eth_proofs_blocks,
+                            )
+                            .await?;
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                // Case --from is not set:
+                // * --to cannot be set (constraint by clap).
+                // * If --endless is set, we keep checking for new blocks.
+                if endless {
+                    loop {
+                        let latest_block_number =
+                            fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                                .await?;
+
+                        let start = Instant::now();
+
+                        Box::pin(async {
+                            Self::Cache(CacheSubcommand::Block(BlockOptions {
+                                block: Some(latest_block_number),
+                                opts: opts.clone(),
+                            }))
+                            .run()
+                            .await
+                        })
+                        .await?;
+
+                        let elapsed = start.elapsed();
+
+                        // Sleep until the next block time (12 seconds)
+                        if elapsed < Duration::from_secs(12) {
+                            tokio::time::sleep(Duration::from_secs(12) - elapsed).await;
+                        }
+                    }
                 }
             }
             #[cfg(not(feature = "l2"))]
@@ -815,7 +873,6 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
         eth_client,
         network,
         BlockIdentifier::Number(tx.block_number.as_u64()),
-        false,
     )
     .await?;
 
@@ -841,13 +898,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    let cache = get_blockdata(
-        eth_client,
-        network.clone(),
-        or_latest(block)?,
-        block_opts.only_eth_proofs_blocks,
-    )
-    .await?;
+    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
 
     // Always write the cache after fetching from RPC.
     // It will be deleted later if not needed.
@@ -951,26 +1002,6 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
         Some(n) => BlockIdentifier::Number(n),
         None => BlockIdentifier::Tag(BlockTag::Latest),
     })
-}
-
-#[cfg(not(feature = "l2"))]
-async fn resolve_blocks(
-    mut blocks: Vec<u64>,
-    from: Option<u64>,
-    to: Option<u64>,
-    rpc_url: Url,
-) -> eyre::Result<Vec<u64>> {
-    if let Some(start) = from {
-        let end = to.unwrap_or(fetch_latest_block_number(rpc_url).await?);
-
-        for block in start..=end {
-            blocks.push(block);
-        }
-    } else {
-        blocks.sort();
-    }
-
-    Ok(blocks)
 }
 
 fn print_transition(update: AccountUpdate) {
@@ -1340,10 +1371,49 @@ pub async fn produce_custom_l2_block(
 }
 
 #[cfg(not(feature = "l2"))]
-async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
+async fn fetch_latest_block_number(
+    rpc_url: Url,
+    only_eth_proofs_blocks: bool,
+) -> eyre::Result<u64> {
     let eth_client = EthClient::new(rpc_url.as_str())?;
 
-    let latest_block = eth_client.get_block_number().await?;
+    let mut latest_block_number = eth_client.get_block_number().await?.as_u64();
 
-    Ok(latest_block.as_u64())
+    while only_eth_proofs_blocks && latest_block_number % 100 != 0 {
+        let blocks_left_for_next_eth_proofs_block = 100 - (latest_block_number % 100);
+
+        let time_for_next_eth_proofs_block = Duration::from_secs(
+            blocks_left_for_next_eth_proofs_block * 12, // assuming 12s block time
+        );
+
+        info!(
+            "Latest block is {latest_block_number}, waiting for next eth proofs block ({}) in ~{}",
+            latest_block_number + blocks_left_for_next_eth_proofs_block,
+            format_duration(&time_for_next_eth_proofs_block)
+        );
+
+        tokio::time::sleep(time_for_next_eth_proofs_block).await;
+
+        latest_block_number = eth_client.get_block_number().await?.as_u64();
+    }
+
+    Ok(latest_block_number)
+}
+
+fn format_duration(duration: &Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let milliseconds = duration.subsec_millis();
+
+    if hours > 0 {
+        return format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:03}ms");
+    }
+
+    if minutes == 0 {
+        return format!("{seconds:02}s {milliseconds:03}ms");
+    }
+
+    format!("{minutes:02}m {seconds:02}s")
 }

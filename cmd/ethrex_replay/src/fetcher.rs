@@ -25,27 +25,8 @@ pub async fn get_blockdata(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
-    only_eth_proofs_blocks: bool,
 ) -> eyre::Result<Cache> {
-    let mut latest_block_number = eth_client.get_block_number().await?.as_u64();
-
-    while only_eth_proofs_blocks && latest_block_number % 100 != 0 {
-        let blocks_left_for_next_eth_proofs_block = 100 - (latest_block_number % 100);
-
-        let time_for_next_eth_proofs_block = Duration::from_secs(
-            blocks_left_for_next_eth_proofs_block * 12, // assuming 12s block time
-        );
-
-        info!(
-            "Latest block is {latest_block_number}, waiting for next eth proofs block ({}) in ~{}",
-            latest_block_number + blocks_left_for_next_eth_proofs_block,
-            format_duration(time_for_next_eth_proofs_block)
-        );
-
-        tokio::time::sleep(time_for_next_eth_proofs_block).await;
-
-        latest_block_number = eth_client.get_block_number().await?.as_u64();
-    }
+    let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
     let requested_block_number = match block_number {
         BlockIdentifier::Number(some_number) => some_number,
@@ -97,7 +78,7 @@ pub async fn get_blockdata(
 
     debug!(
         "Got block {requested_block_number} in {}",
-        format_duration(block_retrieval_duration)
+        format_duration(&block_retrieval_duration)
     );
 
     debug!("Getting execution witness from RPC for block {requested_block_number}");
@@ -163,7 +144,7 @@ pub async fn get_blockdata(
 
     debug!(
         "Got execution witness for block {requested_block_number} in {}",
-        format_duration(execution_witness_retrieval_duration)
+        format_duration(&execution_witness_retrieval_duration)
     );
 
     Ok(Cache::new(vec![block], witness_rpc, chain_config))
@@ -213,7 +194,7 @@ async fn fetch_rangedata_from_client(
 
     info!(
         "Got blocks {from} to {to} in {}",
-        format_duration(block_retrieval_duration)
+        format_duration(&block_retrieval_duration)
     );
 
     let from_identifier = BlockIdentifier::Number(from);
@@ -237,7 +218,7 @@ async fn fetch_rangedata_from_client(
 
     info!(
         "Got execution witness for blocks {from} to {to} in {}",
-        format_duration(execution_witness_retrieval_duration)
+        format_duration(&execution_witness_retrieval_duration)
     );
 
     let cache = Cache::new(blocks, witness_rpc, chain_config);
@@ -316,11 +297,16 @@ pub async fn get_batchdata(
     Ok(cache)
 }
 
-fn format_duration(duration: Duration) -> String {
+fn format_duration(duration: &Duration) -> String {
     let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
     let milliseconds = duration.subsec_millis();
+
+    if hours > 0 {
+        return format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:03}ms");
+    }
 
     if minutes == 0 {
         return format!("{seconds:02}s {milliseconds:03}ms");
