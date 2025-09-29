@@ -33,14 +33,10 @@ pub fn migrate_block_body(
     ethrex_common::types::BlockBody {
         transactions: body
             .transactions
-            .iter()
-            .map(|tx| migrate_transaction(tx.clone()))
+            .into_iter()
+            .map(migrate_transaction)
             .collect(),
-        ommers: body
-            .ommers
-            .iter()
-            .map(|ommer| migrate_block_header(ommer.clone()))
-            .collect(),
+        ommers: body.ommers.into_iter().map(migrate_block_header).collect(),
         withdrawals: body.withdrawals.map(|withdrawals| {
             withdrawals
                 .iter()

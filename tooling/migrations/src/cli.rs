@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -49,9 +49,9 @@ impl Subcommand {
 }
 
 async fn migrate_libmdbx_to_rocksdb(
-    genesis_path: &PathBuf,
-    old_storage_path: &PathBuf,
-    new_storage_path: &PathBuf,
+    genesis_path: &Path,
+    old_storage_path: &Path,
+    new_storage_path: &Path,
 ) {
     let old_store = ethrex_storage_libmdbx::Store::new(
         old_storage_path,
@@ -64,7 +64,7 @@ async fn migrate_libmdbx_to_rocksdb(
         .expect("Cannot load libmdbx store state");
 
     let new_store = ethrex_storage::Store::new_from_genesis(
-        new_storage_path.as_path(),
+        new_storage_path,
         ethrex_storage::EngineType::RocksDB,
         genesis_path
             .to_str()
@@ -89,8 +89,10 @@ async fn migrate_libmdbx_to_rocksdb(
 
     println!("Migrating from block {last_known_block} to {last_block_number}");
 
-    let mut blockchain_opts = BlockchainOptions::default();
-    blockchain_opts.r#type = BlockchainType::L2;
+    let blockchain_opts = BlockchainOptions {
+        r#type: BlockchainType::L2,
+        ..Default::default()
+    };
     let blockchain = Blockchain::new(new_store.clone(), blockchain_opts);
 
     let block_bodies = old_store
@@ -98,15 +100,13 @@ async fn migrate_libmdbx_to_rocksdb(
         .await
         .expect("Cannot get bodies from libmdbx store");
 
-    let block_headers = (last_known_block + 1..=last_block_number)
-        .into_iter()
-        .map(|i| {
-            old_store
-                .get_block_header(i)
-                .ok()
-                .flatten()
-                .expect("Cannot get block headers from libmdbx store")
-        });
+    let block_headers = (last_known_block + 1..=last_block_number).map(|i| {
+        old_store
+            .get_block_header(i)
+            .ok()
+            .flatten()
+            .expect("Cannot get block headers from libmdbx store")
+    });
 
     let blocks = block_headers.zip(block_bodies);
     for (header, body) in blocks {
@@ -117,7 +117,7 @@ async fn migrate_libmdbx_to_rocksdb(
         blockchain
             .add_block(&Block::new(header, body))
             .await
-            .expect(&format!("Cannot add block {block_number} to rocksdb store"));
+            .unwrap_or_else(|e| panic!("Cannot add block {block_number} to rocksdb store: {e}"));
     }
 
     let last_block = old_store
