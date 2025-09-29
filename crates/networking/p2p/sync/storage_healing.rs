@@ -483,9 +483,11 @@ async fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&store, &node_response, membatch, roots_healed, to_write).await.inspect_err(
-                |err| error!("{err} in commit node while committing {node_response:?}"),
-            )?;
+            commit_node(&store, &node_response, membatch, roots_healed, to_write)
+                .await
+                .inspect_err(|err| {
+                    error!("{err} in commit node while committing {node_response:?}")
+                })?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -657,6 +659,8 @@ async fn perform_needed_deletions(
     node_path: &Nibbles,
     to_write: &mut HashMap<H256, Vec<(Nibbles, Vec<u8>)>>,
 ) -> Result<(), SyncError> {
+    // Delete all the parents of this node.
+    // Nodes should be in the DB only if their children are also in the DB.
     for i in 0..node_path.len() {
         to_write
             .entry(hashed_account)
@@ -719,7 +723,8 @@ async fn commit_node(
         hashed_account,
         &node.node_request.storage_path,
         to_write,
-    ).await
+    )
+    .await
     .unwrap();
 
     to_write.entry(hashed_account).or_default().push((
@@ -760,7 +765,8 @@ async fn commit_node(
             membatch,
             roots_healed,
             to_write,
-        )).await?;
+        ))
+        .await?;
     } else {
         membatch.insert(parent_key, parent_entry);
     }

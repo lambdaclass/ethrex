@@ -363,6 +363,8 @@ async fn perform_needed_deletions(
     node_path: &Nibbles,
     nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
 ) -> Result<(), SyncError> {
+    // Delete all the parents of this node.
+    // Nodes should be in the DB only if their children are also in the DB.
     for i in 0..node_path.len() {
         nodes_to_write.push((node_path.slice(0, i), vec![]));
     }
