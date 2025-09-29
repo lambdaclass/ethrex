@@ -146,8 +146,6 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source", help_heading = "Replay Options")]
     pub cached: bool,
-    #[arg(long, required = false, help_heading = "Replay Options")]
-    pub to_csv: bool,
     #[arg(long, default_value = "on", help_heading = "Replay Options")]
     pub cache_level: CacheLevel,
     #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
@@ -362,7 +360,6 @@ impl EthrexReplayCommand {
                 let opts = EthrexReplayOptions {
                     rpc_url: Url::parse("http://localhost:8545")?,
                     cached: false,
-                    to_csv: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
                     common,
@@ -466,7 +463,6 @@ impl EthrexReplayCommand {
                     common,
                     rpc_url: Url::parse("http://localhost:8545")?,
                     cached: false,
-                    to_csv: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
                     slack_webhook_url: None,

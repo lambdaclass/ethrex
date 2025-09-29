@@ -19,8 +19,6 @@ use tokio::task::{JoinError, JoinHandle};
 pub struct Options {
     #[command(flatten)]
     pub common: CommonOptions,
-    #[arg(long, required = false, help_heading = "Replay Options")]
-    pub to_csv: bool,
     #[arg(long, default_value = "on", help_heading = "Replay Options")]
     pub cache_level: CacheLevel,
     #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
@@ -272,7 +270,6 @@ async fn replay_latest_block(
             },
             rpc_url: rpc_url.clone(),
             cached: false,
-            to_csv: false,
             no_zkvm: opts.no_zkvm,
             cache_level: opts.cache_level.clone(),
             // Setting this will send the message always, we opted to
@@ -300,7 +297,6 @@ async fn replay_latest_block(
                     },
                     rpc_url,
                     cached: false,
-                    to_csv: false,
                     no_zkvm: false,
                     cache_level: opts.cache_level.clone(),
                     // Setting this will send the message always, we opted to
