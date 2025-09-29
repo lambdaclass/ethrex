@@ -181,7 +181,7 @@ impl ExtensionNode {
         }
 
         // write prefix prefix
-        if prefix_encoded.len() == 1 {
+        if prefix_encoded.len() == 1 && prefix_encoded[0] < 0x80 {
             // value is its own encoding
         } else {
             // ASSUMPTION: prefix is never greater than 55 bytes (in particular it's at most 32 bytes)

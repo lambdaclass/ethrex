@@ -158,7 +158,7 @@ impl LeafNode {
         }
 
         // write partial prefix
-        if partial_encoded.len() == 1 {
+        if partial_encoded.len() == 1 && partial_encoded[0] < 0x80 {
             // value is its own encoding
         } else {
             // ASSUMPTION: partial is never greater than 55 bytes (in particular it's at most 32 bytes)
@@ -168,6 +168,7 @@ impl LeafNode {
         buf.write(&partial_encoded);
 
         // write value prefix
+        // TODO: not possible to be 1 byte
         if self.value.len() == 1 && self.value[0] < 0x80 {
             // value is its own encoding
         } else if self.value.len() < 56 {
