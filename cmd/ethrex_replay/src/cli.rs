@@ -186,7 +186,6 @@ pub struct EthrexReplayOptions {
     // updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
     // Do no remove it under any circumstances, unless you are refactoring how
     // we do benchmarks in CI.
-    #[cfg(feature = "ci")]
     #[arg(
         long,
         help = "Generate a benchmark file named `bench_latest.json` with the latest execution rate in Mgas/s",
@@ -432,7 +431,6 @@ impl EthrexReplayCommand {
                     common,
                     slack_webhook_url: None,
                     verbose: false,
-                    #[cfg(feature = "ci")]
                     bench: false,
                 };
 
@@ -795,7 +793,6 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     // CI for updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
     // Do no remove it under any circumstances, unless you are refactoring how
     // we do benchmarks in CI.
-    #[cfg(feature = "ci")]
     if opts.bench {
         let benchmark_json = report.to_bench_file()?;
         let file =

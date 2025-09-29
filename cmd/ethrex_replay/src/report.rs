@@ -214,7 +214,6 @@ impl Report {
     ///
     /// Do no remove it under any circumstances, unless you are refactoring how
     /// we do benchmarks in CI.
-    #[cfg(feature = "ci")]
     pub fn to_bench_file(&self) -> eyre::Result<serde_json::Value> {
         let json = serde_json::json!([{
             "name": format!("{}, {}", self.zkvm.as_ref().ok_or_else(|| eyre::Error::msg("--zkvm must be set in CI mode"))?, match self.resource {
