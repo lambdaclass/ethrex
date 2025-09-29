@@ -84,11 +84,11 @@ impl NodeRef {
             NodeRef::Hash(hash) => *hash,
         }
     }
-
-    /// # Warning
-    /// will lead to errors if setting the wrong hash, use only
-    /// when the hash was correctly precalculated
-    pub fn with_hash(self, hash: NodeHash) -> Self {
+    
+    /// # SAFETY: caller must ensure the hash is correct for the node.
+    /// Otherwise, the `Trie` will silently produce incorrect results and may
+    /// fail to query other nodes from the `TrieDB`.
+    pub fn with_hash_unchecked(self, hash: NodeHash) -> Self {
         if let NodeRef::Node(_, node_hash) = &self {
             let _ = node_hash.set(hash);
         }
