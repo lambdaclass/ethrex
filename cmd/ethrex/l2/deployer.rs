@@ -1068,25 +1068,18 @@ async fn make_deposits(
         }
 
         // TODO: there is no need of this if, always use native_l1_address
-        let calldata_values = if native_token_is_eth {
-            vec![
-                // uint256 _amount: 0 means deposit all ETH sent with the tx
-                Value::Uint(U256::zero()),
-                // address _token: address(0) means ETH
-                Value::Address(Address::zero()),
-                // address l2Recipient: the address on L2 to receive the funds
-                Value::Address(signer.address()),
-            ]
-        } else {
-            vec![
-                // uint256 _amount: amount of ERC20 to deposit
-                Value::Uint(value_to_deposit),
-                // address _token: the L1 address of the ERC20 token
-                Value::Address(opts.native_token_l1_address),
-                // address l2Recipient: the address on L2 to receive the funds
-                Value::Address(signer.address()),
-            ]
-        };
+        let calldata_values = vec![
+            // uint256 _amount: amount of ERC20 to deposit
+            Value::Uint(if native_token_is_eth {
+                U256::zero()
+            } else {
+                value_to_deposit
+            }),
+            // address _token: the L1 address of the ERC20 token
+            Value::Address(opts.native_token_l1_address),
+            // address l2Recipient: the address on L2 to receive the funds
+            Value::Address(signer.address()),
+        ];
 
         let native_token_deposit_calldata =
             encode_calldata(NATIVE_TOKEN_DEPOSIT_SIGNATURE, &calldata_values)?;
