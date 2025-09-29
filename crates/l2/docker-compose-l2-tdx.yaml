@@ -2,9 +2,10 @@
 services:
   ethrex_l2:
     ports:
-      - 0.0.0.0:3900:3900
+      - "127.0.0.1:1729:1729"
+      - "0.0.0.0:3900:3900"
     volumes:
-      - ../tee/contracts/automada-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool:/automata-dcap-qpl-tool
+      - ../tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool:/automata-dcap-qpl-tool
     environment:
       - ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=${ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY:-0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d}
     command: >
