@@ -219,7 +219,7 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                             &l2_state.committer_key,
                         )
                         .serialize_compact();
-                    let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
+                    let recovery_id: u8 = Into::<i32>::into(recovery_id).try_into().map_err(|e| {
                         RLPxError::InternalError(format!(
                             "Failed to convert recovery id to u8: {e}. This is a bug."
                         ))

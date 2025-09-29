@@ -102,7 +102,7 @@ impl LocalSigner {
             .sign_ecdsa_recoverable(&msg, &self.private_key)
             .serialize_compact();
 
-        Signature::from_slice(&[signature.as_slice(), &[recovery_id.to_i32() as u8]].concat())
+        Signature::from_slice(&[signature.as_slice(), &[Into::<i32>::into(recovery_id) as u8]].concat())
     }
 }
 
