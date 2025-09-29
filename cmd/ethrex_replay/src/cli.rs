@@ -79,7 +79,7 @@ pub enum EthrexReplayCommand {
         #[arg(help = "Ending block. (Inclusive)")]
         end: u64,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
+        rpc_url: Url,
     },
     #[cfg(not(feature = "l2"))]
     #[command(subcommand, about = "Replay a custom block or batch")]
@@ -388,7 +388,7 @@ impl EthrexReplayCommand {
                     ));
                 }
 
-                let eth_client = EthClient::new(&rpc_url)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
 
                 info!(
                     "Fetching blocks from RPC: {start} to {end} ({} blocks)",
