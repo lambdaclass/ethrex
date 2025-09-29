@@ -389,8 +389,8 @@ async fn perform_needed_deletions(
             let mut last_path = node_path.slice(0, first_path.len() - 1);
             last_path.append(node_path.at(node_path.len() - 1) as u8 + 1);
 
-            let mut extended_next_path = extended_path.slice(0, first_path.len() - 1);
-            extended_next_path.append(extended_path.at(first_path.len() - 1) as u8);
+            let mut extended_next_path = extended_path.slice(0, extended_path.len() - 1);
+            extended_next_path.append(extended_path.at(extended_path.len() - 1) as u8 + 1);
 
             // Remove all nodes from [node_path.., 0] to [node_path.., node.prefix]
             store.delete_range(first_path, extended_path).await?;
