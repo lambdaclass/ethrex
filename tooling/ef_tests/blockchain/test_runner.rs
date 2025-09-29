@@ -1,7 +1,6 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    deserialize::{PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX, SENDER_NOT_EOA_REGEX},
     network::Network,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
