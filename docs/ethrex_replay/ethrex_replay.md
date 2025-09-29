@@ -45,16 +45,16 @@ Execution of some particular blocks with the `eth_getProof` method won't work wi
 > ⚠️: supported, but flaky.
 > 🔜: to be supported.
 
-| zkVM   | L1 Networks| Public ethrex L2s |
-| ------ | ---------- | ----------------- |
-| RISC0  | ✅         | 🔜                |
-| SP1    | ✅         | 🔜                |
-| OpenVM | ⚠️         | 🔜                |
-| ZisK   | 🔜         | 🔜                |
-| Jolt   | 🔜         | 🔜                |
-| Nexus  | 🔜         | 🔜                |
-| Pico   | 🔜         | 🔜                |
-| Ziren  | 🔜         | 🔜                |
+| zkVM   | Hoodi      | Sepolia   | Mainnet    | Public ethrex L2s |
+| ------ | ---------- | --------- | ---------- | ----------------- |
+| RISC0  | ✅         | ✅         | ✅         | 🔜                |
+| SP1    | ✅         | ✅         | ✅         | 🔜                |
+| OpenVM | ⚠️         | 🔜         | 🔜         | 🔜                |
+| ZisK   | 🔜         | 🔜         | ⚠️         | 🔜                |
+| Jolt   | 🔜         | 🔜         | 🔜         | 🔜                |
+| Nexus  | 🔜         | 🔜         | 🔜         | 🔜                |
+| Pico   | 🔜         | 🔜         | 🔜         | 🔜                |
+| Ziren  | 🔜         | 🔜         | 🔜         | 🔜                |
 
 ## Getting Started
 
