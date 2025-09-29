@@ -117,7 +117,11 @@ impl BuildPayloadArgs {
 
 /// Creates a new payload based on the payload arguments
 // Basic payload block building, can and should be improved
-pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block, ChainError> {
+pub fn create_payload(
+    args: &BuildPayloadArgs,
+    storage: &Store,
+    extra_data: Bytes,
+) -> Result<Block, ChainError> {
     let parent_block = storage
         .get_block_header_by_hash(args.parent)?
         .ok_or_else(|| ChainError::ParentNotFound)?;
@@ -141,8 +145,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         gas_limit,
         gas_used: 0,
         timestamp: args.timestamp,
-        // TODO: should use builder config's extra_data
-        extra_data: Bytes::new(),
+        extra_data,
         prev_randao: args.random,
         nonce: 0,
         base_fee_per_gas: calculate_base_fee_per_gas(
@@ -386,9 +389,10 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context = PayloadBuildContext::new(payload, &self.storage, self.r#type.clone())?;
+        let mut context =
+            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
 
-        if let BlockchainType::L1 = self.r#type {
+        if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
         self.apply_withdrawals(&mut context)?;
