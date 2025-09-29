@@ -35,7 +35,6 @@ futures.workspace = true
 cfg-if.workspace = true
 rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
-itertools = "0.14.0"
 
 tokio-stream = "0.1.17"
 sha3 = "0.10.8"
