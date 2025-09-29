@@ -1312,12 +1312,39 @@ impl Store {
             .await
     }
 
-    pub async fn delete_subtree(
+    pub async fn delete_subtrees(
         &self,
         root: Nibbles,
-        child: Vec<u8>
+        mut children: Vec<u8>,
     ) -> Result<(), StoreError> {
-        self.engine.delete_subtree(root, child).await
+        children.sort();
+        children.dedup();
+
+        let mut ranges = vec![];
+
+        // Merge consecutive children into ranges
+        for i in children.into_iter() {
+            match ranges.last_mut() {
+                Some((_, to)) if i == *to => {
+                    *to += 1;
+                }
+                _ => ranges.push((i, i + 1)),
+            }
+        }
+
+        for (from, to) in ranges {
+            let from = root.append_new(from);
+            let to = root.append_new(to);
+            println!("deleting subtree {from:?} - {to:?}");
+            self.engine.delete_range(from, to).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Removes entries in the range [from, to)
+    pub async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
+        self.engine.delete_range(from, to).await
     }
 
     pub async fn write_account_code_batch(

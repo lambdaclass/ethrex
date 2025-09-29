@@ -1494,38 +1494,18 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    async fn delete_subtree(&self, root: Nibbles, child: Vec<u8>) -> Result<(), StoreError> {
+    async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let mut child = child.clone();
-            child.sort();
-            let first = child.first().unwrap();
-
             let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
                 StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
             })?;
 
-            let mut ranges = vec![(*first, first + 1)];
-
-            for i in child.into_iter().skip(1) {
-                if let Some((_, to)) = ranges.last_mut() {
-                    if *to == i {
-                        *to += 1;
-                    } else {
-                        ranges.push((i, i + 1));
-                    }
-                }
-            }
-
-            for (from, to) in ranges {
-                let from = root.append_new(from);
-                let to = root.append_new(to);
-                println!("deleting subtree {from:?} - {to:?}");
-                db.delete_range_cf(&cf, from, to).map_err(|e| {
-                    StoreError::Custom(format!("RocksDB range delete error: {}", e))
-                })?;
-            }
-            Ok(())
+            let from = from.as_ref().to_vec();
+            let to = to.as_ref().to_vec();
+            println!("deleting subtree {from:?} - {to:?}");
+            db.delete_range_cf(&cf, from, to)
+                .map_err(|e| StoreError::Custom(format!("RocksDB range delete error: {}", e)))
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
