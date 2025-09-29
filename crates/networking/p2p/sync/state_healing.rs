@@ -392,6 +392,13 @@ async fn perform_needed_deletions(
             let mut extended_next_path = extended_path.slice(0, extended_path.len() - 1);
             extended_next_path.append(extended_path.at(extended_path.len() - 1) as u8 + 1);
 
+            info!(
+                ?first_path,
+                ?extended_path,
+                ?extended_next_path,
+                ?last_path,
+                "Deleting extension node siblings"
+            );
             // Remove all nodes from [node_path.., 0] to [node_path.., node.prefix]
             store.delete_range(first_path, extended_path).await?;
             // Remove all nodes from [node_path.., node.prefix++] to [node_path++]
