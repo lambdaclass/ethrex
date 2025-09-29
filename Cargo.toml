@@ -33,7 +33,7 @@ members = [
   "crates/common/config",
   "tooling/reorgs",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison"]
+exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
