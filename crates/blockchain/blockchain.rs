@@ -48,6 +48,7 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
+const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -67,12 +68,28 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
-    /// Whether performance logs should be emitted
-    pub perf_logs_enabled: bool,
-    pub r#type: BlockchainType,
+    pub options: BlockchainOptions,
     /// Mapping from a payload id to either a complete payload or a payload build task
     /// We need to keep completed payloads around in case consensus requests them twice
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockchainOptions {
+    pub max_mempool_size: usize,
+    /// Whether performance logs should be emitted
+    pub perf_logs_enabled: bool,
+    pub r#type: BlockchainType,
+}
+
+impl Default for BlockchainOptions {
+    fn default() -> Self {
+        Self {
+            max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
+            perf_logs_enabled: false,
+            r#type: BlockchainType::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -94,25 +111,23 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_type: BlockchainType, perf_logs_enabled: bool) -> Self {
+    pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
         Self {
             storage: store,
-            mempool: Mempool::new(),
+            mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
-            r#type: blockchain_type,
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            perf_logs_enabled,
+            options: blockchain_opts,
         }
     }
 
     pub fn default_with_store(store: Store) -> Self {
         Self {
             storage: store,
-            mempool: Mempool::new(),
+            mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
-            r#type: BlockchainType::default(),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            perf_logs_enabled: false,
+            options: BlockchainOptions::default(),
         }
     }
 
@@ -204,7 +219,7 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
-            let mut vm = match self.r#type {
+            let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
                 BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
             };
@@ -422,7 +437,7 @@ impl Blockchain {
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
 
-        if self.perf_logs_enabled {
+        if self.options.perf_logs_enabled {
             Self::print_add_block_logs(block, since, executed, merkleized, stored);
         }
         result
@@ -613,7 +628,7 @@ impl Blockchain {
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
-        if self.perf_logs_enabled {
+        if self.options.perf_logs_enabled {
             info!(
                 "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
                 blocks_len,
@@ -883,7 +898,7 @@ impl Blockchain {
     }
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-        let evm = match self.r#type {
+        let evm = match self.options.r#type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
             BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
         };
