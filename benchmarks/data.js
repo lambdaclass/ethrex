@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759174141136,
+  "lastUpdate": 1759177152648,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17365,6 +17365,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89140969750,
             "range": "± 215663494",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5c14350ac25b516ee90d5d81c3964e96bfd809d5",
+          "message": "chore(l1): print error on sync error (#4690)\n\n**Motivation**\n\nThe error log for failing to sync was a warning, it should be an error.\n\n**Description**\n\n- Changed warn to error in `start_sync`\n- Added a comment with the link to issues: #2767",
+          "timestamp": "2025-09-29T19:26:44Z",
+          "tree_id": "3ccc45e8042d1c35398fe006be4cf4422252ab00",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5c14350ac25b516ee90d5d81c3964e96bfd809d5"
+        },
+        "date": 1759177131805,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89456567316,
+            "range": "± 788060145",
             "unit": "ns/iter"
           }
         ]
