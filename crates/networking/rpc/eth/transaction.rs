@@ -12,9 +12,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
-    types::{
-        AccessListEntry, BlockHash, BlockHeader, BlockNumber, Fork, GenericTransaction, TxKind,
-    },
+    types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
 use ethrex_rlp::encode::RLPEncode;
@@ -108,7 +106,6 @@ impl RpcHandler for CallRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let chain_config = context.storage.get_chain_config()?;
         // Run transaction
         let result = simulate_tx(
             &self.transaction,
@@ -351,7 +348,6 @@ impl RpcHandler for CreateAccessListRequest {
 
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
         let mut vm = context.blockchain.new_evm(vm_db)?;
-        let chain_config = context.storage.get_chain_config()?;
 
         // Run transaction and obtain access list
         let (gas_used, access_list, error) = vm.create_access_list(&self.transaction, &header)?;
@@ -460,8 +456,6 @@ impl RpcHandler for EstimateGasRequest {
                 cloned_transaction
             }
         };
-
-        let chain_config = storage.get_chain_config()?;
 
         // If the transaction is a plain value transfer, short circuit estimation.
         if let TxKind::Call(address) = transaction.to {
