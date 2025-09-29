@@ -160,6 +160,7 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     }
 }
 
+/// Returns a detailed client version string with git info.
 pub fn get_client_version() -> String {
     format!(
         "{}/v{}-{}-{}/{}/rustc-v{}",
@@ -170,6 +171,11 @@ pub fn get_client_version() -> String {
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         env!("VERGEN_RUSTC_SEMVER")
     )
+}
+
+/// Returns a minimal client version string without git info.
+pub fn get_minimal_client_version() -> String {
+    format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
 }
 
 pub fn display_chain_initialization(genesis: &Genesis) {
