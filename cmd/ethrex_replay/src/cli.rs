@@ -181,6 +181,20 @@ pub struct EthrexReplayOptions {
         required = false
     )]
     pub verbose: bool,
+    // CAUTION
+    // This flag is used to create a benchmark file that is used by our CI for
+    // updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
+    // Do no remove it under any circumstances, unless you are refactoring how
+    // we do benchmarks in CI.
+    #[cfg(feature = "ci")]
+    #[arg(
+        long,
+        help = "Generate a benchmark file named `bench_latest.json` with the latest execution rate in Mgas/s",
+        help_heading = "CI Options",
+        requires = "zkvm",
+        default_value_t = false
+    )]
+    pub bench: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -418,6 +432,8 @@ impl EthrexReplayCommand {
                     common,
                     slack_webhook_url: None,
                     verbose: false,
+                    #[cfg(feature = "ci")]
+                    bench: false,
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -722,15 +738,17 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
+    let backend = backend(&opts.common.zkvm)?;
+
     let (execution_result, proving_result) = if opts.no_zkvm {
         (replay_no_zkvm(cache.clone(), &opts).await, None)
     } else {
         // Always execute
-        let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
+        let execution_result = exec(backend, cache.clone()).await;
 
         let proving_result = if opts.common.action == Action::Prove {
             // Only prove if requested
-            Some(prove(backend(&opts.common.zkvm)?, cache.clone()).await)
+            Some(prove(backend, cache.clone()).await)
         } else {
             None
         };
@@ -739,7 +757,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     };
 
     let report = Report::new_for(
-        opts.common.zkvm,
+        opts.common.zkvm.clone(),
         opts.common.resource,
         opts.common.action,
         block,
@@ -762,12 +780,26 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         CacheLevel::On => {}
         // Only save the cache if the block run failed
         CacheLevel::Failed => {
-            if report.execution_result.is_ok() || report.proving_result.is_some_and(|r| r.is_ok()) {
+            if report.execution_result.is_ok()
+                || report.proving_result.as_ref().is_some_and(|r| r.is_ok())
+            {
                 cache.delete()?;
             }
         }
         // Don't keep the cache
         CacheLevel::Off => cache.delete()?,
+    }
+
+    // CAUTION
+    // This piece of code is used to create a benchmark file that is used by our
+    // CI for updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
+    // Do no remove it under any circumstances, unless you are refactoring how
+    // we do benchmarks in CI.
+    #[cfg(feature = "ci")]
+    if opts.bench {
+        let benchmark_json = report.to_bench_file()?;
+        let file = File::create("bench_latest.json").expect("failed to create bench_latest.json");
+        serde_json::to_writer(file, &benchmark_json).expect("failed to write to bench_latest.json");
     }
 
     Ok(())

@@ -204,6 +204,28 @@ impl Report {
             }
         }
     }
+
+    /// Convert the report to a benchmark file in JSON format.
+    ///
+    /// # CAUTION
+    ///
+    /// This functions is used to create a benchmark file that is used by our CI
+    /// for updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
+    ///
+    /// Do no remove it under any circumstances, unless you are refactoring how
+    /// we do benchmarks in CI.
+    pub fn to_bench_file(&self) -> eyre::Result<serde_json::Value> {
+        let json = serde_json::json!([{
+            "name": format!("{}, {}", self.zkvm.as_ref().ok_or_else(|| eyre::Error::msg("--zkvm must be set in CI mode"))?, match self.resource {
+                Resource::CPU => cpu_info().unwrap_or_else(|| "CPU".to_string()),
+                Resource::GPU => gpu_info().unwrap_or_else(|| "GPU".to_string()),
+            }),
+            "unit": "Mgas/s",
+            "value": true
+        }]);
+
+        Ok(json)
+    }
 }
 
 impl Display for Report {
