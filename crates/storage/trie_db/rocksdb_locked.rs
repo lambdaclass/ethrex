@@ -1,6 +1,6 @@
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
-use rocksdb::{DBWithThreadMode, MultiThreaded, SnapshotWithThreadMode};
+use ethrex_trie::{Nibbles, NodeHash, TrieDB, error::TrieError};
+use rocksdb::{DBWithThreadMode, MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
 use std::sync::Arc;
 
 use crate::trie_db::layering::apply_prefix;
@@ -8,18 +8,18 @@ use crate::trie_db::layering::apply_prefix;
 /// RocksDB locked implementation for the TrieDB trait, read-only with consistent snapshot.
 pub struct RocksDBLockedTrieDB {
     /// RocksDB database
-    db: &'static Arc<DBWithThreadMode<MultiThreaded>>,
+    db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Column family handle
     cf: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
     /// Read-only snapshot for consistent reads
-    snapshot: SnapshotWithThreadMode<'static, DBWithThreadMode<MultiThreaded>>,
+    snapshot: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
 }
 
 impl RocksDBLockedTrieDB {
     pub fn new(
-        db: Arc<DBWithThreadMode<MultiThreaded>>,
+        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
@@ -43,7 +43,9 @@ impl RocksDBLockedTrieDB {
     }
 
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, node_hash).as_ref().to_vec()
+        apply_prefix(self.address_prefix, node_hash)
+            .as_ref()
+            .to_vec()
     }
 }
 
@@ -52,8 +54,8 @@ impl Drop for RocksDBLockedTrieDB {
         // Restore the leaked database reference
         unsafe {
             drop(Box::from_raw(
-                self.db as *const Arc<DBWithThreadMode<MultiThreaded>>
-                    as *mut Arc<DBWithThreadMode<MultiThreaded>>,
+                self.db as *const Arc<OptimisticTransactionDB<MultiThreaded>>
+                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
             ));
         }
     }

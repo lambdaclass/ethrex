@@ -41,7 +41,6 @@ local-ip-address = "0.6"
 tokio-util.workspace = true
 lazy_static.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
