@@ -1,5 +1,10 @@
 use std::{
-    fs::File, io::Read, path::PathBuf, process::Stdio, sync::atomic::AtomicU16, time::{Duration, Instant, SystemTime},
+    fs::File,
+    io::Read,
+    path::PathBuf,
+    process::Stdio,
+    sync::atomic::AtomicU16,
+    time::{Duration, SystemTime},
 };
 
 use ethrex::{cli::Options, initializers::get_network};
