@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759148342054,
+  "lastUpdate": 1759156225673,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17125,6 +17125,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91846452279,
             "range": "± 283646418",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "48249a15df05ba6af280f19834851f010dc85fee",
+          "message": "feat(l1): add extra data to block header (#4667)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe don't set the `extra_data` field in the block header.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nUse a CLI provided `extra_data` string or a default one.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #4662",
+          "timestamp": "2025-09-29T13:40:45Z",
+          "tree_id": "0b6ccbb114a9cdd2b41d50d4932cf3f572034154",
+          "url": "https://github.com/lambdaclass/ethrex/commit/48249a15df05ba6af280f19834851f010dc85fee"
+        },
+        "date": 1759156205108,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 91760624383,
+            "range": "± 388520468",
             "unit": "ns/iter"
           }
         ]
