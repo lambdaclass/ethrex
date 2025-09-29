@@ -227,6 +227,7 @@ impl BranchNode {
         } else if payload_len < u8::MAX as usize {
             buf.write(&[0xf8, payload_len as u8]);
         } else {
+            // ASSUMPTION: list len will never be >u16::MAX (2 bytes len)
             buf.write(&[
                 0xf9,
                 ((payload_len as u16) >> 8) as u8,
@@ -241,6 +242,10 @@ impl BranchNode {
                     buf.write(&hash.0);
                 }
                 NodeHash::Inline(raw) if raw.1 != 0 => {
+                    // ASSUMPTION: nodes would never be inlined
+                    // WARN: assumption is wrong actually, but the probability of an inlined node
+                    // is pretty small.
+                    // TODO: fix this
                     unreachable!();
                     // buf.push(0x80 + raw.1);
                     // buf.extend_from_slice(&raw.0[..raw.1 as usize]);
