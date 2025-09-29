@@ -1,6 +1,3 @@
-use std::time::{Duration, SystemTime};
-
-use ethrex_common::types::ChainConfig;
 use ethrex_config::networks::Network;
 use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
@@ -9,6 +6,7 @@ use ethrex_rpc::{
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::{OptionExt, WrapErr};
+use std::time::{Duration, SystemTime};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -150,6 +148,7 @@ pub async fn get_blockdata(
     Ok(Cache::new(vec![block], witness_rpc, chain_config))
 }
 
+#[cfg(feature = "l2")]
 async fn fetch_rangedata_from_client(
     eth_client: EthClient,
     chain_config: ChainConfig,
@@ -222,31 +221,6 @@ async fn fetch_rangedata_from_client(
     );
 
     let cache = Cache::new(blocks, witness_rpc, chain_config);
-
-    Ok(cache)
-}
-
-#[cfg(not(feature = "l2"))]
-pub async fn get_rangedata(
-    eth_client: EthClient,
-    network: Network,
-    from: u64,
-    to: u64,
-) -> eyre::Result<Cache> {
-    let chain_config = network.get_genesis()?.config;
-
-    let file_name = get_block_cache_file_name(&network, from, Some(to));
-
-    if let Ok(cache) = Cache::load(&file_name) {
-        info!("Getting block range data from cache");
-        return Ok(cache);
-    }
-
-    info!("Getting block range data from RPC");
-
-    let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to).await?;
-
-    cache.write()?;
 
     Ok(cache)
 }

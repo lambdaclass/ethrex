@@ -43,8 +43,6 @@ use tracing::info;
 #[cfg(feature = "l2")]
 use crate::fetcher::get_batchdata;
 #[cfg(not(feature = "l2"))]
-use crate::fetcher::get_rangedata;
-#[cfg(not(feature = "l2"))]
 use crate::plot_composition::plot;
 use crate::{cache::Cache, report::Report};
 use crate::{fetcher::get_blockdata, helpers::get_referenced_hashes};
@@ -82,13 +80,6 @@ pub enum EthrexReplayCommand {
         end: u64,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
-        #[arg(
-            long,
-            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
-            value_parser = clap::value_parser!(Network),
-            default_value_t = Network::default(),
-        )]
-        network: Network,
     },
     #[cfg(not(feature = "l2"))]
     #[command(subcommand, about = "Replay a custom block or batch")]
@@ -390,7 +381,6 @@ impl EthrexReplayCommand {
                 start,
                 end,
                 rpc_url,
-                network,
             } => {
                 if start >= end {
                     return Err(eyre::Error::msg(
@@ -400,9 +390,20 @@ impl EthrexReplayCommand {
 
                 let eth_client = EthClient::new(&rpc_url)?;
 
-                let cache = get_rangedata(eth_client, network, start, end).await?;
+                let mut blocks = vec![];
+                for block_number in start..=end {
+                    let rpc_block = eth_client
+                        .get_block_by_number(BlockIdentifier::Number(block_number), true)
+                        .await?;
 
-                plot(cache).await?;
+                    let block = rpc_block
+                        .try_into()
+                        .map_err(|e| eyre::eyre!("Failed to convert rpc block to block: {}", e))?;
+
+                    blocks.push(block);
+                }
+
+                plot(&blocks).await?;
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Transaction(TransactionOpts { tx_hash, opts })) => {
