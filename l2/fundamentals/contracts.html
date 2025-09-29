@@ -239,38 +239,142 @@
 </style>
 <h1 id="ethrex-l2-contracts"><a class="header" href="#ethrex-l2-contracts">Ethrex L2 contracts</a></h1>
 <p>There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.</p>
-<h2 id="l1-side"><a class="header" href="#l1-side">L1 side</a></h2>
+<h2 id="l1-contracts"><a class="header" href="#l1-contracts">L1 Contracts</a></h2>
 <h3 id="commonbridge"><a class="header" href="#commonbridge"><code>CommonBridge</code></a></h3>
-<p>Allows L1&lt;-&gt;L2 communication from L1. It both sends messages from L1 to L2 and receives messages from L2.</p>
-<h4 id="deposit-functions"><a class="header" href="#deposit-functions">Deposit Functions</a></h4>
-<h5 id="simple-deposits"><a class="header" href="#simple-deposits">Simple Deposits</a></h5>
+<p>The <code>CommonBridge</code> is an upgradeable smart contract that facilitates cross-chain transfers between L1 and L2.</p>
+<h4 id="state-variables"><a class="header" href="#state-variables"><strong>State Variables</strong></a></h4>
 <ul>
-<li>Send ETH directly to the contract address using a standard transfer</li>
-<li>The contract's <code>receive()</code> function automatically forwards funds to your identical address on L2</li>
-<li>No additional parameters needed</li>
+<li><strong><code>pendingTxHashes</code></strong>: Array storing hashed pending privileged transactions</li>
+<li><strong><code>batchWithdrawalLogsMerkleRoots</code></strong>: Mapping of L2 batch numbers to merkle roots of withdrawal logs</li>
+<li><strong><code>deposits</code></strong>: Tracks how much of each L1 token was deposited for each L2 token (L1 → L2 → amount)</li>
+<li><strong><code>claimedWithdrawalIDs</code></strong>: Tracks which withdrawals have been claimed by message ID</li>
+<li><strong><code>ON_CHAIN_PROPOSER</code></strong>: Address of the contract that can commit and verify batches</li>
+<li><strong><code>L2_BRIDGE_ADDRESS</code></strong>: Constant address (0xffff) representing the L2 bridge</li>
 </ul>
-<h5 id="deposits-with-contract-interaction"><a class="header" href="#deposits-with-contract-interaction">Deposits with Contract Interaction</a></h5>
-<pre><code class="language-solidity">function deposit(DepositValues calldata depositValues) public payable
+<h4 id="core-functionality"><a class="header" href="#core-functionality"><strong>Core Functionality</strong></a></h4>
+<ol>
+<li>
+<p><strong>Deposits (L1 → L2)</strong></p>
+<ul>
+<li><strong><code>deposit()</code></strong>: Allows users to deposit ETH to L2</li>
+<li><strong><code>depositERC20()</code></strong>: Allows users to deposit ERC20 tokens to L2</li>
+<li><strong><code>receive()</code></strong>: Fallback function for ETH deposits, forwarding to the sender's address on the L2</li>
+<li><strong><code>sendToL2()</code></strong>: Sends arbitrary data to L2 via privileged transaction</li>
+</ul>
+<p>Internally the deposit functions will use the <code>SendValues</code> struct defined as:</p>
+<pre><code class="language-solidity">struct SendValues {
+    address to; // Target address on L2
+    uint256 gasLimit; // Maximum gas for L2 execution
+    uint256 value; // The value of the transaction
+    bytes data; // Calldata to execute on the target L2 contract
+}
 </code></pre>
-<p>Parameters:</p>
+<p>This expresivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.</p>
+</li>
+<li>
+<p><strong>Withdrawals (L2 → L1)</strong></p>
 <ul>
-<li><code>to</code>: Target address on L2</li>
-<li><code>recipient</code>: Address that will receive the ETH on L2 (can differ from sender)</li>
-<li><code>gasLimit</code>: Maximum gas for L2 execution</li>
-<li><code>data</code>: Calldata to execute on the target L2 contract</li>
+<li><strong><code>claimWithdrawal()</code></strong>: Withdraw ETH from <code>CommonBridge</code> via Merkle proof</li>
+<li><strong><code>claimWithdrawalERC20()</code></strong>: Withdraw ERC20 tokens from <code>CommonBridge</code> via Merkle proof</li>
+<li><strong><code>publishWithdrawals()</code></strong>: Priviledged function to add merkle root of L2 withdrawal logs to <code>batchWithdrawalLogsMerkleRoots</code> mapping to make them claimable</li>
 </ul>
-<p>This method enables atomic operations like:</p>
+</li>
+<li>
+<p><strong>Transaction Management</strong></p>
 <ul>
-<li>Depositing ETH while simultaneously interacting with L2 contracts</li>
-<li>Funding another user's L2 account</li>
+<li><strong><code>getPendingTransactionHashes()</code></strong>: Returns pending privileged transaction hashes</li>
+<li><strong><code>removePendingTransactionHashes()</code></strong>: Removes processed privileged transactions (only callable by OnChainProposer)</li>
+<li><strong><code>getPendingTransactionsVersionedHash()</code></strong>: Returns a versioned hash of the first <code>number</code> of pending privileged transactions</li>
 </ul>
+</li>
+</ol>
 <h3 id="onchainoperator"><a class="header" href="#onchainoperator"><code>OnChainOperator</code></a></h3>
-<p>Ensures the advancement of the L2. It is used by the operator to commit batches of blocks and verify batch proofs.</p>
-<h3 id="verifier"><a class="header" href="#verifier"><code>Verifier</code></a></h3>
-<p>TODO</p>
-<h2 id="l2-side"><a class="header" href="#l2-side">L2 side</a></h2>
-<h3 id="l1messagesender"><a class="header" href="#l1messagesender"><code>L1MessageSender</code></a></h3>
-<p>TODO</p>
+<p>The <code>OnChainProposer</code> is an upgradeable smart contract that ensures the advancement of the L2. It's used by sequencers to commit batches of L2 blocks and verify their proofs.</p>
+<h4 id="state-variables-1"><a class="header" href="#state-variables-1"><strong>State Variables</strong></a></h4>
+<ul>
+<li><strong><code>batchCommitments</code></strong>: Mapping of batch numbers to submitted <code>BatchCommitmentInfo</code> structs</li>
+<li><strong><code>lastVerifiedBatch</code></strong>: The latest verified batch number (all batches ≤ this are considered verified)</li>
+<li><strong><code>lastCommittedBatch</code></strong>: The latest committed batch number (all batches ≤ this are considered committed)</li>
+<li><strong><code>authorizedSequencerAddresses</code></strong>: Mapping of authorized sequencer addresses that can commit and verify batches</li>
+</ul>
+<h4 id="core-functionality-1"><a class="header" href="#core-functionality-1"><strong>Core Functionality</strong></a></h4>
+<ol>
+<li>
+<p><strong>Batch Commitment</strong></p>
+<ul>
+<li><strong><code>commitBatch()</code></strong>: Commits a batch of L2 blocks by storing its commitment data and publishing withdrawals</li>
+<li><strong><code>revertBatch()</code></strong>: Removes unverified batches (only callable when paused)</li>
+</ul>
+</li>
+<li>
+<p><strong>Proof Verification</strong></p>
+<ul>
+<li><strong><code>verifyBatch()</code></strong>: Verifies a single batch using RISC0, SP1, or TDX proofs</li>
+<li><strong><code>verifyBatchesAligned()</code></strong>: Verifies multiple batches in sequence using aligned proofs with Merkle verification</li>
+</ul>
+</li>
+<li>
+<p><strong>State Validation</strong></p>
+<ul>
+<li><strong><code>_verifyPublicData()</code></strong>: Internal function used during <code>verifyBatch()</code> or <code>verifyBatchesAligned()</code> that validates public proof inputs match previous data from <code>commitBatch()</code></li>
+</ul>
+</li>
+</ol>
+<h2 id="l2-contracts"><a class="header" href="#l2-contracts">L2 Contracts</a></h2>
+<h3 id="commonbridgel2"><a class="header" href="#commonbridgel2"><code>CommonBridgeL2</code></a></h3>
+<p>The <code>CommonBridgeL2</code> is an L2 smart contract that facilitates cross-chain transfers between L1 and L2.</p>
+<h4 id="state-variables-2"><a class="header" href="#state-variables-2"><strong>State Variables</strong></a></h4>
+<ul>
+<li><strong><code>L1_MESSENGER</code></strong>: Constant address (<code>0x000000000000000000000000000000000000FFFE</code>) representing the L2-to-L1 messenger contract</li>
+<li><strong><code>BURN_ADDRESS</code></strong>: Constant address (<code>0x0000000000000000000000000000000000000000</code>) used to burn ETH during withdrawals</li>
+<li><strong><code>ETH_TOKEN</code></strong>: Constant address (<code>0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE</code>) representing ETH as a token</li>
+</ul>
+<h4 id="core-functionality-2"><a class="header" href="#core-functionality-2"><strong>Core Functionality</strong></a></h4>
+<ol>
+<li>
+<p><strong>ETH Operations</strong></p>
+<ul>
+<li><strong><code>withdraw()</code></strong>: Initiates ETH withdrawal to L1 by burning ETH on L2 and sending a message to L1</li>
+<li><strong><code>mintETH()</code></strong>: Transfers ETH to a recipient (called by privileged L1 bridge transactions). If it fails a withdrawal is queued.</li>
+</ul>
+</li>
+<li>
+<p><strong>ERC20 Token Operations</strong></p>
+<ul>
+<li><strong><code>mintERC20()</code></strong>: Attempts to mint ERC20 tokens on L2 (only callable by the bridge itself via privileged transactions). If it fails a withdrawal is queued.</li>
+<li><strong><code>tryMintERC20()</code></strong>: Internal function that validates token L1 address and performs a cross-chain mint</li>
+<li><strong><code>withdrawERC20()</code></strong>: Initiates ERC20 token withdrawal to L1 by burning tokens on L2 and sending a message to L1</li>
+</ul>
+</li>
+<li>
+<p><strong>Cross-Chain Messaging</strong></p>
+<ul>
+<li><strong><code>_withdraw()</code></strong>: Private function that sends withdrawal messages to L1 via the L2-to-L1 messenger</li>
+<li>Uses keccak256 hashing to encode withdrawal data for L1 processing</li>
+</ul>
+</li>
+<li>
+<p><strong>Access Control</strong></p>
+<ul>
+<li><strong><code>onlySelf</code></strong>: Modifier ensuring only the bridge contract itself can call privileged functions</li>
+<li>Validates that privileged operations (like minting) are only performed by the bridge</li>
+</ul>
+</li>
+</ol>
+<h3 id="l2tol1messenger"><a class="header" href="#l2tol1messenger"><code>L2ToL1Messenger</code></a></h3>
+<p>The <code>L2ToL1Messenger</code> is a simple L2 smart contract that enables communication from L2 to L1 by emitting the data as <code>L1Message</code> events for sequencers to pick up.</p>
+<h4 id="state-variables-3"><a class="header" href="#state-variables-3"><strong>State Variables</strong></a></h4>
+<ul>
+<li><strong><code>lastMessageId</code></strong>: Counter that tracks the ID of the last emitted message (incremented before each message is sent)</li>
+</ul>
+<h4 id="core-functionality-3"><a class="header" href="#core-functionality-3"><strong>Core Functionality</strong></a></h4>
+<ol>
+<li><strong>Message Sending</strong>
+<ul>
+<li><strong><code>sendMessageToL1()</code></strong>: Sends a message to L1 by emitting an <code>L1Message</code> event with the sender, data, and <code>lastMessageId</code></li>
+</ul>
+</li>
+</ol>
 <h2 id="upgrade-the-contracts"><a class="header" href="#upgrade-the-contracts">Upgrade the contracts</a></h2>
 <p>To upgrade a contract, you have to create the new contract and, as the original one, inherit from OpenZeppelin's <code>UUPSUpgradeable</code>. Make sure to implement the <code>_authorizeUpgrade</code> function and follow the <a href="https://docs.openzeppelin.com/upgrades-plugins/writing-upgradeable">proxy pattern restrictions</a>.</p>
 <p>Once you have the new contract, you need to do the following three steps:</p>
