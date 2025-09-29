@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759156453412,
+  "lastUpdate": 1759156674754,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17185,6 +17185,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89290479713,
             "range": "± 626272099",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "040b8a584c03c307e007246a0b1adc41a2992fb5",
+          "message": "fix(levm): check first 18 address bytes in execute_precompile (#4664)\n\nThis PR fixes a check in `execute_precompile`. It isn't triggerable due\nto it being redundant, but it's still a bug.",
+          "timestamp": "2025-09-29T13:47:08Z",
+          "tree_id": "a3bcf8a7e10153b3fb8b709583eab5cfce6718e5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/040b8a584c03c307e007246a0b1adc41a2992fb5"
+        },
+        "date": 1759156653691,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 88436037784,
+            "range": "± 226115606",
             "unit": "ns/iter"
           }
         ]
