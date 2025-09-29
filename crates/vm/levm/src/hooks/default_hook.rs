@@ -248,6 +248,10 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     let calldata = vm.current_call_frame.calldata.clone();
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
+    if vm.current_call_frame.gas_limit < intrinsic_gas {
+        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    }
+
     // calldata_cost = tokens_in_calldata * 4
     let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
 
@@ -261,9 +265,8 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
 
-    let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-    if vm.current_call_frame.gas_limit < min_gas_limit {
-        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    if vm.current_call_frame.gas_limit < floor_cost_by_tokens {
+        return Err(TxValidationError::IntrinsicGasBelowFloorGasCost.into());
     }
 
     Ok(())
