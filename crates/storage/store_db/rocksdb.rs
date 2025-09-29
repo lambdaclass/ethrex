@@ -480,6 +480,10 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn catch_up_with_primary(&self) -> Result<(), StoreError> {
+        self.catch_up_with_primary()
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         if !self.is_primary {
             return Err(StoreError::Custom(

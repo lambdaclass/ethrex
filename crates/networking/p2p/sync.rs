@@ -127,6 +127,7 @@ impl Syncer {
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory, true).expect("Failed to start Store Engine"),
+                Store::new("", EngineType::InMemory, false).expect("Failed to start Store Engine"),
             )),
             datadir: ".".into(),
         }

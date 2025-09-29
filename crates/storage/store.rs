@@ -38,6 +38,7 @@ pub struct Store {
     pub engine: Arc<dyn StoreEngine>,
     pub chain_config: Arc<RwLock<ChainConfig>>,
     pub latest_block_header: Arc<RwLock<BlockHeader>>,
+    pub is_primary: bool,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -74,6 +75,17 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    pub async fn catch_up_with_primary(&self) -> Result<(), StoreError> {
+        if !self.is_primary {
+            return self.engine.catch_up_with_primary().await;
+        }
+        Ok(())
+    }
+
+    pub async fn run_compaction(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
     }
@@ -97,17 +109,20 @@ impl Store {
                 engine: Arc::new(RocksDBStore::new(path, is_primary)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                is_primary,
             },
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                is_primary,
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+                is_primary,
             },
         };
 
@@ -126,7 +141,7 @@ impl Store {
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let primary = Self::new(store_path, engine_type, true)?;
         let secondary =
-            Self::new(store_path, engine_type, true).unwrap_or_else(|_| primary.clone());
+            Self::new(store_path, engine_type, false).unwrap_or_else(|_| primary.clone());
         primary.add_initial_state(genesis).await?;
         Ok((primary, secondary))
     }

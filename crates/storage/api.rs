@@ -13,6 +13,15 @@ use ethrex_trie::{Nibbles, NodeHash, Trie};
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+    // Implement only if the engine supports secondary instances
+    async fn catch_up_with_primary(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+    // Implement only if the engine supports compaction
+    async fn run_compaction(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     /// Store changes in a batch from a vec of blocks
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 

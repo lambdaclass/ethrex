@@ -747,7 +747,7 @@ mod tests {
         let (config, header) = build_basic_config_and_header(false, true);
 
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store.clone(), store);
 
         let tx = EIP1559Transaction {
             nonce: 3,
@@ -774,7 +774,7 @@ mod tests {
         let (config, header) = build_basic_config_and_header(false, false);
 
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store.clone(), store);
 
         let tx = EIP1559Transaction {
             nonce: 3,
@@ -801,7 +801,7 @@ mod tests {
         let (config, header) = build_basic_config_and_header(false, false);
 
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store.clone(), store);
 
         let tx = EIP1559Transaction {
             nonce: 3,
@@ -827,7 +827,7 @@ mod tests {
     async fn transaction_with_gas_limit_lower_than_intrinsic_gas_should_fail() {
         let (config, header) = build_basic_config_and_header(false, false);
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store.clone(), store);
         let intrinsic_gas_cost = TX_GAS_COST;
 
         let tx = EIP1559Transaction {
@@ -854,7 +854,7 @@ mod tests {
     async fn transaction_with_blob_base_fee_below_min_should_fail() {
         let (config, header) = build_basic_config_and_header(false, false);
         let store = setup_storage(config, header).await.expect("Storage setup");
-        let blockchain = Blockchain::default_with_store(store);
+        let blockchain = Blockchain::default_with_store(store.clone(), store);
 
         let tx = EIP4844Transaction {
             nonce: 3,

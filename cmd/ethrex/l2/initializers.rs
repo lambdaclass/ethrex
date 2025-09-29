@@ -167,10 +167,10 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis).await;
+    let (store, secondary) = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
+    let blockchain = init_blockchain(store.clone(), secondary, BlockchainType::L2, true);
 
     let signer = get_signer(&datadir);
 

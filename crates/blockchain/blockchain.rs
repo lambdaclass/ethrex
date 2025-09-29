@@ -62,6 +62,7 @@ pub enum BlockchainType {
 #[derive(Debug)]
 pub struct Blockchain {
     storage: Store,
+    secondary: Store,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after
@@ -94,9 +95,15 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_type: BlockchainType, perf_logs_enabled: bool) -> Self {
+    pub fn new(
+        store: Store,
+        secondary: Store,
+        blockchain_type: BlockchainType,
+        perf_logs_enabled: bool,
+    ) -> Self {
         Self {
             storage: store,
+            secondary,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
@@ -105,9 +112,10 @@ impl Blockchain {
         }
     }
 
-    pub fn default_with_store(store: Store) -> Self {
+    pub fn default_with_store(store: Store, secondary: Store) -> Self {
         Self {
             storage: store,
+            secondary,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
@@ -122,18 +130,19 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+        let Ok(parent_header) = find_parent_header(&block.header, &self.secondary) else {
             // If the parent is not present, we store it as pending.
             self.storage.add_pending_block(block.clone()).await?;
+            self.secondary.catch_up_with_primary().await?;
             return Err(ChainError::ParentNotFound);
         };
 
-        let chain_config = self.storage.get_chain_config()?;
+        let chain_config = self.secondary.get_chain_config()?;
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.secondary.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -180,7 +189,7 @@ impl Blockchain {
 
         // Get state at previous block
         let trie = self
-            .storage
+            .secondary
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
@@ -202,7 +211,7 @@ impl Blockchain {
         for block in blocks {
             let parent_hash = block.header.parent_hash;
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+                Box::new(StoreVmDatabase::new(self.secondary.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
@@ -261,7 +270,8 @@ impl Blockchain {
                 })?;
                 // Get storage trie at before updates
                 if !acc_keys.is_empty() {
-                    if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
+                    if let Ok(Some(storage_trie)) =
+                        self.secondary.storage_trie(parent_hash, *account)
                     {
                         let (storage_trie_witness, storage_trie) =
                             TrieLogger::open_trie(storage_trie);
@@ -289,7 +299,7 @@ impl Blockchain {
                 .iter()
             {
                 let code = self
-                    .storage
+                    .secondary
                     .get_account_code(*code_hash)
                     .map_err(|_e| {
                         ChainError::WitnessGeneration("Failed to get account code".to_string())
@@ -309,6 +319,7 @@ impl Blockchain {
                     used_storage_tries,
                 )
                 .await?;
+            self.secondary.catch_up_with_primary().await?;
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
@@ -353,13 +364,16 @@ impl Blockchain {
         }
         let mut block_headers_bytes = Vec::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
-            let header = self.storage.get_block_header(block_number)?.ok_or(
+            let header = self.secondary.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration("Failed to get block header".to_string()),
             )?;
             block_headers_bytes.push(header.encode_to_vec());
         }
 
-        let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
+        let chain_config = self
+            .secondary
+            .get_chain_config()
+            .map_err(ChainError::from)?;
 
         let nodes = used_trie_nodes.into_iter().collect::<Vec<_>>();
 
@@ -400,7 +414,6 @@ impl Blockchain {
         };
 
         self.storage
-            .clone()
             .store_block_updates(update_batch)
             .await
             .map_err(|e| e.into())
@@ -420,6 +433,7 @@ impl Blockchain {
 
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
+        self.secondary.catch_up_with_primary().await?;
         let stored = Instant::now();
 
         if self.perf_logs_enabled {
@@ -495,7 +509,7 @@ impl Blockchain {
         };
 
         let chain_config: ChainConfig = self
-            .storage
+            .secondary
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
 
@@ -503,7 +517,7 @@ impl Blockchain {
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
+            self.secondary.clone(),
             first_block_header.parent_hash,
             block_hash_cache,
         );
@@ -522,7 +536,7 @@ impl Blockchain {
             }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                find_parent_header(&block.header, &self.storage).map_err(|err| {
+                find_parent_header(&block.header, &self.secondary).map_err(|err| {
                     (
                         err,
                         Some(BatchBlockProcessingFailure {
@@ -595,6 +609,10 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
+            .await
+            .map_err(|e| (e.into(), None))?;
+        self.secondary
+            .catch_up_with_primary()
             .await
             .map_err(|e| (e.into(), None))?;
 
@@ -742,12 +760,12 @@ impl Blockchain {
             return Ok(None);
         }
 
-        let header_no = self.storage.get_latest_block_number().await?;
+        let header_no = self.secondary.get_latest_block_number().await?;
         let header = self
-            .storage
+            .secondary
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
-        let config = self.storage.get_chain_config()?;
+        let config = self.secondary.get_chain_config()?;
 
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
@@ -795,7 +813,7 @@ impl Blockchain {
             }
         };
 
-        let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
+        let maybe_sender_acc_info = self.secondary.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
@@ -892,10 +910,10 @@ impl Blockchain {
 
     /// Get the current fork of the chain, based on the latest block's timestamp
     pub async fn current_fork(&self) -> Result<Fork, StoreError> {
-        let chain_config = self.storage.get_chain_config()?;
-        let latest_block_number = self.storage.get_latest_block_number().await?;
+        let chain_config = self.secondary.get_chain_config()?;
+        let latest_block_number = self.secondary.get_latest_block_number().await?;
         let latest_block = self
-            .storage
+            .secondary
             .get_block_header(latest_block_number)?
             .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
         Ok(chain_config.fork(latest_block.timestamp))

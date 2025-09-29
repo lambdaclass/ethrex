@@ -76,29 +76,39 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
-    let store = open_store(datadir.as_ref());
+pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> (Store, Store) {
+    let (store, secondary) = open_store(datadir.as_ref());
     store
         .add_initial_state(genesis)
         .await
         .expect("Failed to create genesis block");
-    store
+    secondary
+        .catch_up_with_primary()
+        .await
+        .expect("Failed to catch up");
+    (store, secondary)
 }
 
 /// Initializes a pre-existing Store
-pub async fn load_store(datadir: &Path) -> Store {
-    let store = open_store(datadir);
+pub async fn load_store(datadir: &Path) -> (Store, Store) {
+    let (store, secondary) = open_store(datadir);
     store
         .load_initial_state()
         .await
         .expect("Failed to load store");
-    store
+    secondary
+        .catch_up_with_primary()
+        .await
+        .expect("Failed to catch up");
+    (store, secondary)
 }
 
 /// Opens a pre-existing Store or creates a new one
-pub fn open_store(datadir: &Path) -> Store {
+pub fn open_store(datadir: &Path) -> (Store, Store) {
     if datadir.ends_with("memory") {
-        Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
+        let store =
+            Store::new(datadir, EngineType::InMemory, true).expect("Failed to create Store");
+        (store.clone(), store)
     } else {
         cfg_if::cfg_if! {
             if #[cfg(feature = "rocksdb")] {
@@ -110,12 +120,15 @@ pub fn open_store(datadir: &Path) -> Store {
                 panic!("Specify the desired database engine.");
             }
         };
-        Store::new(datadir, engine_type).expect("Failed to create Store")
+        let store = Store::new(datadir, engine_type, true).expect("Failed to create Store");
+        let secondary = Store::new(datadir, engine_type, false).expect("Failed to create Store");
+        (store, secondary)
     }
 }
 
 pub fn init_blockchain(
     store: Store,
+    secondary: Store,
     blockchain_type: BlockchainType,
     perf_logs_enabled: bool,
 ) -> Arc<Blockchain> {
@@ -123,7 +136,7 @@ pub fn init_blockchain(
     info!("Initiating blockchain with revm");
     #[cfg(not(feature = "revm"))]
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
+    Blockchain::new(store, secondary, blockchain_type, perf_logs_enabled).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -383,12 +396,12 @@ pub async fn init_l1(
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
-    let store = init_store(datadir, genesis).await;
+    let (store, secondary) = init_store(datadir, genesis).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
+    let blockchain = init_blockchain(store.clone(), secondary, BlockchainType::L1, true);
 
     let signer = get_signer(datadir);
 

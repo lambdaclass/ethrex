@@ -555,6 +555,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         engine: Arc::new(in_memory_store),
         chain_config: Arc::new(RwLock::new(chain_config)),
         latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+        is_primary: true,
     };
 
     // Add codes to DB
@@ -819,12 +820,17 @@ pub async fn replay_custom_l1_blocks(
     let genesis = network.get_genesis()?;
 
     let mut store = {
-        let store_inner = Store::new("./", EngineType::InMemory)?;
+        let store_inner = Store::new("./", EngineType::InMemory, true)?;
         store_inner.add_initial_state(genesis.clone()).await?;
         store_inner
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L1, false));
+    let blockchain = Arc::new(Blockchain::new(
+        store.clone(),
+        store.clone(),
+        BlockchainType::L1,
+        false,
+    ));
 
     let blocks = produce_l1_blocks(
         blockchain.clone(),
