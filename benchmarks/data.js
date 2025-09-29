@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759156225673,
+  "lastUpdate": 1759156453412,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17155,6 +17155,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91760624383,
             "range": "± 388520468",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "44e1be40f1ba0449aab733dbf9949fc59afb7cea",
+          "message": "feat(l2): add verification key upgrade functions (#4611)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nCurrently when someone wants to upgrade the ethrex version of an L2,\nthey have to perform an UUPS upgrade to the contract in order to upgrade\nthe verification keys.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd a function to upgrade SP1 and RISC0 VKs without the need of a full\nupgrade to the contract\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-09-29T13:44:11Z",
+          "tree_id": "9b0269dc4fa1ce1d2d6083a1f2e06fb67cebc8ab",
+          "url": "https://github.com/lambdaclass/ethrex/commit/44e1be40f1ba0449aab733dbf9949fc59afb7cea"
+        },
+        "date": 1759156399329,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89290479713,
+            "range": "± 626272099",
             "unit": "ns/iter"
           }
         ]
