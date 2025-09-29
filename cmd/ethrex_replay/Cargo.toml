@@ -58,4 +58,3 @@ l2 = [
 profiling = ["ethrex-prover/profiling"]
 ci = []
 jemalloc = ["dep:tikv-jemallocator"]
-revm = ["ethrex-vm/revm"]
