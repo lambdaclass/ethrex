@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759173066383,
+  "lastUpdate": 1759174141136,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17335,6 +17335,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 91251502642,
             "range": "± 512333932",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cad4e82334a8ca4954e3fe01e4962ae50885fda3",
+          "message": "fix(replay): bring back CI benches (#4683)\n\n**Motivation**\n\nhttps://github.com/lambdaclass/ethrex/pull/4641 broke the CI by removing\nthe `bench` module, which was used by the CI to update\nhttps://docs.ethrex.xyz/benchmarks/.\n\nThis module was removed in favor of the new `Report`, but I wasn't aware\nthat its functionality was used for that.\n\n**Description**\n\n- Add logic to convert the `Report` into bench file content.\n- Re-adds the bench file feature under the feature flag `ci`.\n- Add caution comments to not remove this logic under any circumstances\nunless a refactor is made.\n\n\nCloses #2756\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: Jeremías Salomón 🐃🐄🥚 <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-09-29T18:33:29Z",
+          "tree_id": "d5c9746d33f5ddc4b677bcda61e62788304662f3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cad4e82334a8ca4954e3fe01e4962ae50885fda3"
+        },
+        "date": 1759174119581,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89140969750,
+            "range": "± 215663494",
             "unit": "ns/iter"
           }
         ]
