@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use std::{
     cmp::max,
     fmt::Display,
@@ -7,7 +8,7 @@ use std::{
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
@@ -182,6 +183,19 @@ pub struct EthrexReplayOptions {
         required = false
     )]
     pub verbose: bool,
+    // CAUTION
+    // This flag is used to create a benchmark file that is used by our CI for
+    // updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
+    // Do no remove it under any circumstances, unless you are refactoring how
+    // we do benchmarks in CI.
+    #[arg(
+        long,
+        help = "Generate a benchmark file named `bench_latest.json` with the latest execution rate in Mgas/s",
+        help_heading = "CI Options",
+        requires = "zkvm",
+        default_value_t = false
+    )]
+    pub bench: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -429,6 +443,7 @@ impl EthrexReplayCommand {
                     common,
                     slack_webhook_url: None,
                     verbose: false,
+                    bench: false,
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -753,15 +768,17 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
+    let backend = backend(&opts.common.zkvm)?;
+
     let (execution_result, proving_result) = if opts.no_zkvm {
         (replay_no_zkvm(cache.clone(), &opts).await, None)
     } else {
         // Always execute
-        let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
+        let execution_result = exec(backend, cache.clone()).await;
 
         let proving_result = if opts.common.action == Action::Prove {
             // Only prove if requested
-            Some(prove(backend(&opts.common.zkvm)?, cache.clone()).await)
+            Some(prove(backend, cache.clone()).await)
         } else {
             None
         };
@@ -793,12 +810,27 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         CacheLevel::On => {}
         // Only save the cache if the block run failed
         CacheLevel::Failed => {
-            if report.execution_result.is_ok() || report.proving_result.is_some_and(|r| r.is_ok()) {
+            if report.execution_result.is_ok()
+                || report.proving_result.as_ref().is_some_and(|r| r.is_ok())
+            {
                 cache.delete()?;
             }
         }
         // Don't keep the cache
         CacheLevel::Off => cache.delete()?,
+    }
+
+    // CAUTION
+    // This piece of code is used to create a benchmark file that is used by our
+    // CI for updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
+    // Do no remove it under any circumstances, unless you are refactoring how
+    // we do benchmarks in CI.
+    if opts.bench {
+        let benchmark_json = report.to_bench_file()?;
+        let file =
+            std::fs::File::create("bench_latest.json").expect("failed to create bench_latest.json");
+        serde_json::to_writer(file, &benchmark_json)
+            .map_err(|e| eyre::Error::msg(format!("failed to write to bench_latest.json: {e}")))?;
     }
 
     Ok(())
@@ -928,9 +960,7 @@ pub async fn replay_custom_l1_blocks(
 
     let blockchain = Arc::new(Blockchain::new(
         store.clone(),
-        BlockchainType::L1,
-        false,
-        None,
+        ethrex_blockchain::BlockchainOptions::default(),
     ));
 
     let blocks = produce_l1_blocks(
@@ -1023,7 +1053,7 @@ pub async fn produce_l1_block(
 
     let payload_id = build_payload_args.id()?;
 
-    let payload = create_payload(&build_payload_args, store)?;
+    let payload = create_payload(&build_payload_args, store, Bytes::new())?;
 
     blockchain
         .clone()

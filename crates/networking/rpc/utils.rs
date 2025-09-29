@@ -328,6 +328,7 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
+    use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
     use ethrex_common::{H512, types::DEFAULT_BUILDER_GAS_CEIL};
     use ethrex_p2p::{
@@ -395,6 +396,7 @@ pub mod test_utils {
             "ethrex/test".to_string(),
             None,
             None,
+            String::new(),
         )
         .await
         .unwrap();
@@ -414,6 +416,7 @@ pub mod test_utils {
                 local_p2p_node: example_p2p_node(),
                 local_node_record,
                 client_version: "ethrex/test".to_string(),
+                extra_data: Bytes::new(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,

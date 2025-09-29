@@ -11,7 +11,7 @@ use criterion::{
     measurement::{Measurement, ValueFormatter},
 };
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainOptions, BlockchainType,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
@@ -151,7 +151,7 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
     let id = payload_args.id();
-    let block = create_payload(&payload_args, store).unwrap();
+    let block = create_payload(&payload_args, store, Bytes::new()).unwrap();
     (block, id.unwrap())
 }
 
@@ -236,9 +236,11 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let block_chain = Blockchain::new(
                         store_with_genesis.clone(),
-                        BlockchainType::L1, // TODO: Should we support L2?
-                        false,
-                        None,
+                        BlockchainOptions {
+                            r#type: BlockchainType::L1, // TODO: Should we support L2?
+                            perf_logs_enabled: false,
+                            ..Default::default()
+                        },
                     );
                     fill_mempool(&block_chain, accounts).await;
 

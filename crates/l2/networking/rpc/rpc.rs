@@ -96,6 +96,7 @@ pub async fn start_api(
                 local_p2p_node,
                 local_node_record,
                 client_version,
+                extra_data: Bytes::new(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler,

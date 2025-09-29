@@ -502,7 +502,7 @@ impl ProofCoordinator {
             blob_commitment,
             #[cfg(feature = "l2")]
             blob_proof,
-            fee_vault: self.blockchain.fee_vault,
+            fee_vault: self.blockchain.options.fee_vault,
         })
     }
 

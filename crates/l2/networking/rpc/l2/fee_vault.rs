@@ -16,6 +16,7 @@ impl RpcHandler for GetFeeVaultAddress {
         let fee_vault_address = context
             .l1_ctx
             .blockchain
+            .options
             .fee_vault
             .map(|addr| format!("{:#x}", addr));
         Ok(serde_json::to_value(fee_vault_address).map_err(|e| {

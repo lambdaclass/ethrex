@@ -5,8 +5,8 @@ use crate::{
         read_jwtsecret_file, read_node_config_file,
     },
 };
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::{Address, types::Genesis};
+use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
+use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
@@ -114,17 +114,12 @@ pub fn open_store(datadir: &Path) -> Store {
     }
 }
 
-pub fn init_blockchain(
-    store: Store,
-    blockchain_type: BlockchainType,
-    perf_logs_enabled: bool,
-    fee_vault: Option<Address>,
-) -> Arc<Blockchain> {
+pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     #[cfg(feature = "revm")]
     info!("Initiating blockchain with revm");
     #[cfg(not(feature = "revm"))]
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_type, perf_logs_enabled, fee_vault).into()
+    Blockchain::new(store, blockchain_opts).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -139,6 +134,7 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
+    extra_data: String,
 ) {
     init_datadir(&opts.datadir);
     // Create SyncManager
@@ -165,6 +161,7 @@ pub async fn init_rpc_api(
         get_client_version(),
         log_filter_handler,
         gas_ceil,
+        extra_data,
     );
 
     tracker.spawn(rpc_api);
@@ -389,7 +386,15 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true, None);
+    let blockchain = init_blockchain(
+        store.clone(),
+        BlockchainOptions {
+            max_mempool_size: opts.mempool_max_size,
+            perf_logs_enabled: true,
+            r#type: BlockchainType::L1,
+            ..Default::default()
+        },
+    );
 
     let signer = get_signer(datadir);
 
@@ -420,6 +425,7 @@ pub async fn init_l1(
         log_filter_handler,
         // TODO (#4482): Make this configurable.
         None,
+        opts.extra_data.clone(),
     )
     .await;
 
