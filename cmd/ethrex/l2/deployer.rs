@@ -1012,7 +1012,7 @@ async fn make_deposits(
                 encode_calldata("freeMint()", &[])?.into(),
                 Overrides {
                     nonce: Some(nonce),
-                    gas_limit: Some(100_000u64), // This is for not estimating the gas and use an outdated nonce
+                    gas_limit: Some(1_000_000u64), // This is for not estimating the gas and use an outdated nonce
                     ..Default::default()
                 },
             )
@@ -1043,7 +1043,7 @@ async fn make_deposits(
                 calldata.into(),
                 Overrides {
                     from: Some(signer.address()),
-                    gas_limit: Some(100_000u64),
+                    gas_limit: Some(1_000_000u64),
                     nonce: Some(nonce + 1),
                     ..Default::default()
                 },
@@ -1096,7 +1096,7 @@ async fn make_deposits(
             } else {
                 None
             },
-            gas_limit: Some(100_000u64),
+            gas_limit: Some(1_000_000u64),
             ..Overrides::default()
         };
 
