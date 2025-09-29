@@ -195,7 +195,7 @@ impl ExtensionNode {
             // ASSUMPTION: there are no inline node refs
             unreachable!();
         };
-        buf.write(&[0x20]);
+        buf.write(&[0xa0]);
         buf.write(&child_hash.0);
     }
 
