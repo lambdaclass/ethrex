@@ -272,7 +272,7 @@ pub struct BlockOptions {
         long,
         help = "Only fetch Ethereum proofs blocks (i.e., no L2 blocks).",
         help_heading = "Replay Options",
-        requires = "rpc_url"
+        conflicts_with = "block"
     )]
     pub only_eth_proofs_blocks: bool,
     #[command(flatten)]
@@ -300,9 +300,16 @@ pub struct BlocksOptions {
     to: Option<u64>,
     #[arg(
         long,
+        help = "Run blocks endlessly, starting from the specified block or the latest if not specified.",
+        help_heading = "Replay Options",
+        requires = "from",
+        conflicts_with_all = ["blocks", "to"]
+    )]
+    pub endless: bool,
+    #[arg(
+        long,
         help = "Only fetch Ethereum proofs blocks (i.e., no L2 blocks).",
         help_heading = "Replay Options",
-        requires = "rpc_url",
         conflicts_with = "blocks"
     )]
     pub only_eth_proofs_blocks: bool,
@@ -371,6 +378,7 @@ impl EthrexReplayCommand {
                 blocks,
                 from,
                 to,
+                endless,
                 only_eth_proofs_blocks,
                 opts,
             }) => {
@@ -378,27 +386,53 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
-
-                for (i, block_number) in blocks.iter().enumerate() {
-                    info!(
-                        "{} block {}/{}: {block_number}",
-                        if opts.common.action == Action::Execute {
-                            "Executing"
-                        } else {
-                            "Proving"
-                        },
-                        i + 1,
-                        blocks.len()
-                    );
-
-                    replay_block(BlockOptions {
-                        block: Some(*block_number),
-                        endless: false,
-                        only_eth_proofs_blocks,
-                        opts: opts.clone(),
+                if endless {
+                    // Replay the from
+                    Box::pin(async {
+                        Self::Block(BlockOptions {
+                            block: from,
+                            endless: false,
+                            only_eth_proofs_blocks,
+                            opts: opts.clone(),
+                        })
                     })
-                    .await?;
+                    .await;
+
+                    // Replay endlessly
+                    Box::pin(async {
+                        Self::Block(BlockOptions {
+                            block: None,
+                            endless,
+                            only_eth_proofs_blocks,
+                            opts: opts.clone(),
+                        })
+                    })
+                    .await;
+                } else {
+                    let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
+
+                    for (i, block_number) in blocks.iter().enumerate() {
+                        info!(
+                            "{} block {}/{}: {block_number}",
+                            if opts.common.action == Action::Execute {
+                                "Executing"
+                            } else {
+                                "Proving"
+                            },
+                            i + 1,
+                            blocks.len()
+                        );
+
+                        Box::pin(async {
+                            Self::Block(BlockOptions {
+                                block: Some(*block_number),
+                                endless: false,
+                                only_eth_proofs_blocks,
+                                opts: opts.clone(),
+                            })
+                        })
+                        .await;
+                    }
                 }
             }
             #[cfg(not(feature = "l2"))]
@@ -410,20 +444,26 @@ impl EthrexReplayCommand {
             })) => {
                 let (eth_client, network) = setup(&opts).await?;
 
-                let block_identifier = or_latest(block)?;
+                loop {
+                    let block_identifier = or_latest(block)?;
 
-                get_blockdata(
-                    eth_client,
-                    network.clone(),
-                    block_identifier,
-                    only_eth_proofs_blocks,
-                )
-                .await?;
+                    get_blockdata(
+                        eth_client.clone(),
+                        network.clone(),
+                        block_identifier,
+                        only_eth_proofs_blocks,
+                    )
+                    .await?;
 
-                if let Some(block_number) = block {
-                    info!("Block {block_number} data cached successfully.");
-                } else {
-                    info!("Latest block data cached successfully.");
+                    if let Some(block_number) = block {
+                        info!("Block {block_number} data cached successfully.");
+                    } else {
+                        info!("Latest block data cached successfully.");
+                    }
+
+                    if !endless {
+                        break;
+                    }
                 }
             }
             #[cfg(not(feature = "l2"))]
@@ -431,24 +471,49 @@ impl EthrexReplayCommand {
                 blocks,
                 from,
                 to,
+                endless,
                 only_eth_proofs_blocks,
                 opts,
             })) => {
-                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
+                if endless {
+                    // Cache the from
+                    Box::pin(async {
+                        Self::Cache(CacheSubcommand::Block(BlockOptions {
+                            block: from,
+                            endless: false,
+                            only_eth_proofs_blocks,
+                            opts: opts.clone(),
+                        }))
+                    })
+                    .await;
 
-                let (eth_client, network) = setup(&opts).await?;
+                    // Cache endlessly
+                    Box::pin(async {
+                        Self::Cache(CacheSubcommand::Block(BlockOptions {
+                            block: None,
+                            endless,
+                            only_eth_proofs_blocks,
+                            opts: opts.clone(),
+                        }))
+                    })
+                    .await;
+                } else {
+                    let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
 
-                for block_number in blocks {
-                    get_blockdata(
-                        eth_client.clone(),
-                        network.clone(),
-                        BlockIdentifier::Number(block_number),
-                        only_eth_proofs_blocks,
-                    )
-                    .await?;
+                    for block_number in blocks {
+                        Box::pin(async {
+                            Self::Cache(CacheSubcommand::Block(BlockOptions {
+                                block: Some(block_number),
+                                endless: false,
+                                only_eth_proofs_blocks,
+                                opts: opts.clone(),
+                            }))
+                        })
+                        .await;
+                    }
+
+                    info!("Blocks data cached successfully.");
                 }
-
-                info!("Blocks data cached successfully.");
             }
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Block(CustomBlockOptions { common })) => {
