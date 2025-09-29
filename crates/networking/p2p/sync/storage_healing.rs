@@ -689,7 +689,7 @@ async fn perform_needed_deletions(
             let first_path = node_path.append_new(0);
             let mut extended_path = node_path.clone();
             extended_path.extend(&node.prefix);
-            let mut last_path = node_path.slice(0, first_path.len() - 1);
+            let mut last_path = node_path.slice(0, node_path.len() - 1);
             last_path.append(node_path.at(node_path.len() - 1) as u8 + 1);
 
             let mut extended_next_path = extended_path.slice(0, extended_path.len() - 1);
