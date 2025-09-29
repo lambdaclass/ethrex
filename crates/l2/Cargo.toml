@@ -15,7 +15,7 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
-ethrex-common = { workspace = true, features = ["c-kzg"] }
+ethrex-common = { workspace = true, default-features = false }
 ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
@@ -82,4 +82,6 @@ panic = "deny"
 [features]
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics"]
-l2 = ["guest_program/l2"]
+l2 = ["guest_program/l2", "ethrex-common/c-kzg"]
+sp1 = ["ethrex-common/kzg-rs"]
+risc0 = ["ethrex-common/c-kzg"]
