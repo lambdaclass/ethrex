@@ -134,6 +134,7 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
+    extra_data: String,
 ) {
     init_datadir(&opts.datadir);
     // Create SyncManager
@@ -160,6 +161,7 @@ pub async fn init_rpc_api(
         get_client_version(),
         log_filter_handler,
         gas_ceil,
+        extra_data,
     );
 
     tracker.spawn(rpc_api);
@@ -422,6 +424,7 @@ pub async fn init_l1(
         log_filter_handler,
         // TODO (#4482): Make this configurable.
         None,
+        opts.extra_data.clone(),
     )
     .await;
 
