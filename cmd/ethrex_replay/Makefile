@@ -8,7 +8,7 @@ REPLAY_BLOCK_ARGS += --rpc-url ${RPC_URL}
 
 ## Execution block
 execute:
-	cargo r -r --features --no-default-features -- block ${REPLAY_BLOCK_ARGS} --bench
+	cargo r -r --no-default-features -- block ${REPLAY_BLOCK_ARGS} --bench
   
 prove-sp1-gpu-ci:
 	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- block --zkvm sp1 --action prove --resource gpu ${REPLAY_BLOCK_ARGS} --bench
