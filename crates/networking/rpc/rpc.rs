@@ -169,6 +169,7 @@ pub struct NodeData {
     pub local_p2p_node: Node,
     pub local_node_record: NodeRecord,
     pub client_version: String,
+    pub extra_data: Bytes,
 }
 
 #[allow(async_fn_in_trait)]
@@ -205,6 +206,7 @@ pub async fn start_api(
     client_version: String,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
+    extra_data: String,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -220,6 +222,7 @@ pub async fn start_api(
             local_p2p_node,
             local_node_record,
             client_version,
+            extra_data: extra_data.into(),
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
@@ -563,6 +566,8 @@ mod tests {
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
             "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
             "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "bpo1": { "target": 10, "max": 15, "baseFeeUpdateFraction": 8346193 },
+            "bpo2": { "target": 14, "max": 21, "baseFeeUpdateFraction": 11684671 },
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",

@@ -259,7 +259,7 @@ pub fn execute_precompile(
         precompiles
     };
 
-    if address[0..17] != [0u8; 17] {
+    if address[0..18] != [0u8; 18] {
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
     }
     let index = u16::from_be_bytes([address[18], address[19]]) as usize;
