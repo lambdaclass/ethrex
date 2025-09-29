@@ -43,9 +43,8 @@ hex = "0.4.3"
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg", "revm"]
+default = ["c-kzg"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
-revm = ["ethrex-vm/revm"]
 
 [[test]]
 name = "all"

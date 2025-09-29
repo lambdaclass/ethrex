@@ -109,14 +109,12 @@ impl RpcHandler for CallRequest {
             _ => return Ok(Value::Null),
         };
         let chain_config = context.storage.get_chain_config()?;
-        let fork = chain_config.get_fork(header.timestamp);
         // Run transaction
         let result = simulate_tx(
             &self.transaction,
             &header,
             context.storage,
             context.blockchain,
-            fork,
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -354,11 +352,9 @@ impl RpcHandler for CreateAccessListRequest {
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
         let mut vm = context.blockchain.new_evm(vm_db)?;
         let chain_config = context.storage.get_chain_config()?;
-        let fork = chain_config.get_fork(header.timestamp);
 
         // Run transaction and obtain access list
-        let (gas_used, access_list, error) =
-            vm.create_access_list(&self.transaction, &header, fork)?;
+        let (gas_used, access_list, error) = vm.create_access_list(&self.transaction, &header)?;
         let result = AccessListResult {
             access_list: access_list
                 .into_iter()
@@ -466,7 +462,6 @@ impl RpcHandler for EstimateGasRequest {
         };
 
         let chain_config = storage.get_chain_config()?;
-        let fork = chain_config.get_fork(block_header.timestamp);
 
         // If the transaction is a plain value transfer, short circuit estimation.
         if let TxKind::Call(address) = transaction.to {
@@ -482,7 +477,6 @@ impl RpcHandler for EstimateGasRequest {
                     &block_header,
                     storage.clone(),
                     blockchain.clone(),
-                    fork,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
                     return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
@@ -515,7 +509,6 @@ impl RpcHandler for EstimateGasRequest {
             &block_header,
             storage.clone(),
             blockchain.clone(),
-            fork,
         )?;
 
         let gas_used = result.gas_used();
@@ -544,7 +537,6 @@ impl RpcHandler for EstimateGasRequest {
                 &block_header,
                 storage.clone(),
                 blockchain.clone(),
-                fork,
             );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
@@ -580,12 +572,11 @@ fn simulate_tx(
     block_header: &BlockHeader,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
     let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash());
     let mut vm = blockchain.new_evm(vm_db)?;
 
-    match vm.simulate_tx_from_generic(transaction, block_header, fork)? {
+    match vm.simulate_tx_from_generic(transaction, block_header)? {
         ExecutionResult::Revert {
             gas_used: _,
             output,

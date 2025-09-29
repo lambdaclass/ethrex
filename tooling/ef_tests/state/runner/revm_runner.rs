@@ -16,13 +16,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_vm::{
-    DynVmDatabase, EvmError,
-    backends::{
-        self,
-        revm::{db::EvmState, helpers::fork_to_spec_id},
-    },
-};
+use ethrex_vm::EvmError;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
     Evm as Revm,
@@ -35,6 +29,40 @@ use revm::{
     },
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+use super::revm_db::{EvmState, RevmDynVmDatabase};
+
+
+pub fn fork_to_spec_id(fork: Fork) -> SpecId {
+    match fork {
+        Fork::Frontier => SpecId::FRONTIER,
+        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
+        Fork::Homestead => SpecId::HOMESTEAD,
+        Fork::DaoFork => SpecId::DAO_FORK,
+        Fork::Tangerine => SpecId::TANGERINE,
+        Fork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        Fork::Byzantium => SpecId::BYZANTIUM,
+        Fork::Constantinople => SpecId::CONSTANTINOPLE,
+        Fork::Petersburg => SpecId::PETERSBURG,
+        Fork::Istanbul => SpecId::ISTANBUL,
+        Fork::MuirGlacier => SpecId::MUIR_GLACIER,
+        Fork::Berlin => SpecId::BERLIN,
+        Fork::London => SpecId::LONDON,
+        Fork::ArrowGlacier => SpecId::ARROW_GLACIER,
+        Fork::GrayGlacier => SpecId::GRAY_GLACIER,
+        Fork::Paris => SpecId::MERGE,
+        Fork::Shanghai => SpecId::SHANGHAI,
+        Fork::Cancun => SpecId::CANCUN,
+        Fork::Prague => SpecId::PRAGUE,
+        Fork::Osaka => SpecId::OSAKA,
+        Fork::BPO1 => SpecId::OSAKA,
+        Fork::BPO2 => SpecId::OSAKA,
+        Fork::BPO3 => SpecId::OSAKA,
+        Fork::BPO4 => SpecId::OSAKA,
+        Fork::BPO5 => SpecId::OSAKA,
+    }
+}
+
 
 fn levm_and_revm_logs_match(
     levm_logs: &Vec<ethrex_common::types::Log>,
@@ -165,7 +193,7 @@ pub fn prepare_revm_for_tx<'state>(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<DynVmDatabase>>, EFTestRunnerError> {
+) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<RevmDynVmDatabase>>, EFTestRunnerError> {
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
@@ -388,11 +416,11 @@ pub async fn ensure_post_state(
         None => {
             let mut db = load_initial_state_levm(test).await;
             db.current_accounts_state = levm_cache;
-            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
+            let levm_account_updates = db.get_state_transitions()
                 .map_err(|_| {
                     InternalError::Custom(format!("Error at LEVM::get_state_transitions() thrown in REVM runner line: {} when executing ensure_post_state()",line!()).to_owned())
                 })?;
-            let revm_account_updates = backends::revm::REVM::get_state_transitions(revm_state);
+            let revm_account_updates = revm_state.get_state_transitions();
             let account_updates_report = compare_levm_revm_account_updates(
                 vector,
                 test,
@@ -586,7 +614,7 @@ pub async fn _ensure_post_state_revm(
                 // Execution result was successful and no exception was expected.
                 None => {
                     let revm_account_updates =
-                        backends::revm::REVM::get_state_transitions(revm_state);
+                        revm_state.get_state_transitions();
                     let pos_state_root = post_state_root(&revm_account_updates, test).await;
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;

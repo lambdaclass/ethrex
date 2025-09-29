@@ -1,17 +1,14 @@
 use std::sync::Arc;
 
 use crate::{
-    runner::{EFTestRunnerError, InternalError},
+    runner::{revm_db::{evm_state, EvmState}, EFTestRunnerError, InternalError},
     types::{EFTest, EFTestTransaction},
 };
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{H256, U256, types::Genesis};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{
-    DynVmDatabase,
-    backends::revm::db::{EvmState, evm_state},
-};
+use ethrex_vm::DynVmDatabase;
 
 /// Loads initial state, used for REVM as it contains EvmState.
 pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
