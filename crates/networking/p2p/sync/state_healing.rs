@@ -377,26 +377,21 @@ async fn perform_needed_deletions(
         Node::Extension(node) => {
             // An extension node is equivalent to a series of branch nodes with only
             // one valid child each, so we remove all the empty siblings on the path.
-            let first_path = node_path.append_new(0);
-            let mut extended_path = node_path.clone();
-            extended_path.extend(&node.prefix);
-            let mut last_path = node_path.slice(0, node_path.len() - 1);
-            last_path.append(node_path.at(node_path.len() - 1) as u8 + 1);
-
-            let mut extended_next_path = extended_path.slice(0, extended_path.len() - 1);
-            extended_next_path.append(extended_path.at(extended_path.len() - 1) as u8 + 1);
+            let (first, second) = compute_subtree_ranges(&node_path, &node.prefix);
 
             info!(
-                ?first_path,
-                ?extended_path,
-                ?extended_next_path,
-                ?last_path,
+                first_start=?first.start,
+                first_end=?first.end,
+                second_start=?second.start,
+                second_end=?second.end,
                 "Deleting extension node siblings"
             );
-            // Remove all nodes from [node_path.., 0] to [node_path.., node.prefix]
-            store.delete_range(first_path, extended_path).await?;
-            // Remove all nodes from [node_path.., node.prefix++] to [node_path++]
-            store.delete_range(extended_next_path, last_path).await?;
+            if !first.is_empty() {
+                store.delete_range(first.start, first.end).await?;
+            }
+            if !second.is_empty() {
+                store.delete_range(second.start, second.end).await?;
+            }
         }
         Node::Leaf(_) => {}
     }
@@ -485,4 +480,94 @@ pub fn node_missing_children(
         _ => {}
     }
     Ok((missing_children_count, paths))
+}
+
+pub(crate) struct SubTreeRange {
+    pub(crate) start: Nibbles,
+    pub(crate) end: Nibbles,
+}
+
+impl SubTreeRange {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+}
+
+// Computes the subtree ranges for non-existent children paths of an extension node.
+// Returns two ranges:
+//  - [node_path.., 0] to [node_path.., node.prefix]
+//  - [node_path.., node.prefix++] to [node_path++]
+pub(crate) fn compute_subtree_ranges(
+    node_path: &Nibbles,
+    extension_prefix: &Nibbles,
+) -> (SubTreeRange, SubTreeRange) {
+    debug_assert!(!extension_prefix.is_empty(), "Extension prefix is empty");
+
+    let first_path = node_path.append_new(0);
+    let mut extended_path = node_path.clone();
+    extended_path.extend(extension_prefix);
+    let mut last_path = node_path.slice(0, node_path.len() - 1);
+    last_path.append(node_path.at(node_path.len() - 1) as u8 + 1);
+
+    let last_extension_nibble = extension_prefix.at(extension_prefix.len() - 1) as u8;
+    let extended_next_path = if last_extension_nibble == 15 {
+        last_path.clone()
+    } else {
+        let mut extended_next_path = extended_path.slice(0, extended_path.len() - 1);
+        extended_next_path.append(extended_path.at(extended_path.len() - 1) as u8 + 1);
+        extended_next_path
+    };
+
+    let first = SubTreeRange {
+        start: first_path,
+        end: extended_path,
+    };
+    let second = SubTreeRange {
+        start: extended_next_path,
+        end: last_path,
+    };
+    (first, second)
+}
+
+#[cfg(test)]
+mod tests {
+    use ethrex_trie::Nibbles;
+
+    use super::compute_subtree_ranges;
+
+    #[test]
+    fn test_compute_subtree_ranges() {
+        let node_path = Nibbles::from_hex(vec![5, 10, 3]);
+        let extension_prefix = Nibbles::from_hex(vec![1, 2]);
+        let (first, second) = compute_subtree_ranges(&node_path, &extension_prefix);
+
+        assert_eq!(first.start, Nibbles::from_hex(vec![5, 10, 3, 0]));
+        assert_eq!(first.end, Nibbles::from_hex(vec![5, 10, 3, 1, 2]));
+        assert_eq!(second.start, Nibbles::from_hex(vec![5, 10, 3, 1, 3]));
+        assert_eq!(second.end, Nibbles::from_hex(vec![5, 10, 4]));
+    }
+
+    #[test]
+    fn test_compute_subtree_ranges_single_prefix_nibble_0() {
+        let node_path = Nibbles::from_hex(vec![5, 10, 3]);
+        let extension_prefix = Nibbles::from_hex(vec![0]);
+        let (first, second) = compute_subtree_ranges(&node_path, &extension_prefix);
+
+        assert_eq!(first.start, Nibbles::from_hex(vec![5, 10, 3, 0]));
+        assert_eq!(first.end, Nibbles::from_hex(vec![5, 10, 3, 0]));
+        assert_eq!(second.start, Nibbles::from_hex(vec![5, 10, 3, 1]));
+        assert_eq!(second.end, Nibbles::from_hex(vec![5, 10, 4]));
+    }
+
+    #[test]
+    fn test_compute_subtree_ranges_single_prefix_nibble_f() {
+        let node_path = Nibbles::from_hex(vec![5, 10, 3]);
+        let extension_prefix = Nibbles::from_hex(vec![15]);
+        let (first, second) = compute_subtree_ranges(&node_path, &extension_prefix);
+
+        assert_eq!(first.start, Nibbles::from_hex(vec![5, 10, 3, 0]));
+        assert_eq!(first.end, Nibbles::from_hex(vec![5, 10, 3, 15]));
+        assert_eq!(second.start, Nibbles::from_hex(vec![5, 10, 4]));
+        assert_eq!(second.end, Nibbles::from_hex(vec![5, 10, 4]));
+    }
 }
