@@ -137,7 +137,8 @@ impl LeafNode {
                 1 + partial_encoded.len()
             };
             let value_prefix_len = match self.value.len() {
-                ..56 => 1,
+                1 if self.value[0] < 0x80 => 0,
+                1 | ..56 => 1,
                 56..256 => 2,
                 _ => 3, // ASSUMPTION: list len will never be >u16::MAX (2 bytes len)
             };
@@ -169,7 +170,7 @@ impl LeafNode {
 
         // write value prefix
         if self.value.len() == 1 && self.value[0] < 0x80 {
-            unreachable!()
+            // value is its own encoding
         } else if self.value.len() < 56 {
             buf.write(&[0x80 + self.value.len() as u8]);
         } else if self.value.len() < u8::MAX as usize { // TODO: < or <=
