@@ -576,10 +576,10 @@ dependencies = [
  "clap 4.5.47",
  "clap_complete",
  "ethrex",
- "ethrex-common",
- "ethrex-rlp",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
  "ethrex-rpc",
- "ethrex-storage",
+ "ethrex-storage 0.1.0",
  "eyre",
  "hex",
  "lazy_static",
@@ -3374,10 +3374,10 @@ dependencies = [
  "bytes",
  "datatest-stable",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-prover",
- "ethrex-rlp",
- "ethrex-storage",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
  "ethrex-vm",
  "guest_program",
  "hex",
@@ -3398,10 +3398,10 @@ dependencies = [
  "clap_complete",
  "colored",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-levm",
- "ethrex-rlp",
- "ethrex-storage",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
  "ethrex-vm",
  "hex",
  "itertools 0.13.0",
@@ -3425,11 +3425,11 @@ dependencies = [
  "clap_complete",
  "colored",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-l2-rpc",
  "ethrex-levm",
- "ethrex-rlp",
- "ethrex-storage",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
  "ethrex-vm",
  "hex",
  "secp256k1",
@@ -4023,7 +4023,7 @@ dependencies = [
  "criterion",
  "directories 5.0.1",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-config",
  "ethrex-dev",
  "ethrex-l2",
@@ -4032,10 +4032,10 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-prover",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "ethrex-rpc",
  "ethrex-sdk",
- "ethrex-storage",
+ "ethrex-storage 0.1.0",
  "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
@@ -4067,10 +4067,10 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "cfg-if 1.0.3",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-metrics",
- "ethrex-rlp",
- "ethrex-storage",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
  "ethrex-vm",
  "hex",
  "secp256k1",
@@ -4090,10 +4090,37 @@ dependencies = [
  "c-kzg",
  "crc32fast",
  "ethereum-types 0.15.1",
- "ethrex-rlp",
- "ethrex-trie",
+ "ethrex-rlp 0.1.0",
+ "ethrex-trie 0.1.0",
  "hex",
  "hex-literal",
+ "kzg-rs",
+ "lazy_static",
+ "once_cell",
+ "rayon",
+ "rkyv",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3",
+ "thiserror 2.0.16",
+ "tinyvec",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "ethrex-common"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22#1ef53ccda5fd3f96118cadbd296fbff6e5c10b22"
+dependencies = [
+ "bytes",
+ "crc32fast",
+ "ethereum-types 0.15.1",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "hex",
  "kzg-rs",
  "lazy_static",
  "once_cell",
@@ -4114,7 +4141,7 @@ dependencies = [
 name = "ethrex-config"
 version = "0.1.0"
 dependencies = [
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-p2p",
  "hex",
  "serde",
@@ -4163,7 +4190,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethers",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-config",
  "ethrex-dev",
  "ethrex-l2-common",
@@ -4171,12 +4198,12 @@ dependencies = [
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-p2p",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "ethrex-rpc",
  "ethrex-sdk",
- "ethrex-storage",
+ "ethrex-storage 0.1.0",
  "ethrex-storage-rollup",
- "ethrex-trie",
+ "ethrex-trie 0.1.0",
  "ethrex-vm",
  "futures",
  "guest_program",
@@ -4209,10 +4236,10 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
  "ethrex-vm",
  "lambdaworks-crypto 0.11.0",
  "secp256k1",
@@ -4229,12 +4256,12 @@ dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-l2-common",
  "ethrex-p2p",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "ethrex-rpc",
- "ethrex-storage",
+ "ethrex-storage 0.1.0",
  "ethrex-storage-rollup",
  "hex",
  "reqwest 0.12.23",
@@ -4262,9 +4289,9 @@ dependencies = [
  "colored",
  "datatest-stable",
  "derive_more 1.0.0",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-crypto",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "hex",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "lambdaworks-math 0.11.0",
@@ -4288,7 +4315,7 @@ name = "ethrex-metrics"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.4",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "prometheus 0.13.4",
  "serde",
  "serde_json",
@@ -4309,11 +4336,11 @@ dependencies = [
  "ctr",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-storage",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
  "ethrex-storage-rollup",
- "ethrex-trie",
+ "ethrex-trie 0.1.0",
  "futures",
  "hex",
  "hex-literal",
@@ -4348,12 +4375,12 @@ dependencies = [
  "clap 4.5.47",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-l2",
  "ethrex-l2-common",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "ethrex-sdk",
- "ethrex-storage",
+ "ethrex-storage 0.1.0",
  "ethrex-vm",
  "guest_program",
  "hex",
@@ -4382,18 +4409,18 @@ dependencies = [
  "charming",
  "clap 4.5.47",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-config",
  "ethrex-l2",
  "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-p2p",
  "ethrex-prover",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "ethrex-rpc",
- "ethrex-storage",
+ "ethrex-storage 0.1.0",
  "ethrex-storage-rollup",
- "ethrex-trie",
+ "ethrex-trie 0.1.0",
  "ethrex-vm",
  "eyre",
  "futures",
@@ -4419,7 +4446,7 @@ name = "ethrex-replayer"
 version = "0.1.0"
 dependencies = [
  "clap 4.5.47",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-config",
  "ethrex-replay",
  "ethrex-rpc",
@@ -4450,6 +4477,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-rlp"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22#1ef53ccda5fd3f96118cadbd296fbff6e5c10b22"
+dependencies = [
+ "bytes",
+ "ethereum-types 0.15.1",
+ "hex",
+ "lazy_static",
+ "snap",
+ "thiserror 2.0.16",
+ "tinyvec",
+]
+
+[[package]]
 name = "ethrex-rpc"
 version = "0.1.0"
 dependencies = [
@@ -4460,13 +4501,13 @@ dependencies = [
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-l2-common",
  "ethrex-p2p",
- "ethrex-rlp",
- "ethrex-storage",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
  "ethrex-storage-rollup",
- "ethrex-trie",
+ "ethrex-trie 0.1.0",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -4494,10 +4535,10 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "ethrex-rpc",
  "ethrex-sdk-contract-utils",
  "eyre",
@@ -4530,9 +4571,9 @@ dependencies = [
  "bincode",
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-trie",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-trie 0.1.0",
  "hex",
  "hex-literal",
  "libmdbx",
@@ -4547,6 +4588,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-storage"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22#1ef53ccda5fd3f96118cadbd296fbff6e5c10b22"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "bytes",
+ "ethereum-types 0.15.1",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "hex",
+ "libmdbx",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 2.0.16",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "ethrex-storage-rollup"
 version = "0.1.0"
 dependencies = [
@@ -4554,11 +4618,11 @@ dependencies = [
  "async-trait",
  "bincode",
  "ethereum-types 0.15.1",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
  "futures",
  "libsql",
  "thiserror 2.0.16",
@@ -4576,7 +4640,7 @@ dependencies = [
  "criterion",
  "digest 0.10.7",
  "ethereum-types 0.15.1",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "hasher",
  "hex",
  "hex-literal",
@@ -4595,6 +4659,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-trie"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22#1ef53ccda5fd3f96118cadbd296fbff6e5c10b22"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "digest 0.10.7",
+ "ethereum-types 0.15.1",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "hex",
+ "lazy_static",
+ "libmdbx",
+ "serde",
+ "serde_json",
+ "sha3",
+ "smallvec",
+ "thiserror 2.0.16",
+ "tracing",
+]
+
+[[package]]
 name = "ethrex-vm"
 version = "0.1.0"
 dependencies = [
@@ -4604,10 +4689,10 @@ dependencies = [
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types 0.15.1",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-levm",
- "ethrex-rlp",
- "ethrex-trie",
+ "ethrex-rlp 0.1.0",
+ "ethrex-trie 0.1.0",
  "hex",
  "lazy_static",
  "revm 19.7.0",
@@ -5127,7 +5212,7 @@ dependencies = [
 name = "genesis-tool"
 version = "0.1.0"
 dependencies = [
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "serde_json",
 ]
 
@@ -5328,11 +5413,11 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-l2-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
  "ethrex-vm",
  "hex",
  "risc0-build",
@@ -6964,7 +7049,7 @@ dependencies = [
  "clap 4.5.47",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
  "ethrex-rpc",
@@ -7328,6 +7413,21 @@ dependencies = [
  "log",
  "objc",
  "paste",
+]
+
+[[package]]
+name = "migrations"
+version = "0.1.0"
+dependencies = [
+ "clap 4.5.47",
+ "ethrex-blockchain",
+ "ethrex-common 0.1.0",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-storage 0.1.0",
+ "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.20",
 ]
 
 [[package]]
@@ -9426,7 +9526,7 @@ version = "0.1.0"
 dependencies = [
  "ethrex",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-config",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
@@ -9714,9 +9814,9 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-levm",
- "ethrex-storage",
+ "ethrex-storage 0.1.0",
  "ethrex-vm",
  "hex",
  "revm 9.0.0",
@@ -10358,9 +10458,9 @@ dependencies = [
  "clap 4.5.47",
  "env_logger 0.11.8",
  "ethrex-blockchain",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "ethrex-levm",
- "ethrex-storage",
+ "ethrex-storage 0.1.0",
  "ethrex-vm",
  "hex",
  "json5",
