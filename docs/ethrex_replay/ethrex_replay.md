@@ -16,6 +16,8 @@ Currently ethrex replay only works against ethrex nodes with the `debug_executio
 | `ethrex-replay transaction`       | Replay a single transaction of a block.                                                                                                |
 | `ethrex-replay cache`             | Generate witness data prior to block replay (see `ethrex-replay cache --help`)                                                         |
 
+You can set the max requests per second to the RPC url with the env variable `RPC_RPS`. Default is 10.
+
 ### L2
 
 | Feature                        | Description |

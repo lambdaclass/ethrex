@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::env;
 use std::time::{Duration, Instant};
 
 use crate::rpc::{get_account, get_block, retry};
@@ -25,14 +26,19 @@ use sha3::{Digest, Keccak256};
 use tokio::time::sleep;
 use tracing::{debug, info};
 
-use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::{Arc, LazyLock};
 
 use super::{Account, NodeRLP};
 
-// 10 Requests Per second max cap. It's a conservative number that every Free tier of RPC Providers supports.
-const RPC_RATE_LIMIT: usize = 10;
-const RATE_LIMIT: Duration = Duration::from_millis(100);
+pub static RPC_RPS: LazyLock<usize> = LazyLock::new(|| {
+    env::var("RPC_RPS")
+        .ok()
+        .and_then(|val| val.parse::<usize>().ok())
+        .unwrap_or(10) // 10 is a safe default that every Free tier of RPC Providers supports.
+});
+pub static RATE_LIMIT: LazyLock<Duration> =
+    LazyLock::new(|| Duration::from_micros(1_000_000 / *RPC_RPS as u64));
 
 /// Structure for a database that fetches data from an RPC endpoint on demand.
 /// Caches already fetched data to minimize RPC calls.
@@ -159,7 +165,7 @@ impl RpcDB {
         let mut counter = 0;
 
         // Fetch accounts in chunks to respect rate limits of the RPC endpoint
-        for chunk in index.chunks(RPC_RATE_LIMIT) {
+        for chunk in index.chunks(*RPC_RPS) {
             let start = Instant::now();
 
             // Call to `eth_getProof` for each account in the chunk
@@ -196,7 +202,7 @@ impl RpcDB {
 
             // Cooldown depends on chunk size.
             let chunk_size = chunk.len() as u32;
-            let target_gap = RATE_LIMIT * chunk_size;
+            let target_gap = *RATE_LIMIT * chunk_size;
             let elapsed = start.elapsed();
 
             if target_gap > elapsed {
