@@ -169,6 +169,7 @@ pub struct NodeData {
     pub local_p2p_node: Node,
     pub local_node_record: NodeRecord,
     pub client_version: String,
+    pub extra_data: Bytes,
 }
 
 #[allow(async_fn_in_trait)]
@@ -205,6 +206,7 @@ pub async fn start_api(
     client_version: String,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
+    extra_data: String,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -220,6 +222,7 @@ pub async fn start_api(
             local_p2p_node,
             local_node_record,
             client_version,
+            extra_data: extra_data.into(),
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,

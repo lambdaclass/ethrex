@@ -20,7 +20,7 @@ use crate::{
         self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
     },
-    utils::{self, default_datadir, get_client_version, init_datadir},
+    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
 use ethrex_config::networks::Network;
 
@@ -167,6 +167,14 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
+    #[arg(
+        long = "block-producer.extra-data",
+        default_value = get_minimal_client_version(),
+        value_name = "EXTRA_DATA",
+        help = "Block extra data message.",
+        help_heading = "Block producer options"
+    )]
+    pub extra_data: String,
 }
 
 impl Options {
@@ -229,6 +237,7 @@ impl Default for Options {
             metrics_enabled: Default::default(),
             dev: Default::default(),
             force: false,
+            extra_data: get_minimal_client_version(),
         }
     }
 }
