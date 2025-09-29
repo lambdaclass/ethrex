@@ -212,7 +212,7 @@ impl Report {
     /// This functions is used to create a benchmark file that is used by our CI
     /// for updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
     ///
-    /// Do no remove it under any circumstances, unless you are refactoring how
+    /// Do not remove it under any circumstances, unless you are refactoring how
     /// we do benchmarks in CI.
     pub fn to_bench_file(&self) -> eyre::Result<serde_json::Value> {
         let elapsed = match (&self.execution_result, &self.proving_result) {
