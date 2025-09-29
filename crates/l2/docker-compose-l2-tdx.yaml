@@ -1,9 +1,6 @@
 # Docker Compose file to run ethrex_l2 with TDX support
 services:
   ethrex_l2:
-    ports:
-      - "127.0.0.1:1729:1729"
-      - "0.0.0.0:3900:3900"
     volumes:
       - ../tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool:/automata-dcap-qpl-tool
     environment:

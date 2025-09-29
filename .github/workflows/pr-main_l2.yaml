@@ -337,6 +337,7 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
 
       - name: Run test
