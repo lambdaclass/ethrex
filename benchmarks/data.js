@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759158303771,
+  "lastUpdate": 1759160737782,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17275,6 +17275,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 92920881373,
             "range": "± 389496832",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c9882b16c55cf9c8505eaeea84fb3f9c1c914304",
+          "message": "feat(l1,l2,replay): mempool max size parameter (#4639)\n\n**Motivation**\nWe want to make the mempool max size a parameter\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdds the mempool max size as a parameter to ethrex command\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses https://github.com/lambdaclass/ethrex/issues/4600",
+          "timestamp": "2025-09-29T14:54:10Z",
+          "tree_id": "55c15009d246b4a4f39e0b9f50f6ce0d3f79e835",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c9882b16c55cf9c8505eaeea84fb3f9c1c914304"
+        },
+        "date": 1759160716340,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89274447761,
+            "range": "± 137015464",
             "unit": "ns/iter"
           }
         ]
