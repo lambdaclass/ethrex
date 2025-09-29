@@ -757,7 +757,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
     };
 
     let report = Report::new_for(
-        opts.common.zkvm.clone(),
+        opts.common.zkvm,
         opts.common.resource,
         opts.common.action,
         block,
