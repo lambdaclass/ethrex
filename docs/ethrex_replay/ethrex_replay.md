@@ -2,29 +2,59 @@
 
 A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by [starknet-replay](https://github.com/lambdaclass/starknet-replay).
 
-## Supported Networks
+## Features
 
-- Mainnet
-- Hoodi
-- Sepolia
+### L1
 
-## Client Compatibility
+| Feature                           | Description                                                                                                                            |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ethrex-replay block`             | Replay a single block.                                                                                                                 |
+| `ethrex-replay blocks`            | Replay a list of specific block numbers, a range of blocks, or from a specific block to the latest (see `ethrex-replay blocks --help`) |
+| `ethrex-replay block-composition` |                                                                                                                                        |
+| `ethrex-replay custom`            | Build your block before to replay it.                                                                                                  |
+| `ethrex-replay transaction`       | Replay a single transaction of a block.                                                                                                |
+| `ethrex-replay cache`             | Generate witness data prior to block replay (see `ethrex-replay cache --help`)                                                         |
+
+### L2
+
+| Feature                        | Description |
+| ------------------------------ | ----------- |
+| `ethrex-replay l2 batch`       |             |
+| `ethrex-replay l2 block`       |             |
+| `ethrex-replay l2 custom`      |             |
+| `ethrex-replay l2 transaction` |             |
+
+## Supported Clients
 
 | Client     | `ethrex-replay block`         | notes                                            |
 | ---------- | ----------------------------- | ------------------------------------------------ |
 | reth       | ✅                            | `debug_executionWitness`                         |
 | geth       | ✅                            | `eth_getProof`                                   |
-| nethermind | ✅                            | `eth_getProof` (hoodi is unstable)               |
+| nethermind | ✅                            | `eth_getProof`                                   |
 | ethrex     | ✅                            | `debug_executionWitness`                         |
 | erigon     | ❌                            | V3 supports `eth_getProof` only for latest block |
 | besu       | ❌                            | Doesn't return proof for non-existing accounts   |
 
 We support any other client that responds correctly to `eth_getProof` or `debug_executionWitness` endpoints.
 
-Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using these it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a **full node** using `eth_getProof` if for some reason execution were to take longer than 25 minutes it would probably fail because the node may have pruned it's state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.
+Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using these it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a **full node** using `eth_getProof` if for some reason information retrieval were to take longer than 25 minutes it would probably fail because the node may have pruned it's state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.
 
-Note: For some reason Nethermind with hoodi nodes (up to v1.33 at least) doesn't work properly for some blocks, we get gas used mismatch. The witness generated with this method has fewer trie nodes than the witness generated with geth nodes, we don't know why. This hasn't happened in mainnet or sepolia yet.
+## Supported zkVM Replays (execution & proving)
 
+> ✅: supported.
+> ⚠️: supported, but flaky.
+> 🔜: to be supported.
+
+| zkVM   | L1 Networks| Public ethrex L2s |
+| ------ | ---------- | ----------------- |
+| RISC0  | ✅         | 🔜                |
+| SP1    | ✅         | 🔜                |
+| OpenVM | ⚠️         | 🔜                |
+| ZisK   | 🔜         | 🔜                |
+| Jolt   | 🔜         | 🔜                |
+| Nexus  | 🔜         | 🔜                |
+| Pico   | 🔜         | 🔜                |
+| Ziren  | 🔜         | 🔜                |
 
 ## Getting Started
 
@@ -167,10 +197,14 @@ The following table lists the available features for `ethrex-replay`. To enable 
 ### Execute a single block from a public network
 
 > [!NOTE]
-> If `BLOCK_NUMBER` is not provided, the latest block will be executed.
+>
+> 1. If `BLOCK_NUMBER` is not provided, the latest block will be executed.
+> 2. If `ZKVM` is not provided, no zkVM will be used for execution.
+> 3. If `RESOURCE` is not provided, CPU will be used for execution.
+> 4. If `ACTION` is not provided, only execution will be performed.
 
 ```
-ethrex-replay block --block <BLOCK_NUMBER> --execute --rpc-url <RPC_URL>
+ethrex-replay block <BLOCK_NUMBER> --zkvm <ZKVM> --resource <RESOURCE> --action <ACTION> --rpc-url <RPC_URL>
 ```
 
 ### Prove a single block
@@ -183,7 +217,7 @@ ethrex-replay block --block <BLOCK_NUMBER> --execute --rpc-url <RPC_URL>
 > 4. If proving with SP1, add `SP1_PROVER=cuda` to the command to enable GPU support.
 
 ```
-ethrex-replay block --block <BLOCK_NUMBER> --prove --rpc-url <RPC_URL>
+ethrex-replay block <BLOCK_NUMBER> --zkvm <ZKVM> --resource gpu --action prove --rpc-url <RPC_URL>
 ```
 
 ### Execute an L2 batch
@@ -210,9 +244,9 @@ ethrex-replay l2 batch --batch <BATCH_NUMBER> --prove --rpc-url <RPC_URL>
 > L2 transaction replay requires the binary to be run/compiled with the `l2` feature.
 
 ```
-ethrex-replay transaction --tx-hash <TX_HASH> --execute --rpc-url <RPC_URL>
+ethrex-replay transaction <TX_HASH> --execute --rpc-url <RPC_URL>
 
-ethrex-replay l2 transaction --tx-hash <TX_HASH> --execute --rpc-url <RPC_URL>
+ethrex-replay l2 transaction <TX_HASH> --execute --rpc-url <RPC_URL>
 ```
 
 ### Plot block composition

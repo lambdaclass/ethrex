@@ -8,7 +8,7 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::GetWitnessError},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use eyre::WrapErr;
+use eyre::{OptionExt, WrapErr};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -100,12 +100,16 @@ pub async fn get_blockdata(
 
             info!(
                 "Caching callers and recipients state for block {}",
-                requested_block_number - 1
+                requested_block_number
             );
             let rpc_db = RpcDB::with_cache(
-                eth_client.urls.first().unwrap().as_str(),
+                eth_client
+                    .urls
+                    .first()
+                    .ok_or_eyre("No RPC URLs configured")?
+                    .as_str(),
                 chain_config,
-                (requested_block_number - 1).try_into()?,
+                requested_block_number,
                 &block,
                 vm_type,
             )
@@ -114,14 +118,14 @@ pub async fn get_blockdata(
 
             info!(
                 "Pre executing block {}. This may take a while.",
-                requested_block_number - 1
+                requested_block_number
             );
             let rpc_db = rpc_db
                 .to_execution_witness(&block)
                 .wrap_err("failed to build execution db")?;
             info!(
                 "Finished building execution witness for block {}",
-                requested_block_number - 1
+                requested_block_number
             );
             rpc_db
         }
@@ -172,10 +176,15 @@ async fn fetch_rangedata_from_client(
     let block_retrieval_start_time = SystemTime::now();
 
     for block_number in from..=to {
-        let block = eth_client
-            .get_raw_block(BlockIdentifier::Number(block_number))
+        let rpc_block = eth_client
+            .get_block_by_number(BlockIdentifier::Number(block_number), true)
             .await
             .wrap_err(format!("failed to fetch block {block_number}"))?;
+
+        let block = rpc_block
+            .try_into()
+            .map_err(|e| eyre::eyre!("Failed to convert rpc block to block: {}", e))
+            .wrap_err("Failed to convert from rpc block to block")?;
         blocks.push(block);
     }
 
