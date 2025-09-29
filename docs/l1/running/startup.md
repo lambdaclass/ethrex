@@ -72,6 +72,6 @@ ETHREX_NETWORK=hoodi docker compose up
 
 ---
 
-For more details and configuration options see:
+For more details and configuration options:
 - [Configuration](./configuration.md)
 - [CLI reference](../../CLI.md)
