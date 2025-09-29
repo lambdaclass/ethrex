@@ -50,8 +50,8 @@ mod test {
         orm::{Database, table},
         table_info,
     };
+    use std::path::Path;
     use std::sync::Arc;
-    use tempfile::TempDir;
 
     #[test]
     fn simple_addition() {
@@ -189,8 +189,7 @@ mod test {
     fn resume_trie() {
         use crate::trie_db::test_utils::libmdbx::{new_db_with_path, open_db};
 
-        let trie_dir = TempDir::new().expect("Failed to create temp dir");
-        let trie_dir = trie_dir.path();
+        let trie_dir = Path::new(".temp");
 
         // Create new trie from clean DB
         let db = new_db_with_path::<TestNodes>(trie_dir.into());
@@ -214,5 +213,7 @@ mod test {
         assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
         assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([4; 32].to_vec()));
+
+        std::fs::remove_dir_all(trie_dir).unwrap();
     }
 }

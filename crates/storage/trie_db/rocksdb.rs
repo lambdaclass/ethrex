@@ -83,15 +83,16 @@ impl TrieDB for RocksDBTrieDB {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use ethrex_trie::NodeHash;
     use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
-    use tempfile::TempDir;
 
     #[test]
     fn test_trie_db_basic_operations() {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_db");
+        let temp_dir = Path::new(".temp");
+        let db_path = temp_dir.join("test_db");
 
         // Setup RocksDB with column family
         let mut db_options = Options::default();
@@ -126,12 +127,14 @@ mod tests {
         // Test get nonexistent
         let nonexistent_hash = NodeHash::from(H256::from([2u8; 32]));
         assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
     }
 
     #[test]
     fn test_trie_db_with_address_prefix() {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_db");
+        let temp_dir = Path::new(".temp");
+        let db_path = temp_dir.join("test_db");
 
         // Setup RocksDB with column family
         let mut db_options = Options::default();
@@ -163,12 +166,14 @@ mod tests {
         // Test get
         let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
         assert_eq!(retrieved_data, node_data);
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
     }
 
     #[test]
     fn test_trie_db_batch_operations() {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_db");
+        let temp_dir = Path::new(".temp");
+        let db_path = temp_dir.join("test_db");
 
         // Setup RocksDB with column family
         let mut db_options = Options::default();
@@ -202,5 +207,7 @@ mod tests {
             let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
             assert_eq!(retrieved_data, expected_data);
         }
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
     }
 }

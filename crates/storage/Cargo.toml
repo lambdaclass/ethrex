@@ -35,7 +35,6 @@ rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb", "dep:tokio"]
 [dev-dependencies]
 hex.workspace = true
 hex-literal.workspace = true
-tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [lib]

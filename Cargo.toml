@@ -110,7 +110,6 @@ axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
-rustc-hex = "2.1.0"
 url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
@@ -121,7 +120,6 @@ lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
-tempfile = "3.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
 

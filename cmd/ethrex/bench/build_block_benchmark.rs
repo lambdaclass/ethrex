@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    path::Path,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -118,9 +119,9 @@ fn recover_address_for_sk(sk: &SecretKey) -> Address {
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
-    let storage_path = tempfile::TempDir::new().unwrap();
-    if std::fs::exists(&storage_path).unwrap_or(false) {
-        std::fs::remove_dir_all(&storage_path).unwrap();
+    let storage_path = Path::new(".temp");
+    if std::fs::exists(storage_path).unwrap_or(false) {
+        std::fs::remove_dir_all(storage_path).unwrap();
     }
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
@@ -135,6 +136,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
         genesis.alloc.insert(*address, account_info);
     }
     store.add_initial_state(genesis.clone()).await.unwrap();
+    std::fs::remove_dir(storage_path).unwrap();
     (store, genesis)
 }
 
