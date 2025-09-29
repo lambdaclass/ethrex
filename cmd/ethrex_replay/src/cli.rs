@@ -356,6 +356,7 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
+                // Case ethrex-replay blocks n,...,m
                 if !blocks.is_empty() {
                     blocks.sort();
 
@@ -383,17 +384,20 @@ impl EthrexReplayCommand {
                     return Ok(());
                 }
 
-                // Case --from is set:
-                // * --endless and --to cannot be set together (constraint by clap).
-                // * If --endless is set, we start from --from and keep checking for new blocks.
-                // * If --to is set, we run from --from to --to and stop.
-                // * If neither is set, we run from --from to latest and stop.
+                // Case ethrex-replay blocks --from n
+                // * --endless and --to cannot be set together (constraint by clap)
+                // * If --endless is set, we start from --from and keep checking for new blocks
+                // * If --to is set, we run from --from to --to and stop
+                // * If neither is set, we run from --from to latest and stop
                 if let Some(from) = from {
-                    let mut to = if let Some(to) = to {
-                        to
-                    } else {
-                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
-                            .await?
+                    let mut to = match to {
+                        // Case --to is set
+                        Some(to) => to,
+                        // Case --to is not set
+                        None => {
+                            fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                                .await?
+                        }
                     };
 
                     if from > to {
@@ -402,12 +406,12 @@ impl EthrexReplayCommand {
                         ));
                     }
 
-                    let mut block = from;
+                    let mut block_to_replay = from;
 
-                    while block <= to {
+                    while block_to_replay <= to {
                         Box::pin(async {
                             Self::Block(BlockOptions {
-                                block: Some(block),
+                                block: Some(block_to_replay),
                                 opts: opts.clone(),
                             })
                             .run()
@@ -415,10 +419,11 @@ impl EthrexReplayCommand {
                         })
                         .await?;
 
-                        block += 1;
+                        block_to_replay += 1;
 
-                        // We only want to update the `to` if we're in endless mode
-                        while endless && block > to {
+                        // Case --endless is set, we want to update the `to` so
+                        // we can keep checking for new blocks
+                        while endless && block_to_replay > to {
                             tokio::time::sleep(Duration::from_secs(12)).await;
                             to = fetch_latest_block_number(
                                 opts.rpc_url.clone(),
@@ -431,9 +436,8 @@ impl EthrexReplayCommand {
                     return Ok(());
                 }
 
-                // Case --from is not set:
-                // * --to cannot be set (constraint by clap).
-                // * If --endless is set, we keep checking for new blocks.
+                // Case ethrex-replay blocks --endless
+                // * --from is not set and --to cannot be set (constraint by clap).
                 if endless {
                     loop {
                         let latest_block_number =
