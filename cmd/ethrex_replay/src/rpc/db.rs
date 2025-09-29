@@ -41,8 +41,8 @@ const RATE_LIMIT: Duration = Duration::from_millis(100);
 pub struct RpcDB {
     /// RPC endpoint URL.
     pub rpc_url: String,
-    /// Block number of the actual block to execute.
-    pub block_number: usize,
+    /// Block number of the block we want to execute.
+    pub block_number: u64,
     /// Cache of already fetched accounts. This includes state, code, storage and proofs.
     /// Accounts in the parent block, i.e. the initial state of the execution.
     pub cache: Arc<Mutex<HashMap<Address, Account>>>,
@@ -63,7 +63,7 @@ impl RpcDB {
     pub fn new(
         rpc_url: &str,
         chain_config: ChainConfig,
-        block_number: usize,
+        block_number: u64,
         vm_type: VMType,
     ) -> Self {
         RpcDB {
@@ -82,7 +82,7 @@ impl RpcDB {
     pub async fn with_cache(
         rpc_url: &str,
         chain_config: ChainConfig,
-        block_number: usize,
+        block_number: u64,
         block: &Block,
         vm_type: VMType,
     ) -> eyre::Result<Self> {
@@ -137,8 +137,8 @@ impl RpcDB {
     ///
     /// # Parameters
     /// * `index` - List of addresses and their storage keys to fetch
-    /// * `from_child` - If true, fetches data for the post-state (block_number + 1),
-    ///   otherwise fetches data for the pre-state (block_number)
+    /// * `from_child` - If true, fetches data for the post-state (block_number),
+    ///   otherwise fetches data for the pre-state (block_number - 1)
     ///
     /// # Implementation details
     /// * Uses rate limiting to avoid surpassing the RPC endpoint limits
@@ -150,10 +150,10 @@ impl RpcDB {
         from_child: bool,
     ) -> eyre::Result<HashMap<Address, Account>> {
         let block_number = if from_child {
-            self.block_number + 1
-        } else {
             self.block_number
-        };
+        } else {
+            self.block_number - 1
+        } as usize;
 
         let mut fetched = HashMap::new();
         let mut counter = 0;

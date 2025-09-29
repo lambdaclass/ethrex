@@ -100,12 +100,12 @@ pub async fn get_blockdata(
 
             info!(
                 "Caching callers and recipients state for block {}",
-                requested_block_number - 1
+                requested_block_number
             );
             let rpc_db = RpcDB::with_cache(
                 eth_client.urls.first().unwrap().as_str(),
                 chain_config,
-                (requested_block_number - 1).try_into()?,
+                requested_block_number,
                 &block,
                 vm_type,
             )
@@ -114,14 +114,14 @@ pub async fn get_blockdata(
 
             info!(
                 "Pre executing block {}. This may take a while.",
-                requested_block_number - 1
+                requested_block_number
             );
             let rpc_db = rpc_db
                 .to_execution_witness(&block)
                 .wrap_err("failed to build execution db")?;
             info!(
                 "Finished building execution witness for block {}",
-                requested_block_number - 1
+                requested_block_number
             );
             rpc_db
         }
