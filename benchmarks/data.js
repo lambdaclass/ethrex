@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759158051440,
+  "lastUpdate": 1759158303771,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17245,6 +17245,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 89085218257,
             "range": "± 143950153",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "FredrikaPhililip@proton.me",
+            "name": "Suuuuuuperrrrr fred",
+            "username": "FredPhilipy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cbcfb5dd7f4b0fc2c13122169ac93e932049a4d2",
+          "message": "fix(replay): replace unwrap with proper error handling for empty URLs (#4609)\n\nReplace `unwrap()` with `ok_or_eyre()` when accessing the first URL from\neth_client.urls to prevent potential panics when the URLs vector is\nempty.",
+          "timestamp": "2025-09-29T14:15:51Z",
+          "tree_id": "7d3da70b5f234e4507721e500666132b4945811e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cbcfb5dd7f4b0fc2c13122169ac93e932049a4d2"
+        },
+        "date": 1759158281971,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 92920881373,
+            "range": "± 389496832",
             "unit": "ns/iter"
           }
         ]
