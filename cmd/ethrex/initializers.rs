@@ -5,7 +5,7 @@ use crate::{
         read_jwtsecret_file, read_node_config_file,
     },
 };
-use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
@@ -114,13 +114,9 @@ pub fn open_store(datadir: &Path) -> Store {
     }
 }
 
-pub fn init_blockchain(
-    store: Store,
-    blockchain_type: BlockchainType,
-    perf_logs_enabled: bool,
-) -> Arc<Blockchain> {
+pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
+    Blockchain::new(store, blockchain_opts).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -387,7 +383,14 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
+    let blockchain = init_blockchain(
+        store.clone(),
+        BlockchainOptions {
+            max_mempool_size: opts.mempool_max_size,
+            perf_logs_enabled: true,
+            r#type: BlockchainType::L1,
+        },
+    );
 
     let signer = get_signer(datadir);
 
