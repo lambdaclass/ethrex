@@ -9449,6 +9449,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "reorgs"
+version = "0.1.0"
+dependencies = [
+ "ethrex",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-config",
+ "ethrex-l2-common",
+ "ethrex-l2-rpc",
+ "ethrex-rpc",
+ "hex",
+ "nix",
+ "rand 0.8.5",
+ "secp256k1",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"

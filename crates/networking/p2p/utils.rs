@@ -1,5 +1,4 @@
 use std::{
-    net::IpAddr,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -47,15 +46,6 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
     let public_key = PublicKey::from_secret_key(secp256k1::SECP256K1, signer);
     let encoded = public_key.serialize_uncompressed();
     H512::from_slice(&encoded[1..])
-}
-
-pub fn unmap_ipv4in6_address(addr: IpAddr) -> IpAddr {
-    if let IpAddr::V6(v6_addr) = addr {
-        if let Some(v4_addr) = v6_addr.to_ipv4_mapped() {
-            return IpAddr::V4(v4_addr);
-        }
-    }
-    addr
 }
 
 pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {
