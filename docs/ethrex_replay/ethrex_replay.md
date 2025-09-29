@@ -28,10 +28,10 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches �
 
 | Client     | `ethrex-replay block`         | notes                                            |
 | ---------- | ----------------------------- | ------------------------------------------------ |
+| ethrex     | ✅                            | `debug_executionWitness`                         |
 | reth       | ✅                            | `debug_executionWitness`                         |
 | geth       | ✅                            | `eth_getProof`                                   |
 | nethermind | ✅                            | `eth_getProof`                                   |
-| ethrex     | ✅                            | `debug_executionWitness`                         |
 | erigon     | ❌                            | V3 supports `eth_getProof` only for latest block |
 | besu       | ❌                            | Doesn't return proof for non-existing accounts   |
 
