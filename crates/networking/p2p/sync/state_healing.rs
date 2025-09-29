@@ -107,6 +107,7 @@ async fn heal_state_trie(
     let mut downloads_fail = 0;
     let mut leafs_healed = 0;
     let mut empty_try_recv: u64 = 0;
+    let mut heals_per_cycle: u64 = 0;
     let mut nodes_to_write: Vec<(Nibbles, Vec<u8>)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
@@ -135,21 +136,13 @@ async fn heal_state_trie(
             METRICS
                 .healing_empty_try_recv
                 .store(empty_try_recv, Ordering::Relaxed);
-            if is_stale {
-                debug!(
-                    "State Healing stopping due to staleness, snap peers available {num_peers}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
-                    global_leafs_healed,
-                    paths.len(),
-                    membatch.len()
-                );
-            } else {
-                debug!(
-                    "State Healing in Progress, snap peers available {num_peers}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}",
-                    global_leafs_healed,
-                    paths.len(),
-                    membatch.len()
-                );
-            }
+            debug!(
+                "State Healing {}, snap peers available {num_peers}, inflight_tasks: {inflight_tasks}, Maximum depth reached on loop {longest_path_seen}, leafs healed {leafs_healed}, global leafs healed {}, Download success rate {downloads_rate}, Paths to go {}, Membatch size {}, Processing per cycle {heals_per_cycle}",
+                if is_stale { "stopping" } else { "in progress" },
+                global_leafs_healed,
+                paths.len(),
+                membatch.len()
+            );
             downloads_success = 0;
             downloads_fail = 0;
         }
@@ -258,6 +251,7 @@ async fn heal_state_trie(
 
         // If there is at least one "batch" of nodes to heal, heal it
         if let Some((nodes, batch)) = nodes_to_heal.pop() {
+            heals_per_cycle += 1;
             let return_paths = heal_state_batch(
                 batch,
                 nodes,
