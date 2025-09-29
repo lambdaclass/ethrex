@@ -224,7 +224,7 @@ impl BranchNode {
         });
         if payload_len < 56 {
             buf.write(&[0xc0 + payload_len as u8]);
-        } else if payload_len < u8::MAX as usize {
+        } else if payload_len < u8::MAX as usize { // TODO: < or <=
             buf.write(&[0xf8, payload_len as u8]);
         } else {
             // ASSUMPTION: list len will never be >u16::MAX (2 bytes len)

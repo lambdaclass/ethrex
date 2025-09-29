@@ -168,12 +168,11 @@ impl LeafNode {
         buf.write(&partial_encoded);
 
         // write value prefix
-        // TODO: not possible to be 1 byte
         if self.value.len() == 1 && self.value[0] < 0x80 {
-            // value is its own encoding
+            unreachable!()
         } else if self.value.len() < 56 {
             buf.write(&[0x80 + self.value.len() as u8]);
-        } else if self.value.len() < u8::MAX as usize {
+        } else if self.value.len() < u8::MAX as usize { // TODO: < or <=
             buf.write(&[0xb8, self.value.len() as u8]);
         } else {
             // ASSUMPTION: value len will never be >u16::MAX (2 bytes len)
