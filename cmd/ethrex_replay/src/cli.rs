@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use std::{
     cmp::max,
     fmt::Display,
@@ -986,7 +987,7 @@ pub async fn produce_l1_block(
 
     let payload_id = build_payload_args.id()?;
 
-    let payload = create_payload(&build_payload_args, store)?;
+    let payload = create_payload(&build_payload_args, store, Bytes::new())?;
 
     blockchain
         .clone()
