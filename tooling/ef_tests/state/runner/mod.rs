@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 
 pub mod levm_runner;
-pub mod revm_runner;
 pub mod revm_db;
+pub mod revm_runner;
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
 pub enum EFTestRunnerError {

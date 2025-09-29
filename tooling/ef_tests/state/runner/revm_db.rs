@@ -1,25 +1,25 @@
 use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig};
 use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
 use ethrex_vm::{DynVmDatabase, EvmError, VmDatabase};
-use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
+use revm::db::states::bundle_state::BundleRetention;
 use revm::primitives::{
-    AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256
+    AccountInfo as RevmAccountInfo, Address as RevmAddress, B256 as RevmB256,
+    Bytecode as RevmBytecode, Bytes as RevmBytes, U256 as RevmU256,
 };
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database
-///
-/// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
-pub struct EvmState {
+pub struct RevmState {
     pub inner: revm::db::State<RevmDynVmDatabase>,
 }
 
+/// Wrapper used so we can implement revm-specific traits over `DynVmDatabase`
 #[derive(Clone)]
 pub struct RevmDynVmDatabase(DynVmDatabase);
 
 // Needed because revm::db::State is not cloneable and we need to
 // restore the previous EVM state after executing a transaction in L2 mode whose resulting state diff doesn't fit in a blob.
-impl Clone for EvmState {
+impl Clone for RevmState {
     fn clone(&self) -> Self {
         let inner = revm::db::State::<RevmDynVmDatabase> {
             cache: self.inner.cache.clone(),
@@ -34,21 +34,14 @@ impl Clone for EvmState {
     }
 }
 
-impl EvmState {
-    /// Gets the stored chain config
-    pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.inner.database.0.get_chain_config()
-    }
-}
-
-/// Builds EvmState from a Store
-pub fn evm_state(db: DynVmDatabase) -> EvmState {
+/// Builds RevmState from a Store
+pub fn revm_state(db: DynVmDatabase) -> RevmState {
     let inner = revm::db::State::builder()
         .with_database(RevmDynVmDatabase(db))
         .with_bundle_update()
         .without_state_clear()
         .build();
-    EvmState { inner }
+    RevmState { inner }
 }
 
 impl revm::Database for RevmDynVmDatabase {
@@ -137,10 +130,14 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
     }
 }
 
-impl EvmState {
-     /// Gets the state_transitions == [AccountUpdate] from the [EvmState].
-     pub fn get_state_transitions(&mut self,
-    ) -> Vec<ethrex_common::types::AccountUpdate> {
+impl RevmState {
+    /// Gets the stored chain config
+    pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
+        self.inner.database.0.get_chain_config()
+    }
+
+    /// Gets the state_transitions == [AccountUpdate] from the [RevmState].
+    pub fn get_state_transitions(&mut self) -> Vec<ethrex_common::types::AccountUpdate> {
         let initial_state = &mut self.inner;
         initial_state.merge_transitions(BundleRetention::PlainState);
         let bundle = initial_state.take_bundle();
