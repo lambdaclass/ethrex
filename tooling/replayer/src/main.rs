@@ -276,6 +276,7 @@ async fn replay_latest_block(
             // send it under different rules (see below in the code).
             slack_webhook_url: None,
             verbose: opts.verbose,
+            bench: false,
         },
     })
     .run()
@@ -303,6 +304,7 @@ async fn replay_latest_block(
                     // send it under different rules (see below in the code).
                     slack_webhook_url: None,
                     verbose: opts.verbose,
+                    bench: false,
                 },
             })
             .run()
