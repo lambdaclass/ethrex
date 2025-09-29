@@ -543,9 +543,12 @@ pub async fn deploy_l1_contracts(
                 warn!("Failed to make deposits: {err}");
             });
     }
-    // Ok(ContractAddresses::default())
 
-    write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
+    write_contract_addresses_to_env(
+        contract_addresses,
+        opts.native_token_l1_address,
+        opts.env_file_path,
+    )?;
     info!("Deployer binary finished successfully");
     Ok(contract_addresses)
 }
@@ -1131,6 +1134,7 @@ async fn make_deposits(
 
 fn write_contract_addresses_to_env(
     contract_addresses: ContractAddresses,
+    native_token_l1_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -1207,6 +1211,11 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={:#x}",
         contract_addresses.sequencer_registry_address
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_NATIVE_TOKEN_L1_ADDRESS={:#x}",
+        native_token_l1_address
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
