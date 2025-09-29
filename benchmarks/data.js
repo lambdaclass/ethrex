@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759156674754,
+  "lastUpdate": 1759158051440,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -17215,6 +17215,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 88436037784,
             "range": "± 226115606",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón 🐃🐄🥚",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c84b6a7442efcd8c1345b542aa9ea4b771c11419",
+          "message": "fix(replay): block number wrongly displayed in RpcDB (#4613)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nBlock number being displayed on screen was wrong.\nWe now do store the actual block number to execute and this is used for\nthe post-state proofs, whereas the `block number - 1` is used for the\npre-state proofs.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-29T14:08:47Z",
+          "tree_id": "9c52a3f3873dd6b45e7203797d4d1e0ef74a9e09",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c84b6a7442efcd8c1345b542aa9ea4b771c11419"
+        },
+        "date": 1759158029695,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 89085218257,
+            "range": "± 143950153",
             "unit": "ns/iter"
           }
         ]
