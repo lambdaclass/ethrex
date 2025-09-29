@@ -90,13 +90,7 @@ impl TrieDB for RocksDBTrieDB {
 
         self.primary
             .write(batch)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))?;
-        self.secondary.try_catch_up_with_primary().map_err(|e| {
-            TrieError::DbError(anyhow::anyhow!(
-                "Secondary RocksDB instance failed to catch up with primary: {}",
-                e
-            ))
-        })
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
     }
 }
 
