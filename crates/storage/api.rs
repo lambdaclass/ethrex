@@ -249,7 +249,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn open_direct_storage_trie(
         &self,
         hashed_address: H256,
-        storage_root: H256
+        storage_root: H256,
     ) -> Result<Trie, StoreError>;
 
     /// Obtain a state trie from the given state root
@@ -370,10 +370,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError>;
 
-    async fn delete_subtree(
-        &self,
-        root: Nibbles,
-    ) -> Result<(), StoreError>;
+    async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError>;
 
     async fn write_account_code_batch(
         &self,

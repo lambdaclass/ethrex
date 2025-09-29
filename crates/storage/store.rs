@@ -1312,11 +1312,15 @@ impl Store {
             .await
     }
 
-    pub async fn delete_subtree(
-        &self,
-        root: Nibbles,
-    ) -> Result<(), StoreError> {
-        self.engine.delete_subtree(root).await
+    pub async fn delete_subtree(&self, root: Nibbles) -> Result<(), StoreError> {
+        let mut to = root.as_ref().to_vec();
+        to.last_mut().map(|last| *last += 1);
+        self.engine.delete_range(root, Nibbles::from_hex(to)).await
+    }
+
+    /// Removes entries in the range [from, to)
+    pub async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
+        self.engine.delete_range(from, to).await
     }
 
     pub async fn write_account_code_batch(
