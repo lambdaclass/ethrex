@@ -120,6 +120,7 @@ spawned-concurrency = "0.4.0"
 spawned-rt = "0.4.0"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
+crossbeam = "0.8.4"
 rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"

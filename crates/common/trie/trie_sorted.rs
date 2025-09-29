@@ -2,6 +2,7 @@ use crate::{
     EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
+use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
 use ethereum_types::H256;
 use pool_test::ThreadPool;
 use std::{sync::Arc, thread::scope};
@@ -124,11 +125,15 @@ fn add_center_to_parent_and_write_queue(
 }
 
 fn flush_nodes_to_write(
-    nodes_to_write: Vec<Node>,
+    mut nodes_to_write: Vec<Node>,
     db: &dyn TrieDB,
+    sender: Sender<Vec<Node>>,
 ) -> Result<(), TrieGenerationError> {
-    db.put_batch_no_alloc(nodes_to_write)
-        .map_err(TrieGenerationError::FlushToDbError)
+    db.put_batch_no_alloc(&nodes_to_write)
+        .map_err(TrieGenerationError::FlushToDbError)?;
+    nodes_to_write.clear();
+    sender.send(nodes_to_write);
+    Ok(())
 }
 
 #[inline(never)]
@@ -136,11 +141,15 @@ pub fn trie_from_sorted_accounts<'scope, T>(
     db: &'scope dyn TrieDB,
     data_iter: &mut T,
     scope: Arc<ThreadPool<'scope>>,
+    buffer_sender: Sender<Vec<Node>>,
+    buffer_receiver: Receiver<Vec<Node>>,
 ) -> Result<H256, TrieGenerationError>
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
-    let mut nodes_to_write: Vec<Node> = Vec::with_capacity(SIZE_TO_WRITE_DB as usize + 65);
+    let mut nodes_to_write: Vec<Node> = buffer_receiver
+        .recv()
+        .expect("This channel shouldn't close");
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
 
     let mut left_side = StackElement::default();
@@ -157,16 +166,19 @@ where
             value: initial_value.1,
         };
         let hash = node.compute_hash().finalize();
-        flush_nodes_to_write(vec![node.into()], db)?;
+        flush_nodes_to_write(vec![node.into()], db, buffer_sender)?;
         return Ok(hash);
     }
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
+            let buffer_sender = buffer_sender.clone();
             scope.execute_priority(Box::new(move || {
-                let _ = flush_nodes_to_write(nodes_to_write, db);
+                let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
             }));
-            nodes_to_write = Vec::with_capacity(SIZE_TO_WRITE_DB as usize + 65);
+            nodes_to_write = buffer_receiver
+                .recv()
+                .expect("This channel shouldn't close");
         }
 
         let right_side_path = Nibbles::from_bytes(right_side.0.as_bytes());
@@ -267,7 +279,7 @@ where
             .finalize()
     };
 
-    flush_nodes_to_write(nodes_to_write, db);
+    flush_nodes_to_write(nodes_to_write, db, buffer_sender);
     Ok(hash)
 }
 
@@ -278,9 +290,19 @@ pub fn trie_from_sorted_accounts_wrap<T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<Node>>(1001);
+    for _ in 0..1_000 {
+        buffer_sender.send(Vec::with_capacity(20_065));
+    }
     scope(|s| {
         let pool = ThreadPool::new(12, s);
-        trie_from_sorted_accounts(db, accounts_iter, Arc::new(pool))
+        trie_from_sorted_accounts(
+            db,
+            accounts_iter,
+            Arc::new(pool),
+            buffer_sender,
+            buffer_receiver,
+        )
     })
 }
 

@@ -81,7 +81,10 @@ impl TrieDB for RocksDBTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
     }
 
-    fn put_batch_no_alloc(&self, key_values: Vec<ethrex_trie::Node>) -> Result<(), TrieError> {
+    fn put_batch_no_alloc(
+        &self,
+        key_values: &std::vec::Vec<ethrex_trie::Node>,
+    ) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let mut batch = rocksdb::WriteBatch::default();
         let mut buffer = Vec::with_capacity(300);

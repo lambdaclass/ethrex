@@ -1707,21 +1707,28 @@ async fn insert_storage_into_rocksdb(
         })
         .collect::<Vec<(H256, Trie)>>();
 
-    use crossbeam::channel::unbounded;
+    use crossbeam::channel::{bounded, unbounded};
+
+    use ethrex_trie::Node;
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
+    let thread_count = std::thread::available_parallelism()
+        .map(|num| num.into())
+        .unwrap_or(8);
+
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<Node>>(1001);
+    for _ in 0..1_000 {
+        buffer_sender.send(Vec::with_capacity(20_065));
+    }
 
     scope(|scope| {
-        let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(
-            std::thread::available_parallelism()
-                .map(|num| num.into())
-                .unwrap_or(8),
-            scope,
-        ));
+        let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
             let sender = sender.clone();
-            if counter > 100_000 {
+            let buffer_sender = buffer_sender.clone();
+            let buffer_receiver = buffer_receiver.clone();
+            if counter >= thread_count - 1 {
                 let _ = receiver.recv();
                 counter -= 1;
             }
@@ -1740,7 +1747,9 @@ async fn insert_storage_into_rocksdb(
                 let _ = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter,
-                    pool_clone
+                    pool_clone,
+                    buffer_sender,
+                    buffer_receiver,
                 )
                 .inspect_err(|err: &TrieGenerationError| {
                     error!(

@@ -24,6 +24,7 @@ digest = "0.10.6"
 lazy_static.workspace = true
 rayon.workspace = true
 pool_test.workspace = true
+crossbeam.workspace = true
 
 [features]
 default = []
