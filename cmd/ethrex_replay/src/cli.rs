@@ -91,12 +91,6 @@ pub enum EthrexReplayCommand {
         network: Network,
     },
     #[cfg(not(feature = "l2"))]
-    #[command(
-        subcommand,
-        about = "Store the state prior to the execution of the block"
-    )]
-    Cache(CacheSubcommand),
-    #[cfg(not(feature = "l2"))]
     #[command(subcommand, about = "Replay a custom block or batch")]
     Custom(CustomSubcommand),
     #[cfg(not(feature = "l2"))]
@@ -359,42 +353,6 @@ impl EthrexReplayCommand {
                     })
                     .await?;
                 }
-            }
-            #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::Block(BlockOptions { block, opts })) => {
-                let (eth_client, network) = setup(&opts).await?;
-
-                let block_identifier = or_latest(block)?;
-
-                get_blockdata(eth_client, network.clone(), block_identifier).await?;
-
-                if let Some(block_number) = block {
-                    info!("Block {block_number} data cached successfully.");
-                } else {
-                    info!("Latest block data cached successfully.");
-                }
-            }
-            #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::Blocks(BlocksOptions {
-                blocks,
-                from,
-                to,
-                opts,
-            })) => {
-                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
-
-                let (eth_client, network) = setup(&opts).await?;
-
-                for block_number in blocks {
-                    get_blockdata(
-                        eth_client.clone(),
-                        network.clone(),
-                        BlockIdentifier::Number(block_number),
-                    )
-                    .await?;
-                }
-
-                info!("Blocks data cached successfully.");
             }
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Block(CustomBlockOptions { common })) => {
