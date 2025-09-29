@@ -1,5 +1,5 @@
 use std::{
-    fs::File, io::Read, path::PathBuf, process::Stdio, sync::atomic::AtomicU16, time::Duration,
+    fs::File, io::Read, path::PathBuf, process::Stdio, sync::atomic::AtomicU16, time::{Duration, Instant, SystemTime},
 };
 
 use ethrex::{cli::Options, initializers::get_network};
@@ -91,7 +91,11 @@ impl Simulator {
         let _ = std::fs::remove_dir_all(&opts.datadir);
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
 
-        let logs_file_path = format!("data/{test_name}/node{n}.log");
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let logs_file_path = format!("data/{test_name}/node{n}_{now}.log");
         let logs_file = File::create(&logs_file_path).expect("Failed to create logs file");
 
         let cancel = CancellationToken::new();
