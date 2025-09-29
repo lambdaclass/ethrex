@@ -59,7 +59,7 @@ debug = 2
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain" }
-ethrex-common = { path = "./crates/common" }
+ethrex-common = { path = "./crates/common", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
