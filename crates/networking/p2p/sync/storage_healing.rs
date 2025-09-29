@@ -669,16 +669,19 @@ async fn perform_needed_deletions(
     }
     match node {
         Node::Branch(node) => {
-            for (choice, child) in node.choices.iter().enumerate() {
-                if !child.is_valid() {
-                    store
-                        .delete_subtree(apply_prefix(
-                            Some(hashed_account),
-                            node_path.append_new(choice as u8),
-                        ))
-                        .await?;
-                }
-            }
+            let children = node
+                .choices
+                .iter()
+                .enumerate()
+                .filter(|(_, child)| !child.is_valid())
+                .map(|(choice, _)| choice as u8)
+                .collect();
+            store
+                .delete_subtree(
+                    apply_prefix(Some(hashed_account), node_path.clone()),
+                    children,
+                )
+                .await?;
         }
         Node::Extension(node) => {
             let mut path = node_path.clone();
@@ -686,6 +689,7 @@ async fn perform_needed_deletions(
                 let [current_nibble, next_nibble] = window else {
                     break;
                 };
+                let mut to_delete = vec![];
                 for i in 0..16u8 {
                     if i == *next_nibble {
                         if path.len() + 1 != node_path.len() + node.prefix.len() {
@@ -695,11 +699,12 @@ async fn perform_needed_deletions(
                                 .push((path.append_new(i), vec![]));
                         }
                     } else {
-                        store
-                            .delete_subtree(apply_prefix(Some(hashed_account), path.append_new(i)))
-                            .await?;
+                        to_delete.push(i);
                     }
                 }
+                store
+                    .delete_subtree(apply_prefix(Some(hashed_account), path.clone()), to_delete)
+                    .await?;
                 path.append(*current_nibble as u8);
             }
         }

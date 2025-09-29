@@ -373,6 +373,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn delete_subtree(
         &self,
         root: Nibbles,
+        child: Vec<u8>
     ) -> Result<(), StoreError>;
 
     async fn write_account_code_batch(

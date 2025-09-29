@@ -660,6 +660,7 @@ impl StoreEngine for Store {
     async fn delete_subtree(
         &self,
         root: Nibbles,
+        child: Vec<u8>
     ) -> Result<(), StoreError> {
         todo!()
     }
