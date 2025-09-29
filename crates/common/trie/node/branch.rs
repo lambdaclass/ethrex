@@ -1,4 +1,9 @@
+use std::io::Write;
+
+use digest::core_api::CoreWrapper;
+use ethereum_types::H256;
 use ethrex_rlp::structs::Encoder;
+use sha3::{Digest, Keccak256, Keccak256Core};
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
@@ -203,7 +208,71 @@ impl BranchNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(&self.encode_raw())
+        let mut hasher = Keccak256::new();
+        self.encode_write(&mut hasher);
+        let hash = hasher.finalize();
+        NodeHash::Hashed(H256::from_slice(&hash))
+    }
+
+    /// Encodes the node
+    /// Assumptions:
+    /// - No value
+    /// - 32 byte choices
+    pub fn encode_write(&self, buf: &mut impl Write) {
+        // 16 items * 33 bytes, assuming branches don't have values
+        // in a state or storage trie.
+        // plus a 3 byte headroom for the payload prefix
+        //const MAX_RLP_ENCODED_SIZE: usize = 528 + 3;
+
+        let mut hashes = Vec::with_capacity(self.choices.len());
+
+        // calculate payload len
+        let mut payload_len = 1;
+        for child in self.choices.iter() {
+            let hash = child.compute_hash();
+            match hash {
+                NodeHash::Hashed(_) => {
+                    payload_len += 33;
+                }
+                NodeHash::Inline(raw) if raw.1 != 0 => {
+                    payload_len += 1 + raw.1 as usize;
+                }
+                _ => {
+                    payload_len += 1;
+                }
+            }
+            hashes.push(hash);
+        }
+        // write payload prefix
+        if payload_len < 56 {
+            buf.write(&[0xc0 + payload_len as u8]);
+        } else if payload_len < u8::MAX as usize {
+            buf.write(&[0xf8]);
+            buf.write(&[payload_len as u8]);
+        } else {
+            buf.write(&[0xf9]);
+            buf.write(&[((payload_len as u16) >> 8) as u8]);
+            buf.write(&[(payload_len & 0xff) as u8]);
+        }
+        // push payload
+        for hash in hashes {
+            match hash {
+                NodeHash::Hashed(hash) => {
+                    buf.write(&[0xa0]);
+                    buf.write(&hash.0);
+                }
+                NodeHash::Inline(raw) if raw.1 != 0 => {
+                    buf.write(&[0x80 + raw.1]);
+                    buf.write(&raw.0[..raw.1 as usize]);
+                }
+                _ => {
+                    buf.write(&[0x80]);
+                }
+            }
+        }
+
+        // branch's value is empty
+        buf.write(&[0x80]);
     }
 
     /// Encodes the node
@@ -213,48 +282,59 @@ impl BranchNode {
     pub fn encode_raw(&self) -> Vec<u8> {
         // 16 items * 33 bytes, assuming branches don't have values
         // in a state or storage trie.
-        // plus a 3 byte headroom for the first prefix and possibly payload len
+        // plus a 3 byte headroom for the payload prefix
         const MAX_RLP_ENCODED_SIZE: usize = 528 + 3;
 
         let mut buf = Vec::with_capacity(MAX_RLP_ENCODED_SIZE);
-        buf.extend([0x00; 3]);
+        let mut hashes = Vec::with_capacity(self.choices.len());
 
+        // calculate payload len
         let mut payload_len = 1;
         for child in self.choices.iter() {
-            match child.compute_hash() {
+            let hash = child.compute_hash();
+            match hash {
+                NodeHash::Hashed(_) => {
+                    payload_len += 33;
+                }
+                NodeHash::Inline(raw) if raw.1 != 0 => {
+                    payload_len += 1 + raw.1 as usize;
+                }
+                _ => {
+                    payload_len += 1;
+                }
+            }
+            hashes.push(hash);
+        }
+        // push payload prefix
+        if payload_len < 56 {
+            buf.push(0xc0 + payload_len as u8);
+        } else if payload_len < u8::MAX as usize {
+            buf.push(0xf8);
+            buf.push(payload_len as u8);
+        } else {
+            buf.push(0xf9);
+            buf.push(((payload_len as u16) >> 8) as u8);
+            buf.push((payload_len & 0xff) as u8);
+        }
+        // push payload
+        for hash in hashes {
+            match hash {
                 NodeHash::Hashed(hash) => {
                     buf.push(0xa0);
                     buf.extend(hash.0);
-                    payload_len += 33;
                 }
                 NodeHash::Inline(raw) if raw.1 != 0 => {
                     buf.push(0x80 + raw.1);
                     buf.extend_from_slice(&raw.0[..raw.1 as usize]);
-                    payload_len += 1 + raw.1 as usize;
                 }
                 _ => {
                     buf.push(0x80);
-                    payload_len += 1;
                 }
             }
         }
 
         // branch's value is empty
         buf.push(0x80);
-
-        if payload_len < 56 {
-            buf[2] = 0xc0 + payload_len as u8;
-            buf.remove(0);
-            buf.remove(0);
-        } else if payload_len < u8::MAX as usize {
-            buf[1] = 0xf8;
-            buf[2] = payload_len as u8;
-            buf.remove(0);
-        } else {
-            buf[0] = 0xf9;
-            buf[1] = ((payload_len as u16) >> 8) as u8;
-            buf[2] = (payload_len & 0xff) as u8;
-        }
 
         buf
     }
