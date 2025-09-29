@@ -447,6 +447,8 @@ impl EthrexReplayCommand {
                 loop {
                     let block_identifier = or_latest(block)?;
 
+                    let start = Instant::now();
+
                     get_blockdata(
                         eth_client.clone(),
                         network.clone(),
@@ -454,6 +456,8 @@ impl EthrexReplayCommand {
                         only_eth_proofs_blocks,
                     )
                     .await?;
+
+                    let elapsed = start.elapsed();
 
                     if let Some(block_number) = block {
                         info!("Block {block_number} data cached successfully.");
@@ -463,6 +467,11 @@ impl EthrexReplayCommand {
 
                     if !endless {
                         break;
+                    }
+
+                    // Sleep until the next block time (12 seconds)
+                    if elapsed < Duration::from_secs(12) {
+                        tokio::time::sleep(Duration::from_secs(12) - elapsed).await;
                     }
                 }
             }
