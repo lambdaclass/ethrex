@@ -1,4 +1,6 @@
-use std::{fs::File, io::Read, path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    fs::File, io::Read, path::PathBuf, process::Stdio, sync::atomic::AtomicU16, time::Duration,
+};
 
 use ethrex::{cli::Options, initializers::get_network};
 use ethrex_common::{
@@ -76,11 +78,15 @@ impl Simulator {
         let test_name = &self.test_name;
         info!(node = n, "Starting node");
         let mut opts = self.base_opts.clone();
-        opts.http_port = (8545 + n * 2).to_string();
-        opts.authrpc_port = (8545 + n * 2 + 1).to_string();
-        opts.p2p_port = (30303 + n).to_string();
-        opts.discovery_port = (30303 + n).to_string();
         opts.datadir = format!("data/{test_name}/node{n}").into();
+
+        opts.http_port = get_next_port().to_string();
+        opts.authrpc_port = get_next_port().to_string();
+
+        // These are one TCP and one UDP
+        let p2p_port = get_next_port();
+        opts.p2p_port = p2p_port.to_string();
+        opts.discovery_port = p2p_port.to_string();
 
         let _ = std::fs::remove_dir_all(&opts.datadir);
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
@@ -436,6 +442,7 @@ impl Node {
     }
 }
 
+#[derive(Debug)]
 pub struct Chain {
     block_hashes: Vec<H256>,
     blocks: Vec<Block>,
@@ -525,4 +532,9 @@ async fn wait_until_synced(engine_client: &EngineClient, fork_choice_state: Fork
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+fn get_next_port() -> u16 {
+    static NEXT_PORT: AtomicU16 = AtomicU16::new(8560);
+    NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
