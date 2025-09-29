@@ -159,7 +159,7 @@ impl TxBroadcaster {
             )
             .await?;
         }
-        self.blockchain.mempool.clear_broadcasted_txs();
+        self.blockchain.mempool.clear_broadcasted_txs()?;
         Ok(())
     }
 
