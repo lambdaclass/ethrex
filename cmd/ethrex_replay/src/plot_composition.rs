@@ -1,5 +1,6 @@
 use ethrex_common::types::{Block, Transaction, TxKind};
 use std::collections::HashMap;
+use tracing::info;
 
 use charming::{
     Chart, ImageRenderer,
@@ -162,9 +163,13 @@ pub async fn plot(blocks: &[Block]) -> eyre::Result<()> {
     for tx in txs {
         stats.process(tx);
     }
+    let first = blocks.first().map(|b| b.header.number).unwrap();
+    let last = blocks.last().map(|b| b.header.number).unwrap();
     let mut renderer = ImageRenderer::new(1000, 800);
     for (name, chart) in stats.chart() {
-        renderer.save(&chart, format!("chart_{name}.svg"))?;
+        let filename = format!("chart_{name}_{first}-{last}.svg");
+        info!("Saving chart to: {filename}");
+        renderer.save(&chart, &filename)?;
     }
     Ok(())
 }

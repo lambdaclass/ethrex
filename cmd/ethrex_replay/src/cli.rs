@@ -38,7 +38,7 @@ use ethrex_trie::{
 use reqwest::Url;
 #[cfg(feature = "l2")]
 use std::path::Path;
-use tracing::info;
+use tracing::{debug, info};
 
 #[cfg(feature = "l2")]
 use crate::fetcher::get_batchdata;
@@ -390,8 +390,13 @@ impl EthrexReplayCommand {
 
                 let eth_client = EthClient::new(&rpc_url)?;
 
+                info!(
+                    "Fetching blocks from RPC: {start} to {end} ({} blocks)",
+                    end - start + 1
+                );
                 let mut blocks = vec![];
                 for block_number in start..=end {
+                    debug!("Fetching block {block_number}");
                     let rpc_block = eth_client
                         .get_block_by_number(BlockIdentifier::Number(block_number), true)
                         .await?;
