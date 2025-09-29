@@ -56,5 +56,4 @@ l2 = [
     "ethrex-storage-rollup/l2",
 ]
 profiling = ["ethrex-prover/profiling"]
-ci = []
 jemalloc = ["dep:tikv-jemallocator"]
