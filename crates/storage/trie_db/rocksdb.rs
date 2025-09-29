@@ -54,11 +54,11 @@ impl TrieDB for RocksDBTrieDB {
         let cf = self.cf_handle()?;
         let db_key = self.make_key(key);
 
-
-        let res = self.db
+        let res = self
+            .db
             .get_cf(&cf, &db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
-        println!("{:?} exists => {}", db_key, res.is_some());
+        // println!("{:?} exists => {}", db_key, res.is_some());
         Ok(res)
     }
 
