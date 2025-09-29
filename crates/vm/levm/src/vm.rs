@@ -441,13 +441,18 @@ impl<'a> VM<'a> {
         ) {
             let call_frame = &mut self.current_call_frame;
 
-            return Self::execute_precompile(
+            let mut gas_remaining = call_frame.gas_remaining as u64;
+            let result = Self::execute_precompile(
                 call_frame.code_address,
                 &call_frame.calldata,
                 call_frame.gas_limit,
-                &mut call_frame.gas_remaining,
+                &mut gas_remaining,
                 self.env.config.fork,
             );
+
+            call_frame.gas_remaining = gas_remaining as i64;
+
+            return result;
         }
 
         loop {

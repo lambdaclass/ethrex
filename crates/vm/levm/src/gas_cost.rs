@@ -956,11 +956,13 @@ pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
 pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMError> {
     let mut remaining_gas = current_call_frame.gas_remaining;
 
-    remaining_gas = remaining_gas
-        .checked_sub(remaining_gas / 64)
-        .ok_or(InternalError::Underflow)?;
+    remaining_gas -= remaining_gas / 64;
 
-    Ok(remaining_gas)
+    if remaining_gas < 0 {
+        return Err(InternalError::Underflow.into());
+    }
+
+    Ok(remaining_gas as u64)
 }
 
 fn calculate_cost_and_gas_limit_call(
