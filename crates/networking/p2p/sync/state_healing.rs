@@ -344,7 +344,7 @@ async fn heal_state_batch(
                 &path.parent_path,
                 membatch,
                 nodes_to_write,
-            );
+            ).await;
         } else {
             let entry = MembatchEntryValue {
                 node: node.clone(),
@@ -364,7 +364,7 @@ async fn perform_needed_deletions(
     nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
 ) -> Result<(), SyncError> {
     for i in 0..node_path.len() {
-        nodes_to_write.push((node_path.slice(i, node_path.len()), vec![]));
+        nodes_to_write.push((node_path.slice(0, i), vec![]));
     }
     match node {
         Node::Branch(node) => {
@@ -399,7 +399,7 @@ async fn perform_needed_deletions(
     Ok(())
 }
 
-fn commit_node(
+async fn commit_node(
     store: &Store,
     node: Node,
     path: &Nibbles,
@@ -407,14 +407,13 @@ fn commit_node(
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
     nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
 ) {
-    futures::executor::block_on(perform_needed_deletions(
-        store,
-        node.clone(),
-        &path,
-        nodes_to_write,
-    ))
-    .unwrap();
+    perform_needed_deletions(store, node.clone(), &path, nodes_to_write)
+        .await
+        .unwrap();
     nodes_to_write.push((path.clone(), node.encode_to_vec()));
+    if let Node::Leaf(leaf) = &node {
+        nodes_to_write.push((path.concat(leaf.partial.clone()), leaf.value.clone()));
+    }
 
     if parent_path == path {
         return; // Case where we're saving the root
@@ -426,14 +425,15 @@ fn commit_node(
 
     membatch_entry.children_not_in_storage_count -= 1;
     if membatch_entry.children_not_in_storage_count == 0 {
-        commit_node(
+        Box::pin(commit_node(
             store,
             membatch_entry.node,
             parent_path,
             &membatch_entry.parent_path,
             membatch,
             nodes_to_write,
-        );
+        ))
+        .await;
     } else {
         membatch.insert(parent_path.clone(), membatch_entry);
     }

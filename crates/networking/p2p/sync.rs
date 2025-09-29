@@ -1091,7 +1091,8 @@ impl Syncer {
         let mut healing_done = false;
         while !healing_done {
             // This if is an edge case for the skip snap sync scenario
-            if block_is_stale(&pivot_header) {
+            // TODO: UNCOMMENT CONDITION
+            //if block_is_stale(&pivot_header) {
                 pivot_header = update_pivot(
                     pivot_header.number,
                     pivot_header.timestamp,
@@ -1099,7 +1100,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-            }
+            //}
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
@@ -1259,7 +1260,7 @@ fn compute_storage_roots(
         }
     }
 
-    let (computed_storage_root, mut changes) = storage_trie.collect_changes_since_last_hash();
+    let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
 
     let account_state = store
         .get_account_state_by_acc_hash(pivot_hash, account_hash)?
@@ -1272,7 +1273,6 @@ fn compute_storage_roots(
             .map_err(|_| SyncError::MaybeBigAccount)?
             .insert(account_hash, computed_storage_root);
     }
-    changes.retain(|(path, _)| path.len() != 64);
     Ok((account_hash, changes))
 }
 

@@ -38,12 +38,14 @@ impl NodeRef {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
             NodeRef::Hash(hash) => db
-                .get(path)?
+                .get(path.clone())?
+                .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
                     Ok(node) => {
                         if node.compute_hash() == hash {
                             Some(Ok(node))
                         } else {
+                            println!("bad hash for {path:?}, wanted hash {hash:?} got {rlp:?}");
                             None
                         }
                     }
@@ -80,7 +82,7 @@ impl NodeRef {
                 let hash = hash.get_or_init(|| node.compute_hash());
                 acc.push((path.clone(), node.encode_to_vec()));
                 if let Node::Leaf(leaf) = node.as_ref() {
-                    acc.push((path.concat(leaf.partial.clone()), node.encode_to_vec()));
+                    acc.push((path.concat(leaf.partial.clone()), leaf.value.clone()));
                 }
 
                 let hash = *hash;

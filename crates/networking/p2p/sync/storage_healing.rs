@@ -277,6 +277,7 @@ pub async fn heal_storage_trie(
                     &mut state.maximum_length_seen,
                     &mut nodes_to_write,
                 )
+                .await
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
             Err(RequestStorageTrieNodes::SendMessageError(id, _err)) => {
@@ -452,7 +453,7 @@ async fn zip_requeue_node_responses_score_peer(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn process_node_responses(
+async fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
     store: Store,
@@ -482,7 +483,7 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&store, &node_response, membatch, roots_healed, to_write).inspect_err(
+            commit_node(&store, &node_response, membatch, roots_healed, to_write).await.inspect_err(
                 |err| error!("{err} in commit node while committing {node_response:?}"),
             )?;
         } else {
@@ -660,7 +661,7 @@ async fn perform_needed_deletions(
         to_write
             .entry(hashed_account)
             .or_default()
-            .push((node_path.slice(i, node_path.len()), vec![]));
+            .push((node_path.slice(0, i), vec![]));
     }
     match node {
         Node::Branch(node) => {
@@ -703,7 +704,7 @@ async fn perform_needed_deletions(
     Ok(())
 }
 
-fn commit_node(
+async fn commit_node(
     store: &Store,
     node: &NodeResponse,
     membatch: &mut Membatch,
@@ -712,13 +713,13 @@ fn commit_node(
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
 
-    futures::executor::block_on(perform_needed_deletions(
+    perform_needed_deletions(
         store,
         node.node.clone(),
         hashed_account,
         &node.node_request.storage_path,
         to_write,
-    ))
+    ).await
     .unwrap();
 
     to_write.entry(hashed_account).or_default().push((
@@ -728,7 +729,7 @@ fn commit_node(
     if let Node::Leaf(leaf) = &node.node {
         to_write.entry(hashed_account).or_default().push((
             node.node_request.storage_path.concat(leaf.partial.clone()),
-            node.node.encode_to_vec(),
+            leaf.value.clone(),
         ));
     }
 
@@ -753,13 +754,13 @@ fn commit_node(
     parent_entry.missing_children_count -= 1;
 
     if parent_entry.missing_children_count == 0 {
-        commit_node(
+        Box::pin(commit_node(
             store,
             &parent_entry.node_response,
             membatch,
             roots_healed,
             to_write,
-        )?;
+        )).await?;
     } else {
         membatch.insert(parent_key, parent_entry);
     }

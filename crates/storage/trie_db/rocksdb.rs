@@ -43,7 +43,9 @@ impl RocksDBTrieDB {
     }
 
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, node_hash).as_ref().to_vec()
+        apply_prefix(self.address_prefix, node_hash)
+            .as_ref()
+            .to_vec()
     }
 }
 
@@ -52,9 +54,12 @@ impl TrieDB for RocksDBTrieDB {
         let cf = self.cf_handle()?;
         let db_key = self.make_key(key);
 
-        self.db
-            .get_cf(&cf, db_key)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))
+
+        let res = self.db
+            .get_cf(&cf, &db_key)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
+        println!("{:?} exists => {}", db_key, res.is_some());
+        Ok(res)
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
@@ -63,7 +68,11 @@ impl TrieDB for RocksDBTrieDB {
 
         for (key, value) in key_values {
             let db_key = self.make_key(key);
-            batch.put_cf(&cf, db_key, value);
+            if value.is_empty() {
+                batch.delete_cf(&cf, db_key);
+            } else {
+                batch.put_cf(&cf, db_key, value);
+            }
         }
 
         self.db
