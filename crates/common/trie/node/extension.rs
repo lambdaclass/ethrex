@@ -161,7 +161,14 @@ impl ExtensionNode {
         // calc total payload len
         // ASSUMPTION: there are no inline node refs, so child len is 1 + 32 bytes
         // ASSUMPTION: prefix is never greater than 55 bytes (in particular it's at most 32 bytes)
-        let payload_len = 1 + prefix_encoded.len() + 33;
+        let payload_len = {
+            let prefix_len = if prefix_encoded.len() == 1 {
+                1
+            } else {
+                1 + prefix_encoded.len()
+            };
+            prefix_len + 33
+        };
 
         // write payload prefix
         if payload_len < 56 {
@@ -173,9 +180,14 @@ impl ExtensionNode {
             unreachable!();
         }
 
+        // write prefix prefix
+        if prefix_encoded.len() == 1 {
+            // value is its own encoding
+        } else {
+            // ASSUMPTION: prefix is never greater than 55 bytes (in particular it's at most 32 bytes)
+            buf.write(&[0x80 + prefix_encoded.len() as u8]);
+        }
         // write prefix
-        // ASSUMPTION: prefix is never greater than 55 bytes (in particular it's at most 32 bytes)
-        buf.write(&[0x80 + prefix_encoded.len() as u8]);
         buf.write(&prefix_encoded);
 
         // write child hash

@@ -131,7 +131,11 @@ impl LeafNode {
         // calc total payload len
         let payload_len = {
             // ASSUMPTION: partial is never greater than 55 bytes (in particular it's at most 32 bytes)
-            let partial_len = 1 + partial_encoded.len();
+            let partial_len = if partial_encoded.len() == 1 {
+                1
+            } else {
+                1 + partial_encoded.len()
+            };
             let value_prefix_len = match self.value.len() {
                 ..56 => 1,
                 56..255 => 2,
@@ -153,8 +157,14 @@ impl LeafNode {
             ]);
         }
 
+        // write partial prefix
+        if partial_encoded.len() == 1 {
+            // value is its own encoding
+        } else {
+            // ASSUMPTION: partial is never greater than 55 bytes (in particular it's at most 32 bytes)
+            buf.write(&[0x80 + partial_encoded.len() as u8]);
+        }
         // write partial
-        buf.write(&[0x80 + partial_encoded.len() as u8]);
         buf.write(&partial_encoded);
 
         // write value prefix
