@@ -800,7 +800,8 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         let benchmark_json = report.to_bench_file()?;
         let file =
             std::fs::File::create("bench_latest.json").expect("failed to create bench_latest.json");
-        serde_json::to_writer(file, &benchmark_json).expect("failed to write to bench_latest.json");
+        serde_json::to_writer(file, &benchmark_json)
+            .map_err(|e| eyre::Error::msg(format!("failed to write to bench_latest.json: {e}")))?;
     }
 
     Ok(())
