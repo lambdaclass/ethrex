@@ -333,7 +333,7 @@ pub struct TransactionOpts {
     tx_hash: H256,
     #[arg(
         long,
-        help = "Block number containing the transaction.",
+        help = "Block number containing the transaction. Necessary in cached mode.",
         help_heading = "Command Options"
     )]
     pub block_number: Option<u64>,
