@@ -111,7 +111,8 @@ impl StoreEngine {
             }
 
             let txn = db.begin_write()?;
-            txn.put_batch(batch_items)
+            txn.put_batch(batch_items)?;
+            txn.commit()
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -151,7 +152,8 @@ impl StoreEngine {
             }
 
             let txn = db.begin_write()?;
-            txn.put_batch(batch_items)
+            txn.put_batch(batch_items)?;
+            txn.commit()
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -413,7 +415,8 @@ impl StoreEngine {
             .collect();
 
         let txn = self.backend.begin_write()?;
-        txn.put_batch(batch_items)
+        txn.put_batch(batch_items)?;
+        txn.commit()
     }
 
     // FIXME: Check libmdbx implementation to see if we can replicate it
@@ -495,7 +498,8 @@ impl StoreEngine {
             })
             .collect();
         let txn = self.backend.begin_write()?;
-        txn.put_batch(batch_items)
+        txn.put_batch(batch_items)?;
+        txn.commit()
     }
 
     /// Obtain receipt by block hash and index
@@ -1090,7 +1094,8 @@ impl StoreEngine {
         }
 
         let txn = self.backend.begin_write()?;
-        txn.put_batch(batch_items)
+        txn.put_batch(batch_items)?;
+        txn.commit()
     }
 
     pub async fn write_account_code_batch(
@@ -1104,6 +1109,7 @@ impl StoreEngine {
         }
 
         let txn = self.backend.begin_write()?;
-        txn.put_batch(batch_items)
+        txn.put_batch(batch_items)?;
+        txn.commit()
     }
 }

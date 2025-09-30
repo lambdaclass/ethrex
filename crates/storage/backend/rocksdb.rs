@@ -2,11 +2,8 @@ use crate::api::{
     PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions,
 };
 use crate::error::StoreError;
-use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamilyDescriptor, DBCompressionType, MultiThreaded, Options,
-    SliceTransform, SnapshotWithThreadMode, Transaction,
-};
-use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
+use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode};
+use rocksdb::{OptimisticTransactionDB, Transaction, WriteBatchWithTransaction};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -23,23 +20,13 @@ impl StorageBackend for RocksDBBackend {
     where
         Self: Sized,
     {
-        // RocksDB options (DB-level)
+        // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
         opts.set_max_open_files(-1);
         opts.set_max_background_jobs(8);
-        opts.set_level_compaction_dynamic_level_bytes(true);
-        opts.set_enable_pipelined_write(true);
-        opts.set_allow_concurrent_memtable_write(true);
-        opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
-        opts.set_max_write_buffer_number(4);
-        opts.set_min_write_buffer_number_to_merge(2);
-        opts.set_bytes_per_sync(32 * 1024 * 1024); // 32MB
-
-        // Shared block cache
-        let cache = Cache::new_lru_cache(512 * 1024 * 1024); // 512MB
 
         // Open all column families
         let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
@@ -49,76 +36,9 @@ impl StorageBackend for RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
-        // Per-CF tuning
         let cf_descriptors = all_cfs_to_open
             .iter()
-            .map(|cf_name| {
-                let mut cf_opts = Options::default();
-
-                // Defaults for any CF
-                cf_opts.set_level_compaction_dynamic_level_bytes(true);
-                cf_opts.set_compression_type(DBCompressionType::Lz4);
-                cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
-                cf_opts.set_max_write_buffer_number(3);
-                cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
-
-                // Block-based table options with shared cache
-                let mut bb = BlockBasedOptions::default();
-                bb.set_block_cache(&cache);
-                bb.set_block_size(16 * 1024); // 16KB por defecto
-                bb.set_cache_index_and_filter_blocks(true);
-
-                match cf_name.as_str() {
-                    "headers" | "bodies" => {
-                        cf_opts.set_compression_type(DBCompressionType::Zstd);
-                        cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
-                        cf_opts.set_max_write_buffer_number(4);
-                        cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-
-                        bb.set_block_size(32 * 1024); // 32KB
-                    }
-                    "canonical_block_hashes" | "block_numbers" => {
-                        cf_opts.set_write_buffer_size(64 * 1024 * 1024);
-                        cf_opts.set_max_write_buffer_number(3);
-                        cf_opts.set_target_file_size_base(128 * 1024 * 1024);
-                        bb.set_bloom_filter(10.0, false);
-                    }
-                    "state_trie_nodes" | "storage_trie_nodes" => {
-                        cf_opts.set_write_buffer_size(256 * 1024 * 1024); // 256MB
-                        cf_opts.set_max_write_buffer_number(6);
-                        cf_opts.set_min_write_buffer_number_to_merge(2);
-                        cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                        cf_opts.set_memtable_prefix_bloom_ratio(0.2);
-
-                        bb.set_bloom_filter(10.0, false);
-                        bb.set_pin_l0_filter_and_index_blocks_in_cache(true);
-
-                        if cf_name == "storage_trie_nodes" {
-                            cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(32));
-                        }
-                    }
-                    "transaction_locations" => {
-                        cf_opts.set_write_buffer_size(64 * 1024 * 1024);
-                        cf_opts.set_max_write_buffer_number(3);
-                        cf_opts.set_target_file_size_base(128 * 1024 * 1024);
-                        bb.set_bloom_filter(10.0, false);
-                        cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(32));
-                    }
-                    "receipts" | "account_codes" => {
-                        cf_opts.set_write_buffer_size(128 * 1024 * 1024);
-                        cf_opts.set_max_write_buffer_number(3);
-                        cf_opts.set_target_file_size_base(256 * 1024 * 1024);
-                        bb.set_block_size(32 * 1024);
-                    }
-                    _ => {
-                        // Default for other CFs
-                    }
-                }
-
-                cf_opts.set_block_based_table_factory(&bb);
-
-                ColumnFamilyDescriptor::new(cf_name, cf_opts)
-            })
+            .map(|cf| ColumnFamilyDescriptor::new(cf, Options::default()))
             .collect::<Vec<_>>();
 
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
@@ -155,8 +75,6 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
-        let tx = self.db.transaction();
-
         let mut cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'_>>> =
             HashMap::with_capacity(TABLES.len());
         for &table in TABLES.iter() {
@@ -166,12 +84,13 @@ impl StorageBackend for RocksDBBackend {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
             cfs.insert(table.to_string(), cf);
         }
-        Ok(Box::new(RocksDBRoTx { tx, cfs }))
+        Ok(Box::new(RocksDBRoTx {
+            db: self.db.clone(),
+            cfs,
+        }))
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError> {
-        let tx = self.db.transaction();
-
         let mut cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'_>>> =
             HashMap::with_capacity(TABLES.len());
         for &table in TABLES.iter() {
@@ -181,11 +100,10 @@ impl StorageBackend for RocksDBBackend {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
             cfs.insert(table.to_string(), cf);
         }
-        Ok(Box::new(RocksDBRwTx {
-            db: self.db.clone(),
-            tx,
-            cfs,
-        }))
+
+        let txn = self.db.transaction();
+
+        Ok(Box::new(RocksDBRwTx { txn, cfs }))
     }
 
     fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
@@ -202,7 +120,7 @@ impl StorageBackend for RocksDBBackend {
 /// Read-only transaction for RocksDB
 pub struct RocksDBRoTx<'a> {
     /// Transaction
-    tx: Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Hashmap of column families
     cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
@@ -215,7 +133,7 @@ impl<'a> StorageRoTx for RocksDBRoTx<'a> {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
-        self.tx
+        self.db
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
@@ -232,38 +150,40 @@ impl<'a> StorageRoTx for RocksDBRoTx<'a> {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
-        let iter = self.tx.prefix_iterator_cf(&cf, prefix);
-        let rocks_iter = RocksDBStreamingIter { inner: iter };
+        let iter = self.db.prefix_iterator_cf(&cf, prefix);
+        let results: Vec<PrefixResult> = iter
+            .map(|result| {
+                result
+                    .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            })
+            .collect();
+
+        let rocks_iter = RocksDBPrefixIter {
+            results: results.into_iter(),
+        };
         Ok(Box::new(rocks_iter))
     }
 }
 
-/// Iterator for RocksDB
-pub struct RocksDBStreamingIter<'a> {
-    inner: rocksdb::DBIteratorWithThreadMode<
-        'a,
-        rocksdb::Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
-    >,
+/// Prefix iterator for RocksDB
+pub struct RocksDBPrefixIter {
+    /// Vector of prefix results
+    results: std::vec::IntoIter<PrefixResult>,
 }
 
-impl<'a> Iterator for RocksDBStreamingIter<'a> {
-    type Item = PrefixResult;
+impl Iterator for RocksDBPrefixIter {
+    type Item = Result<(Vec<u8>, Vec<u8>), StoreError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|result| {
-            result
-                .map(|(k, v)| (k.to_vec(), v.to_vec()))
-                .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-        })
+        self.results.next()
     }
 }
 
 /// Read-write transaction for RocksDB
 pub struct RocksDBRwTx<'a> {
-    /// Reference to database
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Transaction
-    tx: Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
+    txn: Transaction<'a, OptimisticTransactionDB<MultiThreaded>>,
     /// Hashmap of column families
     cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
@@ -276,7 +196,7 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
-        self.tx
+        self.txn
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
@@ -293,18 +213,26 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
-        let iter = self.tx.prefix_iterator_cf(&cf, prefix);
-        let rocks_iter = RocksDBStreamingIter { inner: iter };
+        let iter = self.txn.prefix_iterator_cf(&cf, prefix);
+        let results: Vec<PrefixResult> = iter
+            .map(|result| {
+                result
+                    .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            })
+            .collect();
+
+        let rocks_iter = RocksDBPrefixIter {
+            results: results.into_iter(),
+        };
         Ok(Box::new(rocks_iter))
     }
 }
 
 impl<'a> StorageRwTx for RocksDBRwTx<'a> {
-    /// Stores multiple key-value pairs in different tables using [`WriteBatchWithTransaction`].
-    /// This struct needs [`OptimisticTransactionDB`] to write the changes to the database.
-    /// This method doesn't need to [`commit()`](StorageRwTx::commit) the transaction because it is done internally.
+    /// Stores multiple key-value pairs in different tables using optimistic transactions.
+    /// Changes are accumulated in the transaction and written atomically on commit.
     fn put_batch(&self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
-        let mut write_batch = WriteBatchWithTransaction::<true>::default();
         for (table, key, value) in batch {
             let cf = self
                 .cfs
@@ -312,12 +240,11 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
                 .clone();
 
-            write_batch.put_cf(&cf, key.as_slice(), value.as_slice());
+            self.txn
+                .put_cf(&cf, key, value)
+                .map_err(|e| StoreError::Custom(format!("Failed to put in {}: {}", table, e)))?;
         }
-
-        self.db
-            .write(write_batch)
-            .map_err(|e| StoreError::Custom(format!("Failed to write batch: {}", e)))
+        Ok(())
     }
 
     fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
@@ -327,13 +254,13 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
-        self.tx
+        self.txn
             .delete_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to delete from {}: {}", table, e)))
     }
 
     fn commit(self: Box<Self>) -> Result<(), StoreError> {
-        self.tx
+        self.txn
             .commit()
             .map_err(|e| StoreError::Custom(format!("Failed to commit transaction: {}", e)))
     }
