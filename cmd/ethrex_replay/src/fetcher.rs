@@ -96,7 +96,9 @@ pub async fn get_blockdata(
             warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
 
             #[cfg(feature = "l2")]
-            let vm_type = VMType::L2;
+            let vm_type = VMType::L2(
+                _fee_config.ok_or_else(|| eyre::eyre!("fee_config is required for L2"))?,
+            );
             #[cfg(not(feature = "l2"))]
             let vm_type = VMType::L1;
 
@@ -282,7 +284,7 @@ pub async fn get_batchdata(
     rollup_client: EthClient,
     network: Network,
     batch_number: u64,
-    fee_vault: Option<Address>,
+    fee_config: Option<FeeConfig>,
 ) -> eyre::Result<Cache> {
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
@@ -300,7 +302,7 @@ pub async fn get_batchdata(
         network.get_genesis()?.config,
         rpc_batch.batch.first_block,
         rpc_batch.batch.last_block,
-        fee_vault,
+        fee_config,
     )
     .await?;
 
@@ -318,7 +320,7 @@ pub async fn get_batchdata(
             .proofs
             .first()
             .unwrap_or(&[0_u8; 48]),
-        fee_vault,
+        fee_config: fee_config.ok_or_else(|| eyre::eyre!("fee_config is required for L2"))?,
     });
 
     cache.write()?;

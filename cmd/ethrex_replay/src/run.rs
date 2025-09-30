@@ -106,7 +106,12 @@ pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<A
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
 
     #[cfg(feature = "l2")]
-    let vm_type = VMType::L2;
+    let fee_config = cache
+        .l2_fields
+        .ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?
+        .fee_config;
+    #[cfg(feature = "l2")]
+    let vm_type = VMType::L2(fee_config);
     #[cfg(not(feature = "l2"))]
     let vm_type = VMType::L1;
 
@@ -120,10 +125,7 @@ pub async fn run_tx(cache: Cache, tx_hash: H256) -> eyre::Result<(Receipt, Vec<A
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(
-            wrapped_db.clone(),
-            cache.l2_fields.clone().and_then(|f| f.fee_vault),
-        )?;
+        let mut vm = Evm::new_for_l2(wrapped_db.clone(), fee_config)?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
@@ -222,6 +224,6 @@ fn get_l2_input(cache: Cache) -> eyre::Result<ProgramInput> {
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         blob_commitment: l2_fields.blob_commitment,
         blob_proof: l2_fields.blob_proof,
-        fee_vault: l2_fields.fee_vault,
+        fee_config: Some(l2_fields.fee_config),
     })
 }

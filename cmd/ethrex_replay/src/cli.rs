@@ -666,9 +666,12 @@ impl EthrexReplayCommand {
 
                 let (eth_client, network) = setup(&opts).await?;
 
-                let fee_vault = get_fee_vault_address(&eth_client).await?;
+                let fee_config = Some(FeeConfig {
+                    fee_vault: get_fee_vault_address(&eth_client).await?,
+                    ..Default::default()
+                });
 
-                let cache = get_batchdata(eth_client, network, batch, fee_vault).await?;
+                let cache = get_batchdata(eth_client, network, batch, fee_config).await?;
 
                 let backend = backend(&opts.common.zkvm)?;
 
@@ -721,9 +724,16 @@ impl EthrexReplayCommand {
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
                     slack_webhook_url: None,
+                    verbose: false,
+                    bench: false,
                 };
 
-                let report = replay_custom_l2_blocks(max(1, n_blocks), fee_vault, opts).await?;
+                let fee_config = FeeConfig {
+                    fee_vault: fee_vault,
+                    ..Default::default()
+                };
+
+                let report = replay_custom_l2_blocks(max(1, n_blocks), fee_config, opts).await?;
 
                 println!("{report}");
             }
@@ -1262,9 +1272,13 @@ use ethrex_vm::BlockExecutionResult;
 #[cfg(feature = "l2")]
 pub async fn replay_custom_l2_blocks(
     n_blocks: u64,
-    fee_vault: Option<Address>,
+    fee_config: FeeConfig,
     opts: EthrexReplayOptions,
 ) -> eyre::Result<Report> {
+    use ethrex_blockchain::{BlockchainOptions, BlockchainType, MAX_MEMPOOL_SIZE_DEFAULT};
+
+    use crate::cache::L2Fields;
+
     let network = Network::LocalDevnetL2;
 
     let genesis = network.get_genesis()?;
@@ -1287,9 +1301,11 @@ pub async fn replay_custom_l2_blocks(
 
     let blockchain = Arc::new(Blockchain::new(
         store.clone(),
-        BlockchainType::L2,
-        false,
-        fee_vault,
+        BlockchainOptions {
+            max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
+            r#type: BlockchainType::L2(fee_config.clone()),
+            ..Default::default()
+        },
     ));
 
     let genesis_hash = genesis.get_block().hash();
@@ -1306,11 +1322,17 @@ pub async fn replay_custom_l2_blocks(
 
     let execution_witness = blockchain.generate_witness_for_blocks(&blocks).await?;
 
+    let l2_fields = Some(L2Fields {
+        blob_commitment: [0u8; 48],
+        blob_proof: [0u8; 48],
+        fee_config,
+    });
+
     let cache = Cache::new(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         genesis.config,
-        fee_vault,
+        l2_fields,
     );
 
     let backend = backend(&opts.common.zkvm)?;
@@ -1390,7 +1412,7 @@ pub async fn produce_custom_l2_block(
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
-    let payload = create_payload(&build_payload_args, store)?;
+    let payload = create_payload(&build_payload_args, store, Bytes::new())?;
 
     let payload_build_result = build_payload(
         blockchain.clone(),
