@@ -563,8 +563,17 @@ impl EthrexReplayCommand {
                 plot(&blocks).await?;
             }
             #[cfg(feature = "l2")]
-            Self::L2(L2Subcommand::Transaction(TransactionOpts { tx_hash, opts })) => {
-                replay_transaction(TransactionOpts { tx_hash, opts }).await?
+            Self::L2(L2Subcommand::Transaction(TransactionOpts {
+                tx_hash,
+                opts,
+                block_number,
+            })) => {
+                replay_transaction(TransactionOpts {
+                    tx_hash,
+                    opts,
+                    block_number,
+                })
+                .await?
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Batch(BatchOptions { batch, opts })) => {
@@ -616,7 +625,7 @@ impl EthrexReplayCommand {
             }))) => {
                 let opts = EthrexReplayOptions {
                     common,
-                    rpc_url: Url::parse("http://localhost:8545")?,
+                    rpc_url: Some(Url::parse("http://localhost:8545")?),
                     cached: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
@@ -624,6 +633,7 @@ impl EthrexReplayCommand {
                     bench: false,
                     cache_dir: PathBuf::from("./replay_cache"),
                     verbose: false,
+                    network: None,
                 };
 
                 let report = replay_custom_l2_blocks(max(1, n_blocks), opts).await?;
