@@ -155,6 +155,11 @@ jobs:
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           docker compose up contract_deployer
+      
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
 
       - name: Start Sequencer
         run: |
@@ -220,6 +225,11 @@ jobs:
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           COMPILE_CONTRACTS=true \
           docker compose up contract_deployer
+      
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
 
       - name: Install rex
         run: |

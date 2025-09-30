@@ -1,3 +1,6 @@
+volumes:
+  env:
+
 services:
   ethrex_l1:
     container_name: ethrex_l1
@@ -16,7 +19,7 @@ services:
     volumes:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts
-      - ../../cmd/.env:${DOCKER_ETHREX_WORKDIR}/.env
+      - env:/env/
       - ../../fixtures/genesis/l1-dev.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ../../fixtures/genesis/l2.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
@@ -27,7 +30,7 @@ services:
       # NOTE: The paths in the env variables must match those
       # specified in the `volumes:` section
       - ETHREX_DEPLOYER_L1_PRIVATE_KEY=${ETHREX_DEPLOYER_PRIVATE_KEY:-0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924}
-      - ETHREX_DEPLOYER_ENV_FILE_PATH=${DOCKER_ETHREX_WORKDIR}/.env
+      - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ETHREX_DEPLOYER_GENESIS_L2_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${DOCKER_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
@@ -51,9 +54,11 @@ services:
       - COMPILE_CONTRACTS=true
     depends_on:
       - ethrex_l1
+    entrypoint:
+      - /bin/bash
+      - -c
+      - touch /env/.env; ./ethrex l2 deploy "$0" "$@"
     command: >
-      l2
-      deploy
       --randomize-contract-deployment
 
   ethrex_l2:
@@ -76,14 +81,15 @@ services:
       - ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY=${ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY:-0x0000000000000000000000000000000000000000}
       - ETHREX_COMMITTER_COMMIT_TIME=${ETHREX_COMMITTER_COMMIT_TIME:-60000}
       - ETHREX_WATCHER_WATCH_INTERVAL=${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
-    env_file:
-      - ../../cmd/.env
     volumes:
       - ../../fixtures/genesis/l2.json:/genesis/l2.json
-      - ../../cmd/.env:/.env:ro
+      - env:/env/
+    entrypoint:
+      - /bin/bash
+      - -c
+      - export $(xargs < /env/.env); ./ethrex l2 "$0" "$@" 
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
-      l2
       --network /genesis/l2.json
       --http.addr 0.0.0.0
       --http.port 1729
