@@ -32,7 +32,7 @@ use std::sync::{Arc, LazyLock};
 use super::{Account, NodeRLP};
 
 pub static RPC_RPS: LazyLock<usize> = LazyLock::new(|| {
-    env::var("RPC_RPS")
+    env::var("REPLAY_RPC_RPS")
         .ok()
         .and_then(|val| val.parse::<usize>().ok())
         .unwrap_or(10) // 10 is a safe default that every Free tier of RPC Providers supports.

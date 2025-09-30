@@ -1,7 +1,6 @@
 # ethrex-replay
 
 A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by [starknet-replay](https://github.com/lambdaclass/starknet-replay).
-Currently ethrex replay only works against ethrex nodes with the `debug_executionWitness` RPC endpoint.
 
 ## Features
 
@@ -16,8 +15,6 @@ Currently ethrex replay only works against ethrex nodes with the `debug_executio
 | `ethrex-replay transaction`       | Replay a single transaction of a block.                                                                                                |
 | `ethrex-replay cache`             | Generate witness data prior to block replay (see `ethrex-replay cache --help`)                                                         |
 
-You can set the max requests per second to the RPC url with the env variable `RPC_RPS`. Default is 10.
-
 ### L2
 
 | Feature                        | Description |
@@ -29,17 +26,19 @@ You can set the max requests per second to the RPC url with the env variable `RP
 
 ## Supported Clients
 
-> ✅: supported.
-> ⚠️: supported, but flaky.
-> 🔜: to be supported.
+| Client     | `ethrex-replay block`         | notes                                            |
+| ---------- | ----------------------------- | ------------------------------------------------ |
+| ethrex     | ✅                            | `debug_executionWitness`                         |
+| reth       | ✅                            | `debug_executionWitness`                         |
+| geth       | ✅                            | `eth_getProof`                                   |
+| nethermind | ✅                            | `eth_getProof`                                   |
+| erigon     | ❌                            | V3 supports `eth_getProof` only for latest block |
+| besu       | ❌                            | Doesn't return proof for non-existing accounts   |
 
-| Client     | Hoodi | Sepolia | Mainnet | Public ethrex L2s |
-| ---------- | ----- | ------- | ------- | ----------------- |
-| ethrex     | ✅    | ✅      | ✅      | ✅                |
-| reth       | ✅    | ✅      | ✅      | -                 |
-| geth       | ✅    | ✅      | ✅      | -                 |
-| Nethermind | ⚠️    | ⚠️      | ⚠️      | -                 |
-| erigon     | 🔜    | 🔜      | 🔜      | -                 |
+We support any other client that is compliant with `eth_getProof` or `debug_executionWitness` endpoints.
+You can set the max requests per second to the RPC url with the environment variable `REPLAY_RPC_RPS`. This is particularly useful when using `eth_getProof`. Default is 10.
+
+Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using these it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a **full node** using `eth_getProof` if for some reason information retrieval were to take longer than 25 minutes it would probably fail because the node may have pruned its state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.
 
 ## Supported zkVM Replays (execution & proving)
 
@@ -47,20 +46,23 @@ You can set the max requests per second to the RPC url with the env variable `RP
 > ⚠️: supported, but flaky.
 > 🔜: to be supported.
 
-| zkVM   | Hoodi | Sepolia | Mainnet | Public ethrex L2s |
-| ------ | ----- | ------- | ------- | ----------------- |
-| RISC0  | ✅    | ✅      | ✅      | 🔜                |
-| SP1    | ✅    | ✅      | ✅      | 🔜                |
-| OpenVM | ⚠️    | 🔜      | 🔜      | 🔜                |
-| ZisK   | 🔜    | 🔜      | ⚠️      | 🔜                |
-| Jolt   | 🔜    | 🔜      | 🔜      | 🔜                |
-| Nexus  | 🔜    | 🔜      | 🔜      | 🔜                |
-| Pico   | 🔜    | 🔜      | 🔜      | 🔜                |
-| Ziren  | 🔜    | 🔜      | 🔜      | 🔜                |
+| zkVM   | Hoodi      | Sepolia   | Mainnet    | Public ethrex L2s |
+| ------ | ---------- | --------- | ---------- | ----------------- |
+| RISC0  | ✅         | ✅         | ✅         | ✅                |
+| SP1    | ✅         | ✅         | ✅         | ✅                |
+| OpenVM | ⚠️         | 🔜         | 🔜         | 🔜                |
+| ZisK   | 🔜         | 🔜         | ⚠️         | 🔜                |
+| Jolt   | 🔜         | 🔜         | 🔜         | 🔜                |
+| Nexus  | 🔜         | 🔜         | 🔜         | 🔜                |
+| Pico   | 🔜         | 🔜         | 🔜         | 🔜                |
+| Ziren  | 🔜         | 🔜         | 🔜         | 🔜                |
 
 ## Getting Started
 
 ### Dependencies
+
+These dependencies are optional, install them only if you want to run with the features `risc0` or `sp1` respectively. 
+Make sure to use the correct versions of these.
 
 #### [RISC0](https://dev.risczero.com/api/zkvm/install)
 
@@ -71,7 +73,7 @@ rzup install risc0-groth16
 rzup install rust
 ```
 
-#### [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
+#### [SP1](https://docs.succinct.xyz/docs/sp1/getting-started/install)
 
 ```sh
 curl -L https://sp1up.succinct.xyz | bash
@@ -256,6 +258,11 @@ ethrex-replay block-composition --start-block <START_BLOCK> --end-block <END_BLO
 
 ### Run Samply
 
+We recommend building in `release-with-debug` mode so that the flamegraph is the most accurate.
+```bash
+cargo build -p ethrex-replay --profile release-with-debug --features <FEATURES>
+```
+
 #### On zkVMs
 
 > [!IMPORTANT]
@@ -264,16 +271,13 @@ ethrex-replay block-composition --start-block <START_BLOCK> --end-block <END_BLO
 > 2. The `TRACE_SAMPLE_RATE` environment variable controls the sampling rate (in milliseconds). Adjust it according to your needs.
 
 ```
-TRACE_FILE=output.json TRACE_SAMPLE_RATE=1000 ethrex-replay <COMMAND> [ARGS]
+TRACE_FILE=output.json TRACE_SAMPLE_RATE=1000 target/release-with-debug/ethrex-replay <COMMAND> [ARGS]
 ```
 
 #### Execution without zkVMs
 
-We recommend building in release-with-debug mode so that the flamegraph is the most accurate.
-
 ```bash
-cargo build -p ethrex-replay --profile release-with-debug
-samply record target/release-with-debug/ethrex-replay <COMMAND> [ARGS]
+samply record target/release-with-debug/ethrex-replay <COMMAND> --no-zkvm [OTHER_ARGS]
 ```
 
 ### Run Bytehound
@@ -294,6 +298,7 @@ LD_PRELOAD=/path/to/bytehound/preload/target/release/libbytehound.so:/path/to/li
 >
 > 1. The following requires [Jemalloc](https://github.com/jemalloc/jemalloc) and [Heaptrack](https://github.com/KDE/heaptrack) to be installed.
 > 2. The `ethrex-replay` binary must be built with the `jemalloc` feature enabled.
+> 3. Note that Heaptrack is a **Linux** profiler, so it won't work natively on macOS.
 
 ```
 LD_PRELOAD=/path/to/libjemalloc.so heaptrack ethrex-replay <COMMAND> [ARGS]
