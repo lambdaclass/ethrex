@@ -216,7 +216,7 @@ contract CommonBridge is
         uint256 value;
         require(
             _token == NATIVE_TOKEN_L1_ADDRESS,
-            "CommonBridge: token address is not the native token address. Use depositERC20() instead"
+            "CommonBridge: token address is not the native token address"
         );
 
         if (_token == address(0)) {
@@ -244,7 +244,7 @@ contract CommonBridge is
 
             value = _amount;
 
-            IERC20(_token).safeTransferFrom(msg.sender, address(this), value);
+            IERC20(_token).transferFrom(msg.sender, address(this), value);
         }
 
         deposits[ETH_TOKEN][ETH_TOKEN] += value;
@@ -275,6 +275,10 @@ contract CommonBridge is
         uint256 amount
     ) external whenNotPaused {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
+        require(
+            tokenL1 != NATIVE_TOKEN_L1_ADDRESS,
+            "CommonBridge: tokenL1 is the native token address, use deposit() instead"
+        );
         deposits[tokenL1][tokenL2] += amount;
         IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
 
