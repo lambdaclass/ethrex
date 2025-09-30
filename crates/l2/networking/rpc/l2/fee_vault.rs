@@ -13,14 +13,20 @@ impl RpcHandler for GetFeeVaultAddress {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let fee_vault_address = context
-            .l1_ctx
-            .blockchain
-            .options
-            .fee_vault
-            .map(|addr| format!("{:#x}", addr));
-        Ok(serde_json::to_value(fee_vault_address).map_err(|e| {
-            ethrex_rpc::RpcErr::Internal(format!("Failed to serialize fee vault address: {}", e))
-        })?)
+        let fee_vault_address = match context.l1_ctx.blockchain.options.r#type {
+            ethrex_blockchain::BlockchainType::L1 => None,
+            ethrex_blockchain::BlockchainType::L2(fee_config) => fee_config.fee_vault,
+        };
+
+        Ok(
+            serde_json::to_value(fee_vault_address.map(|addr| format!("{:#x}", addr))).map_err(
+                |e| {
+                    ethrex_rpc::RpcErr::Internal(format!(
+                        "Failed to serialize fee vault address: {}",
+                        e
+                    ))
+                },
+            )?,
+        )
     }
 }

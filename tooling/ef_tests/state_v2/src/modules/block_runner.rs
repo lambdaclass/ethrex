@@ -43,8 +43,8 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     let (mut db, initial_block_hash, store, _genesis) =
         load_initial_state(test, &test_case.fork).await;
-    let mut vm = VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1, None)
-        .map_err(RunnerError::VMError)?;
+    let mut vm =
+        VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
     let execution_result = vm.execute();
 
     let (receipts, gas_used) = match execution_result {

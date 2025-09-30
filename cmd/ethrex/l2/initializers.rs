@@ -6,6 +6,7 @@ use std::time::Duration;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
 use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
+use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::network::peer_table;
@@ -170,11 +171,15 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
+    let fee_config = FeeConfig {
+        fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
+        ..Default::default()
+    };
+
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
         max_mempool_size: opts.node_opts.mempool_max_size,
-        r#type: BlockchainType::L2,
+        r#type: BlockchainType::L2(fee_config),
         perf_logs_enabled: true,
-        fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);

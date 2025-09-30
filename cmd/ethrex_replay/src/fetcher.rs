@@ -123,7 +123,7 @@ pub async fn get_blockdata(
                 requested_block_number
             );
             let rpc_db = rpc_db
-                .to_execution_witness(&block, fee_vault)
+                .to_execution_witness(&block)
                 .wrap_err("failed to build execution db")?;
             info!(
                 "Finished building execution witness for block {}",

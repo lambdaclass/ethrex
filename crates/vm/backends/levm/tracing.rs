@@ -1,4 +1,3 @@
-use ethrex_common::Address;
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
 use ethrex_levm::vm::VMType;
@@ -14,7 +13,6 @@ impl LEVM {
         block: &Block,
         stop_index: Option<usize>,
         vm_type: VMType,
-        fee_vault: Option<Address>,
     ) -> Result<(), EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
@@ -30,7 +28,7 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type, fee_vault)?;
+            Self::execute_tx(tx, sender, &block.header, db, vm_type)?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -51,7 +49,6 @@ impl LEVM {
         only_top_call: bool,
         with_log: bool,
         vm_type: VMType,
-        fee_vault: Option<Address>,
     ) -> Result<CallTrace, EvmError> {
         let env = Self::setup_env(
             tx,
@@ -67,7 +64,6 @@ impl LEVM {
             tx,
             LevmCallTracer::new(only_top_call, with_log),
             vm_type,
-            fee_vault,
         )?;
 
         vm.execute()?;

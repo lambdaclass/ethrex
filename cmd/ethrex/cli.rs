@@ -7,7 +7,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis, fee_config::FeeConfig};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_p2p::types::Node;
 use ethrex_rlp::encode::RLPEncode;
@@ -336,7 +336,7 @@ impl Subcommand {
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
-                    BlockchainType::L2
+                    BlockchainType::L2(FeeConfig::default())
                 } else {
                     BlockchainType::L1
                 };

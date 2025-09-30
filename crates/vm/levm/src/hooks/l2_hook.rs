@@ -5,7 +5,7 @@ use crate::{
     vm::VM,
 };
 
-use ethrex_common::{Address, H160, U256};
+use ethrex_common::{Address, H160, U256, types::fee_config::FeeConfig};
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -13,8 +13,7 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
 ]);
 
 pub struct L2Hook {
-    /// If set, the base fee is sent to this address instead of being burned.
-    pub fee_vault: Option<Address>,
+    pub fee_config: FeeConfig,
 }
 
 impl Hook for L2Hook {
@@ -112,7 +111,7 @@ impl Hook for L2Hook {
         if !vm.env.is_privileged {
             DefaultHook.finalize_execution(vm, ctx_result)?;
             // Different from L1, the base fee is not burned
-            return pay_to_fee_vault(vm, ctx_result.gas_used, self.fee_vault);
+            return pay_to_fee_vault(vm, ctx_result.gas_used, self.fee_config.fee_vault);
         }
 
         if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {

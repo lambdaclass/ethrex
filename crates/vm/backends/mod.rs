@@ -12,12 +12,12 @@ use levm::LEVM;
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use ethrex_common::Address;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
+use ethrex_common::{Address, types::fee_config::FeeConfig};
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -34,8 +34,6 @@ pub struct Evm {
     // For simplifying compilation we decided to include them both in revm and levm builds.
     pub db: GeneralizedDatabase,
     pub vm_type: VMType,
-    // Address where the base fee will be sent instead of burned. If None, base fees are burned.
-    pub fee_vault: Option<Address>,
 }
 
 impl core::fmt::Debug for Evm {
@@ -64,7 +62,6 @@ impl Evm {
                 state: evm_state(wrapped_db.clone()),
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
                 vm_type: VMType::L1,
-                fee_vault: None,
             }
         }
 
@@ -73,14 +70,13 @@ impl Evm {
             Evm {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
                 vm_type: VMType::L1,
-                fee_vault: None,
             }
         }
     }
 
     pub fn new_for_l2(
         _db: impl VmDatabase + 'static,
-        _fee_vault: Option<Address>,
+        _fee_config: FeeConfig,
     ) -> Result<Self, EvmError> {
         #[cfg(feature = "revm")]
         {
@@ -95,8 +91,7 @@ impl Evm {
 
             let evm = Evm {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
-                vm_type: VMType::L2,
-                fee_vault: _fee_vault,
+                vm_type: VMType::L2(_fee_config),
             };
 
             Ok(evm)
@@ -104,36 +99,27 @@ impl Evm {
     }
 
     pub fn new_from_db_for_l1(store: Arc<impl LevmDatabase + 'static>) -> Self {
-        Self::_new_from_db(store, VMType::L1, None)
+        Self::_new_from_db(store, VMType::L1)
     }
 
     pub fn new_from_db_for_l2(
         store: Arc<impl LevmDatabase + 'static>,
-        fee_vault: Option<Address>,
+        fee_config: FeeConfig,
     ) -> Self {
-        Self::_new_from_db(store, VMType::L2, fee_vault)
+        Self::_new_from_db(store, VMType::L2(fee_config))
     }
 
     // Only used in non-REVM builds; in REVM builds this constructor is not supported.
     #[cfg(feature = "revm")]
-    fn _new_from_db(
-        _store: Arc<impl LevmDatabase + 'static>,
-        _vm_type: VMType,
-        _fee_vault: Option<Address>,
-    ) -> Self {
+    fn _new_from_db(_store: Arc<impl LevmDatabase + 'static>, _vm_type: VMType) -> Self {
         unreachable!("new_from_db is not supported when built with the `revm` feature")
     }
 
     #[cfg(not(feature = "revm"))]
-    fn _new_from_db(
-        store: Arc<impl LevmDatabase + 'static>,
-        vm_type: VMType,
-        fee_vault: Option<Address>,
-    ) -> Self {
+    fn _new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
         Evm {
             db: GeneralizedDatabase::new(store),
             vm_type,
-            fee_vault,
         }
     }
 
@@ -146,7 +132,7 @@ impl Evm {
 
         #[cfg(not(feature = "revm"))]
         {
-            LEVM::execute_block(block, &mut self.db, self.vm_type, self.fee_vault)
+            LEVM::execute_block(block, &mut self.db, self.vm_type)
         }
     }
 
@@ -185,14 +171,8 @@ impl Evm {
 
         #[cfg(not(feature = "revm"))]
         {
-            let execution_report = LEVM::execute_tx(
-                tx,
-                sender,
-                block_header,
-                &mut self.db,
-                self.vm_type,
-                self.fee_vault,
-            )?;
+            let execution_report =
+                LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
 
             *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
@@ -323,7 +303,7 @@ impl Evm {
 
         #[cfg(not(feature = "revm"))]
         {
-            LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, self.fee_vault)
+            LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type)
         }
     }
 
@@ -340,15 +320,7 @@ impl Evm {
         };
 
         #[cfg(not(feature = "revm"))]
-        let result = {
-            LEVM::create_access_list(
-                tx.clone(),
-                header,
-                &mut self.db,
-                self.vm_type,
-                self.fee_vault,
-            )?
-        };
+        let result = { LEVM::create_access_list(tx.clone(), header, &mut self.db, self.vm_type)? };
 
         match result {
             (

@@ -1,8 +1,5 @@
+use crate::{H256, types::BlobsBundle};
 use serde::{Deserialize, Serialize};
-
-use crate::H256;
-
-use super::BlobsBundle;
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct Batch {

@@ -13,6 +13,7 @@ use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
@@ -57,7 +58,7 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 pub enum BlockchainType {
     #[default]
     L1,
-    L2,
+    L2(FeeConfig),
 }
 
 #[derive(Debug)]
@@ -80,8 +81,6 @@ pub struct BlockchainOptions {
     /// Whether performance logs should be emitted
     pub perf_logs_enabled: bool,
     pub r#type: BlockchainType,
-    /// (L2 only) If set, collected base fees will be sent to this address instead of being burned
-    pub fee_vault: Option<Address>,
 }
 
 impl Default for BlockchainOptions {
@@ -90,7 +89,6 @@ impl Default for BlockchainOptions {
             max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
-            fee_vault: None,
         }
     }
 }
@@ -224,8 +222,8 @@ impl Blockchain {
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2 => {
-                    Evm::new_from_db_for_l2(logger.clone(), self.options.fee_vault)
+                BlockchainType::L2(fee_config) => {
+                    Evm::new_from_db_for_l2(logger.clone(), fee_config)
                 }
             };
 
@@ -905,7 +903,7 @@ impl Blockchain {
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
         let evm = match self.options.r#type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db, self.options.fee_vault)?,
+            BlockchainType::L2(fee_config) => Evm::new_for_l2(vm_db, fee_config)?,
         };
         Ok(evm)
     }

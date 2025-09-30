@@ -20,7 +20,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Fork, Log, Transaction},
+    types::{AccessListEntry, Fork, Log, Transaction, fee_config::FeeConfig},
 };
 use std::{
     cell::RefCell,
@@ -35,7 +35,7 @@ pub type Storage = HashMap<U256, H256>;
 pub enum VMType {
     #[default]
     L1,
-    L2,
+    L2(FeeConfig),
 }
 
 /// Information that changes during transaction execution.
@@ -335,7 +335,6 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
-        fee_vault: Option<Address>,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -350,7 +349,7 @@ impl<'a> VM<'a> {
             substate,
             db,
             tx: tx.clone(),
-            hooks: get_hooks(&vm_type, fee_vault),
+            hooks: get_hooks(&vm_type),
             substate_backups: Vec::new(),
             storage_original_values: BTreeMap::new(),
             tracer,

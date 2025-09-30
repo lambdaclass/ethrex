@@ -151,7 +151,6 @@ fn main() {
         &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
         LevmCallTracer::disabled(),
         VMType::L1,
-        None,
     )
     .expect("Failed to initialize VM");
 

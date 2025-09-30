@@ -42,7 +42,6 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        fee_vault: Option<Address>,
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type)?;
 
@@ -52,7 +51,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, fee_vault)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -74,7 +73,7 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
-            VMType::L2 => Default::default(),
+            VMType::L2(_) => Default::default(),
         };
 
         Ok(BlockExecutionResult { receipts, requests })
@@ -130,10 +129,9 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        fee_vault: Option<Address>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, fee_vault)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -150,7 +148,6 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        fee_vault: Option<Address>,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
@@ -158,7 +155,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type, fee_vault)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -196,7 +193,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "beacon_root_contract_call should not be called for L2 VM".to_string(),
             ));
@@ -222,7 +219,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "process_block_hash_history should not be called for L2 VM".to_string(),
             ));
@@ -243,7 +240,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "read_withdrawal_requests should not be called for L2 VM".to_string(),
             ));
@@ -272,7 +269,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
                 "dequeue_consolidation_requests should not be called for L2 VM".to_string(),
             ));
@@ -301,19 +298,18 @@ impl LEVM {
         header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        fee_vault: Option<Address>,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, db)?;
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, fee_vault)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, fee_vault)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 
@@ -336,7 +332,7 @@ impl LEVM {
         let fork = chain_config.fork(block_header.timestamp);
 
         // TODO: I don't like deciding the behavior based on the VMType here.
-        if let VMType::L2 = vm_type {
+        if let VMType::L2(_) = vm_type {
             return Ok(());
         }
 
@@ -392,7 +388,7 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     });
     let mut vm =
-        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, None).map_err(EvmError::from)?;
+        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -423,7 +419,7 @@ pub fn extract_all_requests_levm(
     header: &BlockHeader,
     vm_type: VMType,
 ) -> Result<Vec<Requests>, EvmError> {
-    if let VMType::L2 = vm_type {
+    if let VMType::L2(_) = vm_type {
         return Err(EvmError::InvalidEVM(
             "extract_all_requests_levm should not be called for L2 VM".to_string(),
         ));
@@ -519,7 +515,6 @@ fn vm_from_generic<'a>(
     env: Environment,
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
-    fee_vault: Option<Address>,
 ) -> Result<VM<'a>, VMError> {
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
@@ -554,5 +549,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, fee_vault)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
 }

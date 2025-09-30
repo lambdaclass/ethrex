@@ -319,15 +319,11 @@ impl RpcDB {
     /// 1. Pre-executes the block to capture all state changes
     /// 2. Gathers account and storage proofs for both initial and final states
     /// 3. Collects potential child nodes for deleted account and storage entries
-    pub fn to_execution_witness(
-        &self,
-        block: &Block,
-        fee_vault: Option<Address>,
-    ) -> eyre::Result<RpcExecutionWitness> {
+    pub fn to_execution_witness(&self, block: &Block) -> eyre::Result<RpcExecutionWitness> {
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()));
 
         // pre-execute and get all state changes
-        let _ = LEVM::execute_block(block, &mut db, self.vm_type, fee_vault).map_err(Box::new)?;
+        let _ = LEVM::execute_block(block, &mut db, self.vm_type).map_err(Box::new)?;
         let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
 
         info!(

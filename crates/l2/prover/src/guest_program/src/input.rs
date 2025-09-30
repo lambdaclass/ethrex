@@ -1,6 +1,5 @@
-use ethrex_common::{
-    Address,
-    types::{Block, block_execution_witness::ExecutionWitness},
+use ethrex_common::types::{
+    Block, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
 };
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -20,8 +19,7 @@ pub struct ProgramInput {
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     /// Address where collected fees are sent. If None, fees are burned.
-    #[rkyv(with=ethrex_common::rkyv_utils::OptionH160Wrapper)]
-    pub fee_vault: Option<Address>,
+    pub fee_config: Option<FeeConfig>,
     #[cfg(feature = "l2")]
     /// KZG commitment to the blob data
     #[serde_as(as = "[_; 48]")]
@@ -38,7 +36,7 @@ impl Default for ProgramInput {
             blocks: Default::default(),
             execution_witness: ExecutionWitness::default(),
             elasticity_multiplier: Default::default(),
-            fee_vault: None,
+            fee_config: None,
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],
             #[cfg(feature = "l2")]
