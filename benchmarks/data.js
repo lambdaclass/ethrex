@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759184108130,
+  "lastUpdate": 1759220112265,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35655,6 +35655,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.004553202688728025,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "de0a189e69b84794def54c4dce7fcdc974c8d1b4",
+          "message": "ci(l1): remove flamegraph and import block reports",
+          "timestamp": "2025-09-29T21:51:54Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4685/commits/de0a189e69b84794def54c4dce7fcdc974c8d1b4"
+        },
+        "date": 1759220087757,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004674513419134063,
             "unit": "Mgas/s"
           }
         ]
