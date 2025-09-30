@@ -543,7 +543,7 @@ pub struct ProofCoordinatorOptions {
     #[arg(
         long = "proof-coordinator.qpl-tool-path",
         value_name = "QPL_TOOL_PATH",
-        env = "ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY",
+        env = "ETHREX_PROOF_COORDINATOR_QPL_TOOL_PATH",
         default_value = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool",
         help_heading = "Proof coordinator options",
         long_help = "Path to the QPL tool that will be used to generate TDX quotes."
