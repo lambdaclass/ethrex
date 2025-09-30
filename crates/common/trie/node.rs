@@ -219,7 +219,7 @@ impl Node {
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
         match self {
-            Node::Branch(n) => n.encode_raw().to_vec(),
+            Node::Branch(n) => n.encode_raw(),
             Node::Extension(n) => n.encode_raw(),
             Node::Leaf(n) => n.encode_raw(),
         }
