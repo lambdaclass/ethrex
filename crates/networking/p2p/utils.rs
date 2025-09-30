@@ -126,7 +126,7 @@ pub fn dump_storages_to_rocks_db(
         writer.put(buffer_key.as_ref(), buffer_storage.as_slice())?;
     }
     info!("dump_storages_to_rocks_db before finish file");
-    writer.finish();
+    writer.finish()?;
     info!("dump_storages_to_rocks_db after finish file");
     Ok(())
 }
