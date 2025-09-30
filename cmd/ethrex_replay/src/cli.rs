@@ -419,19 +419,20 @@ impl EthrexReplayCommand {
                 let mut block_to_replay = from;
                 let mut last_block_to_replay = to;
 
-                while block_to_replay <= to {
+                while block_to_replay <= last_block_to_replay {
                     if only_eth_proofs_blocks && block_to_replay % 100 != 0 {
                         block_to_replay += 1;
 
                         // Case --endless is set, we want to update the `to` so
                         // we can keep checking for new blocks
                         if endless && block_to_replay > last_block_to_replay {
-                            tokio::time::sleep(Duration::from_secs(12)).await;
                             last_block_to_replay = fetch_latest_block_number(
                                 opts.rpc_url.clone(),
                                 only_eth_proofs_blocks,
                             )
                             .await?;
+
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                         }
 
                         continue;
@@ -452,10 +453,11 @@ impl EthrexReplayCommand {
                     // Case --endless is set, we want to update the `to` so
                     // we can keep checking for new blocks
                     while endless && block_to_replay > last_block_to_replay {
-                        tokio::time::sleep(Duration::from_secs(12)).await;
                         last_block_to_replay =
                             fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
                                 .await?;
+
+                        tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
             }
