@@ -25,7 +25,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::{
     EthClient,
     debug::execution_witness::{RpcExecutionWitness, execution_witness_from_rpc_chain_config},
-    types::block_identifier::{BlockIdentifier, BlockTag},
+    types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
