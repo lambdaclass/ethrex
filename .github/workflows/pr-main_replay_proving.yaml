@@ -68,7 +68,7 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "http://eth-testnet-rpc:8547"
         run: |
-          cp fixtures/cache/rpc_prover/cache_hoodi_1265656.json cmd/ethrex_replay
+          install -D fixtures/cache/rpc_prover/cache_hoodi_1265656.json cmd/ethrex_replay/cache/cache_hoodi_1265656.json
           cd cmd/ethrex_replay
           make prove-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=1265656 NETWORK=hoodi
 
