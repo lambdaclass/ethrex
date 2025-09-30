@@ -151,7 +151,7 @@ pub struct EthrexReplayOptions {
         long,
         help = "Directory to store and load cache files",
         value_parser,
-        default_value = "./cache",
+        default_value = "./replay_cache",
         help_heading = "Replay Options"
     )]
     pub cache_dir: PathBuf,
@@ -488,7 +488,7 @@ impl EthrexReplayCommand {
                     slack_webhook_url: None,
                     verbose: false,
                     bench: false,
-                    cache_dir: PathBuf::from("./cache"),
+                    cache_dir: PathBuf::from("./replay_cache"),
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -591,7 +591,7 @@ impl EthrexReplayCommand {
                     cache_level: CacheLevel::default(),
                     slack_webhook_url: None,
                     bench: false,
-                    cache_dir: PathBuf::from("./cache"),
+                    cache_dir: PathBuf::from("./replay_cache"),
                     verbose: false,
                 };
 
