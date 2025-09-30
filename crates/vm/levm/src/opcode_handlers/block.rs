@@ -1,6 +1,6 @@
 use crate::{
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
-    errors::{ExceptionalHalt, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     utils::*,
     vm::VM,
@@ -12,7 +12,7 @@ use ethrex_common::utils::u256_from_big_endian_const;
 
 impl<'a> VM<'a> {
     // BLOCKHASH operation
-    pub fn op_blockhash(&mut self) -> Result<bool, VMError> {
+    pub fn op_blockhash(&mut self) -> Result<OpcodeResult, VMError> {
         let current_block = self.env.block_number;
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::BLOCKHASH)?;
@@ -24,7 +24,7 @@ impl<'a> VM<'a> {
             || block_number >= current_block
         {
             current_call_frame.stack.push_zero()?;
-            return Ok(false);
+            return Ok(OpcodeResult::Continue);
         }
 
         let block_number: u64 = block_number
@@ -36,44 +36,44 @@ impl<'a> VM<'a> {
             .stack
             .push1(u256_from_big_endian_const(block_hash.to_fixed_bytes()))?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // COINBASE operation
-    pub fn op_coinbase(&mut self) -> Result<bool, VMError> {
+    pub fn op_coinbase(&mut self) -> Result<OpcodeResult, VMError> {
         let coinbase = self.env.coinbase;
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::COINBASE)?;
 
         current_call_frame.stack.push1(address_to_word(coinbase))?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // TIMESTAMP operation
-    pub fn op_timestamp(&mut self) -> Result<bool, VMError> {
+    pub fn op_timestamp(&mut self) -> Result<OpcodeResult, VMError> {
         let timestamp = self.env.timestamp;
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::TIMESTAMP)?;
 
         current_call_frame.stack.push1(timestamp)?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // NUMBER operation
-    pub fn op_number(&mut self) -> Result<bool, VMError> {
+    pub fn op_number(&mut self) -> Result<OpcodeResult, VMError> {
         let block_number = self.env.block_number;
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::NUMBER)?;
 
         current_call_frame.stack.push1(block_number)?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // PREVRANDAO operation
-    pub fn op_prevrandao(&mut self) -> Result<bool, VMError> {
+    pub fn op_prevrandao(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-4399
         // After Paris the prev randao is the prev_randao (or current_random) field
         let randao =
@@ -83,33 +83,33 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
         current_call_frame.stack.push1(randao)?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // GASLIMIT operation
-    pub fn op_gaslimit(&mut self) -> Result<bool, VMError> {
+    pub fn op_gaslimit(&mut self) -> Result<OpcodeResult, VMError> {
         let block_gas_limit = self.env.block_gas_limit;
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
 
         current_call_frame.stack.push1(block_gas_limit.into())?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // CHAINID operation
-    pub fn op_chainid(&mut self) -> Result<bool, VMError> {
+    pub fn op_chainid(&mut self) -> Result<OpcodeResult, VMError> {
         let chain_id = self.env.chain_id;
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
         current_call_frame.stack.push1(chain_id)?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // SELFBALANCE operation
-    pub fn op_selfbalance(&mut self) -> Result<bool, VMError> {
+    pub fn op_selfbalance(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
@@ -120,11 +120,11 @@ impl<'a> VM<'a> {
             .balance;
 
         self.current_call_frame.stack.push1(balance)?;
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // BASEFEE operation
-    pub fn op_basefee(&mut self) -> Result<bool, VMError> {
+    pub fn op_basefee(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-3198
         let base_fee_per_gas = self.env.base_fee_per_gas;
         let current_call_frame = &mut self.current_call_frame;
@@ -132,12 +132,12 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(base_fee_per_gas)?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // BLOBHASH operation
     /// Currently not tested
-    pub fn op_blobhash(&mut self) -> Result<bool, VMError> {
+    pub fn op_blobhash(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
         let index = self.current_call_frame.stack.pop1()?;
@@ -147,7 +147,7 @@ impl<'a> VM<'a> {
             Ok(index) if index < blob_hashes.len() => index,
             _ => {
                 self.current_call_frame.stack.push_zero()?;
-                return Ok(false);
+                return Ok(OpcodeResult::Continue);
             }
         };
 
@@ -158,11 +158,11 @@ impl<'a> VM<'a> {
 
         self.current_call_frame.stack.push1(hash)?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // BLOBBASEFEE operation
-    pub fn op_blobbasefee(&mut self) -> Result<bool, VMError> {
+    pub fn op_blobbasefee(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
@@ -171,6 +171,6 @@ impl<'a> VM<'a> {
 
         self.current_call_frame.stack.push1(blob_base_fee)?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 }

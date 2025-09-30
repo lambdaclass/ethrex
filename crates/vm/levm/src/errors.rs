@@ -218,6 +218,12 @@ pub enum DatabaseError {
     Custom(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum OpcodeResult {
+    Continue,
+    Halt,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TxResult {
     Success,

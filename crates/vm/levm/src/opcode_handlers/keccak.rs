@@ -1,5 +1,9 @@
 use crate::{
-    errors::VMError, gas_cost, memory::calculate_memory_size, utils::size_offset_to_usize, vm::VM,
+    errors::{OpcodeResult, VMError},
+    gas_cost,
+    memory::calculate_memory_size,
+    utils::size_offset_to_usize,
+    vm::VM,
 };
 use ethrex_common::utils::u256_from_big_endian;
 use sha3::{Digest, Keccak256};
@@ -8,7 +12,7 @@ use sha3::{Digest, Keccak256};
 // Opcodes: KECCAK256
 
 impl<'a> VM<'a> {
-    pub fn op_keccak256(&mut self) -> Result<bool, VMError> {
+    pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         let [offset, size] = *current_call_frame.stack.pop()?;
         let (size, offset) = size_offset_to_usize(size, offset)?;
@@ -27,6 +31,6 @@ impl<'a> VM<'a> {
             .stack
             .push1(u256_from_big_endian(&hasher.finalize()))?;
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 }

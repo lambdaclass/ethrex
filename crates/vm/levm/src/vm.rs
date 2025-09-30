@@ -4,7 +4,7 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, VMError},
+    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -460,8 +460,8 @@ impl<'a> VM<'a> {
             let op_result = self.opcode_table[opcode as usize].call(self);
 
             let result = match op_result {
-                Ok(false) => continue,
-                Ok(true) => self.handle_opcode_result()?,
+                Ok(OpcodeResult::Continue) => continue,
+                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };
 

@@ -1,5 +1,5 @@
 use crate::{
-    errors::{InternalError, VMError},
+    errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -10,7 +10,7 @@ use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 impl<'a> VM<'a> {
     // Generic PUSH operation, optimized at compile time for the given N.
-    pub fn op_push<const N: usize>(&mut self) -> Result<bool, VMError> {
+    pub fn op_push<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         let call_frame = &mut self.current_call_frame;
         call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
@@ -39,14 +39,14 @@ impl<'a> VM<'a> {
         // The n_bytes that you push to the stack + 1 for the next instruction
         call_frame.pc = call_frame.pc.wrapping_add(N);
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 
     // PUSH0
-    pub fn op_push0(&mut self) -> Result<bool, VMError> {
+    pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::PUSH0)?;
         self.current_call_frame.stack.push_zero()?;
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 }

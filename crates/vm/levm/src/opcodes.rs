@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExceptionalHalt, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     vm::VM,
 };
 use ethrex_common::types::Fork;
@@ -360,12 +360,12 @@ impl From<Opcode> for usize {
 ///
 /// The boolean return value is true if the VM's execution should be interrupted for any reason.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct OpCodeFn<'a>(fn(&'_ mut VM<'a>) -> Result<bool, VMError>);
+pub(crate) struct OpCodeFn<'a>(fn(&'_ mut VM<'a>) -> Result<OpcodeResult, VMError>);
 
 impl<'a> OpCodeFn<'a> {
     /// Call the opcode handler.
     #[inline(always)]
-    pub fn call(self, vm: &mut VM<'a>) -> Result<bool, VMError> {
+    pub fn call(self, vm: &mut VM<'a>) -> Result<OpcodeResult, VMError> {
         (self.0)(vm)
     }
 }
@@ -580,11 +580,11 @@ impl<'a> VM<'a> {
     }
 
     /// Used within the opcode table for invalid opcodes.
-    pub fn on_invalid_opcode(&mut self) -> Result<bool, VMError> {
+    pub fn on_invalid_opcode(&mut self) -> Result<OpcodeResult, VMError> {
         Err(ExceptionalHalt::InvalidOpcode.into())
     }
 
-    pub fn op_stop(&mut self) -> Result<bool, VMError> {
-        Ok(true)
+    pub fn op_stop(&mut self) -> Result<OpcodeResult, VMError> {
+        Ok(OpcodeResult::Halt)
     }
 }

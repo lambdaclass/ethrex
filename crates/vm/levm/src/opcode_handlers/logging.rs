@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExceptionalHalt, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     memory::calculate_memory_size,
     utils::size_offset_to_usize,
@@ -12,7 +12,7 @@ use ethrex_common::{H256, U256, types::Log};
 
 impl<'a> VM<'a> {
     // LOG operation
-    pub fn op_log<const N_TOPICS: usize>(&mut self) -> Result<bool, VMError> {
+    pub fn op_log<const N_TOPICS: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = &mut self.current_call_frame;
         if current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
@@ -45,6 +45,6 @@ impl<'a> VM<'a> {
 
         self.substate.add_log(log);
 
-        Ok(false)
+        Ok(OpcodeResult::Continue)
     }
 }
