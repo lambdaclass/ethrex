@@ -52,7 +52,7 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         let Some(quotient) = dividend.checked_div(divisor) else {
-            current_call_frame.stack.push1(U256::zero())?;
+            current_call_frame.stack.push_zero()?;
             return Ok(OpcodeResult::Continue);
         };
         current_call_frame.stack.push1(quotient)?;
