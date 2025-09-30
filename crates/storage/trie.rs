@@ -61,7 +61,7 @@ impl TrieDB for BackendTrieDB {
             .map(|(node_hash, value)| (self.table_name.as_str(), self.make_key(node_hash), value))
             .collect();
 
-        let txn = self.backend.begin_write().map_err(|e| {
+        let mut txn = self.backend.begin_write().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;
 

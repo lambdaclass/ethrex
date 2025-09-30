@@ -4,7 +4,6 @@ use crate::api::{
 use crate::error::StoreError;
 use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode};
 use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -102,7 +101,7 @@ impl StorageBackend for RocksDBBackend {
             cfs.insert(table.to_string(), cf);
         }
 
-        let batch = RefCell::new(WriteBatchWithTransaction::<true>::default());
+        let batch = WriteBatchWithTransaction::<true>::default();
 
         Ok(Box::new(RocksDBRwTx {
             db: self.db.clone(),
@@ -190,7 +189,7 @@ pub struct RocksDBRwTx<'a> {
     /// Database reference for writing
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Write batch for accumulating changes (interior mutability)
-    batch: RefCell<WriteBatchWithTransaction<true>>,
+    batch: WriteBatchWithTransaction<true>,
     /// Hashmap of column families
     cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
@@ -239,9 +238,7 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
 impl<'a> StorageRwTx for RocksDBRwTx<'a> {
     /// Stores multiple key-value pairs in different tables using WriteBatch.
     /// Changes are accumulated in the batch and written atomically on commit.
-    fn put_batch(&self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
-        let mut batch_mut = self.batch.borrow_mut();
-
+    fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
         for (table, key, value) in batch {
             let cf = self
                 .cfs
@@ -249,27 +246,25 @@ impl<'a> StorageRwTx for RocksDBRwTx<'a> {
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
                 .clone();
 
-            batch_mut.put_cf(&cf, key, value);
+            self.batch.put_cf(&cf, key, value);
         }
         Ok(())
     }
 
-    fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
+    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .cfs
             .get(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
-        let mut batch_mut = self.batch.borrow_mut();
-        batch_mut.delete_cf(&cf, key);
+        self.batch.delete_cf(&cf, key);
         Ok(())
     }
 
     fn commit(self: Box<Self>) -> Result<(), StoreError> {
-        let batch = self.batch.into_inner();
         self.db
-            .write(batch)
+            .write(self.batch)
             .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))
     }
 }

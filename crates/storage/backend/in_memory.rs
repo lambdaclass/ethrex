@@ -185,7 +185,7 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
 }
 
 impl<'a> StorageRwTx for InMemoryRwTx<'a> {
-    fn put_batch(&self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+    fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
         let mut db = self
             .backend
             .write()
@@ -199,7 +199,7 @@ impl<'a> StorageRwTx for InMemoryRwTx<'a> {
         Ok(())
     }
 
-    fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError> {
+    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let mut db = self
             .backend
             .write()

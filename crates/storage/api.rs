@@ -96,15 +96,15 @@ pub trait StorageRoTx {
 /// Changes are not persisted until [`commit()`](StorageRwTx::commit) is called.
 pub trait StorageRwTx: StorageRoTx {
     /// Stores a key-value pair in the specified table.
-    fn put(&self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.put_batch(vec![(table, key.to_vec(), value.to_vec())])
     }
 
     /// Stores multiple key-value pairs in the specified table within the transaction.
-    fn put_batch(&self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError>;
+    fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError>;
 
     /// Removes a key-value pair from the specified table.
-    fn delete(&self, table: &str, key: &[u8]) -> Result<(), StoreError>;
+    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError>;
 
     /// Commits all changes made in this transaction.
     fn commit(self: Box<Self>) -> Result<(), StoreError>;

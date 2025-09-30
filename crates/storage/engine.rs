@@ -110,7 +110,7 @@ impl StoreEngine {
                 }
             }
 
-            let txn = db.begin_write()?;
+            let mut txn = db.begin_write()?;
             txn.put_batch(batch_items)?;
             txn.commit()
         })
@@ -151,7 +151,7 @@ impl StoreEngine {
                 }
             }
 
-            let txn = db.begin_write()?;
+            let mut txn = db.begin_write()?;
             txn.put_batch(batch_items)?;
             txn.commit()
         })
@@ -165,7 +165,7 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
         txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
         txn.commit()
@@ -176,7 +176,7 @@ impl StoreEngine {
         &self,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         for block_header in block_headers {
             let block_hash = block_header.hash();
             let block_number = block_header.number;
@@ -214,7 +214,7 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         let body_value = BlockBodyRLP::from(block_body).bytes().clone();
         txn.put(BODIES, block_hash.as_bytes(), body_value.as_slice())?;
         txn.commit()
@@ -238,7 +238,7 @@ impl StoreEngine {
             return Ok(());
         };
 
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.delete(
             CANONICAL_BLOCK_HASHES,
             block_number.to_le_bytes().as_slice(),
@@ -326,7 +326,7 @@ impl StoreEngine {
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let block_value = BlockRLP::from(block.clone()).bytes().clone();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(
             PENDING_BLOCKS,
             block.hash().as_bytes(),
@@ -353,7 +353,7 @@ impl StoreEngine {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         let number_value = block_number.to_le_bytes();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(BLOCK_NUMBERS, block_hash.as_bytes(), &number_value)?;
         txn.commit()
     }
@@ -389,7 +389,7 @@ impl StoreEngine {
         composite_key[32..].copy_from_slice(block_hash.as_bytes());
         let location_value = (block_number, block_hash, index).encode_to_vec();
 
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(
             TRANSACTION_LOCATIONS,
             composite_key.as_slice(),
@@ -414,7 +414,7 @@ impl StoreEngine {
             })
             .collect();
 
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put_batch(batch_items)?;
         txn.commit()
     }
@@ -477,7 +477,7 @@ impl StoreEngine {
         // FIXME: Use dupsort table
         let key = (block_hash, index).encode_to_vec();
         let value = receipt.encode_to_vec();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(RECEIPTS, key.as_slice(), value.as_slice())?;
         txn.commit()
     }
@@ -497,7 +497,7 @@ impl StoreEngine {
                 (RECEIPTS, key, value)
             })
             .collect();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put_batch(batch_items)?;
         txn.commit()
     }
@@ -529,7 +529,7 @@ impl StoreEngine {
     /// Add account code
     pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         let code_value = AccountCodeRLP::from(code).bytes().clone();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(ACCOUNT_CODES, code_hash.as_bytes(), code_value.as_slice())?;
         txn.commit()
     }
@@ -616,7 +616,7 @@ impl StoreEngine {
         let value = serde_json::to_string(chain_config)
             .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
             .into_bytes();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(CHAIN_DATA, &key, &value)?;
         txn.commit()
     }
@@ -628,7 +628,7 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [ChainDataIndex::EarliestBlockNumber as u8];
         let value = block_number.to_le_bytes();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(CHAIN_DATA, &key, &value)?;
         txn.commit()
     }
@@ -700,7 +700,7 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [ChainDataIndex::PendingBlockNumber as u8];
         let value = block_number.to_le_bytes();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(CHAIN_DATA, &key, &value)?;
         txn.commit()
     }
@@ -811,7 +811,7 @@ impl StoreEngine {
             }
 
             // TODO: Check if there is a better way to do this
-            let txn = db.begin_write()?;
+            let mut txn = db.begin_write()?;
             for number in (head_number + 1)..(latest + 1) {
                 txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
             }
@@ -889,7 +889,7 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::HeaderDownloadCheckpoint as u8];
         let value = block_hash.encode_to_vec();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &value)?;
         txn.commit()
     }
@@ -912,7 +912,7 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateTrieKeyCheckpoint as u8];
         let value = last_keys.to_vec().encode_to_vec();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &value)?;
         txn.commit()
     }
@@ -945,7 +945,7 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateHealPaths as u8];
         let value = paths.encode_to_vec();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &value)?;
         txn.commit()
     }
@@ -969,7 +969,7 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StateTrieRebuildCheckpoint as u8];
         let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &value)?;
         txn.commit()
     }
@@ -1002,7 +1002,7 @@ impl StoreEngine {
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
         let key = [SnapStateIndex::StorageTrieRebuildPending as u8];
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put(SNAP_STATE, &key, &pending.encode_to_vec())?;
         txn.commit()
     }
@@ -1029,7 +1029,7 @@ impl StoreEngine {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         let value = BlockHashRLP::from(latest_valid).bytes().clone();
         txn.put(INVALID_CHAINS, bad_block.as_bytes(), value.as_slice())?;
         txn.commit()
@@ -1093,7 +1093,7 @@ impl StoreEngine {
             }
         }
 
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put_batch(batch_items)?;
         txn.commit()
     }
@@ -1108,7 +1108,7 @@ impl StoreEngine {
             batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), value));
         }
 
-        let txn = self.backend.begin_write()?;
+        let mut txn = self.backend.begin_write()?;
         txn.put_batch(batch_items)?;
         txn.commit()
     }
