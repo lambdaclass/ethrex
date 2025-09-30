@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759269418141,
+  "lastUpdate": 1759271054795,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35966,6 +35966,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004650330396177785,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4da3a4982d35c1a7cff48d14b1516fda334a539f",
+          "message": "feat(l1): remove revm from workspace (#4686)\n\n**Motivation**\nRemove rem as a workspace dependency\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Remove `revm` feature from all workspace crates\n* Remove revm backend from `ethrex-vm` crate\n* Remove `tooling/ef_tests/state` and\n`crates/vm/levm/bench/revm_comparison` from workspace (They still retain\nrevm as a dependency)\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-09-30T16:31:57Z",
+          "tree_id": "b973d4d1f1adc782ff1374db33bdd555e5a475b8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4da3a4982d35c1a7cff48d14b1516fda334a539f"
+        },
+        "date": 1759271054154,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004620602214492756,
             "unit": "Mgas/s"
           }
         ]
