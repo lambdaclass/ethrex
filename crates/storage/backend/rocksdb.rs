@@ -211,6 +211,25 @@ impl StorageRwTx for RocksDBRwTx {
     /// Stores multiple key-value pairs in different tables using WriteBatch.
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+        // Fast-path if we have only one table in the batch
+        let Some(first_table) = batch.first().map(|(t, _, _)| *t) else {
+            // Empty batch
+            return Ok(());
+        };
+
+        if batch.iter().all(|(t, _, _)| *t == first_table) {
+            // All tables are the same
+            let cf = self
+                .db
+                .cf_handle(first_table)
+                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", first_table)))?;
+
+            for (_, key, value) in batch {
+                self.batch.put_cf(&cf, key, value);
+            }
+            return Ok(());
+        }
+
         // Load the column families for the tables in the batch
         let unique_tables: HashSet<&str> = batch.iter().map(|(t, _, _)| *t).collect();
         let mut cfs = HashMap::with_capacity(unique_tables.len());
