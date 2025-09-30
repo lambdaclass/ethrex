@@ -242,9 +242,11 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
             SENDER_NOT_EOA_REGEX
         ) | (
             "call gas cost exceeds the gas limit",
-            "Intrinsic gas too low"
-        ) | ("gas floor exceeds the gas limit", "Intrinsic gas too low")
-            | ("empty blobs", "Type 3 transaction without blobs")
+            "Transaction gas limit lower than the minimum gas cost to execute the transaction"
+        ) | (
+            "gas floor exceeds the gas limit",
+            "Transaction gas limit lower than the minimum gas cost to execute the transaction"
+        ) | ("empty blobs", "Type 3 transaction without blobs")
             | (
                 "blob versioned hashes not supported",
                 "Type 3 transactions are not supported before the Cancun fork"

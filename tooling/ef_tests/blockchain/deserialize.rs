@@ -40,7 +40,7 @@ where
                     )
                 }
                 "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
-                    BlockChainExpectedException::TxtException("Intrinsic gas too low".to_string())
+                    BlockChainExpectedException::TxtException("Transaction gas limit lower than the minimum gas cost to execute the transaction".to_string())
                 }
                 "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                     BlockChainExpectedException::TxtException(
