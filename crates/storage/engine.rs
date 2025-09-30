@@ -809,10 +809,10 @@ impl StoreEngine {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
-        // FIXME: Create a new transaction
         let latest = self.get_latest_block_number().await?.unwrap_or(0);
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
+            let mut txn = db.begin_write()?;
             let mut batch_items = Vec::new();
 
             if let Some(canonical_blocks) = new_canonical_blocks {
@@ -826,8 +826,6 @@ impl StoreEngine {
                 }
             }
 
-            // TODO: Check if there is a better way to do this
-            let mut txn = db.begin_write()?;
             for number in (head_number + 1)..(latest + 1) {
                 txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
             }
