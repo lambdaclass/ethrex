@@ -881,20 +881,22 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     try_send_report_to_slack(&report, opts.slack_webhook_url).await?;
 
-    // Apply cache level rules
-    match opts.cache_level {
-        // Cache is already saved
-        CacheLevel::On => {}
-        // Only save the cache if the block run or proving failed
-        CacheLevel::Failed => {
-            if report.execution_result.is_ok()
-                && report.proving_result.as_ref().is_none_or(|r| r.is_ok())
-            {
-                cache.delete()?;
+    // Decide whether or not to keep the cache when fetching data from RPC.
+    if !opts.cached {
+        match opts.cache_level {
+            // Cache is already saved
+            CacheLevel::On => {}
+            // Only save the cache if the block run or proving failed
+            CacheLevel::Failed => {
+                if report.execution_result.is_ok()
+                    && report.proving_result.as_ref().is_none_or(|r| r.is_ok())
+                {
+                    cache.delete()?;
+                }
             }
+            // Don't keep the cache
+            CacheLevel::Off => cache.delete()?,
         }
-        // Don't keep the cache
-        CacheLevel::Off => cache.delete()?,
     }
 
     // CAUTION
