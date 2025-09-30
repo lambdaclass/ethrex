@@ -84,7 +84,7 @@ impl NodeRef {
             NodeRef::Hash(hash) => *hash,
         }
     }
-    
+
     /// # SAFETY: caller must ensure the hash is correct for the node.
     /// Otherwise, the `Trie` will silently produce incorrect results and may
     /// fail to query other nodes from the `TrieDB`.
