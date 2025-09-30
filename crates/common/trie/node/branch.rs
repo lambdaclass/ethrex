@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use arrayvec::ArrayVec;
 use digest::core_api::CoreWrapper;
 use ethereum_types::H256;
 use ethrex_rlp::structs::Encoder;
@@ -218,58 +219,13 @@ impl BranchNode {
     /// Assumptions:
     /// - No value
     /// - 32 byte choices
-    pub fn encode_write(&self, buf: &mut impl Write) {
-        let payload_len = self.choices.iter().fold(1, |payload_len, child| {
-            payload_len + if child.is_valid() { 33 } else { 1 }
-        });
-        if payload_len < 56 {
-            buf.write(&[0xc0 + payload_len as u8]);
-        } else if payload_len < u8::MAX as usize { // TODO: < or <=
-            buf.write(&[0xf8, payload_len as u8]);
-        } else {
-            // ASSUMPTION: list len will never be >u16::MAX (2 bytes len)
-            buf.write(&[
-                0xf9,
-                ((payload_len as u16) >> 8) as u8,
-                (payload_len & 0xff) as u8,
-            ]);
-        }
-
-        for child in self.choices.iter() {
-            match child.compute_hash() {
-                NodeHash::Hashed(hash) => {
-                    buf.write(&[0xa0]);
-                    buf.write(&hash.0);
-                }
-                NodeHash::Inline(raw) if raw.1 != 0 => {
-                    // ASSUMPTION: nodes would never be inlined
-                    // WARN: assumption is wrong actually, but the probability of an inlined node
-                    // is pretty small.
-                    // TODO: fix this
-                    unreachable!();
-                    // buf.push(0x80 + raw.1);
-                    // buf.extend_from_slice(&raw.0[..raw.1 as usize]);
-                }
-                _ => {
-                    buf.write(&[0x80]);
-                }
-            }
-        }
-
-        // branch's value is empty
-        buf.write(&[0x80]);
-    }
-
-    /// Encodes the node
-    /// Assumptions:
-    /// - No value
-    /// - 32 byte choices
     pub fn encode_raw(&self) -> Vec<u8> {
         // 16 items * 33 bytes, assuming branches don't have values
         // in a state or storage trie.
         // plus a 3 byte headroom for the first prefix and payload len
-        const MAX_RLP_ENCODED_SIZE: usize = 528 + 3;
-        let mut buf = Vec::with_capacity(MAX_RLP_ENCODED_SIZE);
+        // plus a byte for the empty value
+        const MAX_RLP_ENCODED_SIZE: usize = 16*33 + 3 + 1;
+        let mut buf: ArrayVec<u8, MAX_RLP_ENCODED_SIZE> = ArrayVec::new();
 
         let payload_len = self.choices.iter().fold(1, |payload_len, child| {
             payload_len + if child.is_valid() { 33 } else { 1 }
