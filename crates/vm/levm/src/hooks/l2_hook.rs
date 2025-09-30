@@ -131,13 +131,15 @@ fn pay_to_fee_vault(
     gas_to_pay: u64,
     fee_vault: Option<Address>,
 ) -> Result<(), crate::errors::VMError> {
-    let base_fee = U256::from(gas_to_pay)
-        .checked_mul(vm.env.base_fee_per_gas)
-        .ok_or(InternalError::Overflow)?;
     let Some(fee_vault) = fee_vault else {
         // No fee vault configured, base fee is effectively burned
         return Ok(());
     };
+
+    let base_fee = U256::from(gas_to_pay)
+        .checked_mul(vm.env.base_fee_per_gas)
+        .ok_or(InternalError::Overflow)?;
+
     vm.increase_account_balance(fee_vault, base_fee)?;
     Ok(())
 }

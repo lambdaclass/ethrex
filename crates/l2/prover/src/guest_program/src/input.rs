@@ -18,7 +18,7 @@ pub struct ProgramInput {
     pub execution_witness: ExecutionWitness,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
-    /// Address where collected fees are sent. If None, fees are burned.
+    /// Configuration for L2 fees
     pub fee_config: Option<FeeConfig>,
     #[cfg(feature = "l2")]
     /// KZG commitment to the blob data

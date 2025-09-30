@@ -1,10 +1,9 @@
-use ethrex_common::types::fee_config::FeeConfig;
-
 use crate::{
     errors::{ContextResult, VMError},
     hooks::{L2Hook, backup_hook::BackupHook, default_hook::DefaultHook},
     vm::{VM, VMType},
 };
+use ethrex_common::types::fee_config::FeeConfig;
 use std::{cell::RefCell, rc::Rc};
 
 pub trait Hook {

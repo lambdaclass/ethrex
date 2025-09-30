@@ -151,14 +151,15 @@ pub async fn get_blockdata(
         format_duration(&execution_witness_retrieval_duration)
     );
 
-    #[cfg(not(feature = "l2"))]
-    let l2_fields = None;
-    #[cfg(feature = "l2")]
-    let l2_fields = Some(L2Fields {
-        blob_commitment: [0u8; 48],
-        blob_proof: [0u8; 48],
-        fee_config: _fee_config.ok_or_else(|| eyre::eyre!("fee_config is required for L2"))?,
-    });
+    let l2_fields = if cfg!(feature = "l2") {
+        Some(L2Fields {
+            blob_commitment: [0u8; 48],
+            blob_proof: [0u8; 48],
+            fee_config: _fee_config.ok_or_else(|| eyre::eyre!("fee_config is required for L2"))?,
+        })
+    } else {
+        None
+    };
 
     Ok(Cache::new(
         vec![block],
@@ -240,14 +241,15 @@ async fn fetch_rangedata_from_client(
         format_duration(&execution_witness_retrieval_duration)
     );
 
-    #[cfg(not(feature = "l2"))]
-    let l2_fields = None;
-    #[cfg(feature = "l2")]
-    let l2_fields = Some(L2Fields {
-        blob_commitment: [0u8; 48],
-        blob_proof: [0u8; 48],
-        fee_config: _fee_config.ok_or_else(|| eyre::eyre!("fee_config is required for L2"))?,
-    });
+    let l2_fields = if cfg!(feature = "l2") {
+        Some(L2Fields {
+            blob_commitment: [0u8; 48],
+            blob_proof: [0u8; 48],
+            fee_config: _fee_config.ok_or_else(|| eyre::eyre!("fee_config is required for L2"))?,
+        })
+    } else {
+        None
+    };
 
     let cache = Cache::new(blocks, witness_rpc, chain_config, l2_fields);
 
@@ -284,7 +286,7 @@ pub async fn get_batchdata(
     rollup_client: EthClient,
     network: Network,
     batch_number: u64,
-    fee_config: Option<FeeConfig>,
+    fee_config: FeeConfig,
 ) -> eyre::Result<Cache> {
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
@@ -302,7 +304,7 @@ pub async fn get_batchdata(
         network.get_genesis()?.config,
         rpc_batch.batch.first_block,
         rpc_batch.batch.last_block,
-        fee_config,
+        Some(fee_config),
     )
     .await?;
 
@@ -320,7 +322,7 @@ pub async fn get_batchdata(
             .proofs
             .first()
             .unwrap_or(&[0_u8; 48]),
-        fee_config: fee_config.ok_or_else(|| eyre::eyre!("fee_config is required for L2"))?,
+        fee_config,
     });
 
     cache.write()?;

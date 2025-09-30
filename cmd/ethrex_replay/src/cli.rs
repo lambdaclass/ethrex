@@ -666,10 +666,10 @@ impl EthrexReplayCommand {
 
                 let (eth_client, network) = setup(&opts).await?;
 
-                let fee_config = Some(FeeConfig {
+                let fee_config = FeeConfig {
                     fee_vault: get_fee_vault_address(&eth_client).await?,
                     ..Default::default()
-                });
+                };
 
                 let cache = get_batchdata(eth_client, network, batch, fee_config).await?;
 
@@ -699,9 +699,7 @@ impl EthrexReplayCommand {
                     Self::L2(L2Subcommand::Custom(CustomSubcommand::Batch(
                         CustomBatchOptions {
                             n_blocks: 1,
-
                             common,
-
                             fee_vault,
                         },
                     )))
@@ -1275,9 +1273,8 @@ pub async fn replay_custom_l2_blocks(
     fee_config: FeeConfig,
     opts: EthrexReplayOptions,
 ) -> eyre::Result<Report> {
-    use ethrex_blockchain::{BlockchainOptions, BlockchainType, MAX_MEMPOOL_SIZE_DEFAULT};
-
     use crate::cache::L2Fields;
+    use ethrex_blockchain::{BlockchainOptions, BlockchainType, MAX_MEMPOOL_SIZE_DEFAULT};
 
     let network = Network::LocalDevnetL2;
 
