@@ -418,6 +418,9 @@ impl EthrexReplayCommand {
                     }
                 }
 
+                // It will only be used in case from or to weren't specified or in endless mode. We can unwrap as cached mode won't reach those places.
+                let maybe_rpc = opts.rpc_url.as_ref();
+
                 let from = match from {
                     // Case --from is set
                     // * --endless and --to cannot be set together (constraint by clap).
@@ -427,11 +430,8 @@ impl EthrexReplayCommand {
                     // Case --from is not set
                     // * If we reach this point, --endless must be set (constraint by clap)
                     None => {
-                        fetch_latest_block_number(
-                            opts.rpc_url.clone().unwrap(),
-                            only_eth_proofs_blocks,
-                        )
-                        .await?
+                        fetch_latest_block_number(maybe_rpc.unwrap(), only_eth_proofs_blocks)
+                            .await?
                     }
                 };
 
@@ -442,11 +442,8 @@ impl EthrexReplayCommand {
                     // Case --to is not set
                     // * If we reach this point, --from or --endless must be set (constraint by clap)
                     None => {
-                        fetch_latest_block_number(
-                            opts.rpc_url.clone().unwrap(),
-                            only_eth_proofs_blocks,
-                        )
-                        .await?
+                        fetch_latest_block_number(maybe_rpc.unwrap(), only_eth_proofs_blocks)
+                            .await?
                     }
                 };
 
@@ -467,7 +464,7 @@ impl EthrexReplayCommand {
                         // we can keep checking for new blocks
                         if endless && block_to_replay > last_block_to_replay {
                             last_block_to_replay = fetch_latest_block_number(
-                                opts.rpc_url.clone().unwrap(),
+                                maybe_rpc.unwrap(),
                                 only_eth_proofs_blocks,
                             )
                             .await?;
@@ -493,11 +490,9 @@ impl EthrexReplayCommand {
                     // Case --endless is set, we want to update the `to` so
                     // we can keep checking for new blocks
                     while endless && block_to_replay > last_block_to_replay {
-                        last_block_to_replay = fetch_latest_block_number(
-                            opts.rpc_url.clone().unwrap(),
-                            only_eth_proofs_blocks,
-                        )
-                        .await?;
+                        last_block_to_replay =
+                            fetch_latest_block_number(maybe_rpc.unwrap(), only_eth_proofs_blocks)
+                                .await?;
 
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
@@ -1329,7 +1324,7 @@ pub async fn produce_custom_l2_block(
 
 #[cfg(not(feature = "l2"))]
 async fn fetch_latest_block_number(
-    rpc_url: Url,
+    rpc_url: &Url,
     only_eth_proofs_blocks: bool,
 ) -> eyre::Result<u64> {
     let eth_client = EthClient::new(rpc_url.as_str())?;
