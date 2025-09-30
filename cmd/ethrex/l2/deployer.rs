@@ -1015,23 +1015,14 @@ async fn make_deposits(
                 encode_calldata("freeMint()", &[])?.into(),
                 Overrides {
                     nonce: Some(nonce),
-                    gas_limit: Some(1_000_000u64), // This is for not estimating the gas and use an outdated nonce
+                    gas_limit: Some(1_000_000u64), // This is for not estimating the gas and use the nonce it will have
                     ..Default::default()
                 },
             )
             .await?;
-            match send_generic_transaction(eth_client, mint_tx, &signer).await {
-                Ok(hash) => {
-                    info!(
-                        address =? signer.address(),
-                        ?hash,
-                        "Mint transaction sent to L1 token contract"
-                    );
-                }
-                Err(e) => {
-                    error!(address =? signer.address(), "Failed to mint");
-                    return Err(DeployerError::EthClientError(e));
-                }
+            if let Err(e) = send_generic_transaction(eth_client, mint_tx, &signer).await {
+                error!(address =? signer.address(), "Failed to mint {e}");
+                continue;
             }
 
             let calldata = encode_calldata(
@@ -1052,22 +1043,12 @@ async fn make_deposits(
                 },
             )
             .await?;
-            match send_generic_transaction(eth_client, approve_tx, &signer).await {
-                Ok(hash) => {
-                    info!(
-                        address =? signer.address(),
-                        ?hash,
-                        "Approve transaction sent to L1 token contract"
-                    );
-                }
-                Err(e) => {
-                    error!(address =? signer.address(), "Failed to approve");
-                    return Err(DeployerError::EthClientError(e));
-                }
+            if let Err(e) = send_generic_transaction(eth_client, approve_tx, &signer).await {
+                error!(address =? signer.address(), "Failed to approve {e}");
+                continue;
             }
         }
 
-        // TODO: there is no need of this if, always use native_l1_address
         let calldata_values = vec![
             // uint256 _amount: amount of ERC20 to deposit
             Value::Uint(if native_token_is_eth {
