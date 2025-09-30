@@ -489,7 +489,7 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         }
 
         // Write state trie nodes to backend
-        let rw_tx = in_memory_store.begin_write()?;
+        let mut rw_tx = in_memory_store.begin_write()?;
         let mut state_batch = Vec::new();
         for (node_hash, node_data) in state_nodes.iter() {
             state_batch.push((
@@ -549,8 +549,9 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
         }
 
         if !storage_batch.is_empty() {
-            let rw_tx = in_memory_store.begin_write()?;
+            let mut rw_tx = in_memory_store.begin_write()?;
             rw_tx.put_batch(storage_batch)?;
+            rw_tx.commit()?;
         }
     }
 

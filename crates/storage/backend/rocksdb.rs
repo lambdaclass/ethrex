@@ -75,14 +75,13 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
-        let mut cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'_>>> =
-            HashMap::with_capacity(TABLES.len());
+        let mut cfs = HashMap::with_capacity(TABLES.len());
         for &table in TABLES.iter() {
             let cf = self
                 .db
                 .cf_handle(table)
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-            cfs.insert(table.to_string(), cf);
+            cfs.insert(table, cf);
         }
         Ok(Box::new(RocksDBRoTx {
             db: self.db.clone(),
@@ -91,14 +90,13 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError> {
-        let mut cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'_>>> =
-            HashMap::with_capacity(TABLES.len());
+        let mut cfs = HashMap::with_capacity(TABLES.len());
         for &table in TABLES.iter() {
             let cf = self
                 .db
                 .cf_handle(table)
                 .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-            cfs.insert(table.to_string(), cf);
+            cfs.insert(table, cf);
         }
 
         let batch = WriteBatchWithTransaction::<true>::default();
@@ -126,7 +124,7 @@ pub struct RocksDBRoTx<'a> {
     /// Transaction
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Hashmap of column families
-    cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
+    cfs: HashMap<&'a str, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
 impl<'a> StorageRoTx for RocksDBRoTx<'a> {
@@ -191,7 +189,7 @@ pub struct RocksDBRwTx<'a> {
     /// Write batch for accumulating changes (interior mutability)
     batch: WriteBatchWithTransaction<true>,
     /// Hashmap of column families
-    cfs: HashMap<String, Arc<rocksdb::BoundColumnFamily<'a>>>,
+    cfs: HashMap<&'a str, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
 impl<'a> StorageRoTx for RocksDBRwTx<'a> {
