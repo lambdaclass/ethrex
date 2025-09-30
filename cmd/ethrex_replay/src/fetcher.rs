@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     cache::{Cache, get_block_cache_file_name},
-    cli::{EthrexReplayOptions, or_latest, setup_rpc},
+    cli::{EthrexReplayOptions, setup_rpc},
     rpc::db::RpcDB,
 };
 
@@ -52,10 +52,14 @@ pub async fn get_blockdata(
                 ));
             }
         }
+        let block_identifier = match block {
+            Some(n) => BlockIdentifier::Number(n),
+            None => BlockIdentifier::Tag(BlockTag::Latest),
+        };
         let cache = get_blockdata_rpc(
             eth_client,
             rpc_network.clone(),
-            or_latest(block)?,
+            block_identifier,
             opts.cache_dir.clone(),
         )
         .await?;
@@ -72,12 +76,12 @@ pub async fn get_blockdata(
 async fn get_blockdata_rpc(
     eth_client: EthClient,
     network: Network,
-    block_number: BlockIdentifier,
+    block_identifier: BlockIdentifier,
     cache_dir: PathBuf,
 ) -> eyre::Result<Cache> {
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
-    let requested_block_number = match block_number {
+    let requested_block_number = match block_identifier {
         BlockIdentifier::Number(some_number) => some_number,
         BlockIdentifier::Tag(BlockTag::Latest) => latest_block_number,
         BlockIdentifier::Tag(_) => unimplemented!("Only latest block tag is supported"),

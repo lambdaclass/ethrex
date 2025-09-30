@@ -935,13 +935,6 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
     }
 }
 
-pub fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
-    Ok(match maybe_number {
-        Some(n) => BlockIdentifier::Number(n),
-        None => BlockIdentifier::Tag(BlockTag::Latest),
-    })
-}
-
 fn print_transition(update: AccountUpdate) {
     println!("Account {:x}", update.address);
     if update.removed {
