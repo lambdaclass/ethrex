@@ -1726,7 +1726,7 @@ async fn insert_storage_into_rocksdb(
 
     let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(BUFFER_COUNT as usize);
     for _ in 0..BUFFER_COUNT {
-        let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB));
+        let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
     scope(|scope| {
