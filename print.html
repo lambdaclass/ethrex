@@ -7234,8 +7234,7 @@ You can find the solidity code in the <a href="https://github.com/lambdaclass/et
 
 </style>
 <h1 id="ethrex-replay"><a class="header" href="#ethrex-replay">ethrex-replay</a></h1>
-<p>A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by <a href="https://github.com/lambdaclass/starknet-replay">starknet-replay</a>.
-Currently ethrex replay only works against ethrex nodes with the <code>debug_executionWitness</code> RPC endpoint.</p>
+<p>A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by <a href="https://github.com/lambdaclass/starknet-replay">starknet-replay</a>.</p>
 <h2 id="features"><a class="header" href="#features">Features</a></h2>
 <h3 id="l1"><a class="header" href="#l1">L1</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
@@ -7256,19 +7255,17 @@ Currently ethrex replay only works against ethrex nodes with the <code>debug_exe
 </tbody></table>
 </div>
 <h2 id="supported-clients"><a class="header" href="#supported-clients">Supported Clients</a></h2>
-<blockquote>
-<p>✅: supported.
-⚠️: supported, but flaky.
-🔜: to be supported.</p>
-</blockquote>
-<div class="table-wrapper"><table><thead><tr><th>Client</th><th>Hoodi</th><th>Sepolia</th><th>Mainnet</th><th>Public ethrex L2s</th></tr></thead><tbody>
-<tr><td>ethrex</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
-<tr><td>reth</td><td>✅</td><td>✅</td><td>✅</td><td>-</td></tr>
-<tr><td>geth</td><td>✅</td><td>✅</td><td>✅</td><td>-</td></tr>
-<tr><td>Nethermind</td><td>⚠️</td><td>⚠️</td><td>⚠️</td><td>-</td></tr>
-<tr><td>erigon</td><td>🔜</td><td>🔜</td><td>🔜</td><td>-</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Client</th><th><code>ethrex-replay block</code></th><th>notes</th></tr></thead><tbody>
+<tr><td>ethrex</td><td>✅</td><td><code>debug_executionWitness</code></td></tr>
+<tr><td>reth</td><td>✅</td><td><code>debug_executionWitness</code></td></tr>
+<tr><td>geth</td><td>✅</td><td><code>eth_getProof</code></td></tr>
+<tr><td>nethermind</td><td>✅</td><td><code>eth_getProof</code></td></tr>
+<tr><td>erigon</td><td>❌</td><td>V3 supports <code>eth_getProof</code> only for latest block</td></tr>
+<tr><td>besu</td><td>❌</td><td>Doesn't return proof for non-existing accounts</td></tr>
 </tbody></table>
 </div>
+<p>We support any other client that is compliant with <code>eth_getProof</code> or <code>debug_executionWitness</code> endpoints.</p>
+<p>Execution of some particular blocks with the <code>eth_getProof</code> method won't work with zkVMs. But without using these it should work for any block. Read more about this in <a href="ethrex_replay/./faq.html">FAQ</a>. Also, when running against a <strong>full node</strong> using <code>eth_getProof</code> if for some reason information retrieval were to take longer than 25 minutes it would probably fail because the node may have pruned its state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.</p>
 <h2 id="supported-zkvm-replays-execution--proving"><a class="header" href="#supported-zkvm-replays-execution--proving">Supported zkVM Replays (execution &amp; proving)</a></h2>
 <blockquote>
 <p>✅: supported.
@@ -7276,8 +7273,8 @@ Currently ethrex replay only works against ethrex nodes with the <code>debug_exe
 🔜: to be supported.</p>
 </blockquote>
 <div class="table-wrapper"><table><thead><tr><th>zkVM</th><th>Hoodi</th><th>Sepolia</th><th>Mainnet</th><th>Public ethrex L2s</th></tr></thead><tbody>
-<tr><td>RISC0</td><td>✅</td><td>✅</td><td>✅</td><td>🔜</td></tr>
-<tr><td>SP1</td><td>✅</td><td>✅</td><td>✅</td><td>🔜</td></tr>
+<tr><td>RISC0</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+<tr><td>SP1</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
 <tr><td>OpenVM</td><td>⚠️</td><td>🔜</td><td>🔜</td><td>🔜</td></tr>
 <tr><td>ZisK</td><td>🔜</td><td>🔜</td><td>⚠️</td><td>🔜</td></tr>
 <tr><td>Jolt</td><td>🔜</td><td>🔜</td><td>🔜</td><td>🔜</td></tr>
@@ -7288,13 +7285,15 @@ Currently ethrex replay only works against ethrex nodes with the <code>debug_exe
 </div>
 <h2 id="getting-started-1"><a class="header" href="#getting-started-1">Getting Started</a></h2>
 <h3 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h3>
+<p>These dependencies are optional, install them only if you want to run with the features <code>risc0</code> or <code>sp1</code> respectively.
+Make sure to use the correct versions of these.</p>
 <h4 id="risc0"><a class="header" href="#risc0"><a href="https://dev.risczero.com/api/zkvm/install">RISC0</a></a></h4>
 <pre><code class="language-sh">curl -L https://risczero.com/install | bash
 rzup install cargo-risczero 3.0.3
 rzup install risc0-groth16
 rzup install rust
 </code></pre>
-<h4 id="sp1"><a class="header" href="#sp1"><a href="https://docs.succinct.xyz/docs/sp1/introduction">SP1</a></a></h4>
+<h4 id="sp1"><a class="header" href="#sp1"><a href="https://docs.succinct.xyz/docs/sp1/getting-started/install">SP1</a></a></h4>
 <pre><code class="language-sh">curl -L https://sp1up.succinct.xyz | bash
 sp1up --version 5.0.8
 </code></pre>
@@ -7467,6 +7466,9 @@ ethrex-replay l2 transaction &lt;TX_HASH&gt; --execute --rpc-url &lt;RPC_URL&gt;
 <hr />
 <h2 id="benchmarking--profiling"><a class="header" href="#benchmarking--profiling">Benchmarking &amp; Profiling</a></h2>
 <h3 id="run-samply"><a class="header" href="#run-samply">Run Samply</a></h3>
+<p>We recommend building in <code>release-with-debug</code> mode so that the flamegraph is the most accurate.</p>
+<pre><code class="language-bash">cargo build -p ethrex-replay --profile release-with-debug --features &lt;FEATURES&gt;
+</code></pre>
 <h4 id="on-zkvms"><a class="header" href="#on-zkvms">On zkVMs</a></h4>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
@@ -7478,12 +7480,10 @@ ethrex-replay l2 transaction &lt;TX_HASH&gt; --execute --rpc-url &lt;RPC_URL&gt;
 <li>The <code>TRACE_SAMPLE_RATE</code> environment variable controls the sampling rate (in milliseconds). Adjust it according to your needs.</li>
 </ol>
 </div>
-<pre><code>TRACE_FILE=output.json TRACE_SAMPLE_RATE=1000 ethrex-replay &lt;COMMAND&gt; [ARGS]
+<pre><code>TRACE_FILE=output.json TRACE_SAMPLE_RATE=1000 target/release-with-debug/ethrex-replay &lt;COMMAND&gt; [ARGS]
 </code></pre>
 <h4 id="execution-without-zkvms"><a class="header" href="#execution-without-zkvms">Execution without zkVMs</a></h4>
-<p>We recommend building in release-with-debug mode so that the flamegraph is the most accurate.</p>
-<pre><code class="language-bash">cargo build -p ethrex-replay --profile release-with-debug
-samply record target/release-with-debug/ethrex-replay &lt;COMMAND&gt; [ARGS]
+<pre><code class="language-bash">samply record target/release-with-debug/ethrex-replay &lt;COMMAND&gt; --no-zkvm [OTHER_ARGS]
 </code></pre>
 <h3 id="run-bytehound"><a class="header" href="#run-bytehound">Run Bytehound</a></h3>
 <div class="mdbook-alerts mdbook-alerts-important">
@@ -7508,6 +7508,7 @@ LD_PRELOAD=/path/to/bytehound/preload/target/release/libbytehound.so:/path/to/li
 <ol>
 <li>The following requires <a href="https://github.com/jemalloc/jemalloc">Jemalloc</a> and <a href="https://github.com/KDE/heaptrack">Heaptrack</a> to be installed.</li>
 <li>The <code>ethrex-replay</code> binary must be built with the <code>jemalloc</code> feature enabled.</li>
+<li>Note that Heaptrack is a <strong>Linux</strong> profiler, so it won't work natively on macOS.</li>
 </ol>
 </div>
 <pre><code>LD_PRELOAD=/path/to/libjemalloc.so heaptrack ethrex-replay &lt;COMMAND&gt; [ARGS]
@@ -7586,45 +7587,21 @@ heaptrack_print heaptrack.&lt;program&gt;.&lt;pid&gt;.gz &gt; heaptrack.stacks
 }
 
 </style>
-<h1 id="profiling-zkvms-with-ethrex-replay"><a class="header" href="#profiling-zkvms-with-ethrex-replay">Profiling zkvms with ethrex-replay</a></h1>
-<h2 id="getting-started-2"><a class="header" href="#getting-started-2">Getting started</a></h2>
-<p>Before reading this document please take a look the general documentation for <a href="ethrex_replay/./ethrex_replay.html">ethrex-replay</a></p>
-<h3 id="dependencies-1"><a class="header" href="#dependencies-1">Dependencies</a></h3>
-<h4 id="for-sp1"><a class="header" href="#for-sp1">For SP1</a></h4>
-<p>The easiest way is to use cargo but other options are listed in the <a href="https://github.com/mstange/samply">samply repo</a></p>
-<pre><code>cargo install --locked samply
-</code></pre>
-<h4 id="for-risc0"><a class="header" href="#for-risc0">For risc0</a></h4>
-<p>Install go by following the instructions from <a href="https://go.dev/doc/install">go install page</a></p>
-<h3 id="generate-a-profile"><a class="header" href="#generate-a-profile">Generate a profile</a></h3>
-<h4 id="for-sp1-1"><a class="header" href="#for-sp1-1">For SP1</a></h4>
-<p><strong>Profile a L1 block</strong>:</p>
-<p>Required: <code>RPC_URL</code>.
-Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code>.</p>
-<pre><code class="language-sh">make profile-sp1
-</code></pre>
-<p><strong>Profile a L2 batch</strong>:</p>
-<p>Required: <code>RPC_URL</code>, <code>BATCH_NUMBER</code>, <code>NETWORK</code>.</p>
-<pre><code class="language-sh">make profile-batch-sp1
-</code></pre>
-<p><strong>Open samply profile</strong></p>
-<pre><code class="language-sh">samply load output.json
-</code></pre>
-<p>Then visit http://localhost:8000/ on your browser</p>
-<h4 id="for-risc0-1"><a class="header" href="#for-risc0-1">For risc0</a></h4>
-<p><strong>Profile a L1 block</strong>:</p>
-<p>Required: <code>RPC_URL</code>.
-Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code>.</p>
-<pre><code class="language-sh">make profile-risc0
-</code></pre>
-<p><strong>Profile a L2 batch</strong>:</p>
-<p>Required: <code>RPC_URL</code>, <code>BATCH_NUMBER</code>, <code>NETWORK</code>.</p>
-<pre><code class="language-sh">make profile-batch-risc0
-</code></pre>
-<p><strong>Open pprof profile</strong></p>
-<pre><code class="language-sh">go tool pprof -http=127.0.0.1:8000 profile.pb
-</code></pre>
-<p>Then visit http://localhost:8000/ on your browser</p>
+<h2 id="faq"><a class="header" href="#faq">FAQ</a></h2>
+<h3 id="whats-the-difference-between-eth_getproof-and-debug_executionwitness"><a class="header" href="#whats-the-difference-between-eth_getproof-and-debug_executionwitness">What's the difference between <code>eth_getProof</code> and <code>debug_executionWitness</code>?</a></h3>
+<p><code>eth_getProof</code> gets the proof for a particular account and the chosen storage slots.
+<code>debug_executionWitness</code> gets the whole execution witness necessary to execute a block in a stateless manner.</p>
+<p>The former endpoint is implemented by all execution clients and you can even find it in RPC Providers like Alchemy, the latter is only implemented by some execution clients and you can't find it in RPC Providers.</p>
+<p>When wanting to execute a historical block we tend to use the <code>eth_getProof</code> method with an RPC Provider because it will be the most reliable, other way is using it against a Hash-Based Archive Node but this would be too heavy to host ourselves (20TB at least). This method is slow because it performs many requests but it's very flexible.</p>
+<p>If instead we want to execute a recent block we use it against synced ethrex or reth nodes that expose the <code>debug_executionWitness</code> endpoint, this way retrieval of data will be instant and it will be way faster than the other method, because it won't be doing thousands of RPC requests, just one.</p>
+<p>More information regarding the execution witness in <a href="https://github.com/lambdaclass/ethrex/blob/38e0ffc/docs/l2/architecture/prover.md#execution-witness">the prover docs</a>.</p>
+<h3 id="why-stateless-execution-of-some-blocks-doesnt-work-with-eth_getproof"><a class="header" href="#why-stateless-execution-of-some-blocks-doesnt-work-with-eth_getproof">Why stateless execution of some blocks doesn't work with <code>eth_getProof</code></a></h3>
+<p>With this method of execution we get the proof of all the accounts and storage slots accessed during execution, but the problem arises when we want to delete a node from the Merkle Patricia Trie (MPT) when applying the account updates of the block. This is for a particular case in which a tree restructuring happens and we have a missing node that wasn't accessed but we need to know in order to restructure the trie.</p>
+<p>The problem can be explained with a simple example: a Branch node has 2 child nodes and only one was accessed and removed, this branch node should stop existing because they shouldn't have only <strong>one</strong> child. It will be either replaced by a leaf node or by an extension node, this depends on its child.</p>
+<p>This problem is wonderfully explained in <a href="https://github.com/kkrt-labs/zk-pig/blob/main/docs/modified-mpt.md">zkpig docs</a>, they also have a very good intro to the MPT.
+Here they mention two different solutions that we have to implement in order to fix this. The first one works when the missing node is a Leaf or Extension and the second one works then the missing node is a Branch.</p>
+<p>In our code we only applied the first solution by injecting all possible nodes to the execution witness that we build when using <code>eth_getProof</code>, that's why the witness when using this method will be larger than the witness obtained with <code>debug_executionWitness</code>.</p>
+<p>We didn't apply the second change because it needs a change to the MPT that we don't want in our code. However we were able to solve it for execution without using a zkVM by injecting some "fake nodes" to the trie just before execution that have the expected hash but their RLP content doesn't match to it. This way we can "trick" the Trie into thinking that it has the branch nodes when in fact, it doesn't.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
