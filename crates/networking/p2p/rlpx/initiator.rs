@@ -105,7 +105,7 @@ impl GenServer for RLPxInitiator {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type Error = ();
+    type Error = std::convert::Infallible;
 
     async fn handle_cast(
         &mut self,
