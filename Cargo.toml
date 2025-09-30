@@ -31,7 +31,6 @@ members = [
   "tooling/load_test",
   "tooling/loc",
   "tooling/archive_sync",
-  "tooling/replayer",
   "crates/common/config",
   "tooling/reorgs",
 ]
