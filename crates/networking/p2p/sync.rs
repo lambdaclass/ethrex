@@ -28,7 +28,7 @@ use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 #[cfg(not(feature = "rocksdb"))]
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 #[cfg(not(feature = "rocksdb"))]
 use std::sync::Mutex;
@@ -887,24 +887,13 @@ impl Syncer {
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
 
-            #[cfg(feature = "rocksdb")]
-            let computed_state_root = insert_accounts_into_rocksdb(
+            // Variable `accounts_with_storage` unused if not in rocksdb
+            #[allow(unused_variables)]
+            let (computed_state_root, accounts_with_storage) = insert_accounts(
                 store.clone(),
                 &mut storage_accounts,
                 &account_state_snapshots_dir,
-                &crate::utils::get_rocksdb_temp_accounts_dir(&self.datadir),
-                &mut code_hash_collector,
-            )
-            .await?;
-            #[cfg(feature = "rocksdb")]
-            let accounts_with_storage = std::collections::BTreeSet::from_iter(
-                storage_accounts.accounts_with_storage_root.keys().copied(),
-            );
-            #[cfg(not(feature = "rocksdb"))]
-            let computed_state_root = insert_accounts_into_db(
-                store.clone(),
-                &mut storage_accounts,
-                &account_state_snapshots_dir,
+                &self.datadir,
                 &mut code_hash_collector,
             )
             .await?;
@@ -994,28 +983,14 @@ impl Syncer {
                 "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
-            #[cfg(feature = "rocksdb")]
-            {
-                insert_storage_into_rocksdb(
-                    store.clone(),
-                    accounts_with_storage,
-                    &account_storages_snapshots_dir,
-                    &crate::utils::get_rocksdb_temp_storage_dir(&self.datadir),
-                )
-                .await?;
-            }
-            #[cfg(not(feature = "rocksdb"))]
-            {
-                let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-                    Arc::new(Mutex::new(HashMap::new()));
-                insert_storages_into_db(
-                    store.clone(),
-                    &account_storages_snapshots_dir,
-                    &maybe_big_account_storage_state_roots,
-                    &pivot_header,
-                )
-                .await?;
-            }
+            insert_storages(
+                store.clone(),
+                accounts_with_storage,
+                &account_storages_snapshots_dir,
+                &self.datadir,
+                &pivot_header,
+            )
+            .await?;
 
             *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
@@ -1452,12 +1427,13 @@ pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 }
 
 #[cfg(not(feature = "rocksdb"))]
-async fn insert_accounts_into_db(
+async fn insert_accounts(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
+    _: &Path,
     code_hash_collector: &mut CodeHashCollector,
-) -> Result<H256, SyncError> {
+) -> Result<(H256, BTreeSet<H256>), SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
     for entry in std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -1509,17 +1485,20 @@ async fn insert_accounts_into_db(
         computed_state_root = current_state_root?;
     }
     info!("computed_state_root {computed_state_root}");
-    Ok(computed_state_root)
+    Ok((computed_state_root, BTreeSet::new()))
 }
 
 #[cfg(not(feature = "rocksdb"))]
-async fn insert_storages_into_db(
+async fn insert_storages(
     store: Store,
+    _: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
-    maybe_big_account_storage_state_roots: &Arc<Mutex<HashMap<H256, H256>>>,
+    _: &Path,
     pivot_header: &BlockHeader,
 ) -> Result<(), SyncError> {
     use rayon::iter::IntoParallelIterator;
+    let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     for entry in std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
@@ -1587,19 +1566,20 @@ async fn insert_storages_into_db(
 }
 
 #[cfg(feature = "rocksdb")]
-async fn insert_accounts_into_rocksdb(
+async fn insert_accounts(
     store: Store,
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
-    temp_db_dir: &Path,
+    datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
-) -> Result<H256, SyncError> {
+) -> Result<(H256, BTreeSet<H256>), SyncError> {
+    use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
     let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, temp_db_dir)
+    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
     let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -1621,7 +1601,7 @@ async fn insert_accounts_into_rocksdb(
     }
 
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    trie_from_sorted_accounts_wrap(
+    let compute_state_root = trie_from_sorted_accounts_wrap(
         trie.db(),
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
@@ -1639,16 +1619,22 @@ async fn insert_accounts_into_rocksdb(
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
-    .map_err(SyncError::TrieGenerationError)
+    .map_err(SyncError::TrieGenerationError)?;
+
+    let accounts_with_storage =
+        BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
+    Ok((compute_state_root, accounts_with_storage))
 }
 
 #[cfg(feature = "rocksdb")]
-async fn insert_storage_into_rocksdb(
+async fn insert_storages(
     store: Store,
-    accounts_with_storage: std::collections::BTreeSet<H256>,
-    account_state_snapshots_dir: &Path,
-    temp_db_dir: &Path,
+    accounts_with_storage: BTreeSet<H256>,
+    account_storages_snapshots_dir: &Path,
+    datadir: &Path,
+    _: &BlockHeader,
 ) -> Result<(), SyncError> {
+    use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_threadpool::ThreadPool;
     use ethrex_trie::{
@@ -1693,9 +1679,9 @@ async fn insert_storage_into_rocksdb(
 
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, temp_db_dir)
+    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
         .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
+    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
