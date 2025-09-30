@@ -17,9 +17,6 @@ jobs:
   generate-flamegraph-evm:
     name: Generate Flamegraph
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        name: ["levm", "revm"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -94,19 +91,13 @@ jobs:
         run: |
           start_time=$(date +%s)
 
-          if [ "${{ matrix.name }}" == "levm" ]; then
-            rm -rf target/debug/ef_tests_state
-            CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-            -p ef_tests-state --test all -- --tests stSolidityTest,stCallCodes
-          elif [ "${{ matrix.name }}" == "revm" ]; then
-            rm -rf target/debug/ef_tests_state
-            CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-            -p ef_tests-state --test all -- --revm --tests stSolidityTest,stCallCodes
-          fi
+          rm -rf target/debug/ef_tests_state
+          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+          -p ef_tests-state --test all -- --tests stSolidityTest,stCallCodes
 
           end_time=$(date +%s)
           elapsed_time=$((end_time - start_time))
-          echo "time_${{ matrix.name }}=${elapsed_time}" >> time_${{ matrix.name }}.txt
+          echo "time_levm=${elapsed_time}" >> time_levm.txt
 
       - name: Generate SVG
         shell: bash
@@ -115,23 +106,19 @@ jobs:
           PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
           PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
 
-          if [ "${{ matrix.name }}" == "levm" ]; then
-            PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "LEVM Flamegraph" < collapsed.data > flamegraph_levm.svg
-          elif [ "${{ matrix.name }}" == "revm" ]; then
-            PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "REVM Flamegraph" < collapsed.data > flamegraph_revm.svg
-          fi
+          PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "LEVM Flamegraph" < collapsed.data > flamegraph_levm.svg
 
-      - name: Upload artifact - time_${{ matrix.name }}.txt
+      - name: Upload artifact - time_levm.txt
         uses: actions/upload-artifact@v4
         with:
-          name: time_${{ matrix.name }}.txt
-          path: time_${{ matrix.name }}.txt
+          name: time_levm.txt
+          path: time_levm.txt
 
       - name: Upload artifact - ${{ matrix.name }}
         uses: actions/upload-artifact@v4
         with:
-          name: flamegraph_${{ matrix.name }}.svg
-          path: ./flamegraph_${{ matrix.name }}.svg
+          name: flamegraph.svg
+          path: ./flamegraph.svg
 
   test-output:
     name: Test Output
@@ -144,15 +131,9 @@ jobs:
           name: time_levm.txt
           path: time_levm.txt
 
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: time_revm.txt
-          path: time_revm.txt
       - name: echo Output
         run: |
           echo "LEVM Time: $(grep "time_levm" time_levm.txt | cut -d '=' -f2)"
-          echo "REVM Time: $(grep "time_revm" time_revm.txt | cut -d '=' -f2)"
 
   flamegraph-ethrex:
     name: Generate Flamegraph for Ethrex
@@ -226,7 +207,6 @@ jobs:
             echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
 
-      # By default ethrex uses revm as evm backend.
       - id: generate-flamegraph-ethrex
         name: Generate Flamegraph data for Ethrex
         shell: bash
@@ -401,29 +381,16 @@ jobs:
           name: flamegraph_levm.svg
           path: ./
 
-      - name: Download revm flamegraph artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: flamegraph_revm.svg
-          path: ./
-
       - name: Download levm time artifact
         uses: actions/download-artifact@v4
         with:
           name: time_levm.txt
           path: ./
 
-      - name: Download revm time artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: time_revm.txt
-          path: ./
-
       - name: Update static page locally with new data
         shell: bash
         run: |
           cp -r flamegraph_levm.svg flamegraphs/
-          cp -r flamegraph_revm.svg flamegraphs/
           cp -r flamegraph_ethrex.svg flamegraphs/
           cp -r flamegraph_reth.svg flamegraphs/
 
@@ -444,14 +411,6 @@ jobs:
 
           time_levm_str="${minutes} minutes ${seconds} seconds"
           sed -i "s/{{LEVM_TIME}}/${time_levm_str}/g" templates/levm.html
-
-          time_revm=$(grep "time_revm" time_revm.txt | cut -d '=' -f2)
-
-          minutes=$(bc -l <<< "scale=0; $time_revm / 60")
-          seconds=$(bc -l <<< "scale=0; $time_revm % 60")
-
-          time_revm_str="${minutes} minutes ${seconds} seconds"
-          sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" templates/levm.html
 
           rm flamegraphs/levm.html
           rm flamegraphs/index.html
