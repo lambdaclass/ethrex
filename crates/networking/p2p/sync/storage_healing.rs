@@ -679,17 +679,14 @@ async fn perform_needed_deletions(
                 .filter(|(_, child)| !child.is_valid())
                 .map(|(choice, _)| choice as u8)
                 .collect();
-            store
-                .delete_subtrees(
-                    apply_prefix(Some(hashed_account), node_path.clone()),
-                    children,
-                )
-                .await?;
+            let full_path = apply_prefix(Some(hashed_account), node_path.clone());
+            store.delete_subtrees(full_path, children).await?;
         }
         Node::Extension(node) => {
             // An extension node is equivalent to a series of branch nodes with only
             // one valid child each, so we remove all the empty siblings on the path.
-            let (first, second) = compute_subtree_ranges(&node_path, &node.prefix);
+            let full_path = apply_prefix(Some(hashed_account), node_path.clone());
+            let (first, second) = compute_subtree_ranges(&full_path, &node.prefix);
 
             info!(
                 first_start=?first.start,
