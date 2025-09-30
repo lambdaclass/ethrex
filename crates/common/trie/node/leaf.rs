@@ -173,7 +173,8 @@ impl LeafNode {
             // value is its own encoding
         } else if self.value.len() < 56 {
             buf.write(&[0x80 + self.value.len() as u8]);
-        } else if self.value.len() < u8::MAX as usize { // TODO: < or <=
+        } else if self.value.len() < u8::MAX as usize {
+            // TODO: < or <=
             buf.write(&[0xb8, self.value.len() as u8]);
         } else {
             // ASSUMPTION: value len will never be >u16::MAX (2 bytes len)

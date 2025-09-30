@@ -80,7 +80,10 @@ impl NodeRef {
 
     pub fn compute_hash(&self) -> NodeHash {
         match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
+            NodeRef::Node(node, hash) => *hash.get_or_init(|| {
+                node.memoize_hash();
+                node.compute_hash()
+            }),
             NodeRef::Hash(hash) => *hash,
         }
     }
@@ -283,6 +286,30 @@ impl Node {
             Node::Branch(n) => n.compute_hash(),
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
+        }
+    }
+
+    pub fn memoize_hash(&self) {
+        match self {
+            Node::Branch(n) => {
+                for child in &n.choices {
+                    match child {
+                        NodeRef::Node(node, hash) if hash.get().is_none() => {
+                            node.memoize_hash();
+                            let _ = hash.set(node.compute_hash());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Node::Extension(n) => match &n.child {
+                NodeRef::Node(node, hash) if hash.get().is_none() => {
+                    node.memoize_hash();
+                    let _ = hash.set(node.compute_hash());
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
 }
