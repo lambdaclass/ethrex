@@ -209,7 +209,7 @@ impl BranchNode {
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
         let mut hasher = Keccak256::new();
-        self.encode_write(&mut hasher);
+        hasher.update(&self.encode_raw());
         let hash = hasher.finalize();
         NodeHash::Hashed(H256::from_slice(&hash))
     }
