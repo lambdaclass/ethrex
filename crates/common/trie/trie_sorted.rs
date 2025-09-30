@@ -41,7 +41,8 @@ pub enum TrieGenerationError {
     ThreadJoinError(),
 }
 
-const SIZE_TO_WRITE_DB: u64 = 20_000;
+pub const SIZE_TO_WRITE_DB: u64 = 20_000;
+pub const BUFFER_COUNT: u64 = 100;
 
 impl CenterSide {
     fn from_value(tuple: (H256, Vec<u8>)) -> CenterSide {
@@ -291,9 +292,9 @@ pub fn trie_from_sorted_accounts_wrap<T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(1001);
-    for _ in 0..1_000 {
-        let _ = buffer_sender.send(Vec::with_capacity(20_065));
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(BUFFER_COUNT as usize);
+    for _ in 0..BUFFER_COUNT {
+        let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB));
     }
     scope(|s| {
         let pool = ThreadPool::new(12, s);

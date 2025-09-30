@@ -1649,8 +1649,12 @@ async fn insert_storage_into_rocksdb(
     account_state_snapshots_dir: &Path,
     temp_db_dir: &Path,
 ) -> Result<(), SyncError> {
+    use crossbeam::channel::{bounded, unbounded};
     use ethrex_threadpool::ThreadPool;
-    use ethrex_trie::{NodeHash, trie_sorted::trie_from_sorted_accounts};
+    use ethrex_trie::{
+        Node, NodeHash,
+        trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
+    };
     use std::thread::scope;
 
     struct RocksDBIterator<'a> {
@@ -1714,19 +1718,15 @@ async fn insert_storage_into_rocksdb(
         })
         .collect::<Vec<(H256, Trie)>>();
 
-    use crossbeam::channel::{bounded, unbounded};
-
-    use ethrex_trie::Node;
-
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
     let thread_count = std::thread::available_parallelism()
         .map(|num| num.into())
         .unwrap_or(8);
 
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(1001);
-    for _ in 0..1_000 {
-        let _ = buffer_sender.send(Vec::with_capacity(20_065));
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(BUFFER_COUNT as usize);
+    for _ in 0..BUFFER_COUNT {
+        let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB));
     }
 
     scope(|scope| {
