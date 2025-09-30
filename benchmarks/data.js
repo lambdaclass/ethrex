@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759247262403,
+  "lastUpdate": 1759253105080,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35825,6 +35825,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004651455522248382,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "fd298bb2c542c7ec520fd46732716a9cf75b6b60",
+          "message": "perf(levm): remove `OpcodeResult` (#4650)\n\n**Motivation**\n\nResult checking is potentially a source of performance loss in tight\nloops.\n\n**Description**\n\nReduce the data returned in the opcodes' results to check if performance\nimproves.",
+          "timestamp": "2025-09-30T14:19:07Z",
+          "tree_id": "c4ad6b144e34567832ef35e444d58326a24bb9ba",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fd298bb2c542c7ec520fd46732716a9cf75b6b60"
+        },
+        "date": 1759253104106,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004672621046117783,
             "unit": "Mgas/s"
           }
         ]
