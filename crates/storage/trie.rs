@@ -55,10 +55,6 @@ impl TrieDB for BackendTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
-    fn put(&self, node_hash: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        self.put_batch(vec![(node_hash, value)])
-    }
-
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let batch: Vec<(&str, Vec<u8>, Vec<u8>)> = key_values
             .into_iter()
@@ -94,15 +90,13 @@ impl BackendTrieDBLocked {
     fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
-                // Para storage tries, prefijar con la dirección
+                // For storage tries, prefix with address
                 let mut key = address.as_bytes().to_vec();
                 key.extend_from_slice(node_hash.as_ref());
                 key
             }
-            None => {
-                // Para state trie, usar el hash del nodo directamente
-                node_hash.as_ref().to_vec()
-            }
+            // For state tries, use node hash directly
+            None => node_hash.as_ref().to_vec(),
         }
     }
 }
