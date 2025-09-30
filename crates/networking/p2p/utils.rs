@@ -100,8 +100,6 @@ pub fn dump_storages_to_rocks_db(
     path: &Path,
     mut contents: Vec<(H256, H256, U256)>,
 ) -> Result<(), rocksdb::Error> {
-    use tracing::info;
-
     contents.sort();
     contents.dedup_by_key(|(k0, k1, _)| {
         let mut buffer = [0_u8; 64];
