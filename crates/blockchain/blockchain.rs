@@ -124,6 +124,14 @@ impl Blockchain {
         }
     }
 
+    // FIXME: find a better place for this
+    pub async fn catch_up_with_primary(&self) -> Result<(), ChainError> {
+        self.secondary
+            .catch_up_with_primary()
+            .await
+            .map_err(Into::into)
+    }
+
     /// Executes a block withing a new vm instance and state
     async fn execute_block(
         &self,

@@ -1195,9 +1195,11 @@ impl Syncer {
 
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
+        self.blockchain.catch_up_with_primary().await?;
         debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
 
         store_block_bodies(vec![pivot_header.hash()], self.peers.clone(), store.clone()).await?;
+        self.blockchain.catch_up_with_primary().await?;
 
         let block = store
             .get_block_by_hash(pivot_header.hash())
@@ -1205,6 +1207,7 @@ impl Syncer {
             .ok_or(SyncError::CorruptDB)?;
 
         store.add_block(block).await?;
+        self.blockchain.catch_up_with_primary().await?;
 
         let numbers_and_hashes = match block_sync_state {
             BlockSyncState::Full(_) => return Err(SyncError::NotInSnapSync),
@@ -1217,6 +1220,7 @@ impl Syncer {
                 .collect::<Vec<_>>(),
         };
 
+        self.blockchain.catch_up_with_primary().await?;
         store
             .forkchoice_update(
                 Some(numbers_and_hashes),
@@ -1226,6 +1230,7 @@ impl Syncer {
                 None,
             )
             .await?;
+        self.blockchain.catch_up_with_primary().await?;
         Ok(())
     }
 }
