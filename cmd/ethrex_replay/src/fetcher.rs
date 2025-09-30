@@ -160,11 +160,15 @@ pub async fn get_blockdata(
 }
 
 #[cfg(feature = "l2")]
+use ethrex_common::types::ChainConfig;
+
+#[cfg(feature = "l2")]
 async fn fetch_rangedata_from_client(
     eth_client: EthClient,
     chain_config: ChainConfig,
     from: u64,
     to: u64,
+    dir: PathBuf,
 ) -> eyre::Result<Cache> {
     info!("Validating RPC chain ID");
 
@@ -231,7 +235,7 @@ async fn fetch_rangedata_from_client(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    let cache = Cache::new(blocks, witness_rpc, chain_config);
+    let cache = Cache::new(blocks, witness_rpc, chain_config, dir);
 
     Ok(cache)
 }
@@ -241,11 +245,12 @@ pub async fn get_batchdata(
     rollup_client: EthClient,
     network: Network,
     batch_number: u64,
+    cache_dir: PathBuf,
 ) -> eyre::Result<Cache> {
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
     let file_name = get_batch_cache_file_name(batch_number);
-    if let Ok(cache) = Cache::load(&file_name) {
+    if let Ok(cache) = Cache::load(&cache_dir, &file_name) {
         info!("Getting batch data from cache");
         return Ok(cache);
     }
@@ -258,6 +263,7 @@ pub async fn get_batchdata(
         network.get_genesis()?.config,
         rpc_batch.batch.first_block,
         rpc_batch.batch.last_block,
+        cache_dir,
     )
     .await?;
 

@@ -1,4 +1,7 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime},
+};
 
 use clap::Parser;
 use ethrex_config::networks::{Network, PublicNetwork};
@@ -277,6 +280,7 @@ async fn replay_latest_block(
             slack_webhook_url: None,
             verbose: opts.verbose,
             bench: false,
+            cache_dir: PathBuf::from("./cache"),
         },
     })
     .run()
@@ -305,6 +309,7 @@ async fn replay_latest_block(
                     slack_webhook_url: None,
                     verbose: opts.verbose,
                     bench: false,
+                    cache_dir: PathBuf::from("./cache"),
                 },
             })
             .run()

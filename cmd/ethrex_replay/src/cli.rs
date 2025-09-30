@@ -2,6 +2,7 @@ use bytes::Bytes;
 use std::{
     cmp::max,
     fmt::Display,
+    path::PathBuf,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -148,12 +149,12 @@ pub struct EthrexReplayOptions {
     pub cached: bool,
     #[arg(
         long,
-        help = "Directory to store cache files",
+        help = "Directory to store and load cache files",
         value_parser,
         default_value = "./cache",
         help_heading = "Replay Options"
     )]
-    pub cache_dir: std::path::PathBuf,
+    pub cache_dir: PathBuf,
     #[arg(long, default_value = "on", help_heading = "Replay Options")]
     pub cache_level: CacheLevel,
     #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
@@ -387,7 +388,7 @@ impl EthrexReplayCommand {
                     slack_webhook_url: None,
                     verbose: false,
                     bench: false,
-                    cache_dir: std::path::PathBuf::from("./cache"),
+                    cache_dir: PathBuf::from("./cache"),
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -442,7 +443,7 @@ impl EthrexReplayCommand {
 
                 let (eth_client, network) = setup(&opts).await?;
 
-                let cache = get_batchdata(eth_client, network, batch).await?;
+                let cache = get_batchdata(eth_client, network, batch, opts.cache_dir).await?;
 
                 let backend = backend(&opts.common.zkvm)?;
 
@@ -489,6 +490,9 @@ impl EthrexReplayCommand {
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
                     slack_webhook_url: None,
+                    bench: false,
+                    cache_dir: PathBuf::from("./cache"),
+                    verbose: false,
                 };
 
                 let report = replay_custom_l2_blocks(max(1, n_blocks), opts).await?;
@@ -1040,6 +1044,8 @@ pub async fn replay_custom_l2_blocks(
     n_blocks: u64,
     opts: EthrexReplayOptions,
 ) -> eyre::Result<Report> {
+    use ethrex_blockchain::{BlockchainOptions, BlockchainType};
+
     let network = Network::LocalDevnetL2;
 
     let genesis = network.get_genesis()?;
@@ -1060,7 +1066,9 @@ pub async fn replay_custom_l2_blocks(
         rollup_store
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L2, false));
+    let mut blockchain_options = BlockchainOptions::default();
+    blockchain_options.r#type = BlockchainType::L2;
+    let blockchain = Arc::new(Blockchain::new(store.clone(), blockchain_options));
 
     let genesis_hash = genesis.get_block().hash();
 
@@ -1080,6 +1088,7 @@ pub async fn replay_custom_l2_blocks(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         genesis.config,
+        opts.cache_dir.clone(),
     );
 
     let backend = backend(&opts.common.zkvm)?;
@@ -1159,7 +1168,7 @@ pub async fn produce_custom_l2_block(
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
-    let payload = create_payload(&build_payload_args, store)?;
+    let payload = create_payload(&build_payload_args, store, Bytes::new())?;
 
     let payload_build_result = build_payload(
         blockchain.clone(),
