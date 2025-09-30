@@ -1,6 +1,5 @@
 use std::io::Write;
 
-use arrayvec::ArrayVec;
 use digest::core_api::CoreWrapper;
 use ethereum_types::H256;
 use ethrex_rlp::structs::Encoder;
