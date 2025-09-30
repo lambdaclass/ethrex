@@ -15,6 +15,8 @@ tooling/ef_tests/state/vectors
 tooling/ef_tests/state/runner_v2/failure_report.txt
 tooling/ef_tests/state/runner_v2/success_report.txt
 
+tooling/reorgs/data
+
 # Repos checked out by make target
 /hive/
 ethereum-package/

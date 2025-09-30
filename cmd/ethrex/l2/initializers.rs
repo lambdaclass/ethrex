@@ -157,9 +157,6 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
-    #[cfg(feature = "revm")]
-    panic!("L2 doesn't support REVM");
-
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = datadir.join("rollup_store");
@@ -170,7 +167,13 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
+    let blockchain_opts = ethrex_blockchain::BlockchainOptions {
+        max_mempool_size: opts.node_opts.mempool_max_size,
+        r#type: BlockchainType::L2,
+        perf_logs_enabled: true,
+    };
+
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
 
     let signer = get_signer(&datadir);
 

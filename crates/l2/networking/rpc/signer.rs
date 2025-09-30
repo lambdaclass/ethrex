@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Signature};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     U256,
     types::{
@@ -8,7 +9,6 @@ use ethrex_common::{
     },
 };
 use ethrex_rlp::encode::PayloadRLPEncode;
-use keccak_hash::keccak;
 use reqwest::{Client, StatusCode, Url};
 use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
@@ -102,7 +102,13 @@ impl LocalSigner {
             .sign_ecdsa_recoverable(&msg, &self.private_key)
             .serialize_compact();
 
-        Signature::from_slice(&[signature.as_slice(), &[recovery_id.to_i32() as u8]].concat())
+        Signature::from_slice(
+            &[
+                signature.as_slice(),
+                &[Into::<i32>::into(recovery_id) as u8],
+            ]
+            .concat(),
+        )
     }
 }
 

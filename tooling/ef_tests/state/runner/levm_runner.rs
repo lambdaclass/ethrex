@@ -4,6 +4,7 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, U256,
     types::{
@@ -20,7 +21,6 @@ use ethrex_levm::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
-use keccak_hash::keccak;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -486,7 +486,7 @@ pub async fn ensure_post_state(
 }
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
+    let (_initial_state, block_hash, store) = utils::load_initial_state_revm(test).await;
     let ret_account_updates_batch = store
         .apply_account_updates_batch(block_hash, account_updates)
         .await

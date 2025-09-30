@@ -2,10 +2,11 @@ use crate::{
     report::{ComparisonReport, EFTestReport, EFTestReportForkResult, TestReRunReport, TestVector},
     runner::{EFTestRunnerError, InternalError, levm_runner::post_state_root},
     types::EFTest,
-    utils::{effective_gas_price, load_initial_state, load_initial_state_levm},
+    utils::{effective_gas_price, load_initial_state_levm, load_initial_state_revm},
 };
 use alloy_rlp::Encodable;
 use bytes::Bytes;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256,
     types::{Account, AccountUpdate, Fork, TxKind},
@@ -15,14 +16,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_vm::{
-    DynVmDatabase, EvmError,
-    backends::{
-        self,
-        revm::{db::EvmState, helpers::fork_to_spec_id},
-    },
-};
-use keccak_hash::keccak;
+use ethrex_vm::EvmError;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
     Evm as Revm,
@@ -35,6 +29,8 @@ use revm::{
     },
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+use super::revm_db::{RevmDynVmDatabase, RevmState};
 
 fn levm_and_revm_logs_match(
     levm_logs: &Vec<ethrex_common::types::Log>,
@@ -142,7 +138,7 @@ pub async fn re_run_failed_ef_test_tx(
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash, _store) = load_initial_state(test).await;
+    let (mut state, _block_hash, _store) = load_initial_state_revm(test).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     if !test.post.has_vector_for_fork(vector, *fork) {
         return Ok(());
@@ -161,11 +157,12 @@ pub async fn re_run_failed_ef_test_tx(
 }
 
 pub fn prepare_revm_for_tx<'state>(
-    initial_state: &'state mut EvmState,
+    initial_state: &'state mut RevmState,
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<DynVmDatabase>>, EFTestRunnerError> {
+) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<RevmDynVmDatabase>>, EFTestRunnerError>
+{
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
@@ -377,7 +374,7 @@ pub fn compare_levm_revm_execution_results(
 pub async fn ensure_post_state(
     levm_cache: BTreeMap<Address, LevmAccount>,
     vector: &TestVector,
-    revm_state: &mut EvmState,
+    revm_state: &mut RevmState,
     test: &EFTest,
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
@@ -388,11 +385,11 @@ pub async fn ensure_post_state(
         None => {
             let mut db = load_initial_state_levm(test).await;
             db.current_accounts_state = levm_cache;
-            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
+            let levm_account_updates = db.get_state_transitions()
                 .map_err(|_| {
                     InternalError::Custom(format!("Error at LEVM::get_state_transitions() thrown in REVM runner line: {} when executing ensure_post_state()",line!()).to_owned())
                 })?;
-            let revm_account_updates = backends::revm::REVM::get_state_transitions(revm_state);
+            let revm_account_updates = revm_state.get_state_transitions();
             let account_updates_report = compare_levm_revm_account_updates(
                 vector,
                 test,
@@ -544,7 +541,7 @@ pub async fn _run_ef_test_tx_revm(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash, _store) = load_initial_state(test).await;
+    let (mut state, _block_hash, _store) = load_initial_state_revm(test).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     let revm_execution_result = revm.transact_commit();
     drop(revm); // Need to drop the state mutable reference.
@@ -558,7 +555,7 @@ pub async fn _ensure_post_state_revm(
     revm_execution_result: Result<RevmExecutionResult, REVMError<EvmError>>,
     vector: &TestVector,
     test: &EFTest,
-    revm_state: &mut EvmState,
+    revm_state: &mut RevmState,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     match revm_execution_result {
@@ -585,8 +582,7 @@ pub async fn _ensure_post_state_revm(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let revm_account_updates =
-                        backends::revm::REVM::get_state_transitions(revm_state);
+                    let revm_account_updates = revm_state.get_state_transitions();
                     let pos_state_root = post_state_root(&revm_account_updates, test).await;
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
@@ -635,4 +631,34 @@ pub async fn _ensure_post_state_revm(
         }
     };
     Ok(())
+}
+
+pub fn fork_to_spec_id(fork: Fork) -> SpecId {
+    match fork {
+        Fork::Frontier => SpecId::FRONTIER,
+        Fork::FrontierThawing => SpecId::FRONTIER_THAWING,
+        Fork::Homestead => SpecId::HOMESTEAD,
+        Fork::DaoFork => SpecId::DAO_FORK,
+        Fork::Tangerine => SpecId::TANGERINE,
+        Fork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        Fork::Byzantium => SpecId::BYZANTIUM,
+        Fork::Constantinople => SpecId::CONSTANTINOPLE,
+        Fork::Petersburg => SpecId::PETERSBURG,
+        Fork::Istanbul => SpecId::ISTANBUL,
+        Fork::MuirGlacier => SpecId::MUIR_GLACIER,
+        Fork::Berlin => SpecId::BERLIN,
+        Fork::London => SpecId::LONDON,
+        Fork::ArrowGlacier => SpecId::ARROW_GLACIER,
+        Fork::GrayGlacier => SpecId::GRAY_GLACIER,
+        Fork::Paris => SpecId::MERGE,
+        Fork::Shanghai => SpecId::SHANGHAI,
+        Fork::Cancun => SpecId::CANCUN,
+        Fork::Prague => SpecId::PRAGUE,
+        Fork::Osaka => SpecId::OSAKA,
+        Fork::BPO1 => SpecId::OSAKA,
+        Fork::BPO2 => SpecId::OSAKA,
+        Fork::BPO3 => SpecId::OSAKA,
+        Fork::BPO4 => SpecId::OSAKA,
+        Fork::BPO5 => SpecId::OSAKA,
+    }
 }

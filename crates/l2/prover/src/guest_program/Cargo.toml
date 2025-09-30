@@ -11,7 +11,6 @@ serde_with.workspace = true
 serde_json = "1.0.117"
 thiserror = "2.0.9"
 rkyv.workspace = true
-keccak-hash.workspace = true
 bytes.workspace = true
 
 ethrex-common = { path = "../../../../common/", default-features = false }
@@ -25,7 +24,7 @@ ethrex-l2-common = { path = "../../../common", default-features = false }
 [build-dependencies]
 hex.workspace = true
 risc0-build = { version = "=3.0.3", optional = true }
-risc0-zkvm = { version = "=3.0.3", optional = true }
+risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"]  }
 sp1-build = { version = "=5.0.8", optional = true }
 sp1-sdk = { version = "=5.0.8", optional = true }
 
