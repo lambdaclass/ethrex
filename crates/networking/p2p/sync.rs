@@ -150,7 +150,8 @@ impl Syncer {
                     start_time.elapsed().as_secs()
                 );
             }
-            Err(error) => warn!(
+            // TODO #2767: If the error is irrecoverable, we should exit ethrex
+            Err(error) => error!(
                 "Sync cycle failed due to {error}, time elapsed: {} secs ",
                 start_time.elapsed().as_secs()
             ),
