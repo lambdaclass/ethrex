@@ -10,7 +10,7 @@ use ethrex_common::{
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
-    OptimisticTransactionDB, Options, WriteBatchWithTransaction,
+    OptimisticTransactionDB, Options, PlainTableFactoryOptions, WriteBatchWithTransaction,
 };
 use std::{collections::HashSet, path::Path, sync::Arc};
 use tracing::info;
@@ -115,12 +115,17 @@ impl Store {
         db_options.set_max_open_files(-1);
         db_options.set_max_file_opening_threads(16);
 
-        db_options.set_max_background_jobs(8);
-
         db_options.set_use_fsync(false); // fdatasync
 
         db_options.enable_statistics();
         db_options.set_stats_dump_period_sec(600);
+
+        // Values taken from https://github.com/facebook/rocksdb/wiki/Setup-Options-and-Basic-Tuning#other-general-options
+        // These are 'real' default values
+        db_options.set_level_compaction_dynamic_level_bytes(true);
+        db_options.set_max_background_jobs(6);
+        db_options.set_bytes_per_sync(1048576);
+        db_options.set_compaction_pri(rocksdb::CompactionPri::MinOverlappingRatio);
 
         // Current column families that the code expects
         let expected_column_families = vec![
@@ -171,7 +176,15 @@ impl Store {
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
-            let cf_opts = Options::default();
+            let mut cf_opts = Options::default();
+            let mut bb_opts = BlockBasedOptions::default();
+            bb_opts.set_block_size(16 * 1024);
+            bb_opts.set_cache_index_and_filter_blocks(true);
+            bb_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+            // Newest in this [list](https://github.com/facebook/rocksdb/blob/v8.6.7/include/rocksdb/table.h#L493-L521)
+            // We can check main
+            bb_opts.set_format_version(6);
+            cf_opts.set_block_based_table_factory(&bb_opts);
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
