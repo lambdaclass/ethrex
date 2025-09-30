@@ -2,10 +2,13 @@
 
 ## Perf
 
+### 2025-09-29
+
+- Remove `OpcodeResult` to improve tight loops of lightweight opcodes [#4650](https://github.com/lambdaclass/ethrex/pull/4650)
+
 ### 2025-09-24
 
 - Avoid dumping empty storage accounts to disk [#4590](https://github.com/lambdaclass/ethrex/pull/4590)
-
 
 ### 2025-09-22
 
