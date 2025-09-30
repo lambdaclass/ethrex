@@ -19,26 +19,10 @@
 use crate::error::StoreError;
 use std::{fmt::Debug, path::Path};
 
+pub use tables::LIST as TABLES;
+
 /// Type alias for the result of a prefix iterator.
 pub type PrefixResult = Result<(Vec<u8>, Vec<u8>), StoreError>;
-
-// FIXME: We also have the table names in `store.rs`, let's try to unify them.
-/// Table names used by the storage engine.
-pub const TABLES: [&str; 13] = [
-    "chain_data",
-    "account_codes",
-    "bodies",
-    "block_numbers",
-    "canonical_block_hashes",
-    "headers",
-    "pending_blocks",
-    "transaction_locations",
-    "receipts",
-    "snap_state",
-    "invalid_chains",
-    "state_trie_nodes",
-    "storage_trie_nodes",
-];
 
 /// Configuration options for table creation.
 #[derive(Debug, Clone)]
@@ -119,4 +103,37 @@ pub trait StorageRwTx: StorageRoTx {
 pub trait StorageLocked: Send + Sync + 'static {
     /// Retrieves a value by key from the locked table.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+}
+
+/// Table names used by the storage engine.
+pub mod tables {
+    pub const CHAIN_DATA: &str = "chain_data";
+    pub const ACCOUNT_CODES: &str = "account_codes";
+    pub const BODIES: &str = "bodies";
+    pub const BLOCK_NUMBERS: &str = "block_numbers";
+    pub const CANONICAL_BLOCK_HASHES: &str = "canonical_block_hashes";
+    pub const HEADERS: &str = "headers";
+    pub const PENDING_BLOCKS: &str = "pending_blocks";
+    pub const TRANSACTION_LOCATIONS: &str = "transaction_locations";
+    pub const RECEIPTS: &str = "receipts";
+    pub const SNAP_STATE: &str = "snap_state";
+    pub const INVALID_CHAINS: &str = "invalid_chains";
+    pub const STATE_TRIE_NODES: &str = "state_trie_nodes";
+    pub const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
+
+    pub const LIST: [&str; 13] = [
+        CHAIN_DATA,
+        ACCOUNT_CODES,
+        BODIES,
+        BLOCK_NUMBERS,
+        CANONICAL_BLOCK_HASHES,
+        HEADERS,
+        PENDING_BLOCKS,
+        TRANSACTION_LOCATIONS,
+        RECEIPTS,
+        SNAP_STATE,
+        INVALID_CHAINS,
+        STATE_TRIE_NODES,
+        STORAGE_TRIE_NODES,
+    ];
 }
