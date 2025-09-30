@@ -798,11 +798,13 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 }
 
 async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
-    if tx_opts.opts.cached {
-        unimplemented!("cached mode is not implemented yet");
-    }
-
     let tx_hash = tx_opts.tx_hash;
+
+    if tx_opts.opts.cached && tx_opts.block_number.is_none() {
+        return Err(eyre::Error::msg(
+            "In cached mode, --block-number must be specified for transaction replay",
+        ));
+    }
 
     let cache = if let Some(n) = tx_opts.block_number {
         get_blockdata(tx_opts.opts, Some(n)).await?.0
