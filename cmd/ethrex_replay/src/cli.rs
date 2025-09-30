@@ -288,7 +288,6 @@ pub struct BlocksOptions {
         long,
         help = "Run blocks endlessly, starting from the specified block or the latest if not specified.",
         help_heading = "Replay Options",
-        requires = "from",
         conflicts_with_all = ["blocks", "to"]
     )]
     pub endless: bool,
