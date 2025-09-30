@@ -13,6 +13,7 @@ use tracing::debug;
 use crate::cli::network_from_chain_id;
 
 const CACHE_FILE_FORMAT: &str = "json";
+const CACHE_DIR: &str = "caches";
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone)]
@@ -92,9 +93,11 @@ impl Cache {
             l2_fields,
         }
     }
+    
     pub fn load(file_name: &str) -> eyre::Result<Self> {
+        let full_path = format!("{}/{}", CACHE_DIR, file_name);
         let file = BufReader::new(
-            File::open(file_name).map_err(|e| eyre::Error::msg(format!("{e} ({file_name})")))?,
+            File::open(&full_path).map_err(|e| eyre::Error::msg(format!("{e} ({full_path})")))?,
         );
         Ok(serde_json::from_reader(file)?)
     }
@@ -103,6 +106,9 @@ impl Cache {
         if self.blocks.is_empty() {
             return Err(eyre::Error::msg("cache can't be empty"));
         }
+
+        // Ensure the cache directory exists
+        std::fs::create_dir_all(CACHE_DIR)?;
 
         let file_name = get_block_cache_file_name(
             &self.network.clone(),
@@ -114,9 +120,11 @@ impl Cache {
             },
         );
 
-        debug!("Writing cache to {file_name}");
+        let full_path = format!("{}/{}", CACHE_DIR, file_name);
 
-        let file = BufWriter::new(File::create(file_name)?);
+        debug!("Writing cache to {full_path}");
+
+        let file = BufWriter::new(File::create(&full_path)?);
 
         serde_json::to_writer_pretty(file, self)?;
 
