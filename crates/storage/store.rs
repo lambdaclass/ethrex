@@ -76,9 +76,28 @@ pub struct AccountUpdatesList {
 
 impl Store {
     pub async fn catch_up_with_primary(&self) -> Result<(), StoreError> {
-        if !self.is_primary {
-            return self.engine.catch_up_with_primary().await;
+        if self.is_primary {
+            return Ok(());
         }
+        self.engine.catch_up_with_primary().await?;
+        let block_number = self
+            .engine
+            .get_latest_block_number()
+            .await?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
+        let block_header = self
+            .engine
+            .get_block_header(block_number)?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
+        let chain_config = self.engine.get_chain_config().await?;
+        *self
+            .chain_config
+            .write()
+            .map_err(|_| StoreError::LockError)? = chain_config;
+        *self
+            .latest_block_header
+            .write()
+            .map_err(|_| StoreError::LockError)? = block_header;
         Ok(())
     }
 
@@ -763,7 +782,11 @@ impl Store {
             .chain_config
             .write()
             .map_err(|_| StoreError::LockError)? = *chain_config;
-        self.engine.set_chain_config(chain_config).await
+        if self.is_primary {
+            self.engine.set_chain_config(chain_config).await
+        } else {
+            Ok(())
+        }
     }
 
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {

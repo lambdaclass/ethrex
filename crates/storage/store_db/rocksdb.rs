@@ -1091,6 +1091,15 @@ impl StoreEngine for Store {
         self.write_async(CF_CHAIN_DATA, key, value).await
     }
 
+    async fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
+        let key = Self::chain_data_key(ChainDataIndex::ChainConfig);
+        let encoded = self
+            .read_async(CF_CHAIN_DATA, key)
+            .await?
+            .ok_or(StoreError::DecodeError)?;
+        serde_json::from_slice(&encoded).map_err(|_| StoreError::DecodeError)
+    }
+
     async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,

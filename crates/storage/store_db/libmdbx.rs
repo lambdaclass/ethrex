@@ -482,6 +482,14 @@ impl StoreEngine for Store {
         .await
     }
 
+    async fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
+        let bytes = self
+            .read::<ChainData>(ChainDataIndex::ChainConfig)
+            .await?
+            .ok_or(StoreError::DecodeError)?;
+        serde_json::from_slice(&bytes).map_err(|_| StoreError::DecodeError)
+    }
+
     async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,

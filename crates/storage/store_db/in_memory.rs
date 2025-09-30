@@ -355,6 +355,13 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    async fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
+        self.inner()?
+            .chain_data
+            .chain_config
+            .ok_or(StoreError::DecodeError)
+    }
+
     async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
