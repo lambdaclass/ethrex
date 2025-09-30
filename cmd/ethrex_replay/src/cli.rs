@@ -155,7 +155,7 @@ pub struct EthrexReplayOptions {
         help_heading = "Replay Options"
     )]
     pub cache_dir: PathBuf,
-    #[arg(long, default_value = "off", help_heading = "Replay Options")]
+    #[arg(long, default_value = "on", help_heading = "Replay Options")]
     pub cache_level: CacheLevel,
     #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
     pub slack_webhook_url: Option<Url>,
