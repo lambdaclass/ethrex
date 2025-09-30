@@ -56,6 +56,9 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 // before we dump it into the file. This tunes how much memory ethrex uses during
 // the first steps of snap sync
 pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64; // 64MB
+// Cap the in-memory buffer used while batching storage snapshots; keep this small to
+// surface potential RSS spikes quickly during profiling runs.
+pub const STORAGE_FLUSH_THRESHOLD: usize = 8 * 1024 * 1024; // 8MB
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -1347,7 +1350,7 @@ impl PeerHandler {
                 .values()
                 .map(|accounts| 32 * accounts.accounts.len() + 32 * accounts.storages.len())
                 .sum::<usize>()
-                > RANGE_FILE_CHUNK_SIZE
+                > STORAGE_FLUSH_THRESHOLD
             {
                 let current_account_storages = std::mem::take(&mut current_account_storages);
                 let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
@@ -1398,9 +1401,7 @@ impl PeerHandler {
 
                 for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                     for account in accounts {
-                        if !accounts_done.contains_key(account) {
-                            accounts_done.insert(*account, vec![]);
-                        }
+                        accounts_done.entry(*account).or_insert_with(Vec::new);
                     }
                 }
 
@@ -1475,7 +1476,10 @@ impl PeerHandler {
                             );
                             if old_intervals.is_empty() {
                                 for account in accounts_by_root_hash[remaining_start].1.iter() {
-                                    accounts_done.insert(*account, vec![]);
+                                    accounts_done
+                                        .entry(*account)
+                                        .and_modify(|intervals| intervals.clear())
+                                        .or_insert_with(Vec::new);
                                 }
                             }
                         }
