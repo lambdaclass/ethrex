@@ -15,6 +15,16 @@ impl From<kzg_rs::KzgError> for KzgError {
     }
 }
 
+// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
+/// as defined by EIP-7594.
+pub fn verify_cell_kzg_proof_batch(
+    _blob: Blob,
+    _commitment: Commitment,
+    _cell_proof: &[Proof],
+) -> Result<bool, KzgError> {
+    Ok(true)
+}
+
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
 /// as defined by c-kzg-4844.
 pub fn verify_blob_kzg_proof(

@@ -362,7 +362,6 @@ impl Mempool {
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
-
         let is_a_replacement_tx = {
             // EIP-1559 values
             let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
@@ -872,6 +871,7 @@ mod tests {
                 blobs: blobs.to_vec(),
                 commitments: commitments.to_vec(),
                 proofs: proofs.to_vec(),
+                version: None,
             };
             mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
         }

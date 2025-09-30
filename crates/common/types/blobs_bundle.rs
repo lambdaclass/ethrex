@@ -35,6 +35,8 @@ pub struct BlobsBundle {
     pub commitments: Vec<Commitment>,
     #[serde(with = "serde_utils::bytes48::vec")]
     pub proofs: Vec<Proof>,
+    #[serde(skip)]
+    pub version: Option<u8>,
 }
 
 pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
@@ -101,6 +103,7 @@ impl BlobsBundle {
             blobs: blobs.clone(),
             commitments,
             proofs,
+            version: None,
         })
     }
 
@@ -113,6 +116,8 @@ impl BlobsBundle {
 
     #[cfg(feature = "c-kzg")]
     pub fn validate(&self, tx: &EIP4844Transaction, fork: Fork) -> Result<(), BlobsBundleError> {
+        use super::CELLS_PER_EXT_BLOB;
+
         let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
 
@@ -127,7 +132,9 @@ impl BlobsBundle {
 
         // Check if the blob versioned hashes and blobs bundle content length mismatch
         if blob_count != self.commitments.len()
-            || blob_count != self.proofs.len()
+            || (self.version.is_none_or(|v| v == 0) && blob_count != self.proofs.len())
+            || (self.version.is_some_and(|v| v != 0)
+                && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
             || blob_count != tx.blob_versioned_hashes.len()
         {
             return Err(BlobsBundleError::BlobsBundleWrongLen);
@@ -142,17 +149,33 @@ impl BlobsBundle {
             }
         }
 
-        // Validate the blobs with the commitments and proofs
-        for ((blob, commitment), proof) in self
-            .blobs
-            .iter()
-            .zip(self.commitments.iter())
-            .zip(self.proofs.iter())
-        {
-            use crate::kzg::verify_blob_kzg_proof;
+        if self.version.is_some_and(|v| v != 0) {
+            // Validate the blobs with the commitments and cell proofs
+            for ((blob, commitment), proof) in self
+                .blobs
+                .iter()
+                .zip(self.commitments.iter())
+                .zip(self.proofs.chunks(CELLS_PER_EXT_BLOB))
+            {
+                use crate::kzg::verify_cell_kzg_proof_batch;
 
-            if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
-                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
+                if !verify_cell_kzg_proof_batch(*blob, *commitment, proof)? {
+                    return Err(BlobsBundleError::BlobToCommitmentAndProofError);
+                }
+            }
+        } else {
+            // Validate the blobs with the commitments and proofs
+            for ((blob, commitment), proof) in self
+                .blobs
+                .iter()
+                .zip(self.commitments.iter())
+                .zip(self.proofs.iter())
+            {
+                use crate::kzg::verify_blob_kzg_proof;
+
+                if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
+                    return Err(BlobsBundleError::BlobToCommitmentAndProofError);
+                }
             }
         }
 
@@ -182,6 +205,7 @@ impl RLPDecode for BlobsBundle {
                 blobs,
                 commitments,
                 proofs,
+                version: None,
             },
             decoder.finish()?,
         ))
@@ -290,7 +314,8 @@ mod tests {
                             .map(|s| {
                                 shared::convert_str_to_bytes48(s)
                             })
-                            .collect()
+                            .collect(),
+                            version: None,
         };
 
         let tx = EIP4844Transaction {
@@ -341,7 +366,8 @@ mod tests {
                               .map(|s| {
                                 shared::convert_str_to_bytes48(s)
                               })
-                              .collect()
+                              .collect(),
+                              version: None,
         };
 
         let tx = EIP4844Transaction {

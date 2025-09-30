@@ -339,6 +339,58 @@ impl RpcHandler for GetPayloadV4Request {
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
+        if chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!("{:?}", Fork::Osaka)));
+        }
+
+        let response = ExecutionPayloadResponse {
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            block_value: payload_bundle.block_value,
+            blobs_bundle: Some(payload_bundle.blobs_bundle),
+            should_override_builder: Some(false),
+            execution_requests: Some(
+                payload_bundle
+                    .requests
+                    .into_iter()
+                    .filter(|r| !r.is_empty())
+                    .collect(),
+            ),
+        };
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct GetPayloadV5Request {
+    pub payload_id: u64,
+}
+
+impl From<GetPayloadV5Request> for RpcRequest {
+    fn from(val: GetPayloadV5Request) -> Self {
+        RpcRequest {
+            method: "engine_getPayloadV5".to_string(),
+            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for GetPayloadV5Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let payload_id = parse_get_payload_request(params)?;
+        Ok(Self { payload_id })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let payload_bundle = get_payload(self.payload_id, &context).await?;
+        let chain_config = &context.storage.get_chain_config()?;
+
+        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(payload_bundle.block.header.timestamp)
+            )));
+        }
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
