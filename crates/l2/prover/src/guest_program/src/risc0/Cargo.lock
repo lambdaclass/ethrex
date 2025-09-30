@@ -617,11 +617,11 @@ dependencies = [
 
 [[package]]
 name = "c-kzg"
-version = "1.0.3"
-source = "git+https://github.com/risc0/c-kzg-4844?tag=c-kzg%2Fv1.0.3-risczero.1#69ecb82af521baba5b57f9ba77348f8200a64dc7"
+version = "2.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "137a2a2878ed823ef1bd73e5441e245602aae5360022113b8ad259ca4b5b8727"
 dependencies = [
  "blst",
- "bytemuck",
  "cc",
  "glob",
  "hex",
@@ -4211,6 +4211,11 @@ dependencies = [
  "risc0-zkvm-platform",
  "rkyv",
 ]
+
+[[patch.unused]]
+name = "c-kzg"
+version = "1.0.3"
+source = "git+https://github.com/risc0/c-kzg-4844?tag=c-kzg%2Fv1.0.3-risczero.1#69ecb82af521baba5b57f9ba77348f8200a64dc7"
 
 [[patch.unused]]
 name = "ed25519-dalek"
