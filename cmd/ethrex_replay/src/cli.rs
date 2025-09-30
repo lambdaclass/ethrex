@@ -410,12 +410,10 @@ impl EthrexReplayCommand {
                     return Ok(());
                 }
 
-                if opts.cached {
-                    if from.is_none() || to.is_none() {
-                        return Err(eyre::Error::msg(
-                            "`from` and `to` must be specified when using cached mode",
-                        ));
-                    }
+                if opts.cached && (from.is_none() || to.is_none()) {
+                    return Err(eyre::Error::msg(
+                        "`from` and `to` must be specified when using cached mode",
+                    ));
                 }
 
                 // It will only be used in case from or to weren't specified or in endless mode. We can unwrap as cached mode won't reach those places.
