@@ -57,6 +57,11 @@ Node options:
 
           [default: INFO]
 
+      --mempool.maxsize <MEMPOOL_MAX_SIZE>
+          Maximum size of the mempool in number of transactions
+        
+          [default: 10000]
+
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
           Comma separated enode URLs for P2P discovery bootstrap.
