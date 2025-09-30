@@ -17,7 +17,6 @@ use crate::{
     rpc::db::RpcDB,
 };
 
-#[cfg(feature = "l2")]
 use crate::cache::L2Fields;
 #[cfg(feature = "l2")]
 use crate::cache::get_batch_cache_file_name;
