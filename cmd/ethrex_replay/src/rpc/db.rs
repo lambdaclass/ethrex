@@ -504,8 +504,11 @@ impl LevmDatabase for RpcDB {
                 self.cache.lock().unwrap().insert(address, account.clone());
                 account
             } else {
-                // If the RPC did not return the account, consider it non-existing
-                return Ok(AccountInfo::default());
+                // If the RPC did not return the account, propagate an error instead of defaulting
+                return Err(DatabaseError::Custom(format!(
+                    "RPC did not return account {}",
+                    address
+                )));
             }
         };
         if let Account::Existing {
