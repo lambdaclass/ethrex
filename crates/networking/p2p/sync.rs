@@ -381,9 +381,6 @@ impl Syncer {
             }
         }
 
-        // Update current fetch head
-        current_head = sync_head;
-
         if found_common_ancestor {
             block_headers.reverse();
             block_sync_state
