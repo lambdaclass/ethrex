@@ -1709,6 +1709,10 @@ impl PeerHandler {
             ));
         }
 
+        // Release large scheduling buffers before building the trie snapshots to curb peak RSS.
+        drop(accounts_by_root_hash);
+        drop(tasks_queue_not_started);
+
         {
             let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
