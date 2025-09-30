@@ -1,7 +1,6 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    deserialize::{PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX, SENDER_NOT_EOA_REGEX},
     network::Network,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
@@ -188,8 +187,7 @@ fn exception_is_expected(
             | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(error_msg)),
         ) = (exception, returned_error)
         {
-            return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
-                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase())
+            return (expected_error_msg.to_lowercase() == error_msg.to_lowercase())
                 || match_expected_regex(expected_error_msg, error_msg);
         }
         matches!(
@@ -232,40 +230,6 @@ fn exception_is_expected(
             ),
         )
     })
-}
-
-fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> bool {
-    matches!(
-        (msg, expected_msg.as_str()),
-        (
-            "reject transactions from senders with deployed code",
-            SENDER_NOT_EOA_REGEX
-        ) | (
-            "call gas cost exceeds the gas limit",
-            "Transaction gas limit lower than the minimum gas cost to execute the transaction"
-        ) | (
-            "gas floor exceeds the gas limit",
-            "Transaction gas limit lower than the minimum gas cost to execute the transaction"
-        ) | ("empty blobs", "Type 3 transaction without blobs")
-            | (
-                "blob versioned hashes not supported",
-                "Type 3 transactions are not supported before the Cancun fork"
-            )
-            | ("blob version not supported", "Invalid blob versioned hash")
-            | (
-                "gas price is less than basefee",
-                "Insufficient max fee per gas"
-            )
-            | (
-                "blob gas price is greater than max fee per blob gas",
-                "Insufficient max fee per blob gas"
-            )
-            | (
-                "priority fee is greater than max fee",
-                PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX
-            )
-            | ("create initcode size limit", "Initcode size exceeded")
-    ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
 }
 
 fn match_expected_regex(expected_error_regex: &str, error_msg: &str) -> bool {

@@ -115,9 +115,6 @@ pub fn open_store(datadir: &Path) -> Store {
 }
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
-    #[cfg(feature = "revm")]
-    info!("Initiating blockchain with revm");
-    #[cfg(not(feature = "revm"))]
     info!("Initiating blockchain with levm");
     Blockchain::new(store, blockchain_opts).into()
 }
