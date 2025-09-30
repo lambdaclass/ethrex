@@ -24,7 +24,7 @@ impl<'a> VM<'a> {
             || block_number >= current_block
         {
             current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         let block_number: u64 = block_number
@@ -36,7 +36,7 @@ impl<'a> VM<'a> {
             .stack
             .push1(u256_from_big_endian_const(block_hash.to_fixed_bytes()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // COINBASE operation
@@ -47,7 +47,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(address_to_word(coinbase))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // TIMESTAMP operation
@@ -58,7 +58,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(timestamp)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // NUMBER operation
@@ -69,7 +69,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(block_number)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // PREVRANDAO operation
@@ -83,7 +83,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
         current_call_frame.stack.push1(randao)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // GASLIMIT operation
@@ -94,7 +94,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(block_gas_limit.into())?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // CHAINID operation
@@ -105,7 +105,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(chain_id)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SELFBALANCE operation
@@ -120,7 +120,7 @@ impl<'a> VM<'a> {
             .balance;
 
         self.current_call_frame.stack.push1(balance)?;
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // BASEFEE operation
@@ -132,7 +132,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(base_fee_per_gas)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // BLOBHASH operation
@@ -147,7 +147,7 @@ impl<'a> VM<'a> {
             Ok(index) if index < blob_hashes.len() => index,
             _ => {
                 self.current_call_frame.stack.push_zero()?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(OpcodeResult::Continue);
             }
         };
 
@@ -158,7 +158,7 @@ impl<'a> VM<'a> {
 
         self.current_call_frame.stack.push1(hash)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // BLOBBASEFEE operation
@@ -171,6 +171,6 @@ impl<'a> VM<'a> {
 
         self.current_call_frame.stack.push1(blob_base_fee)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }

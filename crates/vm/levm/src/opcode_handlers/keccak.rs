@@ -31,6 +31,6 @@ impl<'a> VM<'a> {
             .stack
             .push1(u256_from_big_endian(&hasher.finalize()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }
