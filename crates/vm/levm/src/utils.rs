@@ -113,9 +113,6 @@ impl JumpTargetFilter {
 
                 let mut i = 0;
                 while i < len {
-                    if jumpdests.len() < i + 1 {
-                        jumpdests.resize(i + 1, false); // Rare, if len changes
-                    }
 
                     let opcode = Opcode::from(code[i]);
                     if opcode == Opcode::JUMPDEST {
