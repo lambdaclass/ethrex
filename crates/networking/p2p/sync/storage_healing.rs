@@ -688,13 +688,6 @@ async fn perform_needed_deletions(
             let full_path = apply_prefix(Some(hashed_account), node_path.clone());
             let (first, second) = compute_subtree_ranges(&full_path, &node.prefix);
 
-            info!(
-                first_start=?first.start,
-                first_end=?first.end,
-                second_start=?second.start,
-                second_end=?second.end,
-                "Deleting storage extension node siblings"
-            );
             if !first.is_empty() {
                 store.delete_range(first.start, first.end).await?;
             }

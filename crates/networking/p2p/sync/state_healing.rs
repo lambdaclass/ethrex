@@ -379,13 +379,6 @@ async fn perform_needed_deletions(
             // one valid child each, so we remove all the empty siblings on the path.
             let (first, second) = compute_subtree_ranges(&node_path, &node.prefix);
 
-            info!(
-                first_start=?first.start,
-                first_end=?first.end,
-                second_start=?second.start,
-                second_end=?second.end,
-                "Deleting extension node siblings"
-            );
             if !first.is_empty() {
                 store.delete_range(first.start, first.end).await?;
             }

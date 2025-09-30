@@ -38,14 +38,13 @@ impl NodeRef {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
             NodeRef::Hash(hash) => db
-                .get(path.clone())?
+                .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
                     Ok(node) => {
                         if node.compute_hash() == hash {
                             Some(Ok(node))
                         } else {
-                            println!("bad hash for {path:?}, wanted hash {hash:?} got {rlp:?}");
                             None
                         }
                     }

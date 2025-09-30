@@ -1335,7 +1335,6 @@ impl Store {
         for (from, to) in ranges {
             let from = root.append_new(from);
             let to = root.append_new(to);
-            println!("deleting subtree {from:?} - {to:?}");
             self.engine.delete_range(from, to).await?;
         }
 
