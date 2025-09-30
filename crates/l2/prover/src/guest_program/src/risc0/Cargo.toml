@@ -33,7 +33,7 @@ k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k25
 ed25519-dalek = { git = "https://github.com/risc0/curve25519-dalek", tag = "curve25519-4.1.2-risczero.0" }
 rsa = { git = "https://github.com/risc0/RustCrypto-RSA", tag = "v0.9.6-risczero.0" }
 crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.5-risczero.0" }
-c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "c-kzg/v1.0.3-risczero.1" }
+c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "c-kzg/v2.1.1-risczero.1" }
 
 
 # These precompiles require the "unstable" risc0 feature which is not suited

@@ -4214,8 +4214,8 @@ dependencies = [
 
 [[patch.unused]]
 name = "c-kzg"
-version = "1.0.3"
-source = "git+https://github.com/risc0/c-kzg-4844?tag=c-kzg%2Fv1.0.3-risczero.1#69ecb82af521baba5b57f9ba77348f8200a64dc7"
+version = "2.1.1"
+source = "git+https://github.com/risc0/c-kzg-4844?tag=c-kzg%2Fv2.1.1-risczero.1#7be9eb119fc3564c93d208f23e2f75ac99712618"
 
 [[patch.unused]]
 name = "ed25519-dalek"
