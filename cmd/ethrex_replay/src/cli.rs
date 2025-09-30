@@ -148,6 +148,7 @@ pub struct EthrexReplayOptions {
     #[arg(
         long,
         group = "data_source",
+        help = "use cache as input instead of fetching from RPC",
         help_heading = "Replay Options",
         requires = "network",
         conflicts_with = "cache_level"
@@ -168,7 +169,13 @@ pub struct EthrexReplayOptions {
         help_heading = "Replay Options"
     )]
     pub cache_dir: PathBuf,
-    #[arg(long, default_value = "on", help_heading = "Replay Options")]
+    #[arg(
+        long,
+        default_value = "on",
+        help_heading = "Replay Options",
+        help = "Criteria to save a cache when fetching from RPC",
+        requires = "rpc_url"
+    )]
     pub cache_level: CacheLevel,
     #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
     pub slack_webhook_url: Option<Url>,
