@@ -11,7 +11,14 @@ use ethrex_trie::{Nibbles, Trie};
 
 use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
-    api::StorageBackend,
+    api::{
+        StorageBackend,
+        tables::{
+            ACCOUNT_CODES, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, HEADERS,
+            INVALID_CHAINS, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STATE_TRIE_NODES,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+        },
+    },
     error::StoreError,
     rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
     store::StorageTrieNodes,
@@ -19,20 +26,6 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 use std::sync::Arc;
-
-const CHAIN_DATA: &str = "chain_data";
-const ACCOUNT_CODES: &str = "account_codes";
-const BODIES: &str = "bodies";
-const BLOCK_NUMBERS: &str = "block_numbers";
-const CANONICAL_BLOCK_HASHES: &str = "canonical_block_hashes";
-const HEADERS: &str = "headers";
-const PENDING_BLOCKS: &str = "pending_blocks";
-const TRANSACTION_LOCATIONS: &str = "transaction_locations";
-const RECEIPTS: &str = "receipts";
-const SNAP_STATE: &str = "snap_state";
-const INVALID_CHAINS: &str = "invalid_chains";
-const STATE_TRIE_NODES: &str = "state_trie_nodes";
-const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
 #[derive(Clone, Debug)]
 pub struct StoreEngine {
@@ -259,18 +252,42 @@ impl StoreEngine {
         let mut block_bodies = Vec::new();
 
         // FIXME: We are opening two transaction for each iteration
+        // for number in numbers {
+        //     let Some(hash) = self.get_canonical_block_hash_sync(number)? else {
+        //         return Err(StoreError::Custom(format!(
+        //             "Block hash not found for number: {number}"
+        //         )));
+        //     };
+        //     let Some(block_body) = self.get_block_body_by_hash(hash).await? else {
+        //         return Err(StoreError::Custom(format!(
+        //             "Block body not found for hash: {hash}"
+        //         )));
+        //     };
+
+        //     block_bodies.push(block_body);
+        // }
+        let txn = self.backend.begin_read()?;
         for number in numbers {
-            let Some(hash) = self.get_canonical_block_hash_sync(number)? else {
+            let Some(hash) = txn
+                .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
+                .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+                .transpose()
+                .map_err(StoreError::from)?
+            else {
                 return Err(StoreError::Custom(format!(
                     "Block hash not found for number: {number}"
                 )));
             };
-            let Some(block_body) = self.get_block_body_by_hash(hash).await? else {
+            let Some(block_body) = txn
+                .get(BODIES, hash.as_bytes())?
+                .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
+                .transpose()
+                .map_err(StoreError::from)?
+            else {
                 return Err(StoreError::Custom(format!(
                     "Block body not found for hash: {hash}"
                 )));
             };
-
             block_bodies.push(block_body);
         }
 
@@ -536,7 +553,6 @@ impl StoreEngine {
 
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        // FIXME: We need a way to iterate over a table or just delete the entire table
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || db.clear_table(SNAP_STATE))
             .await
