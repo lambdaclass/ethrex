@@ -373,8 +373,8 @@ pub async fn import_blocks(
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
-    let (store, _secondary) = init_store(datadir, genesis).await;
-    let blockchain = init_blockchain(store.clone(), store.clone(), blockchain_type, false);
+    let (store, secondary) = init_store(datadir, genesis).await;
+    let blockchain = init_blockchain(store.clone(), secondary.clone(), blockchain_type, false);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -423,7 +423,7 @@ pub async fn import_blocks(
             }
 
             // Check if the block is already in the blockchain, if it is do nothing, if not add it
-            let block_number = store.get_block_number(hash).await.map_err(|_e| {
+            let block_number = secondary.get_block_number(hash).await.map_err(|_e| {
                 ChainError::Custom(String::from(
                     "Couldn't check if block is already in the blockchain",
                 ))
