@@ -5,7 +5,7 @@ use ethrex_l2_common::{
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
 use guest_program::input::ProgramInput;
-use rkyv::rancor::Error;
+use rkyv::rancor::Error as RkyvError;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
@@ -39,7 +39,17 @@ pub struct ProveOutput {
     pub vk: SP1VerifyingKey,
 }
 
-// TODO: Error enum
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("failed to serialize input: {0}")]
+    Rkyv(#[from] RkyvError),
+    #[error("bincode serialization failed: {0}")]
+    Bincode(#[from] bincode::Error),
+    #[error("zkvm dynamic error: {0}")]
+    ZkvmDyn(#[from] anyhow::Error),
+    #[error("program ELF is missing")]
+    MissingProgramElf,
+}
 
 impl Debug for ProveOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -60,14 +70,23 @@ impl ProveOutput {
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
+    if PROGRAM_ELF.is_empty() {
+        return Err(Box::new(Error::MissingProgramElf));
+    }
+
     let mut stdin = SP1Stdin::new();
-    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    let bytes = rkyv::to_bytes::<RkyvError>(&input)
+        .map_err(|e| Box::<dyn std::error::Error>::from(Error::from(e)))?;
     stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 
     let now = Instant::now();
-    setup.client.execute(PROGRAM_ELF, &stdin).run()?;
+    setup
+        .client
+        .execute(PROGRAM_ELF, &stdin)
+        .run()
+        .map_err(|e| Box::<dyn std::error::Error>::from(Error::from(e)))?;
     let elapsed = now.elapsed();
 
     info!("Successfully executed SP1 program in {:.2?}", elapsed);
@@ -78,17 +97,32 @@ pub fn prove(
     input: ProgramInput,
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
+    if PROGRAM_ELF.is_empty() {
+        return Err(Box::new(Error::MissingProgramElf));
+    }
+
     let mut stdin = SP1Stdin::new();
-    let bytes = rkyv::to_bytes::<Error>(&input)?;
+    let bytes = rkyv::to_bytes::<RkyvError>(&input)
+        .map_err(|e| Box::<dyn std::error::Error>::from(Error::from(e)))?;
     stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 
     // contains the receipt along with statistics about execution of the guest
     let proof = if aligned_mode {
-        setup.client.prove(&setup.pk, &stdin).compressed().run()?
+        setup
+            .client
+            .prove(&setup.pk, &stdin)
+            .compressed()
+            .run()
+            .map_err(|e| Box::<dyn std::error::Error>::from(Error::from(e)))?
     } else {
-        setup.client.prove(&setup.pk, &stdin).groth16().run()?
+        setup
+            .client
+            .prove(&setup.pk, &stdin)
+            .groth16()
+            .run()
+            .map_err(|e| Box::<dyn std::error::Error>::from(Error::from(e)))?
     };
 
     info!("Successfully generated SP1Proof.");
@@ -96,8 +130,15 @@ pub fn prove(
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
+    if PROGRAM_ELF.is_empty() {
+        return Err(Box::new(Error::MissingProgramElf));
+    }
+
     let setup = &*PROVER_SETUP;
-    setup.client.verify(&output.proof, &output.vk)?;
+    setup
+        .client
+        .verify(&output.proof, &output.vk)
+        .map_err(|e| Box::<dyn std::error::Error>::from(Error::from(e)))?;
 
     Ok(())
 }
@@ -108,7 +149,8 @@ pub fn to_batch_proof(
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     let batch_proof = if aligned_mode {
         BatchProof::ProofBytes(ProofBytes {
-            proof: bincode::serialize(&proof.proof)?,
+            proof: bincode::serialize(&proof.proof)
+                .map_err(|e| Box::<dyn std::error::Error>::from(Error::from(e)))?,
             public_values: proof.proof.public_values.to_vec(),
         })
     } else {
