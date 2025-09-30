@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759265729197,
+  "lastUpdate": 1759267679324,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35908,6 +35908,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004625053741748117,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "47de7934d74db28cdffa016be94b69f5eafea7f7",
+          "message": "feat(replay): endless replay & only eth proofs blocks (#4691)\n\n**Motivation**\n\nWe want to remove the `ethrex-replayer` internal tool. This is the first\nstep; we still need to support requesting multiple RPCs.\n\n**Description**\n\n- Adds the flag `--endless` to `BlockOptions`. This allows replaying\nblocks endlessly (once it finishes replaying one block, it fetches the\nlatest and starts replaying it, and so on).\n- Adds the flag `--endless` to `BlocksOptions`. Similar to the above,\nbut only works if `--from <BLOCK>` is set, replaying endlessly from\n`BLOCK`.\n- Adds the flag `--only-eth-proofs-blocks` to `BlockOptions` and\n`BlocksOptions`. If set, it constrains which blocks are executed.\n- Adds the above to the cache commands (the same but skips execution).",
+          "timestamp": "2025-09-30T15:06:48Z",
+          "tree_id": "65320266efcb10127d5a27c32297e8302ca75235",
+          "url": "https://github.com/lambdaclass/ethrex/commit/47de7934d74db28cdffa016be94b69f5eafea7f7"
+        },
+        "date": 1759267678672,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004636967399833812,
             "unit": "Mgas/s"
           }
         ]
