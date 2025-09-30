@@ -110,11 +110,13 @@ pub fn dump_storages_to_rocks_db(
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     let mut buffer_key = [0_u8; 64];
+    let mut buffer_storage: Vec<u8> = Vec::new();
     writer.open(std::path::Path::new(&path))?;
     for (account, slot_hash, slot_value) in contents {
         buffer_key[0..32].copy_from_slice(&account.0);
         buffer_key[32..64].copy_from_slice(&slot_hash.0);
-        writer.put(buffer_key.as_ref(), slot_value.to_big_endian())?;
+        slot_value.encode(&mut buffer_storage);
+        writer.put(buffer_key.as_ref(), buffer_storage.as_slice())?;
     }
     writer.finish()
 }
