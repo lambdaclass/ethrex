@@ -84,7 +84,8 @@ impl TrieDB for RocksDBTrieDB {
     fn put_batch_no_alloc(&self, key_values: &[ethrex_trie::Node]) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
-        let mut buffer = Vec::with_capacity(300);
+        // 532 is the maximum size of an encoded branch node.
+        let mut buffer = Vec::with_capacity(532);
 
         for node in key_values {
             let db_key = self.make_key(node.compute_hash());
