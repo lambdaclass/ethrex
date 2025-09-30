@@ -70,7 +70,10 @@ impl TrieDB for BackendTrieDB {
         })?;
 
         txn.put_batch(batch)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+
+        txn.commit()
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
     }
 }
 
