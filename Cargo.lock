@@ -4415,27 +4415,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-replayer"
-version = "0.1.0"
-dependencies = [
- "clap 4.5.47",
- "ethrex-common",
- "ethrex-config",
- "ethrex-replay",
- "ethrex-rpc",
- "eyre",
- "futures",
- "hex",
- "reqwest 0.12.23",
- "serde",
- "serde_json",
- "serde_with",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.20",
-]
-
-[[package]]
 name = "ethrex-rlp"
 version = "0.1.0"
 dependencies = [
