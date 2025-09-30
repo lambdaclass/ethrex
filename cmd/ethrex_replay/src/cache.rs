@@ -105,7 +105,9 @@ impl Cache {
             File::open(&full_path)
                 .map_err(|e| eyre::Error::msg(format!("{e} ({})", full_path.display())))?,
         );
-        Ok(serde_json::from_reader(file)?)
+        let mut cache: Cache = serde_json::from_reader(file)?;
+        cache.dir = dir.to_path_buf();
+        Ok(cache)
     }
 
     pub fn write(&self) -> eyre::Result<()> {
