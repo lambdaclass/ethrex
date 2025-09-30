@@ -10,6 +10,8 @@ use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::Nod
 
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
+pub const BRANCH_MAX_RLP_ENCODED_SIZE: usize = 16*33 + 3 + 1;
+
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -219,13 +221,12 @@ impl BranchNode {
     /// Assumptions:
     /// - No value
     /// - 32 byte choices
-    pub fn encode_raw(&self) -> Vec<u8> {
+    pub fn encode_raw(&self) -> ArrayVec<u8, BRANCH_MAX_RLP_ENCODED_SIZE> {
         // 16 items * 33 bytes, assuming branches don't have values
         // in a state or storage trie.
         // plus a 3 byte headroom for the first prefix and payload len
         // plus a byte for the empty value
-        const MAX_RLP_ENCODED_SIZE: usize = 16*33 + 3 + 1;
-        let mut buf: ArrayVec<u8, MAX_RLP_ENCODED_SIZE> = ArrayVec::new();
+        let mut buf: ArrayVec<u8, BRANCH_MAX_RLP_ENCODED_SIZE> = ArrayVec::new();
 
         let payload_len = self.choices.iter().fold(1, |payload_len, child| {
             payload_len + if child.is_valid() { 33 } else { 1 }
@@ -275,7 +276,7 @@ impl BranchNode {
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
-        let encoded = self.encode_raw();
+        let encoded = self.encode_raw().to_vec();
         if encoded.len() >= 32 {
             node_path.push(encoded);
         };
