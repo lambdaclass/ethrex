@@ -1,6 +1,4 @@
-use ethereum_types::H256;
-use ethrex_rlp::structs::Encoder;
-use sha3::{Digest, Keccak256};
+use ethrex_rlp::{encode::RLPEncode, structs::Encoder};
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
@@ -205,34 +203,29 @@ impl BranchNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        let mut hasher = Keccak256::new();
-        hasher.update(&self.encode_raw());
-        let hash = hasher.finalize();
-        NodeHash::Hashed(H256::from_slice(&hash))
+        NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        // 16 items * 33 bytes, assuming branches don't have values
-        // in a state or storage trie.
-        // plus a 3 byte headroom for the first prefix and payload len
-        // plus a byte for the empty value
-        const MAX_RLP_SIZE: usize = 16 * 33 + 3 + 1;
-        let mut buf: Vec<u8> = Vec::with_capacity(MAX_RLP_SIZE);
-        let mut encoder = Encoder::new(&mut buf);
+        // 3 byte payload prefix
+        // + 16 choices * 33 bytes
+        // + 3 bytes value prefix
+        // + value
+        let max_rlp_size: usize = 3 + 16 * 33 + 3 + self.value.len();
+        let mut buf: Vec<u8> = Vec::with_capacity(max_rlp_size);
 
         for child in self.choices.iter() {
             match child.compute_hash() {
-                NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
+                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
                 child @ NodeHash::Inline(raw) if raw.1 != 0 => {
-                    encoder = encoder.encode_raw(child.as_ref())
+                    buf.extend(child.as_ref());
                 }
-                _ => encoder = encoder.encode_bytes(&[]),
+                _ => [].encode(&mut buf),
             }
         }
 
-        encoder = encoder.encode_bytes(&self.value);
-        encoder.finish();
+        self.value.encode(&mut buf);
 
         buf
     }
