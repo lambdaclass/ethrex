@@ -1713,19 +1713,20 @@ impl PeerHandler {
         drop(accounts_by_root_hash);
         drop(tasks_queue_not_started);
 
+        if !std::fs::exists(account_storages_snapshots_dir)
+            .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
         {
-            let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
+            std::fs::create_dir_all(account_storages_snapshots_dir)
+                .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
+        }
 
-            if !std::fs::exists(account_storages_snapshots_dir)
-                .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
-            {
-                std::fs::create_dir_all(account_storages_snapshots_dir)
-                    .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
-            }
+        for accounts in current_account_storages.into_values() {
+            let file_index = chunk_index;
             let path =
-                get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
-            dump_storages_to_file(&path, snapshot)
-                .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
+                get_account_storages_snapshot_file(account_storages_snapshots_dir, file_index);
+            dump_storages_to_file(&path, vec![accounts])
+                .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(file_index))?;
+            chunk_index += 1;
         }
         disk_joinset
             .join_all()
@@ -1753,7 +1754,7 @@ impl PeerHandler {
             self.peer_table.free_peer(result.peer_id).await;
         }
 
-        Ok(chunk_index + 1)
+    Ok(chunk_index)
     }
 
     async fn request_storage_ranges_worker(
