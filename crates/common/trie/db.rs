@@ -10,6 +10,7 @@ use std::{
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError>;
+    // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(NodeHash, Node)]) -> Result<(), TrieError> {
         self.put_batch(
             key_values
