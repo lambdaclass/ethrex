@@ -101,6 +101,9 @@ impl Trie {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
+            if value_rlp.is_empty() {
+                return Ok(None);
+            }
             return Ok(Some(value_rlp));
         }
         Ok(match self.root {
