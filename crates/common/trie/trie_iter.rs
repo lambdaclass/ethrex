@@ -66,23 +66,24 @@ impl TrieIterator {
                             for i in choice + 1..16 {
                                 let child = &branch_node.choices[i];
                                 if child.is_valid() {
-                                    new_stack.push((prefix_nibbles.append_new(i as u8), child.clone()));
+                                    new_stack
+                                        .push((prefix_nibbles.append_new(i as u8), child.clone()));
                                 }
                             }
                             Ok(())
                         }
                         None => {
-                            // Key is exhausted at this branch: the branch value (if any) is exactly equal to the key,
-                            // and all of its children are strictly greater. Seed the stack accordingly.
-                            // Push children first so that after the final reverse() the branch is yielded first.
+                            // Key is exhausted at this branch: our iteration use-case targets leaves only,
+                            // so there is no need to yield the branch itself. All valid children are ≥ key.
+                            // Push children in ascending order so that after the final reverse() the smallest child
+                            // is visited first.
                             for i in 0..16 {
                                 let child = &branch_node.choices[i];
                                 if child.is_valid() {
-                                    new_stack.push((prefix_nibbles.append_new(i as u8), child.clone()));
+                                    new_stack
+                                        .push((prefix_nibbles.append_new(i as u8), child.clone()));
                                 }
                             }
-                            // Finally push the branch itself to yield its value first after reversal.
-                            new_stack.push((prefix_nibbles.clone(), node.clone()));
                             Ok(())
                         }
                     }
