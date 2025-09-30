@@ -145,8 +145,20 @@ pub struct EthrexReplayOptions {
     pub common: CommonOptions,
     #[arg(long, group = "data_source", help_heading = "Replay Options")]
     pub rpc_url: Option<Url>,
-    #[arg(long, group = "data_source", help_heading = "Replay Options")]
+    #[arg(
+        long,
+        group = "data_source",
+        help_heading = "Replay Options",
+        requires = "network"
+    )]
     pub cached: bool,
+    #[arg(
+        long,
+        help = "Network to use for replay (i.e. mainnet, sepolia, hoodi). If not specified will fetch from RPC",
+        value_enum,
+        help_heading = "Replay Options"
+    )]
+    pub network: Option<Network>,
     #[arg(
         long,
         help = "Directory to store and load cache files",
@@ -507,6 +519,7 @@ impl EthrexReplayCommand {
                     verbose: false,
                     bench: false,
                     cache_dir: PathBuf::from("./replay_cache"),
+                    network: None,
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;

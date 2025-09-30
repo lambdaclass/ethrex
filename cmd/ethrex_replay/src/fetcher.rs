@@ -1,4 +1,4 @@
-use ethrex_config::networks::{Network, PublicNetwork};
+use ethrex_config::networks::Network;
 use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
@@ -28,13 +28,13 @@ pub async fn get_blockdata(
     block: Option<u64>,
 ) -> eyre::Result<(Cache, Network)> {
     if opts.cached {
-        let network = Network::PublicNetwork(PublicNetwork::Mainnet); //TODO: Make network parametrizable.
-        let requested_block_number = match block {
-            Some(n) => n,
-            None => {
-                return Err(eyre::eyre!("Block number must be specified in cached mode"));
-            }
-        };
+        let network = opts
+            .network
+            .clone()
+            .ok_or_eyre("Network must be specified in cached mode")?;
+        let requested_block_number =
+            block.ok_or_eyre("Block number must be specified in cached mode")?;
+
         let file_name = get_block_cache_file_name(&network, requested_block_number, None);
         info!("Getting block {requested_block_number} data from cache");
         let cache = Cache::load(&opts.cache_dir, &file_name).map_err(|e| {
@@ -42,10 +42,19 @@ pub async fn get_blockdata(
         })?;
         Ok((cache, network))
     } else {
-        let (eth_client, network) = setup_rpc(&opts).await?;
+        let (eth_client, rpc_network) = setup_rpc(&opts).await?;
+        if let Some(network) = &opts.network {
+            if network != &rpc_network {
+                return Err(eyre::eyre!(
+                    "Specified network ({}) does not match RPC network ({})",
+                    network,
+                    rpc_network
+                ));
+            }
+        }
         let cache = get_blockdata_rpc(
             eth_client,
-            network.clone(),
+            rpc_network.clone(),
             or_latest(block)?,
             opts.cache_dir.clone(),
         )
@@ -55,7 +64,7 @@ pub async fn get_blockdata(
         // It will be deleted later if not needed.
         cache.write()?;
 
-        Ok((cache, network))
+        Ok((cache, rpc_network))
     }
 }
 
