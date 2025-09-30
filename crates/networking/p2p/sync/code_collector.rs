@@ -39,8 +39,8 @@ impl CodeHashCollector {
         self.buffer.insert(hash);
     }
 
-    // Used depending on if the feature flag rocksdb is used
-    #[allow(dead_code)]
+    // The optimization for rocksdb database doesn't use this method
+    #[cfg(not(feature = "rocksdb"))]
     /// Extends the buffer with a list of code hashes
     pub fn extend(&mut self, hashes: impl IntoIterator<Item = H256>) {
         self.buffer.extend(hashes);

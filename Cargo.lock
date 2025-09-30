@@ -4318,7 +4318,6 @@ dependencies = [
  "aes",
  "async-trait",
  "bytes",
- "cfg-if 1.0.3",
  "concat-kdf",
  "crossbeam 0.8.4",
  "ctr",
@@ -4334,7 +4333,6 @@ dependencies = [
  "hex",
  "hex-literal",
  "hmac",
- "itertools 0.14.0",
  "lazy_static",
  "prometheus 0.14.0",
  "rand 0.8.5",
@@ -4611,7 +4609,6 @@ dependencies = [
  "libmdbx",
  "proptest",
  "rand 0.8.5",
- "rayon",
  "rocksdb",
  "serde",
  "serde_json",
@@ -9446,6 +9443,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a35e8a6bf28cd121053a66aa2e6a2e3eaffad4a60012179f0e864aa5ffeff215"
 dependencies = [
  "bytecheck",
+]
+
+[[package]]
+name = "reorgs"
+version = "0.1.0"
+dependencies = [
+ "ethrex",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-config",
+ "ethrex-l2-common",
+ "ethrex-l2-rpc",
+ "ethrex-rpc",
+ "hex",
+ "nix",
+ "rand 0.8.5",
+ "secp256k1",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
