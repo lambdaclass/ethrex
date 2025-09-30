@@ -214,7 +214,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     if std::env::var("INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH").is_err() {
-        test_total_eth_l2(&l1_client, &l2_client, native_token_l1_address).await?;
+        test_total_balance_l2(&l1_client, &l2_client, native_token_l1_address).await?;
     }
 
     clean_contracts_dir();
@@ -832,7 +832,7 @@ async fn test_forced_withdrawal(
     } else {
         test_balance_of(&l1_client, native_token_l1_address, rich_address).await
     };
-    // If native token is ETH, it will match `l1_initial_balance`
+    // If native token is ETH, it will match `l1_initial_native_balance`
     let initial_l1_eth_balance = l1_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -1028,7 +1028,8 @@ async fn test_deposit(
     } else {
         test_balance_of(l1_client, native_token_l1_address, rich_wallet_address).await
     };
-    // This is the ETH balance of the depositor, used to pay for gas if the native token is not ETH
+    // This is the ETH balance of the depositor, we want to track this for the fees paid in case the native
+    // token is not ETH.
     let initial_eth_balance = l1_client
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -1042,7 +1043,7 @@ async fn test_deposit(
         .get_balance(rich_wallet_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let bridge_initial_balance = if native_token_is_eth {
+    let bridge_initial_eth_balance = if native_token_is_eth {
         l1_client
             .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
             .await?
@@ -1142,7 +1143,7 @@ async fn test_deposit(
         );
     }
 
-    let bridge_balance_after_deposit = if native_token_is_eth {
+    let bridge_native_balance_after_deposit = if native_token_is_eth {
         l1_client
             .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
             .await?
@@ -1151,8 +1152,8 @@ async fn test_deposit(
     };
 
     assert_eq!(
-        bridge_balance_after_deposit,
-        bridge_initial_balance + deposit_value,
+        bridge_native_balance_after_deposit,
+        bridge_initial_eth_balance + deposit_value,
         "Bridge balance didn't increase as expected after deposit"
     );
 
@@ -1714,13 +1715,13 @@ async fn test_n_withdraws(
     Ok(())
 }
 
-async fn test_total_eth_l2(
+async fn test_total_balance_l2(
     l1_client: &EthClient,
     l2_client: &EthClient,
     native_token_l1_address: Address,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let native_token_is_eth = native_token_l1_address == Address::zero();
-    println!("Checking total ETH on L2");
+    println!("Checking total balance on L2");
 
     println!("Fetching rich accounts balance on L2");
     let rich_accounts_balance = get_rich_accounts_balance(l2_client)
@@ -1736,7 +1737,7 @@ async fn test_total_eth_l2(
     let total_balance_on_l2 = rich_accounts_balance + coinbase_balance;
 
     println!(
-        "Total ETH on L2: {rich_accounts_balance} + {coinbase_balance} = {total_balance_on_l2}"
+        "Total balance on L2: {rich_accounts_balance} + {coinbase_balance} = {total_balance_on_l2}"
     );
 
     println!("Checking native tokens locked on CommonBridge");
