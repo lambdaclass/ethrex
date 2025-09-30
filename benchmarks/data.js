@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759253105080,
+  "lastUpdate": 1759259765473,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35854,6 +35854,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004672621046117783,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9711b50cc628e1612abe59d9ab310d1dee7d0043",
+          "message": "ci(l2): improve tdx logs (#4518)\n\n**Motivation**\n\nOur TDX workflow is currently displaying the `ethrex_l1` logs, which are\nnot very useful for debugging.\n\n**Description**\n\n- Follows `ethrex_l2` logs instead.\n- Runs `ethrex_l2` with Docker. This avoids recompiling `ethrex_l2` by\nreusing the ethrex image.\n- To run `ethrex_l2` in TDX mode with Docker, the following changes were\nmade:\n- `QPL_TOOL_PATH` is now passed via CLI instead of using a hardcoded\npath that enforced the repository structure.\n- A Docker override is used to mount the volume containing the\n`QPL_TOOL` binary.\n    \n> [!NOTE]\n> The total workflow time was not significantly reduced by this change.\nMost of the time is still spent by the deployer cloning dependency\nrepositories.\n\n\nCloses None",
+          "timestamp": "2025-09-30T14:53:22Z",
+          "tree_id": "9e62596fbf5700263ad3531ba71bc5b75e4a0681",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9711b50cc628e1612abe59d9ab310d1dee7d0043"
+        },
+        "date": 1759259729399,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.00466225067853421,
             "unit": "Mgas/s"
           }
         ]
