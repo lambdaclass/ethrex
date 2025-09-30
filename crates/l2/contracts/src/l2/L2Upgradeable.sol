@@ -9,7 +9,7 @@ import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.so
 /// @dev The genesis generator sets the initial implementation using the well-known (ERC-1967) proxy slot
 contract UpgradeableSystemContract is TransparentUpgradeableProxy {
     /// @notice The CommonBridge uses this address to send upgrades
-    address constant ADMIN =  0x000000000000000000000000000000000000f000;
+    address constant ADMIN = 0x000000000000000000000000000000000000f000;
 
     constructor() TransparentUpgradeableProxy(address(0), address(0), "") {
         // This contract is compiled into runtime code when assembling the genesis

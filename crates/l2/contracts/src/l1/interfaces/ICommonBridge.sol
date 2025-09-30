@@ -15,7 +15,7 @@ interface ICommonBridge {
     /// @param value the value of the transaction.
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
-    event PrivilegedTxSent (
+    event PrivilegedTxSent(
         address indexed l1From,
         address from,
         address to,
@@ -49,7 +49,10 @@ interface ICommonBridge {
     /// @notice Method to retrieve all the pending transaction hashes.
     /// @dev This method is used by the L2 L1_Watcher to get the pending
     /// privileged transactions to be processed.
-    function getPendingTransactionHashes() external view returns (bytes32[] memory);
+    function getPendingTransactionHashes()
+        external
+        view
+        returns (bytes32[] memory);
 
     /// @notice Method that sends a transaction to L2.
     /// @dev The deposit process starts here by emitting a L1ToL2Message

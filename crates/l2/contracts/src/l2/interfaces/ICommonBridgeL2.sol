@@ -10,10 +10,7 @@ interface ICommonBridgeL2 {
     /// @dev Event emitted when an ETH deposit is processed.
     /// @param receiver the address that received the ETH
     /// @param amount the amount of ether being deposited
-    event DepositProcessed(
-        address indexed receiver,
-        uint256 amount
-    );
+    event DepositProcessed(address indexed receiver, uint256 amount);
     /// @notice A withdrawal to L1 has initiated.
     /// @dev Event emitted when a withdrawal is initiated.
     /// @param senderOnL2 the sender of the transaction on L2.
@@ -24,7 +21,6 @@ interface ICommonBridgeL2 {
         address indexed receiverOnL1,
         uint256 indexed amount
     );
-
 
     /// @notice An ERC20 token deposit was successfully processed
     /// @dev Event emitted when an ERC20 deposit is processed.
@@ -71,7 +67,12 @@ interface ICommonBridgeL2 {
     /// @param tokenL2 Address of the token on L2
     /// @param destination Address that should receive the tokens
     /// @param amount Amount of tokens to give
-    function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external;
+    function mintERC20(
+        address tokenL1,
+        address tokenL2,
+        address destination,
+        uint256 amount
+    ) external;
 
     /// @notice Initiates the withdrawal of ERC20 tokens to the L1.
     /// @dev This is the first step in the two step process of a user withdrawal.
@@ -81,5 +82,10 @@ interface ICommonBridgeL2 {
     /// @param tokenL2 Address of the token on L2
     /// @param destination Address on L1 that should receive the tokens
     /// @param amount Amount of tokens to withdraw
-    function withdrawERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external;
+    function withdrawERC20(
+        address tokenL1,
+        address tokenL2,
+        address destination,
+        uint256 amount
+    ) external;
 }

@@ -70,7 +70,8 @@ contract CommonBridge is
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice Owner of the L2 system contract proxies
-    address public constant L2_PROXY_ADMIN =  0x000000000000000000000000000000000000f000;
+    address public constant L2_PROXY_ADMIN =
+        0x000000000000000000000000000000000000f000;
 
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping for the message id
@@ -134,7 +135,6 @@ contract CommonBridge is
         while (startingGas - gasleft() < amount) {}
     }
 
-
     /// EIP-7702 delegated accounts have code beginning with this.
     bytes3 internal constant EIP7702_PREFIX = 0xef0100;
     /// Code size in bytes of an EIP-7702 delegated account
@@ -142,7 +142,8 @@ contract CommonBridge is
     uint256 internal constant EIP7702_CODE_LENGTH = 23;
 
     /// This is intentionally different from the constant Optimism uses, but arbitrary.
-    uint256 internal constant ADDRESS_ALIASING = uint256(uint160(0xEe110000000000000000000000000000000011Ff));
+    uint256 internal constant ADDRESS_ALIASING =
+        uint256(uint160(0xEe110000000000000000000000000000000011Ff));
 
     /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
     /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
@@ -159,7 +160,8 @@ contract CommonBridge is
                 return msg.sender;
             }
         }
-        return address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
+        return
+            address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
@@ -194,12 +196,16 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function sendToL2(SendValues calldata sendValues) public override whenNotPaused {
+    function sendToL2(
+        SendValues calldata sendValues
+    ) public override whenNotPaused {
         _sendToL2(_getSenderAlias(), sendValues);
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(address l2Recipient) public payable override whenNotPaused {
+    function deposit(
+        address l2Recipient
+    ) public payable override whenNotPaused {
         _deposit(l2Recipient);
     }
 
@@ -344,7 +350,7 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
-    ) public nonReentrant override whenNotPaused {
+    ) public override nonReentrant whenNotPaused {
         _claimWithdrawal(
             tokenL1,
             tokenL2,
@@ -409,11 +415,7 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
         bytes32 withdrawalLeaf = keccak256(
-            abi.encodePacked(
-                L2_BRIDGE_ADDRESS,
-                msgHash,
-                withdrawalMessageId
-            )
+            abi.encodePacked(L2_BRIDGE_ADDRESS, msgHash, withdrawalMessageId)
         );
         return
             MerkleProof.verify(
@@ -423,8 +425,16 @@ contract CommonBridge is
             );
     }
 
-    function upgradeL2Contract(address l2Contract, address newImplementation, uint256 gasLimit, bytes calldata data) public onlyOwner {
-        bytes memory callData = abi.encodeCall(ITransparentUpgradeableProxy.upgradeToAndCall, (newImplementation, data));
+    function upgradeL2Contract(
+        address l2Contract,
+        address newImplementation,
+        uint256 gasLimit,
+        bytes calldata data
+    ) public onlyOwner {
+        bytes memory callData = abi.encodeCall(
+            ITransparentUpgradeableProxy.upgradeToAndCall,
+            (newImplementation, data)
+        );
         SendValues memory sendValues = SendValues({
             to: l2Contract,
             gasLimit: gasLimit,
