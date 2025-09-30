@@ -81,7 +81,7 @@ impl NodeRef {
     pub fn compute_hash(&self) -> NodeHash {
         match self {
             NodeRef::Node(node, hash) => *hash.get_or_init(|| {
-                node.memoize_hash();
+                node.memoize_hashes();
                 node.compute_hash()
             }),
             NodeRef::Hash(hash) => *hash,
@@ -289,13 +289,15 @@ impl Node {
         }
     }
 
-    pub fn memoize_hash(&self) {
+    /// Recursively memoizes the hashes of all nodes that are in the trie
+    /// that has `self` as root
+    pub fn memoize_hashes(&self) {
         match self {
             Node::Branch(n) => {
                 for child in &n.choices {
                     match child {
                         NodeRef::Node(node, hash) if hash.get().is_none() => {
-                            node.memoize_hash();
+                            node.memoize_hashes();
                             let _ = hash.set(node.compute_hash());
                         }
                         _ => {}
@@ -304,7 +306,7 @@ impl Node {
             }
             Node::Extension(n) => match &n.child {
                 NodeRef::Node(node, hash) if hash.get().is_none() => {
-                    node.memoize_hash();
+                    node.memoize_hashes();
                     let _ = hash.set(node.compute_hash());
                 }
                 _ => {}
