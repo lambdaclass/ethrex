@@ -73,21 +73,48 @@ pub fn get_account_storages_snapshot_file(directory: &Path, chunk_index: u64) ->
 }
 
 #[cfg(feature = "rocksdb")]
-pub fn dump_to_rocks_db(
+pub fn dump_accounts_to_rocks_db(
     path: &Path,
-    mut contents: Vec<(Vec<u8>, Vec<u8>)>,
+    mut contents: Vec<(H256, AccountState)>,
 ) -> Result<(), rocksdb::Error> {
-    contents.sort();
+    contents.sort_by_key(|(k, _)| *k);
     contents.dedup_by_key(|(k, _)| {
-        let mut buf = [0u8; 64];
-        buf[..k.len()].copy_from_slice(k);
+        let mut buf = [0u8; 32];
+        buf[..32].copy_from_slice(&k.0);
         buf
     });
+    let mut buffer: Vec<u8> = Vec::new();
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     writer.open(std::path::Path::new(&path))?;
-    for values in contents {
-        writer.put(values.0, values.1)?;
+    for (key, acccount) in contents {
+        buffer.clear();
+        acccount.encode(&mut buffer);
+        writer.put(key.0.as_ref(), buffer.as_slice())?;
+    }
+    writer.finish()
+}
+
+#[cfg(feature = "rocksdb")]
+pub fn dump_storages_to_rocks_db(
+    path: &Path,
+    mut contents: Vec<(H256, H256, U256)>,
+) -> Result<(), rocksdb::Error> {
+    contents.sort();
+    contents.dedup_by_key(|(k0, k1, _)| {
+        let mut buffer = [0_u8; 64];
+        buffer[0..32].copy_from_slice(&k0.0);
+        buffer[32..64].copy_from_slice(&k1.0);
+        buffer
+    });
+    let writer_options = rocksdb::Options::default();
+    let mut writer = rocksdb::SstFileWriter::create(&writer_options);
+    let mut buffer_key = [0_u8; 64];
+    writer.open(std::path::Path::new(&path))?;
+    for (account, slot_hash, slot_value) in contents {
+        buffer_key[0..32].copy_from_slice(&account.0);
+        buffer_key[32..64].copy_from_slice(&slot_hash.0);
+        writer.put(buffer_key.as_ref(), slot_value.to_big_endian())?;
     }
     writer.finish()
 }
@@ -115,19 +142,13 @@ pub fn dump_accounts_to_file(
     accounts: Vec<(H256, AccountState)>,
 ) -> Result<(), DumpError> {
     #[cfg(feature = "rocksdb")]
-    return dump_to_rocks_db(
-        path,
-        accounts
-            .into_iter()
-            .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec()))
-            .collect::<Vec<_>>(),
-    )
-    .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
-    .map_err(|_| DumpError {
-        path: path.to_path_buf(),
-        contents: Vec::new(),
-        error: std::io::ErrorKind::Other,
-    });
+    return dump_accounts_to_rocks_db(path, accounts)
+        .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+        .map_err(|_| DumpError {
+            path: path.to_path_buf(),
+            contents: Vec::new(),
+            error: std::io::ErrorKind::Other,
+        });
     #[cfg(not(feature = "rocksdb"))]
     dump_to_file(path, accounts.encode_to_vec())
 }
@@ -145,7 +166,7 @@ pub fn dump_storages_to_file(
     storages: Vec<AccountsWithStorage>,
 ) -> Result<(), DumpError> {
     #[cfg(feature = "rocksdb")]
-    return dump_to_rocks_db(
+    return dump_storages_to_rocks_db(
         path,
         storages
             .into_iter()
@@ -157,10 +178,7 @@ pub fn dump_storages_to_file(
                         accounts_with_slots
                             .storages
                             .iter()
-                            .map(move |(slot_hash, slot_value)| {
-                                let key = [hash.as_bytes(), slot_hash.as_bytes()].concat();
-                                (key, slot_value.encode_to_vec())
-                            })
+                            .map(move |(slot_hash, slot_value)| (hash, *slot_hash, *slot_value))
                             .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>()
