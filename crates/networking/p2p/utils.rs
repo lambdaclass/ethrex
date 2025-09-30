@@ -102,33 +102,26 @@ pub fn dump_storages_to_rocks_db(
 ) -> Result<(), rocksdb::Error> {
     use tracing::info;
 
-    info!("dump_storages_to_rocks_db before sort");
     contents.sort();
-    info!("dump_storages_to_rocks_db before dedup");
     contents.dedup_by_key(|(k0, k1, _)| {
         let mut buffer = [0_u8; 64];
         buffer[0..32].copy_from_slice(&k0.0);
         buffer[32..64].copy_from_slice(&k1.0);
         buffer
     });
-    info!("dump_storages_to_rocks_db before create file");
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     let mut buffer_key = [0_u8; 64];
     let mut buffer_storage: Vec<u8> = Vec::new();
-    info!("dump_storages_to_rocks_db before open file");
     writer.open(std::path::Path::new(&path))?;
-    info!("dump_storages_to_rocks_db before write file");
     for (account, slot_hash, slot_value) in contents {
         buffer_key[0..32].copy_from_slice(&account.0);
         buffer_key[32..64].copy_from_slice(&slot_hash.0);
+        buffer_storage.clear();
         slot_value.encode(&mut buffer_storage);
         writer.put(buffer_key.as_ref(), buffer_storage.as_slice())?;
     }
-    info!("dump_storages_to_rocks_db before finish file");
-    writer.finish()?;
-    info!("dump_storages_to_rocks_db after finish file");
-    Ok(())
+    writer.finish()
 }
 
 pub fn get_code_hashes_snapshots_dir(datadir: &Path) -> PathBuf {
