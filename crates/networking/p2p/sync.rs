@@ -886,25 +886,28 @@ impl Syncer {
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "rocksdb")] {
-                    let computed_state_root = insert_accounts_into_rocksdb(
-                        store.clone(),
-                        &mut storage_accounts,
-                        &account_state_snapshots_dir,
-                        &crate::utils::get_rocksdb_temp_accounts_dir(&self.datadir),
-                        &mut code_hash_collector,
-                    ).await?;
-                    let accounts_with_storage = std::collections::BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
-                } else {
-                    let computed_state_root = insert_accounts_into_db(
-                        store.clone(),
-                        &mut storage_accounts,
-                        &account_state_snapshots_dir,
-                        &mut code_hash_collector,
-                    ).await?;
-                }
-            }
+
+            #[cfg(feature = "rocksdb")]
+            let computed_state_root = insert_accounts_into_rocksdb(
+                store.clone(),
+                &mut storage_accounts,
+                &account_state_snapshots_dir,
+                &crate::utils::get_rocksdb_temp_accounts_dir(&self.datadir),
+                &mut code_hash_collector,
+            )
+            .await?;
+            #[cfg(feature = "rocksdb")]
+            let accounts_with_storage = std::collections::BTreeSet::from_iter(
+                storage_accounts.accounts_with_storage_root.keys().copied(),
+            );
+            #[cfg(not(feature = "rocksdb"))]
+            let computed_state_root = insert_accounts_into_db(
+                store.clone(),
+                &mut storage_accounts,
+                &account_state_snapshots_dir,
+                &mut code_hash_collector,
+            )
+            .await?;
             info!(
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
@@ -991,25 +994,27 @@ impl Syncer {
                 "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "rocksdb")] {
-                    insert_storage_into_rocksdb(
-                        store.clone(),
-                        accounts_with_storage,
-                        &account_storages_snapshots_dir,
-                        &crate::utils::get_rocksdb_temp_storage_dir(&self.datadir)
-                    ).await?;
-                } else {
-                    let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-                        Arc::new(Mutex::new(HashMap::new()));
-                    insert_storages_into_db(
-                        store.clone(),
-                        &account_storages_snapshots_dir,
-                        &maybe_big_account_storage_state_roots,
-                        &pivot_header,
-                    )
-                    .await?;
-                }
+            #[cfg(feature = "rocksdb")]
+            {
+                insert_storage_into_rocksdb(
+                    store.clone(),
+                    accounts_with_storage,
+                    &account_storages_snapshots_dir,
+                    &crate::utils::get_rocksdb_temp_storage_dir(&self.datadir),
+                )
+                .await?;
+            }
+            #[cfg(not(feature = "rocksdb"))]
+            {
+                let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
+                    Arc::new(Mutex::new(HashMap::new()));
+                insert_storages_into_db(
+                    store.clone(),
+                    &account_storages_snapshots_dir,
+                    &maybe_big_account_storage_state_roots,
+                    &pivot_header,
+                )
+                .await?;
             }
 
             *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());

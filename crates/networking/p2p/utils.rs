@@ -114,25 +114,22 @@ pub fn dump_accounts_to_file(
     path: &Path,
     accounts: Vec<(H256, AccountState)>,
 ) -> Result<(), DumpError> {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "rocksdb")] {
-            dump_to_rocks_db(
-                path,
-                accounts
-                    .into_iter()
-                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())
-                ).collect::<Vec<_>>()
-            )
-                .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
-                .map_err(|_| DumpError {
-                    path: path.to_path_buf(),
-                    contents: Vec::new(),
-                    error: std::io::ErrorKind::Other,
-                })
-        } else {
-            dump_to_file(path, accounts.encode_to_vec())
-        }
-    }
+    #[cfg(feature = "rocksdb")]
+    return dump_to_rocks_db(
+        path,
+        accounts
+            .into_iter()
+            .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec()))
+            .collect::<Vec<_>>(),
+    )
+    .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+    .map_err(|_| DumpError {
+        path: path.to_path_buf(),
+        contents: Vec::new(),
+        error: std::io::ErrorKind::Other,
+    });
+    #[cfg(not(feature = "rocksdb"))]
+    dump_to_file(path, accounts.encode_to_vec())
 }
 
 /// Struct representing the storage slots of certain accounts that share the same storage root
@@ -147,31 +144,46 @@ pub fn dump_storages_to_file(
     path: &Path,
     storages: Vec<AccountsWithStorage>,
 ) -> Result<(), DumpError> {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "rocksdb")] {
-            dump_to_rocks_db(
-                path,
-                storages
+    #[cfg(feature = "rocksdb")]
+    return dump_to_rocks_db(
+        path,
+        storages
+            .into_iter()
+            .flat_map(|accounts_with_slots| {
+                accounts_with_slots
+                    .accounts
                     .into_iter()
-                    .flat_map(|accounts_with_slots| {
-                        accounts_with_slots.accounts.into_iter().map(|hash| {
-                            accounts_with_slots.storages.iter().map(move |(slot_hash, slot_value)| {
+                    .map(|hash| {
+                        accounts_with_slots
+                            .storages
+                            .iter()
+                            .map(move |(slot_hash, slot_value)| {
                                 let key = [hash.as_bytes(), slot_hash.as_bytes()].concat();
                                 (key, slot_value.encode_to_vec())
-                            }).collect::<Vec<_>>()
-                        }).collect::<Vec<_>>()
-                    }).flatten().collect::<Vec<_>>()
-            )
-                .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
-                .map_err(|_| DumpError {
-                    path: path.to_path_buf(),
-                    contents: Vec::new(),
-                    error: std::io::ErrorKind::Other,
-                })
-        } else {
-            dump_to_file(path, storages.into_iter().map(|accounts_with_slots| (accounts_with_slots.accounts, accounts_with_slots.storages)).collect::<Vec<_>>().encode_to_vec())
-        }
-    }
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .flatten()
+            .collect::<Vec<_>>(),
+    )
+    .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+    .map_err(|_| DumpError {
+        path: path.to_path_buf(),
+        contents: Vec::new(),
+        error: std::io::ErrorKind::Other,
+    });
+
+    #[cfg(not(feature = "rocksdb"))]
+    dump_to_file(
+        path,
+        storages
+            .into_iter()
+            .map(|accounts_with_slots| (accounts_with_slots.accounts, accounts_with_slots.storages))
+            .collect::<Vec<_>>()
+            .encode_to_vec(),
+    )
 }
 
 /// TODO: make it more generic

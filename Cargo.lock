@@ -4318,7 +4318,6 @@ dependencies = [
  "aes",
  "async-trait",
  "bytes",
- "cfg-if 1.0.3",
  "concat-kdf",
  "crossbeam 0.8.4",
  "ctr",

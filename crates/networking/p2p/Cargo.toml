@@ -32,7 +32,6 @@ spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
 futures.workspace = true
-cfg-if.workspace = true
 rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
