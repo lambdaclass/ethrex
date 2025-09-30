@@ -43,10 +43,10 @@ use tracing::{debug, info};
 
 #[cfg(feature = "l2")]
 use crate::fetcher::get_batchdata;
+use crate::helpers::get_referenced_hashes;
 #[cfg(not(feature = "l2"))]
 use crate::plot_composition::plot;
-use crate::{cache::Cache, report::Report};
-use crate::{fetcher::get_blockdata, helpers::get_referenced_hashes};
+use crate::{cache::Cache, fetcher::get_blockdata, report::Report};
 use crate::{
     run::{exec, prove, run_tx},
     slack::try_send_report_to_slack,
@@ -144,7 +144,7 @@ pub struct EthrexReplayOptions {
     #[command(flatten)]
     pub common: CommonOptions,
     #[arg(long, group = "data_source", help_heading = "Replay Options")]
-    pub rpc_url: Url,
+    pub rpc_url: Option<Url>,
     #[arg(long, group = "data_source", help_heading = "Replay Options")]
     pub cached: bool,
     #[arg(
@@ -311,6 +311,12 @@ pub struct BlocksOptions {
 pub struct TransactionOpts {
     #[arg(help = "Transaction hash.", help_heading = "Command Options")]
     tx_hash: H256,
+    #[arg(
+        long,
+        help = "Block number containing the transaction.",
+        help_heading = "Command Options"
+    )]
+    pub block_number: Option<u64>,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -356,10 +362,6 @@ impl EthrexReplayCommand {
                 only_eth_proofs_blocks,
                 opts,
             }) => {
-                if opts.cached {
-                    unimplemented!("cached mode is not implemented yet");
-                }
-
                 // Case ethrex-replay blocks n,...,m
                 if !blocks.is_empty() {
                     blocks.sort();
@@ -388,6 +390,14 @@ impl EthrexReplayCommand {
                     return Ok(());
                 }
 
+                if opts.cached {
+                    if from.is_none() || to.is_none() {
+                        return Err(eyre::Error::msg(
+                            "`from` and `to` must be specified when using cached mode",
+                        ));
+                    }
+                }
+
                 let from = match from {
                     // Case --from is set
                     // * --endless and --to cannot be set together (constraint by clap).
@@ -397,8 +407,11 @@ impl EthrexReplayCommand {
                     // Case --from is not set
                     // * If we reach this point, --endless must be set (constraint by clap)
                     None => {
-                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
-                            .await?
+                        fetch_latest_block_number(
+                            opts.rpc_url.clone().unwrap(),
+                            only_eth_proofs_blocks,
+                        )
+                        .await?
                     }
                 };
 
@@ -409,8 +422,11 @@ impl EthrexReplayCommand {
                     // Case --to is not set
                     // * If we reach this point, --from or --endless must be set (constraint by clap)
                     None => {
-                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
-                            .await?
+                        fetch_latest_block_number(
+                            opts.rpc_url.clone().unwrap(),
+                            only_eth_proofs_blocks,
+                        )
+                        .await?
                     }
                 };
 
@@ -431,7 +447,7 @@ impl EthrexReplayCommand {
                         // we can keep checking for new blocks
                         if endless && block_to_replay > last_block_to_replay {
                             last_block_to_replay = fetch_latest_block_number(
-                                opts.rpc_url.clone(),
+                                opts.rpc_url.clone().unwrap(),
                                 only_eth_proofs_blocks,
                             )
                             .await?;
@@ -457,9 +473,11 @@ impl EthrexReplayCommand {
                     // Case --endless is set, we want to update the `to` so
                     // we can keep checking for new blocks
                     while endless && block_to_replay > last_block_to_replay {
-                        last_block_to_replay =
-                            fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
-                                .await?;
+                        last_block_to_replay = fetch_latest_block_number(
+                            opts.rpc_url.clone().unwrap(),
+                            only_eth_proofs_blocks,
+                        )
+                        .await?;
 
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
@@ -480,7 +498,7 @@ impl EthrexReplayCommand {
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, common })) => {
                 let opts = EthrexReplayOptions {
-                    rpc_url: Url::parse("http://localhost:8545")?,
+                    rpc_url: Some(Url::parse("http://localhost:8545")?),
                     cached: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
@@ -541,7 +559,7 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let (eth_client, network) = setup(&opts).await?;
+                let (eth_client, network) = setup_rpc(&opts).await?;
 
                 let cache = get_batchdata(eth_client, network, batch, opts.cache_dir).await?;
 
@@ -605,8 +623,8 @@ impl EthrexReplayCommand {
     }
 }
 
-async fn setup(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)> {
-    let eth_client = EthClient::new(opts.rpc_url.as_str())?;
+pub async fn setup_rpc(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)> {
+    let eth_client = EthClient::new(opts.rpc_url.as_ref().unwrap().as_str())?;
     let chain_id = eth_client.get_chain_id().await?.as_u64();
     let network = network_from_chain_id(chain_id);
     Ok((eth_client, network))
@@ -762,21 +780,19 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
 
     let tx_hash = tx_opts.tx_hash;
 
-    let (eth_client, network) = setup(&tx_opts.opts).await?;
-
-    // Get the block number of the transaction
-    let tx = eth_client
-        .get_transaction_by_hash(tx_hash)
-        .await?
-        .ok_or(eyre::Error::msg("error fetching transaction"))?;
-
-    let cache = get_blockdata(
-        eth_client,
-        network,
-        BlockIdentifier::Number(tx.block_number.as_u64()),
-        tx_opts.opts.cache_dir,
-    )
-    .await?;
+    let cache = if let Some(n) = tx_opts.block_number {
+        get_blockdata(tx_opts.opts, Some(n)).await?.0
+    } else {
+        let (eth_client, _network) = setup_rpc(&tx_opts.opts).await?;
+        // Get the block number of the transaction
+        let tx = eth_client
+            .get_transaction_by_hash(tx_hash)
+            .await?
+            .ok_or(eyre::Error::msg("error fetching transaction"))?;
+        get_blockdata(tx_opts.opts, Some(tx.block_number.as_u64()))
+            .await?
+            .0
+    };
 
     let (receipt, transitions) = run_tx(cache, tx_hash).await?;
 
@@ -794,23 +810,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let block = block_opts.block;
 
-    if opts.cached {
-        unimplemented!("cached mode is not implemented yet");
-    }
-
-    let (eth_client, network) = setup(&opts).await?;
-
-    let cache = get_blockdata(
-        eth_client,
-        network.clone(),
-        or_latest(block)?,
-        opts.cache_dir.clone(),
-    )
-    .await?;
-
-    // Always write the cache after fetching from RPC.
-    // It will be deleted later if not needed.
-    cache.write()?;
+    let (cache, network) = get_blockdata(opts.clone(), block).await?;
 
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
@@ -922,7 +922,7 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
     }
 }
 
-fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
+pub fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
     Ok(match maybe_number {
         Some(n) => BlockIdentifier::Number(n),
         None => BlockIdentifier::Tag(BlockTag::Latest),

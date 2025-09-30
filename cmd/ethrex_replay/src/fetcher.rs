@@ -1,4 +1,4 @@
-use ethrex_config::networks::Network;
+use ethrex_config::networks::{Network, PublicNetwork};
 use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     cache::{Cache, get_block_cache_file_name},
+    cli::{EthrexReplayOptions, or_latest, setup_rpc},
     rpc::db::RpcDB,
 };
 
@@ -23,6 +24,43 @@ use crate::cache::L2Fields;
 use crate::cache::get_batch_cache_file_name;
 
 pub async fn get_blockdata(
+    opts: EthrexReplayOptions,
+    block: Option<u64>,
+) -> eyre::Result<(Cache, Network)> {
+    if opts.cached {
+        let network = Network::PublicNetwork(PublicNetwork::Mainnet); //TODO: Make network parametrizable.
+        let requested_block_number = match block {
+            Some(n) => n,
+            None => {
+                return Err(eyre::eyre!("Block number must be specified in cached mode"));
+            }
+        };
+        let file_name = get_block_cache_file_name(&network, requested_block_number, None);
+        info!("Getting block {requested_block_number} data from cache");
+        let cache = Cache::load(&opts.cache_dir, &file_name).map_err(|e| {
+            eyre::eyre!("Cache wasn't found for block {requested_block_number}: {e}")
+        })?;
+        Ok((cache, network))
+    } else {
+        let (eth_client, network) = setup_rpc(&opts).await?;
+        let cache = get_blockdata_rpc(
+            eth_client,
+            network.clone(),
+            or_latest(block)?,
+            opts.cache_dir.clone(),
+        )
+        .await?;
+
+        // Always write the cache after fetching from RPC.
+        // It will be deleted later if not needed.
+        cache.write()?;
+
+        Ok((cache, network))
+    }
+}
+
+/// Retreives data from RPC
+async fn get_blockdata_rpc(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
@@ -44,7 +82,6 @@ pub async fn get_blockdata(
     let chain_config = network.get_genesis()?.config;
 
     let file_name = get_block_cache_file_name(&network, requested_block_number, None);
-
     if let Ok(cache) =
         Cache::load(&cache_dir, &file_name).inspect_err(|e| warn!("Failed to load cache: {e}"))
     {
