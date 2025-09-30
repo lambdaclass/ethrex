@@ -36,7 +36,7 @@ impl<'a> VM<'a> {
 
         call_frame.stack.push1(value)?;
 
-        // The n_bytes that you push to the stack + 1 for the next instruction
+        // Advance the PC by the number of bytes in this instruction's payload.
         call_frame.pc = call_frame.pc.wrapping_add(N);
 
         Ok(OpcodeResult::Continue)
