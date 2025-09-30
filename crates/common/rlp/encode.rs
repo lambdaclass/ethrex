@@ -201,6 +201,24 @@ pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
     }
 }
 
+pub fn encoded_prefix_bytes(total_len: usize) -> usize {
+    const U8_MAX_PLUS_ONE: usize = u8::MAX as usize + 1;
+    const U16_MAX_PLUS_ONE: usize = u16::MAX as usize + 1;
+    match total_len {
+        0..56 => 1,
+        56..U8_MAX_PLUS_ONE => 2,
+        U8_MAX_PLUS_ONE..=U16_MAX_PLUS_ONE => 3,
+        _ => {
+            usize::BITS as usize / 8
+                - total_len
+                    .to_be_bytes()
+                    .iter()
+                    .position(|&x| x != 0)
+                    .unwrap()
+        }
+    }
+}
+
 impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {
     fn encode(&self, buf: &mut dyn BufMut) {
         let total_len = self.0.length() + self.1.length();

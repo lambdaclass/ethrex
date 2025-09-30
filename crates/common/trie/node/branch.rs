@@ -1,4 +1,8 @@
-use ethrex_rlp::{encode::RLPEncode, structs::Encoder};
+use ethrex_rlp::{
+    encode::{RLPEncode, encode_length, encoded_prefix_bytes},
+    structs::Encoder,
+};
+use serde::de::value;
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
@@ -208,12 +212,21 @@ impl BranchNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        // 3 byte payload prefix
-        // + 16 choices * 33 bytes
-        // + 3 bytes value prefix
-        // + value
-        let max_rlp_size: usize = 3 + 16 * 33 + 3 + self.value.len();
-        let mut buf: Vec<u8> = Vec::with_capacity(max_rlp_size);
+        let payload_len = {
+            // TODO: choices may be inline
+            let choices_len = self.choices.iter().fold(0, |payload_len, child| {
+                payload_len + if child.is_valid() {
+                    // 32 bytes + 1 byte prefix
+                    33
+                } else {
+                    // 1 byte RLP_NULL
+                    1
+                }
+            });
+            let value_prefix_len = encoded_prefix_bytes(self.value.len());
+            choices_len + value_prefix_len + self.value.len()
+        };
+        let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
 
         for child in self.choices.iter() {
             match child.compute_hash() {
