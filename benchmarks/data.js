@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759231127342,
+  "lastUpdate": 1759247262403,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35796,6 +35796,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004666426195669285,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b1d05fb04de91e6a384608f8e3443fc0266d5c31",
+          "message": "ci(l1): remove flamegraph and import block reports (#4685)\n\n**Motivation**\nRemove flamegraph and import block reports\n\n**Description**\n- Remove flamegraph and import block reports\n- Rename some workflows to follow conventions\n- Add main workflows to alerts job\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-09-30T13:30:50Z",
+          "tree_id": "4b28ec8682d1ab03888fcfb3fe026c1023504675",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b1d05fb04de91e6a384608f8e3443fc0266d5c31"
+        },
+        "date": 1759247239359,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004651455522248382,
             "unit": "Mgas/s"
           }
         ]
