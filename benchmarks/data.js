@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759221842850,
+  "lastUpdate": 1759223561353,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35709,6 +35709,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004646220647610483,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5c14350ac25b516ee90d5d81c3964e96bfd809d5",
+          "message": "chore(l1): print error on sync error (#4690)\n\n**Motivation**\n\nThe error log for failing to sync was a warning, it should be an error.\n\n**Description**\n\n- Changed warn to error in `start_sync`\n- Added a comment with the link to issues: #2767",
+          "timestamp": "2025-09-29T19:26:44Z",
+          "tree_id": "3ccc45e8042d1c35398fe006be4cf4422252ab00",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5c14350ac25b516ee90d5d81c3964e96bfd809d5"
+        },
+        "date": 1759223560176,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004667640793665004,
             "unit": "Mgas/s"
           }
         ]
