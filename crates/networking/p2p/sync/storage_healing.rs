@@ -22,7 +22,7 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::atomic::Ordering,
     time::Instant,
 };
@@ -159,7 +159,7 @@ pub async fn heal_storage_trie(
         Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
     > = JoinSet::new();
 
-    let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Vec<u8>)>> = HashMap::new();
+    let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Node)>> = HashMap::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -204,15 +204,43 @@ pub async fn heal_storage_trie(
         let is_stale = current_unix_time() > state.staleness_timestamp;
 
         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
-            let to_write = nodes_to_write.drain().collect();
+            let to_write: Vec<_> = nodes_to_write.drain().collect();
             let store = state.store.clone();
             if db_joinset.len() > 3 {
                 db_joinset.join_next().await;
             }
             db_joinset.spawn_blocking(|| {
                 spawned_rt::tasks::block_on(async move {
+                    let mut encoded_to_write = vec![];
+                    for (hashed_account, nodes) in to_write {
+                        let mut account_nodes = vec![];
+                        let mut to_delete = HashSet::new();
+                        for (path, node) in nodes {
+                            perform_needed_deletions(
+                                &store,
+                                &node,
+                                hashed_account,
+                                &path,
+                                &mut to_delete,
+                            )
+                            .await
+                            .unwrap();
+                            if let Node::Leaf(leaf) = &node {
+                                account_nodes
+                                    .push((path.concat(leaf.partial.clone()), leaf.value.clone()));
+                            }
+                            account_nodes.push((path, node.encode_to_vec()));
+                        }
+                        let account_nodes = to_delete
+                            .into_iter()
+                            .map(|path| (path, vec![]))
+                            .chain(account_nodes)
+                            .collect();
+                        encoded_to_write.push((hashed_account, account_nodes));
+                    }
+
                     store
-                        .write_storage_trie_nodes_batch(to_write)
+                        .write_storage_trie_nodes_batch(encoded_to_write)
                         .await
                         .expect("db write failed");
                 })
@@ -465,7 +493,7 @@ async fn process_node_responses(
     global_leafs_healed: &mut u64,
     roots_healed: &mut usize,
     maximum_length_seen: &mut usize,
-    to_write: &mut HashMap<H256, Vec<(Nibbles, Vec<u8>)>>,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
@@ -657,18 +685,15 @@ pub fn determine_missing_children(
 
 async fn perform_needed_deletions(
     store: &Store,
-    node: Node,
+    node: &Node,
     hashed_account: H256,
     node_path: &Nibbles,
-    to_write: &mut HashMap<H256, Vec<(Nibbles, Vec<u8>)>>,
+    to_delete: &mut HashSet<Nibbles>,
 ) -> Result<(), SyncError> {
     // Delete all the parents of this node.
     // Nodes should be in the DB only if their children are also in the DB.
     for i in 0..node_path.len() {
-        to_write
-            .entry(hashed_account)
-            .or_default()
-            .push((node_path.slice(0, i), vec![]));
+        to_delete.insert(node_path.slice(0, i));
     }
     match node {
         Node::Branch(node) => {
@@ -705,30 +730,14 @@ async fn commit_node(
     node: &NodeResponse,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
-    to_write: &mut HashMap<H256, Vec<(Nibbles, Vec<u8>)>>,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
 
-    perform_needed_deletions(
-        store,
-        node.node.clone(),
-        hashed_account,
-        &node.node_request.storage_path,
-        to_write,
-    )
-    .await
-    .unwrap();
-
-    to_write.entry(hashed_account).or_default().push((
-        node.node_request.storage_path.clone(),
-        node.node.encode_to_vec(),
-    ));
-    if let Node::Leaf(leaf) = &node.node {
-        to_write.entry(hashed_account).or_default().push((
-            node.node_request.storage_path.concat(leaf.partial.clone()),
-            leaf.value.clone(),
-        ));
-    }
+    to_write
+        .entry(hashed_account)
+        .or_default()
+        .push((node.node_request.storage_path.clone(), node.node.clone()));
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {
