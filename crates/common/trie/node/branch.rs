@@ -211,25 +211,26 @@ impl BranchNode {
     }
 
     /// Encodes the node
+    ///
+    /// Branch encoding is optimized because it's the majoritarian node type in a trie.
     pub fn encode_raw(&self) -> Vec<u8> {
-        let payload_len = {
-            // TODO: choices may be inline
-            let choices_len = self.choices.iter().fold(0, |payload_len, child| {
-                payload_len + if child.is_valid() {
-                    // 32 bytes + 1 byte prefix
-                    33
-                } else {
-                    // 1 byte RLP_NULL
-                    1
+        let value_len = encoded_prefix_bytes(self.value.len()) + self.value.len();
+        let mut choices_len = 0;
+        for child in &self.choices {
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(_) => choices_len += 33,
+                NodeHash::Inline(raw) if raw.1 != 0 => {
+                    choices_len += encoded_prefix_bytes(raw.1 as usize);
+                    choices_len += raw.1 as usize
                 }
-            });
-            let value_prefix_len = encoded_prefix_bytes(self.value.len());
-            choices_len + value_prefix_len + self.value.len()
-        };
+                _ => choices_len += 1,
+            }
+        }
+        let payload_len = choices_len + value_len;
         let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
 
         for child in self.choices.iter() {
-            match child.compute_hash() {
+            match child.compute_hash_ref() {
                 NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
                 child @ NodeHash::Inline(raw) if raw.1 != 0 => {
                     buf.extend(child.as_ref());

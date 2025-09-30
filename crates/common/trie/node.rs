@@ -85,6 +85,13 @@ impl NodeRef {
         }
     }
 
+    pub fn compute_hash_ref<'a>(&'a self) -> &'a NodeHash {
+        match self {
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash()),
+            NodeRef::Hash(hash) => hash,
+        }
+    }
+
     pub fn memoize_hashes(&self) {
         if let NodeRef::Node(node, hash) = &self {
             if hash.get().is_none() {

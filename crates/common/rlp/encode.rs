@@ -207,14 +207,14 @@ pub fn encoded_prefix_bytes(total_len: usize) -> usize {
     match total_len {
         0..56 => 1,
         56..U8_MAX_PLUS_ONE => 2,
-        U8_MAX_PLUS_ONE..=U16_MAX_PLUS_ONE => 3,
+        U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 3,
         _ => {
-            usize::BITS as usize / 8
-                - total_len
-                    .to_be_bytes()
-                    .iter()
-                    .position(|&x| x != 0)
-                    .unwrap()
+            let leading_zeros = total_len
+                .to_be_bytes()
+                .iter()
+                .position(|&x| x != 0)
+                .unwrap();
+            usize::BITS as usize / 8 - leading_zeros
         }
     }
 }
