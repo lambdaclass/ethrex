@@ -888,18 +888,21 @@ impl Syncer {
             // the trie to compute the nodes and stores the accounts with storages for later use
 
             #[cfg(feature = "rocksdb")]
-            let computed_state_root = insert_accounts_into_rocksdb(
-                store.clone(),
-                &mut storage_accounts,
-                &account_state_snapshots_dir,
-                &crate::utils::get_rocksdb_temp_accounts_dir(&self.datadir),
-                &mut code_hash_collector,
-            )
-            .await?;
-            #[cfg(feature = "rocksdb")]
-            let accounts_with_storage = std::collections::BTreeSet::from_iter(
-                storage_accounts.accounts_with_storage_root.keys().copied(),
-            );
+            let (computed_state_root, accounts_with_storage) = {
+                (
+                    insert_accounts_into_rocksdb(
+                        store.clone(),
+                        &mut storage_accounts,
+                        &account_state_snapshots_dir,
+                        &crate::utils::get_rocksdb_temp_accounts_dir(&self.datadir),
+                        &mut code_hash_collector,
+                    )
+                    .await?,
+                    std::collections::BTreeSet::from_iter(
+                        storage_accounts.accounts_with_storage_root.keys().copied(),
+                    ),
+                )
+            };
             #[cfg(not(feature = "rocksdb"))]
             let computed_state_root = insert_accounts_into_db(
                 store.clone(),
@@ -1006,12 +1009,9 @@ impl Syncer {
             }
             #[cfg(not(feature = "rocksdb"))]
             {
-                let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-                    Arc::new(Mutex::new(HashMap::new()));
                 insert_storages_into_db(
                     store.clone(),
                     &account_storages_snapshots_dir,
-                    &maybe_big_account_storage_state_roots,
                     &pivot_header,
                 )
                 .await?;
@@ -1516,10 +1516,11 @@ async fn insert_accounts_into_db(
 async fn insert_storages_into_db(
     store: Store,
     account_storages_snapshots_dir: &Path,
-    maybe_big_account_storage_state_roots: &Arc<Mutex<HashMap<H256, H256>>>,
     pivot_header: &BlockHeader,
 ) -> Result<(), SyncError> {
     use rayon::iter::IntoParallelIterator;
+    let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     for entry in std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
