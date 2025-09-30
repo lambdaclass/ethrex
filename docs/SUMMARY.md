@@ -76,6 +76,7 @@
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
 - [CLI reference](./CLI.md)
+- [Provers dependencies](./developers/l2/provers-dependencies.md)
 - [Troubleshooting]()
 
 # Roadmap
