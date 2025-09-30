@@ -1645,7 +1645,7 @@ async fn insert_storage_into_rocksdb(
     temp_db_dir: &Path,
 ) -> Result<(), SyncError> {
     use ethrex_threadpool::ThreadPool;
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts;
+    use ethrex_trie::{NodeHash, trie_sorted::trie_from_sorted_accounts};
     use std::thread::scope;
 
     struct RocksDBIterator<'a> {
@@ -1719,7 +1719,7 @@ async fn insert_storage_into_rocksdb(
         .map(|num| num.into())
         .unwrap_or(8);
 
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<Node>>(1001);
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(1001);
     for _ in 0..1_000 {
         let _ = buffer_sender.send(Vec::with_capacity(20_065));
     }

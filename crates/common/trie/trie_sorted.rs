@@ -1,5 +1,5 @@
 use crate::{
-    EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
+    EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use crossbeam::channel::{Receiver, Sender, bounded};
@@ -78,7 +78,7 @@ fn create_parent(center_side: &CenterSide, closest_nibbles: &Nibbles) -> StackEl
 }
 
 fn add_center_to_parent_and_write_queue(
-    nodes_to_write: &mut Vec<Node>,
+    nodes_to_write: &mut Vec<(NodeHash, Node)>,
     center_side: &CenterSide,
     parent_element: &mut StackElement,
 ) -> Result<(), TrieGenerationError> {
@@ -95,7 +95,7 @@ fn add_center_to_parent_and_write_queue(
                 node.clone().into()
             } else {
                 let hash = node.compute_hash();
-                nodes_to_write.push(node.clone().into());
+                nodes_to_write.push((hash, node.clone().into()));
                 ExtensionNode {
                     prefix: path,
                     child: hash.into(),
@@ -120,14 +120,14 @@ fn add_center_to_parent_and_write_queue(
             .filter_map(|(index, child)| child.is_valid().then_some(index))
             .collect::<Vec<_>>()
     );
-    nodes_to_write.push(node);
+    nodes_to_write.push((node.compute_hash(), node));
     Ok(())
 }
 
 fn flush_nodes_to_write(
-    mut nodes_to_write: Vec<Node>,
+    mut nodes_to_write: Vec<(NodeHash, Node)>,
     db: &dyn TrieDB,
-    sender: Sender<Vec<Node>>,
+    sender: Sender<Vec<(NodeHash, Node)>>,
 ) -> Result<(), TrieGenerationError> {
     db.put_batch_no_alloc(&nodes_to_write)
         .map_err(TrieGenerationError::FlushToDbError)?;
@@ -141,13 +141,13 @@ pub fn trie_from_sorted_accounts<'scope, T>(
     db: &'scope dyn TrieDB,
     data_iter: &mut T,
     scope: Arc<ThreadPool<'scope>>,
-    buffer_sender: Sender<Vec<Node>>,
-    buffer_receiver: Receiver<Vec<Node>>,
+    buffer_sender: Sender<Vec<(NodeHash, Node)>>,
+    buffer_receiver: Receiver<Vec<(NodeHash, Node)>>,
 ) -> Result<H256, TrieGenerationError>
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
-    let mut nodes_to_write: Vec<Node> = buffer_receiver
+    let mut nodes_to_write: Vec<(NodeHash, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
@@ -165,9 +165,9 @@ where
             partial: center_side.path,
             value: initial_value.1,
         };
-        let hash = node.compute_hash().finalize();
-        flush_nodes_to_write(vec![node.into()], db, buffer_sender)?;
-        return Ok(hash);
+        let hash = node.compute_hash();
+        flush_nodes_to_write(vec![(hash, node.into())], db, buffer_sender)?;
+        return Ok(hash.finalize());
     }
 
     while let Some(right_side) = right_side_opt {
@@ -248,20 +248,20 @@ where
             .find(|(_, child)| child.is_valid())
             .unwrap();
 
-        debug_assert!(nodes_to_write.last().unwrap().compute_hash() == child.compute_hash());
-        match nodes_to_write.iter_mut().last().unwrap() {
+        debug_assert!(nodes_to_write.last().unwrap().0 == child.compute_hash());
+        let (_, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
+        match node_hash_ref {
             Node::Branch(_) => {
-                nodes_to_write.push(
-                    ExtensionNode {
-                        prefix: Nibbles::from_hex(vec![index as u8]),
-                        child,
-                    }
-                    .into(),
-                );
+                let node: Node = ExtensionNode {
+                    prefix: Nibbles::from_hex(vec![index as u8]),
+                    child,
+                }
+                .into();
+                nodes_to_write.push((node.compute_hash(), node));
                 nodes_to_write
                     .last()
                     .expect("we just inserted")
-                    .compute_hash()
+                    .0
                     .finalize()
             }
             Node::Extension(extension_node) => {
@@ -271,11 +271,12 @@ where
             Node::Leaf(leaf_node) => leaf_node.compute_hash().finalize(),
         }
     } else {
-        nodes_to_write.push(left_side.element.into());
+        let node: Node = left_side.element.into();
+        nodes_to_write.push((node.compute_hash(), node));
         nodes_to_write
             .last()
             .expect("we just inserted")
-            .compute_hash()
+            .0
             .finalize()
     };
 
@@ -290,7 +291,7 @@ pub fn trie_from_sorted_accounts_wrap<T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<Node>>(1001);
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(1001);
     for _ in 0..1_000 {
         let _ = buffer_sender.send(Vec::with_capacity(20_065));
     }
