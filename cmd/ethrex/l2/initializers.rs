@@ -157,9 +157,6 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
-    #[cfg(feature = "revm")]
-    panic!("L2 doesn't support REVM");
-
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = datadir.join("rollup_store");
