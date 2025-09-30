@@ -151,17 +151,9 @@ impl BlobsBundle {
 
         if self.version.is_some_and(|v| v != 0) {
             // Validate the blobs with the commitments and cell proofs
-            for ((blob, commitment), proof) in self
-                .blobs
-                .iter()
-                .zip(self.commitments.iter())
-                .zip(self.proofs.chunks(CELLS_PER_EXT_BLOB))
-            {
-                use crate::kzg::verify_cell_kzg_proof_batch;
-
-                if !verify_cell_kzg_proof_batch(*blob, *commitment, proof)? {
-                    return Err(BlobsBundleError::BlobToCommitmentAndProofError);
-                }
+            use crate::kzg::verify_cell_kzg_proof_batch;
+            if !verify_cell_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
+                return Err(BlobsBundleError::BlobToCommitmentAndProofError);
             }
         } else {
             // Validate the blobs with the commitments and proofs
