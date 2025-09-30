@@ -29,7 +29,7 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
-      
+
       - name: RISC-V Risc0 toolchain install
         if: matrix.backend == 'risc0'
         env:
@@ -53,14 +53,14 @@ jobs:
         if: matrix.backend == 'risc0'
         run: |
           cd cmd/ethrex_replay
-          cargo b -r --no-default-features --features "${{ matrix.backend }},ci"
+          cargo b -r --no-default-features --features "${{ matrix.backend }}"
 
       - name: Build SP1
         if: matrix.backend == 'sp1'
         run: |
           cd cmd/ethrex_replay
-          cargo b -r --features "${{ matrix.backend }},ci"
-      
+          cargo b -r --features "${{ matrix.backend }}"
+
       - name: Run
         env:
           # TODO(): use RPC
@@ -70,7 +70,6 @@ jobs:
           cp fixtures/cache/rpc_prover/cache_hoodi_1265656.json cmd/ethrex_replay
           cd cmd/ethrex_replay
           make execute-${{ matrix.backend }}-ci BLOCK_NUMBER=1265656 NETWORK=hoodi
-
 
   run-replay-no-backend:
     # "Test" is a required check, don't change the name

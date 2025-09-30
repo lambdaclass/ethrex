@@ -182,6 +182,19 @@ pub struct EthrexReplayOptions {
         required = false
     )]
     pub verbose: bool,
+    // CAUTION
+    // This flag is used to create a benchmark file that is used by our CI for
+    // updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
+    // Do no remove it under any circumstances, unless you are refactoring how
+    // we do benchmarks in CI.
+    #[arg(
+        long,
+        help = "Generate a benchmark file named `bench_latest.json` with the latest execution rate in Mgas/s",
+        help_heading = "CI Options",
+        requires = "zkvm",
+        default_value_t = false
+    )]
+    pub bench: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -254,7 +267,7 @@ pub enum CacheLevel {
     On,
 }
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 pub struct BlockOptions {
     #[arg(
         help = "Block to use. Uses the latest if not specified.",
@@ -267,7 +280,7 @@ pub struct BlockOptions {
 
 #[cfg(not(feature = "l2"))]
 #[derive(Parser)]
-#[command(group(ArgGroup::new("block_list").required(true).args(["blocks", "from"])))]
+#[command(group(ArgGroup::new("block_list").required(true).multiple(true).args(["blocks", "from", "endless"])))]
 pub struct BlocksOptions {
     #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"], help_heading = "Command Options")]
     blocks: Vec<u64>,
@@ -284,6 +297,20 @@ pub struct BlocksOptions {
         help_heading = "Command Options"
     )]
     to: Option<u64>,
+    #[arg(
+        long,
+        help = "Run blocks endlessly, starting from the specified block or the latest if not specified.",
+        help_heading = "Replay Options",
+        conflicts_with_all = ["blocks", "to"]
+    )]
+    pub endless: bool,
+    #[arg(
+        long,
+        help = "Only fetch Ethereum proofs blocks (i.e., no L2 blocks).",
+        help_heading = "Replay Options",
+        conflicts_with = "blocks"
+    )]
+    pub only_eth_proofs_blocks: bool,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -327,37 +354,123 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(block_opts) => replay_block(block_opts).await?,
+            Self::Block(block_opts) => replay_block(block_opts.clone()).await?,
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions {
-                blocks,
+                mut blocks,
                 from,
                 to,
+                endless,
+                only_eth_proofs_blocks,
                 opts,
             }) => {
                 if opts.cached {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
+                // Case ethrex-replay blocks n,...,m
+                if !blocks.is_empty() {
+                    blocks.sort();
 
-                for (i, block_number) in blocks.iter().enumerate() {
-                    info!(
-                        "{} block {}/{}: {block_number}",
-                        if opts.common.action == Action::Execute {
-                            "Executing"
-                        } else {
-                            "Proving"
-                        },
-                        i + 1,
-                        blocks.len()
-                    );
+                    for block in blocks.clone() {
+                        info!(
+                            "{} block: {block}",
+                            if opts.common.action == Action::Execute {
+                                "Executing"
+                            } else {
+                                "Proving"
+                            }
+                        );
 
-                    replay_block(BlockOptions {
-                        block: Some(*block_number),
-                        opts: opts.clone(),
+                        Box::pin(async {
+                            Self::Block(BlockOptions {
+                                block: Some(block),
+                                opts: opts.clone(),
+                            })
+                            .run()
+                            .await
+                        })
+                        .await?;
+                    }
+
+                    return Ok(());
+                }
+
+                let from = match from {
+                    // Case --from is set
+                    // * --endless and --to cannot be set together (constraint by clap).
+                    // * If --endless is set, we start from --from and keep checking for new blocks
+                    // * If --to is set, we run from --from to --to and stop
+                    Some(from) => from,
+                    // Case --from is not set
+                    // * If we reach this point, --endless must be set (constraint by clap)
+                    None => {
+                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                            .await?
+                    }
+                };
+
+                let to = match to {
+                    // Case --to is set
+                    // * If we reach this point, --from must be set and --endless is not set (constraint by clap)
+                    Some(to) => to,
+                    // Case --to is not set
+                    // * If we reach this point, --from or --endless must be set (constraint by clap)
+                    None => {
+                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                            .await?
+                    }
+                };
+
+                if from > to {
+                    return Err(eyre::Error::msg(
+                        "starting point can't be greater than ending point",
+                    ));
+                }
+
+                let mut block_to_replay = from;
+                let mut last_block_to_replay = to;
+
+                while block_to_replay <= last_block_to_replay {
+                    if only_eth_proofs_blocks && block_to_replay % 100 != 0 {
+                        block_to_replay += 1;
+
+                        // Case --endless is set, we want to update the `to` so
+                        // we can keep checking for new blocks
+                        if endless && block_to_replay > last_block_to_replay {
+                            last_block_to_replay = fetch_latest_block_number(
+                                opts.rpc_url.clone(),
+                                only_eth_proofs_blocks,
+                            )
+                            .await?;
+
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+
+                        continue;
+                    }
+
+                    Box::pin(async {
+                        Self::Block(BlockOptions {
+                            block: Some(block_to_replay),
+                            opts: opts.clone(),
+                        })
+                        .run()
+                        .await
                     })
                     .await?;
+
+                    block_to_replay += 1;
+
+                    // Case --endless is set, we want to update the `to` so
+                    // we can keep checking for new blocks
+                    while endless && block_to_replay > last_block_to_replay {
+                        last_block_to_replay =
+                            fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                                .await?;
+
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
                 }
             }
             #[cfg(not(feature = "l2"))]
@@ -366,7 +479,7 @@ impl EthrexReplayCommand {
 
                 let block_identifier = or_latest(block)?;
 
-                get_blockdata(eth_client, network.clone(), block_identifier).await?;
+                get_blockdata(eth_client.clone(), network.clone(), block_identifier).await?;
 
                 if let Some(block_number) = block {
                     info!("Block {block_number} data cached successfully.");
@@ -376,25 +489,108 @@ impl EthrexReplayCommand {
             }
             #[cfg(not(feature = "l2"))]
             Self::Cache(CacheSubcommand::Blocks(BlocksOptions {
-                blocks,
+                mut blocks,
                 from,
                 to,
+                endless,
+                only_eth_proofs_blocks,
                 opts,
             })) => {
-                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
+                if !blocks.is_empty() {
+                    blocks.sort();
 
-                let (eth_client, network) = setup(&opts).await?;
+                    for block in blocks.clone() {
+                        info!("Caching block: {block}",);
 
-                for block_number in blocks {
-                    get_blockdata(
-                        eth_client.clone(),
-                        network.clone(),
-                        BlockIdentifier::Number(block_number),
-                    )
-                    .await?;
+                        Box::pin(async {
+                            Self::Cache(CacheSubcommand::Block(BlockOptions {
+                                block: Some(block),
+                                opts: opts.clone(),
+                            }))
+                            .run()
+                            .await
+                        })
+                        .await?;
+                    }
+
+                    return Ok(());
                 }
 
-                info!("Blocks data cached successfully.");
+                let from = match from {
+                    // Case --from is set
+                    // * --endless and --to cannot be set together (constraint by clap).
+                    // * If --endless is set, we start from --from and keep checking for new blocks
+                    // * If --to is set, we run from --from to --to and stop
+                    Some(from) => from,
+                    // Case --from is not set
+                    // * If we reach this point, --endless must be set (constraint by clap)
+                    None => {
+                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                            .await?
+                    }
+                };
+
+                let to = match to {
+                    // Case --to is set
+                    // * If we reach this point, --from must be set and --endless is not set (constraint by clap)
+                    Some(to) => to,
+                    // Case --to is not set
+                    // * If we reach this point, --from or --endless must be set (constraint by clap)
+                    None => {
+                        fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                            .await?
+                    }
+                };
+
+                if from > to {
+                    return Err(eyre::Error::msg(
+                        "starting point can't be greater than ending point",
+                    ));
+                }
+
+                let mut block_to_replay = from;
+                let mut last_block_to_replay = to;
+
+                while block_to_replay <= to {
+                    // We skip blocks that are not from EthProofs
+                    if only_eth_proofs_blocks && block_to_replay % 100 != 0 {
+                        block_to_replay += 1;
+
+                        // Case --endless is set, we want to update the `to` so
+                        // we can keep checking for new blocks
+                        if endless && block_to_replay > last_block_to_replay {
+                            tokio::time::sleep(Duration::from_secs(12)).await;
+                            last_block_to_replay = fetch_latest_block_number(
+                                opts.rpc_url.clone(),
+                                only_eth_proofs_blocks,
+                            )
+                            .await?;
+                        }
+
+                        continue;
+                    }
+
+                    Box::pin(async {
+                        Self::Cache(CacheSubcommand::Block(BlockOptions {
+                            block: Some(block_to_replay),
+                            opts: opts.clone(),
+                        }))
+                        .run()
+                        .await
+                    })
+                    .await?;
+
+                    block_to_replay += 1;
+
+                    // Case --endless is set, we want to update the `to` so
+                    // we can keep checking for new blocks
+                    while endless && block_to_replay > last_block_to_replay {
+                        tokio::time::sleep(Duration::from_secs(12)).await;
+                        last_block_to_replay =
+                            fetch_latest_block_number(opts.rpc_url.clone(), only_eth_proofs_blocks)
+                                .await?;
+                    }
+                }
             }
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Block(CustomBlockOptions { common })) => {
@@ -419,6 +615,7 @@ impl EthrexReplayCommand {
                     common,
                     slack_webhook_url: None,
                     verbose: false,
+                    bench: false,
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -723,15 +920,17 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
             eyre::Error::msg("no block found in the cache, this should never happen")
         })?;
 
+    let backend = backend(&opts.common.zkvm)?;
+
     let (execution_result, proving_result) = if opts.no_zkvm {
         (replay_no_zkvm(cache.clone(), &opts).await, None)
     } else {
         // Always execute
-        let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
+        let execution_result = exec(backend, cache.clone()).await;
 
         let proving_result = if opts.common.action == Action::Prove {
             // Only prove if requested
-            Some(prove(backend(&opts.common.zkvm)?, cache.clone()).await)
+            Some(prove(backend, cache.clone()).await)
         } else {
             None
         };
@@ -763,12 +962,27 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
         CacheLevel::On => {}
         // Only save the cache if the block run failed
         CacheLevel::Failed => {
-            if report.execution_result.is_ok() || report.proving_result.is_some_and(|r| r.is_ok()) {
+            if report.execution_result.is_ok()
+                || report.proving_result.as_ref().is_some_and(|r| r.is_ok())
+            {
                 cache.delete()?;
             }
         }
         // Don't keep the cache
         CacheLevel::Off => cache.delete()?,
+    }
+
+    // CAUTION
+    // This piece of code is used to create a benchmark file that is used by our
+    // CI for updating benchmarks from https://docs.ethrex.xyz/benchmarks/.
+    // Do no remove it under any circumstances, unless you are refactoring how
+    // we do benchmarks in CI.
+    if opts.bench {
+        let benchmark_json = report.to_bench_file()?;
+        let file =
+            std::fs::File::create("bench_latest.json").expect("failed to create bench_latest.json");
+        serde_json::to_writer(file, &benchmark_json)
+            .map_err(|e| eyre::Error::msg(format!("failed to write to bench_latest.json: {e}")))?;
     }
 
     Ok(())
@@ -816,26 +1030,6 @@ fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
         Some(n) => BlockIdentifier::Number(n),
         None => BlockIdentifier::Tag(BlockTag::Latest),
     })
-}
-
-#[cfg(not(feature = "l2"))]
-async fn resolve_blocks(
-    mut blocks: Vec<u64>,
-    from: Option<u64>,
-    to: Option<u64>,
-    rpc_url: Url,
-) -> eyre::Result<Vec<u64>> {
-    if let Some(start) = from {
-        let end = to.unwrap_or(fetch_latest_block_number(rpc_url).await?);
-
-        for block in start..=end {
-            blocks.push(block);
-        }
-    } else {
-        blocks.sort();
-    }
-
-    Ok(blocks)
 }
 
 fn print_transition(update: AccountUpdate) {
@@ -1205,10 +1399,49 @@ pub async fn produce_custom_l2_block(
 }
 
 #[cfg(not(feature = "l2"))]
-async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
+async fn fetch_latest_block_number(
+    rpc_url: Url,
+    only_eth_proofs_blocks: bool,
+) -> eyre::Result<u64> {
     let eth_client = EthClient::new(rpc_url.as_str())?;
 
-    let latest_block = eth_client.get_block_number().await?;
+    let mut latest_block_number = eth_client.get_block_number().await?.as_u64();
 
-    Ok(latest_block.as_u64())
+    while only_eth_proofs_blocks && latest_block_number % 100 != 0 {
+        let blocks_left_for_next_eth_proofs_block = 100 - (latest_block_number % 100);
+
+        let time_for_next_eth_proofs_block = Duration::from_secs(
+            blocks_left_for_next_eth_proofs_block * 12, // assuming 12s block time
+        );
+
+        info!(
+            "Latest block is {latest_block_number}, waiting for next eth proofs block ({}) in ~{}",
+            latest_block_number + blocks_left_for_next_eth_proofs_block,
+            format_duration(&time_for_next_eth_proofs_block)
+        );
+
+        tokio::time::sleep(time_for_next_eth_proofs_block).await;
+
+        latest_block_number = eth_client.get_block_number().await?.as_u64();
+    }
+
+    Ok(latest_block_number)
+}
+
+fn format_duration(duration: &Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let milliseconds = duration.subsec_millis();
+
+    if hours > 0 {
+        return format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:03}ms");
+    }
+
+    if minutes == 0 {
+        return format!("{seconds:02}s {milliseconds:03}ms");
+    }
+
+    format!("{minutes:02}m {seconds:02}s")
 }

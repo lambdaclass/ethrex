@@ -20,6 +20,6 @@ impl<'a> VM<'a> {
         // Push the duplicated value onto the stack
         current_call_frame.stack.push1(value_at_depth)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }
