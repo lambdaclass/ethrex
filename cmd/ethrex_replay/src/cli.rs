@@ -149,7 +149,8 @@ pub struct EthrexReplayOptions {
         long,
         group = "data_source",
         help_heading = "Replay Options",
-        requires = "network"
+        requires = "network",
+        conflicts_with = "cache_level"
     )]
     pub cached: bool,
     #[arg(
