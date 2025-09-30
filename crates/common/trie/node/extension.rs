@@ -69,7 +69,15 @@ impl ExtensionNode {
             let branch_node = if self.prefix.at(0) == 16 {
                 match new_node.get_node(db, path.current())? {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
-                    _ => return Err(TrieError::InconsistentTree),
+                    Some(Node::Extension(_)) => {
+                        return Err(TrieError::FoundExtensionInPlaceOfLeaf(path.current()));
+                    }
+                    Some(Node::Branch(_)) => {
+                        return Err(TrieError::FoundBranchInPlaceOfLeaf(path.current()));
+                    }
+                    None => {
+                        return Err(TrieError::LeafNotFound(path.current()));
+                    }
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;

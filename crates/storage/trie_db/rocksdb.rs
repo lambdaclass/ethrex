@@ -1,6 +1,6 @@
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, NodeHash, TrieDB, error::TrieError};
-use rocksdb::{DBWithThreadMode, MultiThreaded, OptimisticTransactionDB};
+use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
+use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
 
 use crate::trie_db::layering::apply_prefix;
@@ -84,8 +84,8 @@ impl TrieDB for RocksDBTrieDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_trie::{Nibbles, NodeHash};
-    use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options};
+    use ethrex_trie::Nibbles;
+    use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
     use tempfile::TempDir;
 
     #[test]
