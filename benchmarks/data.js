@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759223561353,
+  "lastUpdate": 1759225287959,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35738,6 +35738,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004667640793665004,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "24da00b999bb157696d1a376df01dfee92eed673",
+          "message": "feat(l2): optimize RISC0's guest program input read (#4678)\n\n**Description**\n\nRISC0's official documentation suggests using `env::stdin().read_to_end`\nwhen we need to read the input as raw bytes, because that method doesn't\ndo (de)serialization and so does not need to copy or reinterpret the\ninput data. This is the case because we then serialize using `rkyv`.\n\nOn the host side, `ExecutorEnvBuilder::write_slice` is used to pass in\nthe bytes.\n\n**Execution Times Comparison**\n\n> Command: `cargo r -r -p ethrex-replay -F risc0 -- block --zkvm risc0\n--resource cpu --action execute --rpc-url http://157.180.1.98:8545\n<BLOCK>`\n\n| Block | `main` (`1ef53cc`) | `optimize_risc0_guest_program_input_read\n` | Speedup |\n| --- | --- | --- | --- |\n| 23451000 | 57s | 42s | 1.37x |\n| 23451100 | 36s | 25s | 1.44x |\n| 23451200 | 19s | 13s | 1.46x |\n| 23451300 | 43s | 30s | 1.43x |\n| 23451400 | 43s | 31s | 1.39x |\n\n**Input Reading Cycles Comparison**\n\n> Command: `cargo r -r -p ethrex-replay -F risc0 -- block --zkvm risc0\n--resource cpu --action execute --rpc-url http://157.180.1.98:8545\n<BLOCK>`\n\n| Block | `main` (`1ef53cc`) | `optimize_risc0_guest_program_input_read\n` | Diff |\n| --- | --- | --- | --- |\n| 23451000 | 980048869 | 21048307 | -46.56x |\n| 23451100 | 755479461 | 17713531 | -42.65x |\n| 23451200 | 390695293 | 9137304 | -42.76x |\n| 23451300 | 865096745 | 19224750 | -45x |\n| 23451400 | 832784361 | 18776551 | -44.35x |",
+          "timestamp": "2025-09-29T19:48:10Z",
+          "tree_id": "1da4108331a393bc4a4731fb075b1ddf0d3726b4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/24da00b999bb157696d1a376df01dfee92eed673"
+        },
+        "date": 1759225287331,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004657076108792239,
             "unit": "Mgas/s"
           }
         ]
