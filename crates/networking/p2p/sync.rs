@@ -380,6 +380,10 @@ impl Syncer {
                 break;
             }
         }
+
+        // Update current fetch head
+        current_head = sync_head;
+
         if found_common_ancestor {
             block_headers.reverse();
             block_sync_state
@@ -392,7 +396,7 @@ impl Syncer {
                     self.cancel_token.clone(),
                 )
                 .await?;
-            return Ok(());
+            Ok(())
         } else {
             // if found_common_ancestor is false that means we are more than 1024 blocks behind so, for now, we go back to syncing as it follows.
             // TODO: Have full syncing always be from NewToOld
