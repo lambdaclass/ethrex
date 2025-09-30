@@ -1418,7 +1418,7 @@
           "expr": "datadir_size_bytes{job=\"$job\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "Datadir Size",
+          "legendFormat": "Datadir Size (GB)",
           "range": true,
           "refId": "A",
           "useBackend": false
