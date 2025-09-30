@@ -11,16 +11,6 @@ use crate::{metrics::METRICS, network::P2PContext};
 
 use crate::rlpx::connection::server::RLPxConnection;
 
-#[derive(Debug, thiserror::Error)]
-pub enum RLPxInitiatorError {
-    // #[error(transparent)]
-    // IoError(#[from] std::io::Error),
-    // #[error("Failed to send message")]
-    // MessageSendFailure(std::io::Error),
-    // #[error("Only partial message was sent")]
-    // PartialMessageSent,
-}
-
 #[derive(Debug, Clone)]
 pub struct RLPxInitiator {
     context: P2PContext,
@@ -47,7 +37,7 @@ impl RLPxInitiator {
         }
     }
 
-    pub async fn spawn(context: P2PContext) -> Result<(), RLPxInitiatorError> {
+    pub async fn spawn(context: P2PContext) {
         info!("Starting RLPx Initiator");
 
         let state = RLPxInitiator::new(context);
@@ -55,8 +45,6 @@ impl RLPxInitiator {
         let mut server = RLPxInitiator::start(state.clone());
 
         let _ = server.cast(InMessage::LookForPeers).await;
-
-        Ok(())
     }
 
     async fn look_for_peers(&self) {
@@ -117,7 +105,7 @@ impl GenServer for RLPxInitiator {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type Error = RLPxInitiatorError;
+    type Error = (); // not used
 
     async fn handle_cast(
         &mut self,
