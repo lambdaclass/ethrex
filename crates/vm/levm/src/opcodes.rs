@@ -357,8 +357,6 @@ impl From<Opcode> for usize {
 }
 
 /// Represents an opcode function handler.
-///
-/// The boolean return value is true if the VM's execution should be interrupted for any reason.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OpCodeFn<'a>(fn(&'_ mut VM<'a>) -> Result<OpcodeResult, VMError>);
 
