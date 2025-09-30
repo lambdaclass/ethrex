@@ -75,36 +75,17 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError> {
-        let mut cfs = HashMap::with_capacity(TABLES.len());
-        for &table in TABLES.iter() {
-            let cf = self
-                .db
-                .cf_handle(table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-            cfs.insert(table, cf);
-        }
         Ok(Box::new(RocksDBRoTx {
             db: self.db.clone(),
-            cfs,
         }))
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError> {
-        let mut cfs = HashMap::with_capacity(TABLES.len());
-        for &table in TABLES.iter() {
-            let cf = self
-                .db
-                .cf_handle(table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-            cfs.insert(table, cf);
-        }
-
         let batch = WriteBatchWithTransaction::<true>::default();
 
         Ok(Box::new(RocksDBRwTx {
             db: self.db.clone(),
             batch,
-            cfs,
         }))
     }
 
@@ -120,20 +101,17 @@ impl StorageBackend for RocksDBBackend {
 }
 
 /// Read-only transaction for RocksDB
-pub struct RocksDBRoTx<'a> {
+pub struct RocksDBRoTx {
     /// Transaction
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
-    /// Hashmap of column families
-    cfs: HashMap<&'a str, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
-impl<'a> StorageRoTx for RocksDBRoTx<'a> {
+impl StorageRoTx for RocksDBRoTx {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
-            .cfs
-            .get(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-            .clone();
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         self.db
             .get_cf(&cf, key)
@@ -147,8 +125,8 @@ impl<'a> StorageRoTx for RocksDBRoTx<'a> {
     ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
     {
         let cf = self
-            .cfs
-            .get(table)
+            .db
+            .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
             .clone();
 
@@ -183,22 +161,19 @@ impl Iterator for RocksDBPrefixIter {
 }
 
 /// Read-write transaction for RocksDB
-pub struct RocksDBRwTx<'a> {
+pub struct RocksDBRwTx {
     /// Database reference for writing
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
-    /// Write batch for accumulating changes (interior mutability)
+    /// Write batch for accumulating changes
     batch: WriteBatchWithTransaction<true>,
-    /// Hashmap of column families
-    cfs: HashMap<&'a str, Arc<rocksdb::BoundColumnFamily<'a>>>,
 }
 
-impl<'a> StorageRoTx for RocksDBRwTx<'a> {
+impl StorageRoTx for RocksDBRwTx {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
-            .cfs
-            .get(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-            .clone();
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         self.db
             .get_cf(&cf, key)
@@ -212,10 +187,9 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
     ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
     {
         let cf = self
-            .cfs
-            .get(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-            .clone();
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         let iter = self.db.prefix_iterator_cf(&cf, prefix);
         let results: Vec<PrefixResult> = iter
@@ -233,28 +207,36 @@ impl<'a> StorageRoTx for RocksDBRwTx<'a> {
     }
 }
 
-impl<'a> StorageRwTx for RocksDBRwTx<'a> {
+impl StorageRwTx for RocksDBRwTx {
     /// Stores multiple key-value pairs in different tables using WriteBatch.
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
-        for (table, key, value) in batch {
-            let cf = self
-                .cfs
-                .get(table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-                .clone();
+        // Load the column families for the tables in the batch
+        let unique_tables: HashSet<&str> = batch.iter().map(|(t, _, _)| *t).collect();
+        let mut cfs = HashMap::with_capacity(unique_tables.len());
 
-            self.batch.put_cf(&cf, key, value);
+        for &table in unique_tables.iter() {
+            let cf = self
+                .db
+                .cf_handle(table)
+                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            cfs.insert(table, cf);
+        }
+
+        for (table, key, value) in batch {
+            let cf = cfs
+                .get(table)
+                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+            self.batch.put_cf(cf, key, value);
         }
         Ok(())
     }
 
     fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let cf = self
-            .cfs
-            .get(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-            .clone();
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         self.batch.delete_cf(&cf, key);
         Ok(())
