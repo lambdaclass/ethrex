@@ -1485,7 +1485,11 @@ impl StoreEngine for Store {
             for (address_hash, nodes) in storage_trie_nodes {
                 for (node_hash, node_data) in nodes {
                     let key = apply_prefix(Some(address_hash), node_hash);
-                    batch.put_cf(&cf, key.as_ref(), node_data);
+                    if node_data.is_empty() {
+                        batch.delete_cf(&cf, key.as_ref());
+                    } else {
+                        batch.put_cf(&cf, key.as_ref(), node_data);
+                    }
                 }
             }
 
