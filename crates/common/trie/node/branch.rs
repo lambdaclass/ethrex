@@ -223,7 +223,7 @@ impl BranchNode {
         // in a state or storage trie.
         // plus a 3 byte headroom for the first prefix and payload len
         // plus a byte for the empty value
-        const MAX_RLP_SIZE: usize = 16*33 + 3 + 1;
+        const MAX_RLP_SIZE: usize = 16 * 33 + 3 + 1;
         let mut buf: Vec<u8> = Vec::with_capacity(MAX_RLP_SIZE);
 
         let payload_len = self.choices.iter().fold(1, |payload_len, child| {

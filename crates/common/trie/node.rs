@@ -17,7 +17,7 @@ use ethrex_rlp::{
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{TrieDB, error::TrieError, nibbles::Nibbles, node};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -80,11 +80,17 @@ impl NodeRef {
 
     pub fn compute_hash(&self) -> NodeHash {
         match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| {
-                node.memoize_hashes();
-                node.compute_hash()
-            }),
+            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
             NodeRef::Hash(hash) => *hash,
+        }
+    }
+
+    pub fn memoize_hashes(&self) {
+        if let NodeRef::Node(node, hash) = &self {
+            if hash.get().is_none() {
+                node.memoize_hashes();
+                let _ = hash.set(node.compute_hash());
+            }
         }
     }
 }
@@ -282,6 +288,7 @@ impl Node {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
+        self.memoize_hashes();
         match self {
             Node::Branch(n) => n.compute_hash(),
             Node::Extension(n) => n.compute_hash(),
@@ -289,28 +296,16 @@ impl Node {
         }
     }
 
-    /// Recursively memoizes the hashes of all nodes that are in the trie
-    /// that has `self` as root
+    /// Recursively memoizes the hashes of all nodes of the subtrie that has
+    /// `self` as root (post-order traversal)
     pub fn memoize_hashes(&self) {
         match self {
             Node::Branch(n) => {
                 for child in &n.choices {
-                    match child {
-                        NodeRef::Node(node, hash) if hash.get().is_none() => {
-                            node.memoize_hashes();
-                            let _ = hash.set(node.compute_hash());
-                        }
-                        _ => {}
-                    }
+                    child.memoize_hashes();
                 }
             }
-            Node::Extension(n) => match &n.child {
-                NodeRef::Node(node, hash) if hash.get().is_none() => {
-                    node.memoize_hashes();
-                    let _ = hash.set(node.compute_hash());
-                }
-                _ => {}
-            },
+            Node::Extension(n) => n.child.memoize_hashes(),
             _ => {}
         }
     }
