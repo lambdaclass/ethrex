@@ -7,7 +7,7 @@ use eyre::OptionExt;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{fs::File, io::BufWriter};
 use tracing::debug;
 
@@ -99,7 +99,7 @@ impl Cache {
         }
     }
 
-    pub fn load(dir: &PathBuf, file_name: &str) -> eyre::Result<Self> {
+    pub fn load(dir: &Path, file_name: &str) -> eyre::Result<Self> {
         let full_path = dir.join(file_name);
         let file = BufReader::new(
             File::open(&full_path)
