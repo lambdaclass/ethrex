@@ -146,6 +146,14 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source", help_heading = "Replay Options")]
     pub cached: bool,
+    #[arg(
+        long,
+        help = "Directory to store cache files",
+        value_parser,
+        default_value = "./cache",
+        help_heading = "Replay Options"
+    )]
+    pub cache_dir: std::path::PathBuf,
     #[arg(long, default_value = "on", help_heading = "Replay Options")]
     pub cache_level: CacheLevel,
     #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
@@ -379,6 +387,7 @@ impl EthrexReplayCommand {
                     slack_webhook_url: None,
                     verbose: false,
                     bench: false,
+                    cache_dir: std::path::PathBuf::from("./cache"),
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -661,6 +670,7 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
         eth_client,
         network,
         BlockIdentifier::Number(tx.block_number.as_u64()),
+        tx_opts.opts.cache_dir,
     )
     .await?;
 
@@ -686,7 +696,13 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+    let cache = get_blockdata(
+        eth_client,
+        network.clone(),
+        or_latest(block)?,
+        opts.cache_dir.clone(),
+    )
+    .await?;
 
     // Always write the cache after fetching from RPC.
     // It will be deleted later if not needed.
@@ -908,6 +924,7 @@ pub async fn replay_custom_l1_blocks(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         chain_config,
+        opts.cache_dir,
     );
 
     let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;

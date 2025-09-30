@@ -6,7 +6,10 @@ use ethrex_rpc::{
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use eyre::{OptionExt, WrapErr};
-use std::time::{Duration, SystemTime};
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime},
+};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -23,6 +26,7 @@ pub async fn get_blockdata(
     eth_client: EthClient,
     network: Network,
     block_number: BlockIdentifier,
+    cache_dir: PathBuf,
 ) -> eyre::Result<Cache> {
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
@@ -41,7 +45,9 @@ pub async fn get_blockdata(
 
     let file_name = get_block_cache_file_name(&network, requested_block_number, None);
 
-    if let Ok(cache) = Cache::load(&file_name).inspect_err(|e| warn!("Failed to load cache: {e}")) {
+    if let Ok(cache) =
+        Cache::load(&cache_dir, &file_name).inspect_err(|e| warn!("Failed to load cache: {e}"))
+    {
         info!("Getting block {requested_block_number} data from cache");
         return Ok(cache);
     }
@@ -145,7 +151,12 @@ pub async fn get_blockdata(
         format_duration(execution_witness_retrieval_duration)
     );
 
-    Ok(Cache::new(vec![block], witness_rpc, chain_config))
+    Ok(Cache::new(
+        vec![block],
+        witness_rpc,
+        chain_config,
+        cache_dir,
+    ))
 }
 
 #[cfg(feature = "l2")]
