@@ -2,6 +2,7 @@ use bytes::Bytes;
 use std::{
     cmp::max,
     fmt::Display,
+    path::PathBuf,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -146,6 +147,14 @@ pub struct EthrexReplayOptions {
     pub rpc_url: Url,
     #[arg(long, group = "data_source", help_heading = "Replay Options")]
     pub cached: bool,
+    #[arg(
+        long,
+        help = "Directory to store and load cache files",
+        value_parser,
+        default_value = "./cache",
+        help_heading = "Replay Options"
+    )]
+    pub cache_dir: PathBuf,
     #[arg(long, default_value = "on", help_heading = "Replay Options")]
     pub cache_level: CacheLevel,
     #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
@@ -379,6 +388,7 @@ impl EthrexReplayCommand {
                     slack_webhook_url: None,
                     verbose: false,
                     bench: false,
+                    cache_dir: PathBuf::from("./cache"),
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -433,7 +443,7 @@ impl EthrexReplayCommand {
 
                 let (eth_client, network) = setup(&opts).await?;
 
-                let cache = get_batchdata(eth_client, network, batch).await?;
+                let cache = get_batchdata(eth_client, network, batch, opts.cache_dir).await?;
 
                 let backend = backend(&opts.common.zkvm)?;
 
@@ -480,6 +490,9 @@ impl EthrexReplayCommand {
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
                     slack_webhook_url: None,
+                    bench: false,
+                    cache_dir: PathBuf::from("./cache"),
+                    verbose: false,
                 };
 
                 let report = replay_custom_l2_blocks(max(1, n_blocks), opts).await?;
@@ -661,6 +674,7 @@ async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
         eth_client,
         network,
         BlockIdentifier::Number(tx.block_number.as_u64()),
+        tx_opts.opts.cache_dir,
     )
     .await?;
 
@@ -686,7 +700,13 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let (eth_client, network) = setup(&opts).await?;
 
-    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
+    let cache = get_blockdata(
+        eth_client,
+        network.clone(),
+        or_latest(block)?,
+        opts.cache_dir.clone(),
+    )
+    .await?;
 
     // Always write the cache after fetching from RPC.
     // It will be deleted later if not needed.
@@ -908,6 +928,7 @@ pub async fn replay_custom_l1_blocks(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         chain_config,
+        opts.cache_dir,
     );
 
     let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
@@ -1023,6 +1044,8 @@ pub async fn replay_custom_l2_blocks(
     n_blocks: u64,
     opts: EthrexReplayOptions,
 ) -> eyre::Result<Report> {
+    use ethrex_blockchain::{BlockchainOptions, BlockchainType};
+
     let network = Network::LocalDevnetL2;
 
     let genesis = network.get_genesis()?;
@@ -1043,7 +1066,9 @@ pub async fn replay_custom_l2_blocks(
         rollup_store
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L2, false));
+    let mut blockchain_options = BlockchainOptions::default();
+    blockchain_options.r#type = BlockchainType::L2;
+    let blockchain = Arc::new(Blockchain::new(store.clone(), blockchain_options));
 
     let genesis_hash = genesis.get_block().hash();
 
@@ -1063,6 +1088,7 @@ pub async fn replay_custom_l2_blocks(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         genesis.config,
+        opts.cache_dir.clone(),
     );
 
     let backend = backend(&opts.common.zkvm)?;
@@ -1142,7 +1168,7 @@ pub async fn produce_custom_l2_block(
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
-    let payload = create_payload(&build_payload_args, store)?;
+    let payload = create_payload(&build_payload_args, store, Bytes::new())?;
 
     let payload_build_result = build_payload(
         blockchain.clone(),
