@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759267679324,
+  "lastUpdate": 1759269418141,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35937,6 +35937,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004636967399833812,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f470735172fd542c29b6a0672b7b4c6c13842e3",
+          "message": "chore(replay): remove `ethrex-replayer` bin (#4704)\n\n**Motivation**\n\nThis internal tool was useful in a preliminary stage of `ethrex-replay`\nand for measuring the prover's performance. Unlike `ethrex-replay`, the\n`ethrex-replayer` allowed us to replay L1 blocks endlessly from multiple\nRPCs at the same time (Hoodi, Sepolia, Mainnet).\n\n`ethrex-replay` has evolved enough to offer [the \"endless\" functionality\non its own, under the `blocks`\ncommand](https://github.com/lambdaclass/ethrex/pull/4691). As it doesn't\noffer the replay of L1 blocks of multiple RPCs at the same time, this is\nthe same as running the binary in different processes at the same time\n(this is no problem in guest program execution since it's\nsingle-threaded).\n\nThis is enough to get rid of `ethrex-replayer`.\n\n**Description**\n\nRemoves the `ethrex-replayer` binary.",
+          "timestamp": "2025-09-30T15:29:04Z",
+          "tree_id": "dcb475c1bc95ebb00a8a38abdbebac1a1220c0a5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7f470735172fd542c29b6a0672b7b4c6c13842e3"
+        },
+        "date": 1759269417472,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004650330396177785,
             "unit": "Mgas/s"
           }
         ]
