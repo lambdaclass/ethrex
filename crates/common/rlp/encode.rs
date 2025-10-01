@@ -152,7 +152,7 @@ impl RLPEncode for [u8] {
             U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 1 + 2 + self.len(), // single byte prefix + payload len bytes
             _ => {
                 // fallback if `self` is longer than 2^16 - 1 bytes
-                let payload_len_bytes = (usize::BITS - self.len().leading_zeros()) as usize / 8;
+                let payload_len_bytes = ((usize::BITS - self.len().leading_zeros()) as usize + 7) / 8;
                 1 + payload_len_bytes + self.len()
             }
         }
