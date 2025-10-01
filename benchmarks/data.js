@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759314058210,
+  "lastUpdate": 1759315600005,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36107,6 +36107,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004550760926026489,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "92afbc23f79f62b1a0a1f9b71651e2c8450a622a",
+          "message": "refactor(l1): remove RLPxInitiatorError because it is not used (#4711)\n\n**Motivation**\n\n`RLPxInitiatorError` was not in use.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-09-30T19:47:19Z",
+          "tree_id": "2dea3a390e52847c3fb970e645690785717f7397",
+          "url": "https://github.com/lambdaclass/ethrex/commit/92afbc23f79f62b1a0a1f9b71651e2c8450a622a"
+        },
+        "date": 1759315599389,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004599093182939916,
             "unit": "Mgas/s"
           }
         ]
