@@ -3985,6 +3985,7 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_json",
+ "sp1-prover",
  "sp1-recursion-gnark-ffi",
  "sp1-sdk",
  "thiserror 2.0.16",
