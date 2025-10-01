@@ -49,7 +49,12 @@ sp1 = [
     "ethrex-blockchain/kzg-rs",
 ]
 l2 = []
-c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg", "ethrex-blockchain/c-kzg"]
+kzg-rs = [
+    "ethrex-vm/kzg-rs",
+    "ethrex-common/kzg-rs",
+    "ethrex-blockchain/kzg-rs",
+]
 
 [lib]
 path = "./src/lib.rs"
