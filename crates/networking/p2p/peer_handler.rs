@@ -66,7 +66,7 @@ pub const SNAP_LIMIT: usize = 128;
 // increasing them may be the cause of peers disconnection
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
-const STORAGE_ROOTS_PER_CHUNK: usize = 300;
+const STORAGE_ROOTS_PER_CHUNK: usize = 10_000;
 
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
@@ -1374,6 +1374,10 @@ impl PeerHandler {
                 let current_account_storages = std::mem::take(&mut current_account_storages);
                 let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
+                if snapshot.is_empty() {
+                    continue;
+                }
+
                 if !std::fs::exists(account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
                 {
@@ -1746,11 +1750,15 @@ impl PeerHandler {
                 std::fs::create_dir_all(account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
             }
-            let path =
-                get_account_storages_snapshot_file(account_storages_snapshots_dir, *chunk_index);
-            dump_storages_to_file(&path, snapshot)
-                .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(*chunk_index))?;
-            *chunk_index += 1;
+            if snapshot.is_empty() {
+                warn!(chunk = *chunk_index, "Skipping empty storage snapshot");
+            } else {
+                let path =
+                    get_account_storages_snapshot_file(account_storages_snapshots_dir, *chunk_index);
+                dump_storages_to_file(&path, snapshot)
+                    .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(*chunk_index))?;
+                *chunk_index += 1;
+            }
         }
         disk_joinset
             .join_all()
