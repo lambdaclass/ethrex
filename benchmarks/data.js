@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759308933666,
+  "lastUpdate": 1759314058210,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36078,6 +36078,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004619823524652181,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9f851da741622f82109414ffeae95c242c4bae7e",
+          "message": "fix(l2): add script to read address from deployer in docker compose (#4624)\n\n**Motivation**\n\nRunning `docker compose up` was broken running on `crates/l2`. The\nproblem is that the ethrex l2 container reads the `.env` at the moment\nof running the `docker compose up` and miss the updates on the file that\nwrites the deployer.\n\n**Description**\n\n- Deployer now creates the empty `.env` in the shared volume that the\n`ethrex_l2` container will read\n- Add a parsing and exporting the env vars in the `ethrex_l2` container\nas a previous step to running the sequencer.\n- Add a copy step on CI jobs to retrieve the addresses used in the\ndeployment since they are no longer on the host machine\n- Change base image of the `Dockerfile` to use a Debian as we need to\nuse common unix binaries\n\n**How to Test**\n\nOn main this should failed (check that you have a fresh start, removing\n`cmd/.env`)\n\n```\ncd crates/l2\ndocker compose up\n```",
+          "timestamp": "2025-09-30T19:08:16Z",
+          "tree_id": "5f60478ded7a55b4529fdafa10a23cc13c112278",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9f851da741622f82109414ffeae95c242c4bae7e"
+        },
+        "date": 1759314057567,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004550760926026489,
             "unit": "Mgas/s"
           }
         ]
