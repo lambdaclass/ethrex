@@ -18,7 +18,7 @@ impl<'a> VM<'a> {
         let result = u256_from_bool(lho < rho);
         current_call_frame.stack.push1(result)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // GT operation
@@ -29,7 +29,7 @@ impl<'a> VM<'a> {
         let result = u256_from_bool(lho > rho);
         current_call_frame.stack.push1(result)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SLT operation (signed less than)
@@ -48,7 +48,7 @@ impl<'a> VM<'a> {
         };
         current_call_frame.stack.push1(result)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SGT operation (signed greater than)
@@ -67,7 +67,7 @@ impl<'a> VM<'a> {
         };
         current_call_frame.stack.push1(result)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // EQ operation (equality check)
@@ -79,7 +79,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(result)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // ISZERO operation (check if zero)
@@ -92,7 +92,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(result)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // AND operation
@@ -102,7 +102,7 @@ impl<'a> VM<'a> {
         let [a, b] = *current_call_frame.stack.pop()?;
         current_call_frame.stack.push(&[a & b])?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // OR operation
@@ -112,7 +112,7 @@ impl<'a> VM<'a> {
         let [a, b] = *current_call_frame.stack.pop()?;
         current_call_frame.stack.push(&[a | b])?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // XOR operation
@@ -122,7 +122,7 @@ impl<'a> VM<'a> {
         let [a, b] = *current_call_frame.stack.pop()?;
         current_call_frame.stack.push(&[a ^ b])?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // NOT operation
@@ -132,7 +132,7 @@ impl<'a> VM<'a> {
         let a = current_call_frame.stack.pop1()?;
         current_call_frame.stack.push(&[!a])?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // BYTE operation
@@ -145,7 +145,7 @@ impl<'a> VM<'a> {
             Err(_) => {
                 // Index is out of bounds, then push 0
                 current_call_frame.stack.push_zero()?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(OpcodeResult::Continue);
             }
         };
 
@@ -162,7 +162,7 @@ impl<'a> VM<'a> {
             current_call_frame.stack.push_zero()?;
         }
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     #[expect(clippy::arithmetic_side_effects)]
@@ -178,7 +178,7 @@ impl<'a> VM<'a> {
             current_call_frame.stack.push_zero()?;
         }
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     #[expect(clippy::arithmetic_side_effects)]
@@ -194,7 +194,7 @@ impl<'a> VM<'a> {
             current_call_frame.stack.push_zero()?;
         }
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     #[allow(clippy::arithmetic_side_effects)]
@@ -220,7 +220,7 @@ impl<'a> VM<'a> {
         };
         current_call_frame.stack.push1(res)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }
 

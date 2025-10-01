@@ -71,6 +71,34 @@ impl TrieDB for BackendTrieDB {
         txn.commit()
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
     }
+
+    fn put_batch_no_alloc(&self, key_values: &[(NodeHash, ethrex_trie::Node)]) -> Result<(), TrieError> {
+        use ethrex_rlp::encode::RLPEncode;
+
+        let mut txn = self.backend.begin_write().map_err(|e| {
+            TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
+        })?;
+
+        // 532 is the maximum size of an encoded branch node.
+        // Reuse this single buffer for all encodings to minimize allocations.
+        // Using put_raw() which adds directly to the backend's WriteBatch without
+        // creating intermediate Vec allocations.
+        let mut encode_buffer = Vec::with_capacity(532);
+
+        for (node_hash, node) in key_values {
+            encode_buffer.clear();
+            node.encode(&mut encode_buffer);
+
+            let db_key = self.make_key(*node_hash);
+            // put_raw() adds directly to WriteBatch - no Vec allocation
+            // The backend copies the bytes immediately, allowing buffer reuse
+            txn.put_raw(self.table_name.as_str(), &db_key, encode_buffer.as_slice())
+                .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write to batch: {}", e)))?;
+        }
+
+        txn.commit()
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
+    }
 }
 
 /// Read-only version with persistent locked transaction/snapshot for batch reads

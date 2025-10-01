@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::env;
 use std::time::{Duration, Instant};
 
 use crate::rpc::{get_account, get_block, retry};
@@ -25,14 +26,19 @@ use sha3::{Digest, Keccak256};
 use tokio::time::sleep;
 use tracing::{debug, info};
 
-use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::{Arc, LazyLock};
 
 use super::{Account, NodeRLP};
 
-// 10 Requests Per second max cap. It's a conservative number that every Free tier of RPC Providers supports.
-const RPC_RATE_LIMIT: usize = 10;
-const RATE_LIMIT: Duration = Duration::from_millis(100);
+pub static RPC_RPS: LazyLock<usize> = LazyLock::new(|| {
+    env::var("REPLAY_RPC_RPS")
+        .ok()
+        .and_then(|val| val.parse::<usize>().ok())
+        .unwrap_or(10) // 10 is a safe default that every Free tier of RPC Providers supports.
+});
+pub static RATE_LIMIT: LazyLock<Duration> =
+    LazyLock::new(|| Duration::from_micros(1_000_000 / *RPC_RPS as u64));
 
 /// Structure for a database that fetches data from an RPC endpoint on demand.
 /// Caches already fetched data to minimize RPC calls.
@@ -41,8 +47,8 @@ const RATE_LIMIT: Duration = Duration::from_millis(100);
 pub struct RpcDB {
     /// RPC endpoint URL.
     pub rpc_url: String,
-    /// Block number of the actual block to execute.
-    pub block_number: usize,
+    /// Block number of the block we want to execute.
+    pub block_number: u64,
     /// Cache of already fetched accounts. This includes state, code, storage and proofs.
     /// Accounts in the parent block, i.e. the initial state of the execution.
     pub cache: Arc<Mutex<HashMap<Address, Account>>>,
@@ -63,7 +69,7 @@ impl RpcDB {
     pub fn new(
         rpc_url: &str,
         chain_config: ChainConfig,
-        block_number: usize,
+        block_number: u64,
         vm_type: VMType,
     ) -> Self {
         RpcDB {
@@ -82,7 +88,7 @@ impl RpcDB {
     pub async fn with_cache(
         rpc_url: &str,
         chain_config: ChainConfig,
-        block_number: usize,
+        block_number: u64,
         block: &Block,
         vm_type: VMType,
     ) -> eyre::Result<Self> {
@@ -137,8 +143,8 @@ impl RpcDB {
     ///
     /// # Parameters
     /// * `index` - List of addresses and their storage keys to fetch
-    /// * `from_child` - If true, fetches data for the post-state (block_number + 1),
-    ///   otherwise fetches data for the pre-state (block_number)
+    /// * `from_child` - If true, fetches data for the post-state (block_number),
+    ///   otherwise fetches data for the pre-state (block_number - 1)
     ///
     /// # Implementation details
     /// * Uses rate limiting to avoid surpassing the RPC endpoint limits
@@ -150,16 +156,16 @@ impl RpcDB {
         from_child: bool,
     ) -> eyre::Result<HashMap<Address, Account>> {
         let block_number = if from_child {
-            self.block_number + 1
-        } else {
             self.block_number
-        };
+        } else {
+            self.block_number - 1
+        } as usize;
 
         let mut fetched = HashMap::new();
         let mut counter = 0;
 
         // Fetch accounts in chunks to respect rate limits of the RPC endpoint
-        for chunk in index.chunks(RPC_RATE_LIMIT) {
+        for chunk in index.chunks(*RPC_RPS) {
             let start = Instant::now();
 
             // Call to `eth_getProof` for each account in the chunk
@@ -196,7 +202,7 @@ impl RpcDB {
 
             // Cooldown depends on chunk size.
             let chunk_size = chunk.len() as u32;
-            let target_gap = RATE_LIMIT * chunk_size;
+            let target_gap = *RATE_LIMIT * chunk_size;
             let elapsed = start.elapsed();
 
             if target_gap > elapsed {

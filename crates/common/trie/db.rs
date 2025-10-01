@@ -1,6 +1,7 @@
 use ethereum_types::H256;
+use ethrex_rlp::encode::RLPEncode;
 
-use crate::{NodeHash, NodeRLP, Trie, error::TrieError};
+use crate::{Node, NodeHash, NodeRLP, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -9,6 +10,15 @@ use std::{
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError>;
+    // TODO: replace putbatch with this function.
+    fn put_batch_no_alloc(&self, key_values: &[(NodeHash, Node)]) -> Result<(), TrieError> {
+        self.put_batch(
+            key_values
+                .iter()
+                .map(|node| (node.0, node.1.encode_to_vec()))
+                .collect(),
+        )
+    }
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
