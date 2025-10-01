@@ -65,6 +65,8 @@ pub const SNAP_LIMIT: usize = 128;
 // increasing them may be the cause of peers disconnection
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
+const STORAGE_ROOTS_PER_CHUNK: usize = 300;
+
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
@@ -1279,33 +1281,73 @@ impl PeerHandler {
             .set(CurrentStepValue::RequestingStorageRanges);
         debug!("Starting request_storage_ranges function");
         // 1) split the range in chunks of same length
-        let mut accounts_by_root_hash: BTreeMap<_, Vec<_>> = BTreeMap::new();
-        for (account, (maybe_root_hash, _)) in &account_storage_roots.accounts_with_storage_root {
-            match maybe_root_hash {
-                Some(root) => {
-                    accounts_by_root_hash
-                        .entry(*root)
-                        .or_default()
-                        .push(*account);
-                }
+        let account_root_pairs: Vec<(H256, Option<H256>)> = account_storage_roots
+            .accounts_with_storage_root
+            .iter()
+            .map(|(account, (maybe_root_hash, _))| (*account, *maybe_root_hash))
+            .collect();
+        let mut chunk_groups: BTreeMap<H256, Vec<H256>> = BTreeMap::new();
+
+        for (account, maybe_root_hash) in account_root_pairs {
+            let root = match maybe_root_hash {
+                Some(root) => root,
                 None => {
-                    let root = store
-                        .get_account_state_by_acc_hash(pivot_header.hash(), *account)
+                    store
+                        .get_account_state_by_acc_hash(pivot_header.hash(), account)
                         .expect("Failed to get account in state trie")
-                        .expect("Could not find account that should have been downloaded or healed")
-                        .storage_root;
-                    accounts_by_root_hash
-                        .entry(root)
-                        .or_default()
-                        .push(*account);
+                        .expect(
+                            "Could not find account that should have been downloaded or healed",
+                        )
+                        .storage_root
                 }
+            };
+
+            chunk_groups.entry(root).or_default().push(account);
+
+            if chunk_groups.len() >= STORAGE_ROOTS_PER_CHUNK {
+                let chunk_accounts = Vec::from_iter(chunk_groups.into_iter());
+                self.process_storage_chunk(
+                    chunk_accounts,
+                    account_storage_roots,
+                    account_storages_snapshots_dir,
+                    &mut chunk_index,
+                    pivot_header,
+                )
+                .await?;
+                chunk_groups = BTreeMap::new();
             }
         }
-        let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
-        // TODO: Turn this into a stable sort for binary search.
+
+        if !chunk_groups.is_empty() {
+            let chunk_accounts = Vec::from_iter(chunk_groups.into_iter());
+            self.process_storage_chunk(
+                chunk_accounts,
+                account_storage_roots,
+                account_storages_snapshots_dir,
+                &mut chunk_index,
+                pivot_header,
+            )
+            .await?;
+        }
+
+        Ok(chunk_index)
+    }
+
+    async fn process_storage_chunk(
+        &mut self,
+        mut accounts_by_root_hash: Vec<(H256, Vec<H256>)>,
+        account_storage_roots: &mut AccountStorageRoots,
+        account_storages_snapshots_dir: &Path,
+        chunk_index: &mut u64,
+        pivot_header: &mut BlockHeader,
+    ) -> Result<(), PeerHandlerError> {
+        if accounts_by_root_hash.is_empty() {
+            return Ok(());
+        }
+
+        // Maintain previous prioritization of busy roots
         accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
-        let chunk_size = 300;
-        let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
+    let chunk_count = (accounts_by_root_hash.len() / STORAGE_ROOTS_PER_CHUNK) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
@@ -1313,8 +1355,8 @@ impl PeerHandler {
 
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..chunk_count {
-            let chunk_start = chunk_size * i;
-            let chunk_end = (chunk_start + chunk_size).min(accounts_by_root_hash.len());
+            let chunk_start = STORAGE_ROOTS_PER_CHUNK * i;
+            let chunk_end = (chunk_start + STORAGE_ROOTS_PER_CHUNK).min(accounts_by_root_hash.len());
             tasks_queue_not_started.push_back(StorageTask {
                 start_index: chunk_start,
                 end_index: chunk_end,
@@ -1340,7 +1382,7 @@ impl PeerHandler {
         // vector of hashed storage keys and storage values.
         let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
 
-        debug!("Starting request_storage_ranges loop");
+        debug!("Starting request_storage_ranges chunk loop");
         loop {
             if current_account_storages
                 .values()
@@ -1371,15 +1413,16 @@ impl PeerHandler {
                         })
                         .map_err(PeerHandlerError::DumpError)?;
                 }
+                let file_index = *chunk_index;
                 disk_joinset.spawn(async move {
                     let path = get_account_storages_snapshot_file(
                         &account_storages_snapshots_dir_cloned,
-                        chunk_index,
+                        file_index,
                     );
                     dump_storages_to_file(&path, snapshot)
                 });
 
-                chunk_index += 1;
+                *chunk_index += 1;
             }
 
             if let Ok(result) = task_receiver.try_recv() {
@@ -1397,9 +1440,7 @@ impl PeerHandler {
 
                 for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                     for account in accounts {
-                        if !accounts_done.contains_key(account) {
-                            accounts_done.insert(*account, vec![]);
-                        }
+                        accounts_done.entry(*account).or_insert_with(Vec::new);
                     }
                 }
 
@@ -1430,7 +1471,11 @@ impl PeerHandler {
                             let acc_hash = accounts_by_root_hash[remaining_start].1[0];
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
-                                .get_mut(&acc_hash).ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .get_mut(&acc_hash)
+                                .ok_or(PeerHandlerError::UnrecoverableError(
+                                    "Tried to get the old download intervals for an account but did not find them"
+                                        .to_owned(),
+                                ))?;
                             for (old_start, end) in old_intervals {
                                 if end == &hash_end {
                                     *old_start = hash_start;
@@ -1452,8 +1497,6 @@ impl PeerHandler {
                                     if !old_intervals.is_empty() {
                                         acc_hash = *account;
                                     }
-                                } else {
-                                    continue;
                                 }
                             }
                             if acc_hash.is_zero() {
@@ -1462,7 +1505,10 @@ impl PeerHandler {
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&acc_hash)
-                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(PeerHandlerError::UnrecoverableError(
+                                    "Tried to get the old download intervals for an account but did not find them"
+                                        .to_owned(),
+                                ))?;
                             old_intervals.remove(
                                 old_intervals
                                     .iter()
@@ -1474,7 +1520,7 @@ impl PeerHandler {
                             );
                             if old_intervals.is_empty() {
                                 for account in accounts_by_root_hash[remaining_start].1.iter() {
-                                    accounts_done.insert(*account, vec![]);
+                                    accounts_done.entry(*account).or_insert_with(Vec::new);
                                     account_storage_roots.healed_accounts.insert(*account);
                                 }
                             }
@@ -1534,7 +1580,10 @@ impl PeerHandler {
                                 let (_, intervals) = account_storage_roots
                                     .accounts_with_storage_root
                                     .get_mut(&accounts_by_root_hash[remaining_start].1[0])
-                                    .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                    .ok_or(PeerHandlerError::UnrecoverableError(
+                                        "Tried to get the old download intervals for an account but did not find them"
+                                            .to_owned(),
+                                    ))?;
 
                                 for i in 0..chunk_count {
                                     let start_hash_u256 = start_hash_u256 + chunk_size * i;
@@ -1570,7 +1619,10 @@ impl PeerHandler {
                             let (_, intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&accounts_by_root_hash[remaining_start].1[0])
-                                .ok_or(PeerHandlerError::UnrecoverableError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(PeerHandlerError::UnrecoverableError(
+                                    "Trie to get the old download intervals for an account but did not find them"
+                                        .to_owned(),
+                                ))?;
 
                             for i in 0..chunk_count {
                                 let start_hash_u256 = start_hash_u256 + chunk_size * i;
@@ -1715,9 +1767,10 @@ impl PeerHandler {
                     .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
             }
             let path =
-                get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
+                get_account_storages_snapshot_file(account_storages_snapshots_dir, *chunk_index);
             dump_storages_to_file(&path, snapshot)
-                .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
+                .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(*chunk_index))?;
+            *chunk_index += 1;
         }
         disk_joinset
             .join_all()
@@ -1745,7 +1798,7 @@ impl PeerHandler {
             self.peer_table.free_peer(&result.peer_id).await?;
         }
 
-        Ok(chunk_index + 1)
+        Ok(())
     }
 
     async fn request_storage_ranges_worker(
