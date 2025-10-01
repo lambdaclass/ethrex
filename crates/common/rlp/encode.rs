@@ -209,15 +209,11 @@ pub fn encoded_length(bytes: &[u8]) -> usize {
         0 => 1,
         1 if bytes[0] < 0x80 => 1,
         1..56 => 1 + bytes.len(),
-        56..U8_MAX_PLUS_ONE => 2 + bytes.len(),
-        U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 3 + bytes.len(),
+        56..U8_MAX_PLUS_ONE => 1 + 1 + bytes.len(),
+        U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 1 + 2 + bytes.len(),
         _ => {
-            let leading_zeros = bytes.len()
-                .to_be_bytes()
-                .iter()
-                .position(|&x| x != 0)
-                .unwrap();
-            usize::BITS as usize / 8 - leading_zeros + bytes.len()
+            let len_bytes = (usize::BITS - bytes.len().leading_zeros()) as usize / 8;
+            1 + len_bytes + bytes.len()
         }
     }
 }
