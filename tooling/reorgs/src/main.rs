@@ -38,6 +38,9 @@ async fn main() {
     for _ in 0..30 {
         run_test(&cmd_path, reorgs_full_sync_smoke_test).await;
     }
+    for _ in 0..30 {
+        run_test(&cmd_path, reorgs_full_sync_smoke_1024_test).await;
+    }
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_reorg_back_to_base_with_common_ancestor).await;
     run_test(&cmd_path, test_storage_slots_reorg).await;
@@ -161,6 +164,29 @@ async fn reorgs_full_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
     let _ = node2.extend_chain(side_chain, 10).await;
 
     // Try to fully sync node0 to base chain (which is a peer of node1 and node2)
+    // It will ask peer1 sometimes and peer2 others, it has to work with both
+    // So if one fails, this test will fail 50% of the time
+    node0.update_forkchoice(&base_chain).await;
+}
+
+async fn reorgs_full_sync_smoke_1024_test(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+
+    // Start three ethrex nodes
+    let node0 = simulator.start_node().await; // Test_node
+    let node1 = simulator.start_node().await;
+    let node2 = simulator.start_node().await;
+
+    let base_chain = simulator.get_base_chain();
+    let side_chain = base_chain.fork();
+    // Create a chain and extend it with more than 1024 empty blocks
+    let base_chain = node1.extend_chain(base_chain, 1030).await;
+
+    // Create another chain (a fork of the first one) and extend it with a few empty blocks
+    let _ = node2.extend_chain(side_chain, 10).await;
+
+    // Try to fully sync node0 to base chain (which is a peer of node1 and node2)
+    // The request of headers New to Olds will fail since it exceeds 1024 blocks
     // It will ask peer1 sometimes and peer2 others, it has to work with both
     // So if one fails, this test will fail 50% of the time
     node0.update_forkchoice(&base_chain).await;
