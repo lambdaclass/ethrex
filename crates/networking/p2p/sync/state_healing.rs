@@ -43,6 +43,7 @@ pub struct MembatchEntryValue {
     node: Node,
     children_not_in_storage_count: u64,
     parent_path: Nibbles,
+    previous: Option<Node>,
 }
 
 pub async fn heal_state_trie_wrap(
@@ -98,6 +99,7 @@ async fn heal_state_trie(
         hash: state_root,
         path: Nibbles::default(), // We need to be careful, the root parent is a special case
         parent_path: Nibbles::default(),
+        previous: None, // None => can't assume anything
     }];
     let mut last_update = Instant::now();
     let mut inflight_tasks: u64 = 0;
@@ -108,7 +110,7 @@ async fn heal_state_trie(
     let mut leafs_healed = 0;
     let mut empty_try_recv: u64 = 0;
     let mut heals_per_cycle: u64 = 0;
-    let mut nodes_to_write: BTreeMap<Nibbles, Vec<u8>> = BTreeMap::new();
+    let mut nodes_to_write: Vec<(Nibbles, Node, Option<Node>)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -269,8 +271,7 @@ async fn heal_state_trie(
         let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
 
         if nodes_to_write.len() > 100_000 || is_done || is_stale {
-            let to_write = nodes_to_write;
-            nodes_to_write = BTreeMap::new();
+            let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
             if db_joinset.len() > 3 {
                 db_joinset.join_next().await;
@@ -278,11 +279,28 @@ async fn heal_state_trie(
             db_joinset.spawn_blocking(|| {
                 spawned_rt::tasks::block_on(async move {
                     // TODO: replace put batch with the async version
+                    let mut encoded_to_write = BTreeMap::new();
+                    for (path, node, previous) in to_write {
+                        perform_needed_deletions(
+                            &store,
+                            &node,
+                            previous,
+                            &path,
+                            &mut encoded_to_write,
+                        )
+                        .await
+                        .unwrap();
+                        if let Node::Leaf(leaf) = &node {
+                            encoded_to_write
+                                .insert(path.concat(leaf.partial.clone()), leaf.value.clone());
+                        }
+                        encoded_to_write.insert(path, node.encode_to_vec());
+                    }
                     let trie_db = store
                         .open_direct_state_trie(*EMPTY_TRIE_HASH)
                         .expect("Store should open");
                     let db = trie_db.db();
-                    db.put_batch(to_write.into_iter().collect())
+                    db.put_batch(encoded_to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
                 })
             });
@@ -322,7 +340,7 @@ async fn heal_state_batch(
     nodes: Vec<Node>,
     store: Store,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut BTreeMap<Nibbles, Vec<u8>>, // TODO: change tuple to struct
+    nodes_to_write: &mut Vec<(Nibbles, Node, Option<Node>)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
@@ -334,6 +352,7 @@ async fn heal_state_batch(
             commit_node(
                 &store,
                 node,
+                path.previous,
                 &path.path,
                 &path.parent_path,
                 membatch,
@@ -345,6 +364,7 @@ async fn heal_state_batch(
                 node: node.clone(),
                 children_not_in_storage_count: missing_children_count,
                 parent_path: path.parent_path.clone(),
+                previous: path.previous,
             };
             membatch.insert(path.path.clone(), entry);
         }
@@ -354,7 +374,8 @@ async fn heal_state_batch(
 
 async fn perform_needed_deletions(
     store: &Store,
-    node: Node,
+    node: &Node,
+    previous: Option<Node>,
     node_path: &Nibbles,
     nodes_to_write: &mut BTreeMap<Nibbles, Vec<u8>>,
 ) -> Result<(), SyncError> {
@@ -370,11 +391,22 @@ async fn perform_needed_deletions(
                 .iter()
                 .enumerate()
                 .filter(|(_, child)| !child.is_valid())
+                .filter(|(choice, _)| match &previous {
+                    Some(Node::Branch(previous)) => previous.choices[*choice].is_valid(),
+                    Some(Node::Extension(previous)) => {
+                        previous.prefix != Nibbles::from_hex(vec![*choice as u8])
+                    }
+                    Some(Node::Leaf(_)) => false,
+                    None => true,
+                })
                 .map(|(choice, _)| choice as u8)
                 .collect();
             store.delete_subtrees(node_path.clone(), children).await?;
         }
         Node::Extension(node) => {
+            if let Some(Node::Leaf(_)) = previous {
+                return Ok(());
+            }
             // An extension node is equivalent to a series of branch nodes with only
             // one valid child each, so we remove all the empty siblings on the path.
             let (first, second) = compute_subtree_ranges(&node_path, &node.prefix);
@@ -387,6 +419,9 @@ async fn perform_needed_deletions(
             }
         }
         Node::Leaf(node) => {
+            if let Some(Node::Leaf(_)) = previous {
+                return Ok(());
+            }
             // An extension node is equivalent to a series of branch nodes with only
             // one valid child each, so we remove all the empty siblings on the path.
             let (first, second) = compute_subtree_ranges(&node_path, &node.partial);
@@ -405,18 +440,13 @@ async fn perform_needed_deletions(
 async fn commit_node(
     store: &Store,
     node: Node,
+    previous: Option<Node>,
     path: &Nibbles,
     parent_path: &Nibbles,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut BTreeMap<Nibbles, Vec<u8>>,
+    nodes_to_write: &mut Vec<(Nibbles, Node, Option<Node>)>,
 ) {
-    perform_needed_deletions(store, node.clone(), &path, nodes_to_write)
-        .await
-        .unwrap();
-    nodes_to_write.insert(path.clone(), node.encode_to_vec());
-    if let Node::Leaf(leaf) = &node {
-        nodes_to_write.insert(path.concat(leaf.partial.clone()), leaf.value.clone());
-    }
+    nodes_to_write.push((path.clone(), node, previous));
 
     if parent_path == path {
         return; // Case where we're saving the root
@@ -431,6 +461,7 @@ async fn commit_node(
         Box::pin(commit_node(
             store,
             membatch_entry.node,
+            membatch_entry.previous,
             parent_path,
             &membatch_entry.parent_path,
             membatch,
@@ -454,32 +485,54 @@ pub fn node_missing_children(
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
                 let child_path = path.clone().append_new(index as u8);
-                if child.is_valid() && child.get_node(trie_state, child_path.clone())?.is_none() {
-                    missing_children_count += 1;
-                    paths.extend(vec![RequestMetadata {
-                        hash: child.compute_hash().finalize(),
-                        path: child_path,
-                        parent_path: path.clone(),
-                    }]);
+                if !child.is_valid() {
+                    continue;
                 }
+                let (validity, previous) = match child
+                    .get_node_unchecked(trie_state, child_path.clone())
+                    .inspect_err(|_| {
+                        error!("Malformed data when doing get child of a branch node")
+                    })? {
+                    Some((validity, previous)) => (validity, Some(previous)),
+                    None => (false, None),
+                };
+                if validity {
+                    continue;
+                }
+
+                missing_children_count += 1;
+                paths.extend(vec![RequestMetadata {
+                    hash: child.compute_hash().finalize(),
+                    path: child_path,
+                    parent_path: path.clone(),
+                    previous,
+                }]);
             }
         }
         Node::Extension(node) => {
             let child_path = path.concat(node.prefix.clone());
-            if node.child.is_valid()
-                && node
-                    .child
-                    .get_node(trie_state, child_path.clone())?
-                    .is_none()
-            {
-                missing_children_count += 1;
-
-                paths.extend(vec![RequestMetadata {
-                    hash: node.child.compute_hash().finalize(),
-                    path: child_path,
-                    parent_path: path.clone(),
-                }]);
+            if !node.child.is_valid() {
+                return Ok((0, vec![]));
             }
+            let (validity, previous) = match node
+                .child
+                .get_node_unchecked(trie_state, child_path.clone())
+                .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
+            {
+                Some((validity, previous)) => (validity, Some(previous)),
+                None => (false, None),
+            };
+            if validity {
+                return Ok((0, vec![]));
+            }
+            missing_children_count += 1;
+
+            paths.extend(vec![RequestMetadata {
+                hash: node.child.compute_hash().finalize(),
+                path: child_path,
+                parent_path: path.clone(),
+                previous,
+            }]);
         }
         _ => {}
     }
