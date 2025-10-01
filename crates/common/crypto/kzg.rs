@@ -88,19 +88,27 @@ pub fn verify_blob_kzg_proof(
         )
         .map_err(KzgError::from);
     }
-    #[cfg(feature = "kzg-rs")]
+    #[cfg(not(feature = "c-kzg"))]
     {
-        return kzg_rs::KzgProof::verify_blob_kzg_proof(
-            kzg_rs::Blob(blob),
-            &kzg_rs::Bytes48(commitment),
-            &kzg_rs::Bytes48(proof),
-            &kzg_rs::get_kzg_settings(),
-        )
-        .map_err(KzgError::from);
-    }
-    #[cfg(feature = "openvm-kzg")]
-    {
-        unimplemented!("There's no implementation of blob verification for openvm-kzg yet.");
+        #[cfg(feature = "kzg-rs")]
+        {
+            return kzg_rs::KzgProof::verify_blob_kzg_proof(
+                kzg_rs::Blob(blob),
+                &kzg_rs::Bytes48(commitment),
+                &kzg_rs::Bytes48(proof),
+                &kzg_rs::get_kzg_settings(),
+            )
+            .map_err(KzgError::from);
+        }
+        #[cfg(not(feature = "kzg-rs"))]
+        {
+            #[cfg(feature = "openvm-kzg")]
+            {
+                unimplemented!(
+                    "There's no implementation of blob verification for openvm-kzg yet."
+                );
+            }
+        }
     }
 }
 
@@ -145,27 +153,33 @@ pub fn verify_kzg_proof(
         )
         .map_err(KzgError::from);
     }
-    #[cfg(feature = "kzg-rs")]
+    #[cfg(not(feature = "c-kzg"))]
     {
-        return kzg_rs::KzgProof::verify_kzg_proof(
-            &kzg_rs::Bytes48(commitment_bytes),
-            &kzg_rs::Bytes32(z),
-            &kzg_rs::Bytes32(y),
-            &kzg_rs::Bytes48(proof_bytes),
-            &kzg_rs::get_kzg_settings(),
-        )
-        .map_err(KzgError::from);
-    }
-    #[cfg(feature = "openvm-kzg")]
-    {
-        return openvm_kzg::KzgProof::verify_kzg_proof(
-            &openvm_kzg::Bytes48::from_slice(&commitment_bytes)?,
-            &openvm_kzg::Bytes32::from_slice(&z)?,
-            &openvm_kzg::Bytes32::from_slice(&y)?,
-            &openvm_kzg::Bytes48::from_slice(&proof_bytes)?,
-            &openvm_kzg::get_kzg_settings(),
-        )
-        .map_err(KzgError::from);
+        #[cfg(feature = "kzg-rs")]
+        {
+            return kzg_rs::KzgProof::verify_kzg_proof(
+                &kzg_rs::Bytes48(commitment_bytes),
+                &kzg_rs::Bytes32(z),
+                &kzg_rs::Bytes32(y),
+                &kzg_rs::Bytes48(proof_bytes),
+                &kzg_rs::get_kzg_settings(),
+            )
+            .map_err(KzgError::from);
+        }
+        #[cfg(not(feature = "kzg-rs"))]
+        {
+            #[cfg(feature = "openvm-kzg")]
+            {
+                return openvm_kzg::KzgProof::verify_kzg_proof(
+                    &openvm_kzg::Bytes48::from_slice(&commitment_bytes)?,
+                    &openvm_kzg::Bytes32::from_slice(&z)?,
+                    &openvm_kzg::Bytes32::from_slice(&y)?,
+                    &openvm_kzg::Bytes48::from_slice(&proof_bytes)?,
+                    &openvm_kzg::get_kzg_settings(),
+                )
+                .map_err(KzgError::from);
+            }
+        }
     }
 }
 
