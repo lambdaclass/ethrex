@@ -268,7 +268,8 @@
 <tr><td>besu</td><td>❌</td><td>Doesn't return proof for non-existing accounts</td></tr>
 </tbody></table>
 </div>
-<p>We support any other client that is compliant with <code>eth_getProof</code> or <code>debug_executionWitness</code> endpoints.</p>
+<p>We support any other client that is compliant with <code>eth_getProof</code> or <code>debug_executionWitness</code> endpoints.
+You can set the max requests per second to the RPC url with the environment variable <code>REPLAY_RPC_RPS</code>. This is particularly useful when using <code>eth_getProof</code>. Default is 10.</p>
 <p>Execution of some particular blocks with the <code>eth_getProof</code> method won't work with zkVMs. But without using these it should work for any block. Read more about this in <a href="./faq.html">FAQ</a>. Also, when running against a <strong>full node</strong> using <code>eth_getProof</code> if for some reason information retrieval were to take longer than 25 minutes it would probably fail because the node may have pruned its state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.</p>
 <h2 id="supported-zkvm-replays-execution--proving"><a class="header" href="#supported-zkvm-replays-execution--proving">Supported zkVM Replays (execution &amp; proving)</a></h2>
 <blockquote>
