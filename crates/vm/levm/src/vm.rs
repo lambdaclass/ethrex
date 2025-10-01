@@ -457,6 +457,7 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+            self.advance_pc(1)?;
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
@@ -464,14 +465,7 @@ impl<'a> VM<'a> {
             let op_result = self.opcode_table[opcode as usize].call(self);
 
             let result = match op_result {
-                Ok(OpcodeResult::Continue { pc_increment }) => {
-                    self.advance_pc(pc_increment)?;
-                    continue;
-                }
-                Ok(OpcodeResult::SetPc { new_pc }) => {
-                    self.current_call_frame.pc = new_pc;
-                    continue;
-                }
+                Ok(OpcodeResult::Continue) => continue,
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };
@@ -483,8 +477,7 @@ impl<'a> VM<'a> {
             }
 
             // Handle interaction between child and parent callframe.
-            let pc_increment = self.handle_return(&result)?;
-            self.advance_pc(pc_increment)?;
+            self.handle_return(&result)?;
         }
     }
 

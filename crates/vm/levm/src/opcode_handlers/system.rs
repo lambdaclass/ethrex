@@ -656,7 +656,7 @@ impl<'a> VM<'a> {
         for (condition, reason) in checks {
             if condition {
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(OpcodeResult::Continue);
             }
         }
 
@@ -669,7 +669,7 @@ impl<'a> VM<'a> {
             self.current_call_frame.stack.push1(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         let mut stack = self.stack_pool.pop().unwrap_or_default();
@@ -703,7 +703,7 @@ impl<'a> VM<'a> {
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        Ok(OpcodeResult::Continue { pc_increment: 0 })
+        Ok(OpcodeResult::Continue)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -737,7 +737,7 @@ impl<'a> VM<'a> {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(OpcodeResult::Continue);
             }
         }
 
@@ -749,7 +749,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
@@ -804,8 +804,6 @@ impl<'a> VM<'a> {
             }
 
             self.tracer.exit_context(&ctx_result, false)?;
-
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
@@ -839,7 +837,7 @@ impl<'a> VM<'a> {
             self.substate.push_backup();
         }
 
-        Ok(OpcodeResult::Continue { pc_increment: 0 })
+        Ok(OpcodeResult::Continue)
     }
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
@@ -857,7 +855,7 @@ impl<'a> VM<'a> {
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
     ///
     /// Returns the pc increment.
-    pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<usize, VMError> {
+    pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
         self.handle_state_backup(ctx_result)?;
         let executed_call_frame = self.pop_call_frame()?;
 
@@ -868,7 +866,7 @@ impl<'a> VM<'a> {
             self.handle_return_call(executed_call_frame, ctx_result)?;
         }
 
-        Ok(1)
+        Ok(())
     }
 
     pub fn handle_return_call(
