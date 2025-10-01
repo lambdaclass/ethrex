@@ -227,7 +227,6 @@ impl BranchNode {
                 NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
                 child @ NodeHash::Inline(_) => buf.extend(child.as_ref()),
             }
-            child.compute_hash_ref().as_ref().encode(&mut buf);
         }
         self.value.encode(&mut buf);
 

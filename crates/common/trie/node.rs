@@ -17,7 +17,7 @@ use ethrex_rlp::{
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles, node};
+use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
