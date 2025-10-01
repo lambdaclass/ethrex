@@ -161,6 +161,9 @@ fn exception_matches_expected(
                 TransactionExpectedException::IntrinsicGasTooLow,
                 VMError::TxValidation(TxValidationError::IntrinsicGasTooLow)
             ) | (
+                TransactionExpectedException::IntrinsicGasBelowFloorGasCost,
+                VMError::TxValidation(TxValidationError::IntrinsicGasBelowFloorGasCost)
+            ) | (
                 TransactionExpectedException::InsufficientAccountFunds,
                 VMError::TxValidation(TxValidationError::InsufficientAccountFunds)
             ) | (
