@@ -149,7 +149,7 @@ impl ExtensionNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
         encoder = self.child.compute_hash().encode(encoder);
         encoder.finish();
