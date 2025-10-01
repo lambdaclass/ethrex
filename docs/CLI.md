@@ -57,6 +57,11 @@ Node options:
 
           [default: INFO]
 
+      --mempool.maxsize <MEMPOOL_MAX_SIZE>
+          Maximum size of the mempool in number of transactions
+        
+          [default: 10000]
+
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
           Comma separated enode URLs for P2P discovery bootstrap.
@@ -106,6 +111,12 @@ RPC options:
           Receives the jwt secret used for authenticated rpc requests.
 
           [default: jwt.hex]
+
+Block producer options:
+      --block-producer.extra-data <EXTRA_DATA>
+          Block extra data message.
+
+          [default: "ethrex 0.1.0"]
 ```
 
 <!-- END_CLI_HELP -->

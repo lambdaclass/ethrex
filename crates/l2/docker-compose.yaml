@@ -64,7 +64,7 @@ services:
       # RPC
       - 127.0.0.1:1729:1729
       # Proposer
-      - 127.0.0.1:3900:3900
+      - ${ETHREX_PROOF_COORDINATOR_ADDRESS:-127.0.0.1}:3900:3900
     environment:
       # Default values are taken from cmd/ethrex/l2/options.rs defaults.
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545

@@ -203,6 +203,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 tdx_private_key: opts
                     .proof_coordinator_opts
                     .proof_coordinator_tdx_private_key,
+                qpl_tool_path: opts.proof_coordinator_opts.proof_coordinator_qpl_tool_path,
                 validium: opts.validium,
             },
             based: BasedConfig {
@@ -540,6 +541,16 @@ pub struct ProofCoordinatorOptions {
     )]
     pub proof_coordinator_tdx_private_key: Option<SecretKey>,
     #[arg(
+        long = "proof-coordinator.qpl-tool-path",
+        value_name = "QPL_TOOL_PATH",
+        env = "ETHREX_PROOF_COORDINATOR_QPL_TOOL_PATH",
+        default_value = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool",
+        help_heading = "Proof coordinator options",
+        long_help = "Path to the QPL tool that will be used to generate TDX quotes."
+    )]
+    pub proof_coordinator_qpl_tool_path: Option<String>,
+
+    #[arg(
         long = "proof-coordinator.remote-signer-url",
         value_name = "URL",
         env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_URL",
@@ -602,6 +613,7 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             proof_coordinator_tdx_private_key: None,
+            proof_coordinator_qpl_tool_path: None,
         }
     }
 }

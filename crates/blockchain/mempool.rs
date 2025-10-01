@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::RwLock,
 };
 
@@ -17,9 +17,7 @@ use ethrex_common::{
 };
 use ethrex_storage::error::StoreError;
 use std::collections::HashSet;
-
-// Max number of transactions in the mempool
-const MEMPOOL_MAX_SIZE: usize = 10000; //TODO: Define
+use tracing::warn;
 
 #[derive(Debug, Default)]
 struct MempoolInner {
@@ -27,13 +25,19 @@ struct MempoolInner {
     transaction_pool: HashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: HashMap<H256, BlobsBundle>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
-    txs_order: Vec<H256>,
+    txs_order: VecDeque<H256>,
+    max_mempool_size: usize,
+    // Max number of transactions to let the mempool order queue grow before pruning it
+    mempool_prune_threshold: usize,
 }
 
 impl MempoolInner {
-    fn new() -> Self {
+    fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
-            txs_order: Vec::with_capacity(MEMPOOL_MAX_SIZE),
+            txs_order: VecDeque::with_capacity(max_mempool_size * 2),
+            transaction_pool: HashMap::with_capacity(max_mempool_size),
+            max_mempool_size,
+            mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
             ..Default::default()
         }
     }
@@ -48,7 +52,6 @@ impl MempoolInner {
             self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
             self.transaction_pool.remove(hash);
             self.broadcast_pool.remove(hash);
-            self.txs_order.retain(|h| h != hash);
         };
 
         Ok(())
@@ -56,8 +59,16 @@ impl MempoolInner {
 
     /// Remove the oldest transaction in the pool
     fn remove_oldest_transaction(&mut self) -> Result<(), StoreError> {
-        if let Some(&oldest_hash) = self.txs_order.first() {
-            self.remove_transaction_with_lock(&oldest_hash)?;
+        // Remove elements from the order queue until one is present in the pool
+        while self.transaction_pool.len() >= self.max_mempool_size {
+            if let Some(oldest_hash) = self.txs_order.pop_front() {
+                self.remove_transaction_with_lock(&oldest_hash)?;
+            } else {
+                warn!(
+                    "Mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
+                );
+                break;
+            }
         }
 
         Ok(())
@@ -70,9 +81,9 @@ pub struct Mempool {
 }
 
 impl Mempool {
-    pub fn new() -> Self {
+    pub fn new(max_mempool_size: usize) -> Self {
         Mempool {
-            inner: RwLock::new(MempoolInner::new()),
+            inner: RwLock::new(MempoolInner::new(max_mempool_size)),
         }
     }
 
@@ -95,10 +106,17 @@ impl Mempool {
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
-        if inner.transaction_pool.len() >= MEMPOOL_MAX_SIZE {
+        // Prune the order queue if it has grown too much
+        if inner.txs_order.len() > inner.mempool_prune_threshold {
+            // NOTE: we do this to avoid borrow checker errors
+            let txpool = core::mem::take(&mut inner.transaction_pool);
+            inner.txs_order.retain(|tx| txpool.contains_key(tx));
+            inner.transaction_pool = txpool;
+        }
+        if inner.transaction_pool.len() >= inner.max_mempool_size {
             inner.remove_oldest_transaction()?;
         }
-        inner.txs_order.push(hash);
+        inner.txs_order.push_back(hash);
         inner
             .txs_by_sender_nonce
             .insert((transaction.sender(), transaction.nonce()), hash);
@@ -376,7 +394,7 @@ impl Mempool {
         };
 
         if !is_a_replacement_tx {
-            return Err(MempoolError::NonceTooLow);
+            return Err(MempoolError::UnderpricedReplacement);
         }
 
         Ok(Some(tx_in_pool.hash()))
@@ -472,6 +490,8 @@ mod tests {
     use ethrex_common::{Address, Bytes, H256, U256};
     use ethrex_storage::EngineType;
     use ethrex_storage::{Store, error::StoreError};
+
+    const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
 
     async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
@@ -828,7 +848,7 @@ mod tests {
         let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
         let plain_tx_hash = plain_tx.hash();
         let blob_tx_hash = blob_tx.hash();
-        let mempool = Mempool::new();
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
         mempool
@@ -843,7 +863,7 @@ mod tests {
     fn blobs_bundle_loadtest() {
         // Write a bundle of 6 blobs 10 times
         // If this test fails please adjust the max_size in the DB config
-        let mempool = Mempool::new();
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
         for i in 0..300 {
             let blobs = [[i as u8; BYTES_PER_BLOB]; 6];
             let commitments = [[i as u8; 48]; 6];
