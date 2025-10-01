@@ -26,7 +26,19 @@ impl StorageBackend for RocksDBBackend {
         opts.create_missing_column_families(true);
 
         opts.set_max_open_files(-1);
-        opts.set_max_background_jobs(8);
+        opts.set_max_file_opening_threads(16);
+
+        opts.set_use_fsync(false); // fdatasync
+
+        opts.enable_statistics();
+        opts.set_stats_dump_period_sec(600);
+
+        // Values taken from https://github.com/facebook/rocksdb/wiki/Setup-Options-and-Basic-Tuning#other-general-options
+        // These are 'real' default values
+        opts.set_level_compaction_dynamic_level_bytes(true);
+        opts.set_max_background_jobs(6);
+        opts.set_bytes_per_sync(1048576);
+        opts.set_compaction_pri(rocksdb::CompactionPri::MinOverlappingRatio);
 
         // Open all column families
         let existing_cfs = OptimisticTransactionDB::<MultiThreaded>::list_cf(&opts, path.as_ref())
