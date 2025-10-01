@@ -381,6 +381,13 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
+    let account_code_length = db.get_account_code(contract_address)?.len();
+    if account_code_length == 0 && contract_address != HISTORY_STORAGE_ADDRESS.address {
+        return Err(EvmError::SystemContractCallFailed(format!(
+            "System contract: {contract_address} has no code after deployment"
+        )));
+    };
+
     let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(contract_address),
         value: U256::zero(),
