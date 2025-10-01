@@ -1,3 +1,4 @@
+use crate::helpers::get_block_numbers_in_cache_dir;
 use bytes::Bytes;
 use std::{
     cmp::max,
@@ -292,7 +293,7 @@ pub struct BlockOptions {
 
 #[cfg(not(feature = "l2"))]
 #[derive(Parser)]
-#[command(group(ArgGroup::new("block_list").required(true).multiple(true).args(["blocks", "from", "endless"])))]
+#[command(group(ArgGroup::new("block_list").required(true).multiple(true).args(["blocks", "from", "endless", "cached"])))]
 pub struct BlocksOptions {
     #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"], help_heading = "Command Options")]
     blocks: Vec<u64>,
@@ -382,6 +383,23 @@ impl EthrexReplayCommand {
                 only_eth_proofs_blocks,
                 opts,
             }) => {
+                // Necessary checks for running cached blocks only.
+                if opts.cached && blocks.is_empty() {
+                    if from.is_none() && to.is_none() {
+                        let network = opts.network.clone().unwrap(); // enforced by clap
+                        let dir = opts.cache_dir.clone();
+
+                        info!("Running all {} blocks inside `{}`", network, dir.display());
+                        // In order not to repeat code, this just fills the blocks variable so that they are run afterwards.
+                        blocks = get_block_numbers_in_cache_dir(&dir, &network)?;
+                        info!("Found {} cached blocks: {:?}", blocks.len(), blocks);
+                    } else if from.is_none() ^ to.is_none() {
+                        return Err(eyre::Error::msg(
+                            "Either both `from` and `to` must be specified, or neither.",
+                        ));
+                    }
+                }
+
                 // Case ethrex-replay blocks n,...,m
                 if !blocks.is_empty() {
                     blocks.sort();
@@ -408,12 +426,6 @@ impl EthrexReplayCommand {
                     }
 
                     return Ok(());
-                }
-
-                if opts.cached && (from.is_none() || to.is_none()) {
-                    return Err(eyre::Error::msg(
-                        "`from` and `to` must be specified when using cached mode",
-                    ));
                 }
 
                 // It will only be used in case from or to weren't specified or in endless mode. We can unwrap as cached mode won't reach those places.
