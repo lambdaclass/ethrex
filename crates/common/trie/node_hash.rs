@@ -1,5 +1,5 @@
 use ethereum_types::H256;
-use ethrex_rlp::{decode::RLPDecode, encode::{RLPEncode, encoded_length}, error::RLPDecodeError, structs::Encoder};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 use sha3::{Digest, Keccak256};
@@ -92,8 +92,8 @@ impl NodeHash {
 
     pub fn encoded_len(&self) -> usize {
         match self {
-            NodeHash::Hashed(_) => 33, // 1 byte prefix + 32 bytes
-            NodeHash::Inline(raw) => encoded_length(&raw.0),
+            NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
+            NodeHash::Inline(raw) => 1 + raw.1 as usize, // 1 byte prefix + payload length,
         }
     }
 
