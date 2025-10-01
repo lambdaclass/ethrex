@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759330707223,
+  "lastUpdate": 1759359501963,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36248,6 +36248,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004560787670153198,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4816b203b5499f6ab499d8524a499a4d4a1e3ef2",
+          "message": "refactor(l1,l2): move kzg to crypto crate (#4604)\n\n**Motivation**\n\nThis PR refactors the KZG functionality by moving it from the\nethrex-common crate to a dedicated ethrex-crypto crate. This change\nimproves code organization by consolidating cryptographic operations in\na single location.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>",
+          "timestamp": "2025-10-01T20:32:45Z",
+          "tree_id": "7639025ceffa96ca093bf55fe919f66bd46688c8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4816b203b5499f6ab499d8524a499a4d4a1e3ef2"
+        },
+        "date": 1759359501213,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004603069875289569,
             "unit": "Mgas/s"
           }
         ]
