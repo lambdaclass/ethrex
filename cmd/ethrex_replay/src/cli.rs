@@ -313,7 +313,7 @@ pub struct BlocksOptions {
         long,
         help = "Run blocks endlessly, starting from the specified block or the latest if not specified.",
         help_heading = "Replay Options",
-        conflicts_with_all = ["blocks", "to"]
+        conflicts_with_all = ["blocks", "to", "cached"]
     )]
     pub endless: bool,
     #[arg(
