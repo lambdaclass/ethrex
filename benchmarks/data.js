@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759327334438,
+  "lastUpdate": 1759330707223,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36219,6 +36219,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004592324100059939,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ad5a496ea057c19dbe3c053ac4515dff7033bb25",
+          "message": "feat(l1): add `datadir` size metric and panel (#4715)\n\n**Motivation**\n\nWe want to have an initial way to know how much is taking our DB\n\n**Description**\n\nThis PR is an initial iteration over the addition of DB related metrics\nto our dashboards, in this case we add a metric and corresponding panel\nwith the datadir size.\n\nCloses #4174",
+          "timestamp": "2025-10-01T13:31:48Z",
+          "tree_id": "90f7afab194419f1687a3dfdd36285e1dbe16663",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ad5a496ea057c19dbe3c053ac4515dff7033bb25"
+        },
+        "date": 1759330706341,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004560787670153198,
             "unit": "Mgas/s"
           }
         ]
