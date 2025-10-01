@@ -28,10 +28,13 @@ pub enum Subcommand {
     )]
     Libmdbx2Rocksdb {
         #[arg(long = "genesis")]
+        /// Path to the genesis file for the old database
         genesis_path: PathBuf,
         #[arg(long = "store.old")]
+        /// Path to the target Libmbdx database to migrate
         old_storage_path: PathBuf,
         #[arg(long = "store.new")]
+        /// Path for the new RocksDB database
         new_storage_path: PathBuf,
     },
 }
