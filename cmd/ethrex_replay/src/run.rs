@@ -142,6 +142,7 @@ fn get_l1_input(cache: Cache) -> eyre::Result<ProgramInput> {
         network,
         chain_config,
         l2_fields,
+        ..
     } = cache;
 
     if l2_fields.is_some() {
