@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759325337237,
+  "lastUpdate": 1759327334438,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36190,6 +36190,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.0046162473375746605,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "eedb9dd75d2e67df330e99c5705fe9d0c1daf18e",
+          "message": "perf(levm): use signed remaining gas, improving gas cost calculation perf (#4684)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n<img width=\"3024\" height=\"3826\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/31ef9703-e365-4c36-821c-df0738237805\"\n/>",
+          "timestamp": "2025-10-01T13:09:44Z",
+          "tree_id": "116ea28c608a2aeee39ecdfe492a00bfefec0f15",
+          "url": "https://github.com/lambdaclass/ethrex/commit/eedb9dd75d2e67df330e99c5705fe9d0c1daf18e"
+        },
+        "date": 1759327333516,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004592324100059939,
             "unit": "Mgas/s"
           }
         ]
