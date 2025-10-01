@@ -442,7 +442,7 @@ pub fn ecrecover_ethrex(
         _ => return Ok(Bytes::new()),
     };
 
-    let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc) else {
+    let Ok(recovery_id) = RecoveryId::try_from(Into::<i32>::into(recovery_id_from_rpc)) else {
         return Ok(Bytes::new());
     };
 
