@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainType, error::ChainError};
+use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_p2p::types::Node;
@@ -20,7 +20,7 @@ use crate::{
         self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
     },
-    utils::{self, default_datadir, get_client_version, init_datadir},
+    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
 use ethrex_config::networks::Network;
 
@@ -34,7 +34,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser, Debug)]
+#[derive(ClapParser, Debug, Clone)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -108,6 +108,14 @@ pub struct Options {
         help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
+        help = "Maximum size of the mempool in number of transactions",
+        long = "mempool.maxsize",
+        default_value_t = 10_000,
+        value_name = "MEMPOOL_MAX_SIZE",
+        help_heading = "Node options"
+    )]
+    pub mempool_max_size: usize,
+    #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
         value_name = "ADDRESS",
@@ -167,6 +175,14 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
+    #[arg(
+        long = "block-producer.extra-data",
+        default_value = get_minimal_client_version(),
+        value_name = "EXTRA_DATA",
+        help = "Block extra data message.",
+        help_heading = "Block producer options"
+    )]
+    pub extra_data: String,
 }
 
 impl Options {
@@ -229,6 +245,8 @@ impl Default for Options {
             metrics_enabled: Default::default(),
             dev: Default::default(),
             force: false,
+            mempool_max_size: Default::default(),
+            extra_data: get_minimal_client_version(),
         }
     }
 }
@@ -322,7 +340,17 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, blockchain_type).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    BlockchainOptions {
+                        max_mempool_size: opts.mempool_max_size,
+                        r#type: blockchain_type,
+                        ..Default::default()
+                    },
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -369,12 +397,12 @@ pub async fn import_blocks(
     path: &str,
     datadir: &Path,
     genesis: Genesis,
-    blockchain_type: BlockchainType,
+    blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
-    let blockchain = init_blockchain(store.clone(), blockchain_type, false);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.

@@ -2,6 +2,23 @@
 
 ## Perf
 
+### 2025-10-01
+
+- Change remaining_gas to i64, improving performance in gas cost calculations [#4684](https://github.com/lambdaclass/ethrex/pull/4684)
+
+### 2025-09-30
+
+- Downloading all slots of big accounts during the initial leaves download step of snap sync [#4689](https://github.com/lambdaclass/ethrex/pull/4689)
+- Downloading and inserting intelligently accounts with the same state root and few (<= slots) [#4689](https://github.com/lambdaclass/ethrex/pull/4689)
+- Improving the performance of state trie through an ordered insertion algorithm [#4689](https://github.com/lambdaclass/ethrex/pull/4689)
+
+### 2025-09-29
+
+- Remove `OpcodeResult` to improve tight loops of lightweight opcodes [#4650](https://github.com/lambdaclass/ethrex/pull/4650)
+
+### 2025-09-24
+
+- Avoid dumping empty storage accounts to disk [#4590](https://github.com/lambdaclass/ethrex/pull/4590)
 
 ### 2025-09-22
 
