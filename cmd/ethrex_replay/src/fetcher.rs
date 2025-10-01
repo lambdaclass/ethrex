@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     cache::{Cache, get_block_cache_file_name},
+    cli::{EthrexReplayOptions, setup_rpc},
     rpc::db::RpcDB,
 };
 
@@ -23,14 +24,64 @@ use crate::cache::L2Fields;
 use crate::cache::get_batch_cache_file_name;
 
 pub async fn get_blockdata(
+    opts: EthrexReplayOptions,
+    block: Option<u64>,
+) -> eyre::Result<(Cache, Network)> {
+    if opts.cached {
+        let network = opts
+            .network
+            .clone()
+            .ok_or_eyre("Network must be specified in cached mode")?;
+        let requested_block_number =
+            block.ok_or_eyre("Block number must be specified in cached mode")?;
+
+        let file_name = get_block_cache_file_name(&network, requested_block_number, None);
+        info!("Getting block {requested_block_number} data from cache");
+        let cache = Cache::load(&opts.cache_dir, &file_name).map_err(|e| {
+            eyre::eyre!("Cache wasn't found for block {requested_block_number}: {e}")
+        })?;
+        Ok((cache, network))
+    } else {
+        let (eth_client, rpc_network) = setup_rpc(&opts).await?;
+        if let Some(network) = &opts.network {
+            if network != &rpc_network {
+                return Err(eyre::eyre!(
+                    "Specified network ({}) does not match RPC network ({})",
+                    network,
+                    rpc_network
+                ));
+            }
+        }
+        let block_identifier = match block {
+            Some(n) => BlockIdentifier::Number(n),
+            None => BlockIdentifier::Tag(BlockTag::Latest),
+        };
+        let cache = get_blockdata_rpc(
+            eth_client,
+            rpc_network.clone(),
+            block_identifier,
+            opts.cache_dir.clone(),
+        )
+        .await?;
+
+        // Always write the cache after fetching from RPC.
+        // It will be deleted later if not needed.
+        cache.write()?;
+
+        Ok((cache, rpc_network))
+    }
+}
+
+/// Retrieves data from RPC
+async fn get_blockdata_rpc(
     eth_client: EthClient,
     network: Network,
-    block_number: BlockIdentifier,
+    block_identifier: BlockIdentifier,
     cache_dir: PathBuf,
 ) -> eyre::Result<Cache> {
     let latest_block_number = eth_client.get_block_number().await?.as_u64();
 
-    let requested_block_number = match block_number {
+    let requested_block_number = match block_identifier {
         BlockIdentifier::Number(some_number) => some_number,
         BlockIdentifier::Tag(BlockTag::Latest) => latest_block_number,
         BlockIdentifier::Tag(_) => unimplemented!("Only latest block tag is supported"),
@@ -44,7 +95,6 @@ pub async fn get_blockdata(
     let chain_config = network.get_genesis()?.config;
 
     let file_name = get_block_cache_file_name(&network, requested_block_number, None);
-
     if let Ok(cache) =
         Cache::load(&cache_dir, &file_name).inspect_err(|e| warn!("Failed to load cache: {e}"))
     {
