@@ -219,7 +219,7 @@ impl DiscoveryServer {
     }
 
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
-        for contact in self.peer_table.get_contacts_for_lookup(20).await? {
+        for contact in self.peer_table.get_contacts_for_lookup().await? {
             if self.send_find_node(&contact.node).await.is_err() {
                 self.peer_table
                     .set_disposable(&contact.node.node_id())

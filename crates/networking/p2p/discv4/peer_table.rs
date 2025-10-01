@@ -25,6 +25,8 @@ const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
 /// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
+/// Maximum amount of FindNode messages sent to a single node.
+const MAX_FIND_NODE_PER_PEER: u64 = 20;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -351,15 +353,8 @@ impl PeerTableHandle {
     }
 
     /// Get all contacts available for lookup
-    pub async fn get_contacts_for_lookup(
-        &mut self,
-        amount: usize,
-    ) -> Result<Vec<Contact>, PeerTableError> {
-        match self
-            .0
-            .call(CallMessage::GetContactsForLookup(amount))
-            .await?
-        {
+    pub async fn get_contacts_for_lookup(&mut self) -> Result<Vec<Contact>, PeerTableError> {
+        match self.0.call(CallMessage::GetContactsForLookup).await? {
             OutMessage::Contacts(contacts) => Ok(contacts),
             _ => unreachable!(),
         }
@@ -637,11 +632,10 @@ impl PeerTable {
         contacts
     }
 
-    fn get_contacts_for_lookup(&mut self, max_amount: usize) -> Vec<Contact> {
+    fn get_contacts_for_lookup(&mut self) -> Vec<Contact> {
         self.contacts
             .values()
-            .take(max_amount)
-            .filter(|c| !c.disposable)
+            .filter(|c| c.n_find_node_sent < MAX_FIND_NODE_PER_PEER && !c.disposable)
             .cloned()
             .collect()
     }
@@ -850,7 +844,7 @@ pub enum CallMessage {
         target_peers: usize,
     },
     GetContactsToInitiate(usize),
-    GetContactsForLookup(usize),
+    GetContactsForLookup,
     GetContactsToRevalidate(Duration),
     GetBestPeer {
         capabilities: Vec<Capability>,
@@ -950,8 +944,8 @@ impl GenServer for PeerTable {
             CallMessage::GetContactsToInitiate(amount) => CallResponse::Reply(
                 Self::OutMsg::Contacts(self.get_contacts_to_initiate(amount)),
             ),
-            CallMessage::GetContactsForLookup(amount) => {
-                CallResponse::Reply(Self::OutMsg::Contacts(self.get_contacts_for_lookup(amount)))
+            CallMessage::GetContactsForLookup => {
+                CallResponse::Reply(Self::OutMsg::Contacts(self.get_contacts_for_lookup()))
             }
             CallMessage::GetContactsToRevalidate(revalidation_interval) => CallResponse::Reply(
                 Self::OutMsg::Contacts(self.get_contacts_to_revalidate(revalidation_interval)),
