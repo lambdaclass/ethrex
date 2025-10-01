@@ -149,11 +149,8 @@ impl ExtensionNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        // (2 items) * 32 bytes, prefix and child (hash)
-        const RLP_ENCODED_SIZE: usize = 64;
-        let mut buf = Vec::with_capacity(RLP_ENCODED_SIZE);
-        let mut encoder = Encoder::new_with_capacity(&mut buf, RLP_ENCODED_SIZE)
-            .encode_bytes(&self.prefix.encode_compact());
+        let mut buf = Vec::new();
+        let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
         encoder = self.child.compute_hash().encode(encoder);
         encoder.finish();
         buf

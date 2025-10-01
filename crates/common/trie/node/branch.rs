@@ -225,7 +225,9 @@ impl BranchNode {
             match child.compute_hash_ref() {
                 NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
                 NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
-                NodeHash::Inline((encoded, len)) => buf.extend_from_slice(&encoded[..*len as usize]),
+                NodeHash::Inline((encoded, len)) => {
+                    buf.extend_from_slice(&encoded[..*len as usize])
+                }
             }
         }
         <[u8] as RLPEncode>::encode(&self.value, &mut buf);
