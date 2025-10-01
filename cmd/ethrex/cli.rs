@@ -122,7 +122,7 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub log_dir: String,
-    #[arg(    
+    #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
         default_value_t = 10_000,

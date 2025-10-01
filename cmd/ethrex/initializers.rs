@@ -26,7 +26,7 @@ use secp256k1::SecretKey;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
-    fs,
+    fs::{self, File},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
