@@ -127,8 +127,7 @@ impl StorageRoTx for RocksDBRoTx {
         let cf = self
             .db
             .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?
-            .clone();
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         let iter = self.db.prefix_iterator_cf(&cf, prefix);
         let results: Vec<PrefixResult> = iter
