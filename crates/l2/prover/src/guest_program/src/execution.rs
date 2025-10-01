@@ -18,13 +18,16 @@ use ethrex_common::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
-use std::collections::{BTreeMap, HashMap};
+#[cfg(feature = "l2")]
+use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
     kzg_commitment_to_versioned_hash,
 };
+#[cfg(feature = "l2")]
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages,
     privileged_transactions::{
@@ -347,7 +350,10 @@ fn execute_stateless(
         }
 
         non_privileged_count += block.body.transactions.len()
-            - get_block_privileged_transactions(&block.body.transactions).len();
+            - ethrex_l2_common::privileged_transactions::get_block_privileged_transactions(
+                &block.body.transactions,
+            )
+            .len();
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
