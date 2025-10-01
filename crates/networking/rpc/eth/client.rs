@@ -100,13 +100,15 @@ impl RpcHandler for Config {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let chain_config = context.storage.get_chain_config()?;
-        let latest_block_timestamp = context
+        let Some(latest_block) = context
             .storage
             .get_block_by_number(context.storage.get_latest_block_number().await?)
             .await?
-            .unwrap_or_default()
-            .header
-            .timestamp;
+        else {
+            return Err(RpcErr::Internal("Failed to fetch latest block".to_string()));
+        };
+
+        let latest_block_timestamp = latest_block.header.timestamp;
         let current_fork = chain_config.get_fork(latest_block_timestamp);
 
         if current_fork < Fork::Paris {
