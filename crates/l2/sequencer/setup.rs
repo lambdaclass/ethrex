@@ -15,20 +15,19 @@ use tracing::{debug, info};
 
 use std::process::Command;
 
-const QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
-
 pub async fn prepare_quote_prerequisites(
     eth_client: &EthClient,
     rpc_url: &str,
     private_key_str: &str,
     quote: &str,
+    qpl_tool_path: &str,
 ) -> Result<(), ProofCoordinatorError> {
     let chain_id = eth_client
         .get_chain_id()
         .await
         .map_err(ProofCoordinatorError::EthClientError)?;
 
-    Command::new(QPL_TOOL_PATH)
+    Command::new(qpl_tool_path)
         .args([
             "--chain_id",
             &chain_id.to_string(),

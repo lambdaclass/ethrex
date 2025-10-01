@@ -580,32 +580,6 @@ fn get_initial_downloads(
             })
             .collect::<VecDeque<_>>(),
     );
-    initial_requests.extend(
-        account_paths
-            .accounts_with_storage_root
-            .par_iter()
-            .filter_map(|(acc_path, storage_root)| {
-                if *storage_root == *EMPTY_TRIE_HASH {
-                    return None;
-                }
-                if store
-                    .open_direct_storage_trie(*acc_path, *storage_root)
-                    .expect("We should be able to open the store")
-                    .root_node()
-                    .expect("We should be able to read the store")
-                    .is_some()
-                {
-                    return None;
-                }
-                Some(NodeRequest {
-                    acc_path: Nibbles::from_bytes(&acc_path.0),
-                    storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
-                    parent: Nibbles::default(),
-                    hash: *storage_root,
-                })
-            })
-            .collect::<VecDeque<_>>(),
-    );
     initial_requests
 }
 

@@ -12,7 +12,6 @@ services:
 
   ethrex_l2:
     command: >
-      l2
       --network /genesis/l2.json
       --http.addr 0.0.0.0
       --http.port 1729

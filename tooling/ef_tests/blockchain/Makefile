@@ -26,9 +26,6 @@ clean-vectors: ## 🗑️  Clean test vectors
 test-levm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-with-debug
 
-test-revm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with REVM
-	cargo test --profile release-with-debug --features revm
-
 test-sp1:
 	cargo test --profile release-with-debug --features sp1
 
@@ -37,5 +34,4 @@ test-stateless:
 
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with both VMs, and also stateless with LEVM
 	$(MAKE) test-levm
-	$(MAKE) test-revm
 	$(MAKE) test-stateless

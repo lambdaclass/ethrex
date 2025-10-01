@@ -7,6 +7,7 @@ use eyre::OptionExt;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::io::BufReader;
+use std::path::{Path, PathBuf};
 use std::{fs::File, io::BufWriter};
 use tracing::debug;
 
@@ -44,6 +45,9 @@ pub struct Cache {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(flatten)]
     pub l2_fields: Option<L2Fields>,
+    /// Directory where the cache file is stored.
+    #[serde(skip)]
+    pub dir: PathBuf,
 }
 
 impl Cache {
@@ -70,6 +74,7 @@ impl Cache {
         blocks: Vec<Block>,
         witness: RpcExecutionWitness,
         chain_config: ChainConfig,
+        dir: PathBuf,
     ) -> Self {
         let network = network_from_chain_id(chain_config.chain_id);
         #[cfg(feature = "l2")]
@@ -90,19 +95,28 @@ impl Cache {
             network,
             chain_config,
             l2_fields,
+            dir,
         }
     }
-    pub fn load(file_name: &str) -> eyre::Result<Self> {
+
+    pub fn load(dir: &Path, file_name: &str) -> eyre::Result<Self> {
+        let full_path = dir.join(file_name);
         let file = BufReader::new(
-            File::open(file_name).map_err(|e| eyre::Error::msg(format!("{e} ({file_name})")))?,
+            File::open(&full_path)
+                .map_err(|e| eyre::Error::msg(format!("{e} ({})", full_path.display())))?,
         );
-        Ok(serde_json::from_reader(file)?)
+        let mut cache: Cache = serde_json::from_reader(file)?;
+        cache.dir = dir.to_path_buf();
+        Ok(cache)
     }
 
     pub fn write(&self) -> eyre::Result<()> {
         if self.blocks.is_empty() {
             return Err(eyre::Error::msg("cache can't be empty"));
         }
+
+        // Ensure the cache directory exists
+        std::fs::create_dir_all(&self.dir)?;
 
         let file_name = get_block_cache_file_name(
             &self.network.clone(),
@@ -114,9 +128,11 @@ impl Cache {
             },
         );
 
-        debug!("Writing cache to {file_name}");
+        let full_path = self.dir.join(file_name);
 
-        let file = BufWriter::new(File::create(file_name)?);
+        debug!("Writing cache to {}", full_path.display());
+
+        let file = BufWriter::new(File::create(&full_path)?);
 
         serde_json::to_writer_pretty(file, self)?;
 
@@ -138,9 +154,10 @@ impl Cache {
             },
         );
 
-        debug!("Deleting cache file {file_name}");
+        let full_path = self.dir.join(file_name);
+        debug!("Deleting cache file {}", full_path.display());
 
-        std::fs::remove_file(file_name)?;
+        std::fs::remove_file(&full_path)?;
 
         Ok(())
     }

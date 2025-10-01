@@ -129,7 +129,7 @@ fn main() {
         origin: runner_input.transaction.sender,
         gas_limit: runner_input.transaction.gas_limit,
         gas_price: runner_input.transaction.gas_price,
-        block_gas_limit: u64::MAX,
+        block_gas_limit: i64::MAX as u64,
         config: EVMConfig::new(
             runner_input.fork,
             EVMConfig::canonical_values(runner_input.fork),
