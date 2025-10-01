@@ -2112,12 +2112,13 @@ pub enum PeerHandlerError {
     UnrecoverableError(String),
 }
 
-#[derive(Debug, Clone, std::hash::Hash)]
+#[derive(Debug, Clone)]
 pub struct RequestMetadata {
     pub hash: H256,
     pub path: Nibbles,
     /// What node is the parent of this node
     pub parent_path: Nibbles,
+    pub previous: Option<Node>
 }
 
 #[derive(Debug, thiserror::Error)]
