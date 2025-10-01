@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759315600005,
+  "lastUpdate": 1759317150367,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36136,6 +36136,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004599093182939916,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9e1e2b390a11caa7ca10e46c9121d8c32aa3096a",
+          "message": "fix(l2): remove l2 subcommand from tdx override (#4713)\n\n**Motivation**\n\nThe `TDX` workflow is currently failing:\nhttps://github.com/lambdaclass/ethrex/actions/runs/18141426891/job/51633435845.\n\n**Description**\n\n- Removes the extra `L2` subcommand from the `TDX` override.\n\n\n\nCloses None",
+          "timestamp": "2025-09-30T23:30:18Z",
+          "tree_id": "471de00a5396c694f6a54231398c4a92a16162f1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9e1e2b390a11caa7ca10e46c9121d8c32aa3096a"
+        },
+        "date": 1759317149703,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004606439013409578,
             "unit": "Mgas/s"
           }
         ]
