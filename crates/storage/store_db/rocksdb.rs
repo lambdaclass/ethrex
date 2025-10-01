@@ -175,6 +175,12 @@ impl Store {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
+        if let Ok(opts_str) = std::env::var("ETHREX_ROCKSDB_OPTIONS_OVERRIDE") {
+            db_options = db_options
+                .get_options_from_string(opts_str)
+                .unwrap_or(db_options);
+        }
+
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             path,
