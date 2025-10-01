@@ -10,7 +10,7 @@ documentation.workspace = true
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
-ethrex-crypto.workspace = true
+ethrex-crypto = { workspace = true, default-features = false }
 
 tracing.workspace = true
 tinyvec = "1.6.0"
@@ -34,7 +34,7 @@ rkyv.workspace = true
 hex-literal.workspace = true
 
 [features]
-default = []
+default = ["c-kzg"]
 c-kzg = ["ethrex-crypto/c-kzg"]
 kzg-rs = ["ethrex-crypto/kzg-rs"]
 openvm-kzg = ["ethrex-crypto/kzg-rs"]

@@ -9,7 +9,7 @@ documentation.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, default-features = false }
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 secp256k1.workspace = true
@@ -33,7 +33,7 @@ tokio = { workspace = true, features = ["full"] }
 path = "./blockchain.rs"
 
 [features]
-default = []
+default = ["c-kzg"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 kzg-rs = ["ethrex-common/kzg-rs", "ethrex-vm/kzg-rs"]
 metrics = ["ethrex-metrics/transactions"]

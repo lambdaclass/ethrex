@@ -34,26 +34,20 @@ methods = ["src/risc0"]
 
 [features]
 default = []
-risc0 = [
-    "dep:risc0-build",
-    "dep:risc0-zkvm",
+risc0 = ["dep:risc0-build", "dep:risc0-zkvm", "c-kzg"]
+sp1 = ["dep:sp1-build", "dep:sp1-sdk", "kzg-rs"]
+l2 = []
+c-kzg = [
     "ethrex-vm/c-kzg",
     "ethrex-common/c-kzg",
     "ethrex-blockchain/c-kzg",
+    "ethrex-storage/c-kzg",
 ]
-sp1 = [
-    "dep:sp1-build",
-    "dep:sp1-sdk",
-    "ethrex-vm/kzg-rs",
-    "ethrex-common/kzg-rs",
-    "ethrex-blockchain/kzg-rs",
-]
-l2 = []
-c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg", "ethrex-blockchain/c-kzg"]
 kzg-rs = [
     "ethrex-vm/kzg-rs",
     "ethrex-common/kzg-rs",
     "ethrex-blockchain/kzg-rs",
+    "ethrex-storage/kzg-rs",
 ]
 
 [lib]

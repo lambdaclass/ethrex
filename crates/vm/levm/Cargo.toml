@@ -7,8 +7,8 @@ documentation.workspace = true
 
 [dependencies]
 lazy_static.workspace = true
-ethrex-common.workspace = true
-ethrex-crypto.workspace = true
+ethrex-common = { workspace = true, default-features = false }
+ethrex-crypto = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
 
@@ -49,11 +49,11 @@ spinoff = "0.8.0"
 default = ["c-kzg"]
 
 # TODO: rename to "ethrex" or "no-prover"
-c-kzg = ["ethrex-common/c-kzg"]
+c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 
 # TODO: rename to "sp1"
-kzg-rs = ["ethrex-common/kzg-rs"]
-openvm-kzg = ["ethrex-common/openvm-kzg"]
+kzg-rs = ["ethrex-common/kzg-rs", "ethrex-crypto/kzg-rs"]
+openvm-kzg = ["ethrex-common/openvm-kzg", "ethrex-crypto/openvm-kzg"]
 ethereum_foundation_tests = []
 debug = []
 
