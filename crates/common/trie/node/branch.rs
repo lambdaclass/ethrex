@@ -1,8 +1,7 @@
 use ethrex_rlp::{
+    constants::RLP_NULL,
     encode::{RLPEncode, encode_length, encoded_length},
-    structs::Encoder,
 };
-use serde::de::value;
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
@@ -223,6 +222,11 @@ impl BranchNode {
 
         encode_length(payload_len, &mut buf);
         for child in self.choices.iter() {
+            match child.compute_hash_ref() {
+                NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                child @ NodeHash::Inline(_) => buf.extend(child.as_ref()),
+            }
             child.compute_hash_ref().as_ref().encode(&mut buf);
         }
         self.value.encode(&mut buf);

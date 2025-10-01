@@ -92,8 +92,8 @@ impl NodeHash {
 
     pub fn encoded_len(&self) -> usize {
         match self {
-            NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
-            NodeHash::Inline(raw) => 1 + raw.1 as usize, // 1 byte prefix + payload length,
+            NodeHash::Hashed(_) => 33,               // 1 byte prefix + 32 bytes
+            NodeHash::Inline(raw) => raw.1 as usize, // already encoded
         }
     }
 
