@@ -1094,13 +1094,13 @@ impl Syncer {
             // This if is an edge case for the skip snap sync scenario
             // TODO: UNCOMMENT CONDITION
             //if block_is_stale(&pivot_header) {
-                pivot_header = update_pivot(
-                    pivot_header.number,
-                    pivot_header.timestamp,
-                    &mut self.peers,
-                    block_sync_state,
-                )
-                .await?;
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                &mut self.peers,
+                block_sync_state,
+            )
+            .await?;
             //}
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
@@ -1268,7 +1268,10 @@ fn compute_storage_roots(
         .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
     if computed_storage_root == account_state.storage_root {
         METRICS.storage_tries_state_roots_computed.inc();
-    } else {
+    }
+    if account_storage_root != *EMPTY_TRIE_HASH
+        || computed_storage_root != account_state.storage_root
+    {
         maybe_big_account_storage_state_roots
             .lock()
             .map_err(|_| SyncError::MaybeBigAccount)?
