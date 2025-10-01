@@ -713,16 +713,18 @@ impl FullBlockSyncState {
         let mut pending_block_to_sync = vec![];
         let mut last_header_to_sync = sync_head;
         while let Some(block) = self.store.get_pending_block(last_header_to_sync).await? {
-            pending_block_to_sync.push(block.clone());
+            let block_parent = block.header.parent_hash;
             if self
                 .current_blocks
                 .last()
-                .is_some_and(|block| block.hash() == block.header.parent_hash)
+                .is_some_and(|block| block.hash() == block_parent)
+                || sync_head_found
             {
                 sync_head_found = true;
                 break;
             }
-            last_header_to_sync = block.header.parent_hash;
+            pending_block_to_sync.push(block);
+            last_header_to_sync = block_parent;
         }
 
         if sync_head_found {
