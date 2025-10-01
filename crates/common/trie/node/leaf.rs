@@ -1,8 +1,4 @@
-use std::io::Write;
-
-use ethereum_types::H256;
 use ethrex_rlp::structs::Encoder;
-use sha3::{Digest, Keccak256};
 
 use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
 
@@ -118,75 +114,7 @@ impl LeafNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        let mut hasher = Keccak256::new();
-        self.encode_write(&mut hasher);
-        let hash = hasher.finalize();
-        NodeHash::Hashed(H256::from_slice(&hash))
-    }
-
-    /// Encodes the node
-    pub fn encode_write(&self, buf: &mut impl Write) {
-        let partial_encoded = self.partial.encode_compact();
-
-        // calc total payload len
-        let payload_len = {
-            // ASSUMPTION: partial is never greater than 55 bytes (in particular it's at most 32 bytes)
-            let partial_len = if partial_encoded.len() == 1 && partial_encoded[0] < 0x80 {
-                1
-            } else {
-                1 + partial_encoded.len()
-            };
-            let value_prefix_len = match self.value.len() {
-                1 if self.value[0] < 0x80 => 0,
-                1 | ..56 => 1,
-                56..256 => 2,
-                _ => 3, // ASSUMPTION: list len will never be >u16::MAX (2 bytes len)
-            };
-            partial_len + value_prefix_len + self.value.len()
-        };
-        // write payload prefix
-        if payload_len < 56 {
-            buf.write(&[0xc0 + payload_len as u8]);
-        } else if payload_len < u8::MAX as usize {
-            buf.write(&[0xf8, payload_len as u8]);
-        } else {
-            // ASSUMPTION: list len will never be >u16::MAX (2 bytes len)
-            buf.write(&[
-                0xf9,
-                ((payload_len as u16) >> 8) as u8,
-                (payload_len & 0xff) as u8,
-            ]);
-        }
-
-        // write partial prefix
-        if partial_encoded.len() == 1 && partial_encoded[0] < 0x80 {
-            // value is its own encoding
-        } else {
-            // ASSUMPTION: partial is never greater than 55 bytes (in particular it's at most 32 bytes)
-            buf.write(&[0x80 + partial_encoded.len() as u8]);
-        }
-        // write partial
-        buf.write(&partial_encoded);
-
-        // write value prefix
-        if self.value.len() == 1 && self.value[0] < 0x80 {
-            // value is its own encoding
-        } else if self.value.len() < 56 {
-            buf.write(&[0x80 + self.value.len() as u8]);
-        } else if self.value.len() < u8::MAX as usize {
-            // TODO: < or <=
-            buf.write(&[0xb8, self.value.len() as u8]);
-        } else {
-            // ASSUMPTION: value len will never be >u16::MAX (2 bytes len)
-            buf.write(&[
-                0xb9,
-                ((self.value.len() as u16) >> 8) as u8,
-                (self.value.len() & 0xff) as u8,
-            ]);
-        }
-
-        // write value
-        buf.write(&self.value);
+        NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
     /// Encodes the node

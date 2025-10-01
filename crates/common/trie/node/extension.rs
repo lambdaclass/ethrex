@@ -1,8 +1,4 @@
-use std::io::Write;
-
-use ethereum_types::H256;
 use ethrex_rlp::structs::Encoder;
-use sha3::{Digest, Keccak256};
 
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;
@@ -148,55 +144,7 @@ impl ExtensionNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        let mut hasher = Keccak256::new();
-        self.encode_write(&mut hasher);
-        let hash = hasher.finalize();
-        NodeHash::Hashed(H256::from_slice(&hash))
-    }
-
-    /// Encodes the node
-    pub fn encode_write(&self, buf: &mut impl Write) {
-        let prefix_encoded = self.prefix.encode_compact();
-
-        // calc total payload len
-        // ASSUMPTION: there are no inline node refs, so child len is 1 + 32 bytes
-        // ASSUMPTION: prefix is never greater than 55 bytes (in particular it's at most 32 bytes)
-        let payload_len = {
-            let prefix_len = if prefix_encoded.len() == 1 && prefix_encoded[0] < 0x80 {
-                1
-            } else {
-                1 + prefix_encoded.len()
-            };
-            prefix_len + 33
-        };
-
-        // write payload prefix
-        if payload_len < 56 {
-            buf.write(&[0xc0 + payload_len as u8]);
-        } else if payload_len < u8::MAX as usize {
-            buf.write(&[0xf8, payload_len as u8]);
-        } else {
-            // ASSUMPTION: list len will never be greater than (1 + 32) * 2 = 66 bytes
-            unreachable!();
-        }
-
-        // write prefix prefix
-        if prefix_encoded.len() == 1 && prefix_encoded[0] < 0x80 {
-            // value is its own encoding
-        } else {
-            // ASSUMPTION: prefix is never greater than 55 bytes (in particular it's at most 32 bytes)
-            buf.write(&[0x80 + prefix_encoded.len() as u8]);
-        }
-        // write prefix
-        buf.write(&prefix_encoded);
-
-        // write child hash
-        let NodeHash::Hashed(child_hash) = self.child.compute_hash() else {
-            // ASSUMPTION: there are no inline node refs
-            unreachable!();
-        };
-        buf.write(&[0xa0]);
-        buf.write(&child_hash.0);
+        NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
     /// Encodes the node
