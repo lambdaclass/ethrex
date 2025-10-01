@@ -9,19 +9,6 @@ type Blob = [u8; BYTES_PER_BLOB];
 type Commitment = Bytes48;
 type Proof = Bytes48;
 
-// Compile-time check to ensure exactly one backend feature is enabled
-const _: () = {
-    if cfg!(all(
-        not(feature = "c-kzg"),
-        not(feature = "kzg-rs"),
-        not(feature = "openvm-kzg")
-    )) {
-        compile_error!(
-            "Either the `c-kzg`, `kzg-rs` or `openvm-kzg` feature must be enabled to use KZG functionality."
-        );
-    }
-};
-
 #[derive(thiserror::Error, Debug)]
 pub enum KzgError {
     #[cfg(feature = "c-kzg")]
