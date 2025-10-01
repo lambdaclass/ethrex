@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759359501963,
+  "lastUpdate": 1759361182297,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36277,6 +36277,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004603069875289569,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d7ae02d054cc002da5e3cb4fc8894729a9079e0e",
+          "message": "ci(l2): copy .env to host in SP1 workflow (#4724)\n\n**Motivation**\n\nOur SP1 Backend workflow is failing for three reasons:\n- The tests cannot load the deployed contract addresses from `.env`,\nsince the file is not being copied to the host.\n- We are not properly building the prover with `GPU`.\n- The default value for `sp1-server` attempts to set the string `\"None\"`\ninstead of using the default value of an `Option`.\n\nSuccessful run\n[here](https://github.com/lambdaclass/ethrex/actions/runs/18172891260/job/51731692551?pr=4724).\n\nCloses None",
+          "timestamp": "2025-10-01T21:13:10Z",
+          "tree_id": "ac7d236c6369e9da652090438e84078ce136e264",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d7ae02d054cc002da5e3cb4fc8894729a9079e0e"
+        },
+        "date": 1759361181547,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004591692264234372,
             "unit": "Mgas/s"
           }
         ]
