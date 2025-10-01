@@ -1288,21 +1288,6 @@ impl PeerHandler {
         let chunk_size = 300;
         let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
-        // TODO:
-        // To download repeated tries only once, we can group by root_hash so
-        // we download one address and then store N times (for simpler insertion/healing).
-        // Take care of doing it inside this function to avoid confusion between
-        // pivots.
-        // At a later time we might try to also store only once and insert for all.
-        // That should help at least to do less `compute_storage_roots`, but skipping
-        // that might be problematic for healing.
-        // We can also sort by decreasing number of repetitions, so we download
-        // and settle the most common first.
-        // AFTER: try to reduce memory usage from account filtering.
-        // It currently takes about 68B per account with storages, with ~25M of them,
-        // meaning 1.7GB. Possibly several copies of this.
-        // THEN: review storage formats, maybe play with memory mapped data.
-
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
@@ -1319,11 +1304,6 @@ impl PeerHandler {
             });
         }
 
-        // let all_account_hashes: Vec<H256> = account_storage_roots
-        //     .accounts_with_storage_root
-        //     .keys()
-        //     .copied()
-        //     .collect();
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<StorageTaskResult>(1000);
