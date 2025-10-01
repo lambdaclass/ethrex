@@ -168,24 +168,24 @@ impl StoreEngine {
         &self,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        let backend = self.backend.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut txn = backend.begin_write()?;
-            for block_header in block_headers {
-                let block_hash = block_header.hash();
-                let block_number = block_header.number;
-                let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
-                txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
-                txn.put(
-                    BLOCK_NUMBERS,
-                    block_hash.as_bytes(),
-                    &block_number.to_le_bytes(),
-                )?;
-            }
-            txn.commit()
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        let mut batch_ops = Vec::new();
+
+        for header in block_headers {
+            let block_hash = header.hash();
+            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+            let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
+
+            batch_ops.push((HEADERS.to_string(), hash_key, header_value));
+
+            let number_key = header.number.to_le_bytes().to_vec();
+            batch_ops.push((
+                BLOCK_NUMBERS.to_string(),
+                BlockHashRLP::from(block_hash).bytes().clone(),
+                number_key,
+            ));
+        }
+
+        self.write_batch_async(batch_ops).await
     }
 
     /// Obtain canonical block header
@@ -197,12 +197,7 @@ impl StoreEngine {
             return Ok(None);
         };
 
-        self.backend
-            .begin_read()?
-            .get(HEADERS, block_hash.as_bytes())?
-            .map(|bytes| BlockHeaderRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)
+        self.get_block_header_by_hash(block_hash)
     }
 
     /// Add block body
@@ -256,6 +251,7 @@ impl StoreEngine {
         from: BlockNumber,
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
+        // TODO: Implement read bulk
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let numbers: Vec<BlockNumber> = (from..=to).collect();
@@ -298,6 +294,7 @@ impl StoreEngine {
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
         let backend = self.backend.clone();
+        // TODO: Implement read bulk
         tokio::task::spawn_blocking(move || {
             let txn = backend.begin_read()?;
             let mut block_bodies = Vec::new();
@@ -325,16 +322,11 @@ impl StoreEngine {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        let backend = self.backend.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = backend.begin_read()?;
-            txn.get(BODIES, block_hash.as_bytes())?
-                .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
-                .transpose()
-                .map_err(StoreError::from)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        self.read_async(BODIES, block_hash.as_bytes().to_vec())
+            .await?
+            .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     pub fn get_block_header_by_hash(
@@ -362,17 +354,11 @@ impl StoreEngine {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<Block>, StoreError> {
-        let backend = self.backend.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = backend.begin_read()?;
-            let block_value = txn.get(PENDING_BLOCKS, block_hash.as_bytes())?;
-            block_value
-                .map(|bytes| BlockRLP::from_bytes(bytes).to())
-                .transpose()
-                .map_err(StoreError::from)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        self.read_async(PENDING_BLOCKS, block_hash.as_bytes().to_vec())
+            .await?
+            .map(|bytes| BlockRLP::from_bytes(bytes).to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     /// Add block number for a given hash
@@ -391,21 +377,15 @@ impl StoreEngine {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        let backend = self.backend.clone();
-        tokio::task::spawn_blocking(move || {
-            backend
-                .begin_read()?
-                .get(BLOCK_NUMBERS, block_hash.as_bytes())?
-                .map(|bytes| -> Result<BlockNumber, StoreError> {
-                    let array: [u8; 8] = bytes
-                        .try_into()
-                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                    Ok(BlockNumber::from_le_bytes(array))
-                })
-                .transpose()
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        self.read_async(BLOCK_NUMBERS, block_hash.as_bytes().to_vec())
+            .await?
+            .map(|bytes| -> Result<BlockNumber, StoreError> {
+                let array: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                Ok(BlockNumber::from_le_bytes(array))
+            })
+            .transpose()
     }
 
     /// Store transaction location (block number and index of the transaction within the block)
@@ -534,17 +514,12 @@ impl StoreEngine {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        let backend = self.backend.clone();
         let key = (block_hash, index).encode_to_vec();
-        tokio::task::spawn_blocking(move || {
-            let txn = backend.begin_read()?;
-            txn.get(RECEIPTS, key.as_slice())?
-                .map(|bytes| Receipt::decode(bytes.as_slice()))
-                .transpose()
-                .map_err(StoreError::from)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        self.read_async(RECEIPTS, key)
+            .await?
+            .map(|bytes| Receipt::decode(bytes.as_slice()))
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     /// Obtain account code via code hash
@@ -1023,9 +998,9 @@ impl StoreEngine {
     pub async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        let key = [SnapStateIndex::StorageTrieRebuildPending as u8];
-        let txn = self.backend.begin_read()?;
-        txn.get(SNAP_STATE, &key)?
+        let key = vec![SnapStateIndex::StorageTrieRebuildPending as u8];
+        self.read_async(SNAP_STATE, key)
+            .await?
             .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
@@ -1052,8 +1027,8 @@ impl StoreEngine {
         &self,
         block: BlockHash,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let txn = self.backend.begin_read()?;
-        txn.get(INVALID_CHAINS, block.as_bytes())?
+        self.read_async(INVALID_CHAINS, block.as_bytes().to_vec())
+            .await?
             .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
             .transpose()
             .map_err(StoreError::from)
@@ -1149,7 +1124,11 @@ impl StoreEngine {
 
     /// Helper method for async reads
     /// Spawns blocking task to avoid blocking tokio runtime
-    pub async fn read_async(&self, table: &str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StoreError> {
+    pub async fn read_async(
+        &self,
+        table: &str,
+        key: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
         let backend = self.backend.clone();
         let table = table.to_string();
 
