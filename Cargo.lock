@@ -11869,6 +11869,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92e46fce4cdece99f2f07c125e902629ee25e4487d80cae6e3d6e891d5906b00"
 dependencies = [
  "futures",
+ "pin-project-lite",
  "spawned-rt",
  "thiserror 2.0.16",
  "tracing",
