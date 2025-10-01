@@ -2,14 +2,14 @@ pub mod db;
 mod tracing;
 
 use super::BlockExecutionResult;
-use crate::constants::{
+use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, U256,
     types::{
         AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
         EIP7702Transaction, Fork, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
@@ -25,10 +25,9 @@ use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
     errors::{ExecutionReport, TxResult, VMError},
-    vm::{Substate, VM},
+    vm::VM,
 };
 use std::cmp::min;
-use std::collections::BTreeMap;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -152,7 +151,7 @@ impl LEVM {
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
-        env.block_gas_limit = u64::MAX; // disable block gas limit
+        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
         adjust_disabled_base_fee(&mut env);
 
@@ -166,105 +165,7 @@ impl LEVM {
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.current_accounts_state.iter() {
-            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            let initial_state_account =
-                db.initial_accounts_state
-                    .get(address)
-                    .ok_or(EvmError::Custom(format!(
-                        "Failed to get account {address} from immutable cache",
-                    )))?;
-
-            // Edge case: Account was destroyed and created again afterwards with CREATE2.
-            if db.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
-                // Push to account updates the removal of the account and then push the new state of the account.
-                // This is for clearing the account's storage when it was selfdestructed in the first place.
-                account_updates.push(AccountUpdate::removed(*address));
-                let new_account_update = AccountUpdate {
-                    address: *address,
-                    removed: false,
-                    info: Some(new_state_account.info.clone()),
-                    code: Some(
-                        db.codes
-                            .get(&new_state_account.info.code_hash)
-                            .ok_or(EvmError::Custom(format!(
-                                "Failed to get code for account {address}"
-                            )))?
-                            .clone(),
-                    ),
-                    added_storage: new_state_account.storage.clone(),
-                };
-                account_updates.push(new_account_update);
-                continue;
-            }
-
-            let mut acc_info_updated = false;
-            let mut storage_updated = false;
-
-            // 1. Account Info has been updated if balance, nonce or bytecode changed.
-            if initial_state_account.info.balance != new_state_account.info.balance {
-                acc_info_updated = true;
-            }
-
-            if initial_state_account.info.nonce != new_state_account.info.nonce {
-                acc_info_updated = true;
-            }
-
-            let code =
-                if initial_state_account.info.code_hash != new_state_account.info.code_hash {
-                    acc_info_updated = true;
-                    // code should be in `codes`
-                    Some(db.codes.get(&new_state_account.info.code_hash).ok_or(
-                        EvmError::Custom(format!("Failed to get code for account {address}")),
-                    )?)
-                } else {
-                    None
-                };
-
-            // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage = BTreeMap::new();
-
-            for (key, new_value) in &new_state_account.storage {
-                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
-
-                if new_value != old_value {
-                    added_storage.insert(*key, *new_value);
-                    storage_updated = true;
-                }
-            }
-
-            let info = if acc_info_updated {
-                Some(new_state_account.info.clone())
-            } else {
-                None
-            };
-
-            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // If the account was already empty then this is not an update
-            let was_empty = initial_state_account.is_empty();
-            let removed = new_state_account.is_empty() && !was_empty;
-
-            if !removed && !acc_info_updated && !storage_updated {
-                // Account hasn't been updated
-                continue;
-            }
-
-            let account_update = AccountUpdate {
-                address: *address,
-                removed,
-                info,
-                code: code.cloned(),
-                added_storage,
-            };
-
-            account_updates.push(account_update);
-        }
-        db.initial_accounts_state.clear();
-        //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory. #3946
-        db.current_accounts_state.clear();
-        db.codes.clear();
-        Ok(account_updates)
+        Ok(db.get_state_transitions()?)
     }
 
     pub fn process_withdrawals(
@@ -306,8 +207,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             db,
-            *BEACON_ROOTS_ADDRESS,
-            *SYSTEM_ADDRESS,
+            BEACON_ROOTS_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -328,8 +229,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             db,
-            *HISTORY_STORAGE_ADDRESS,
-            *SYSTEM_ADDRESS,
+            HISTORY_STORAGE_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -349,20 +250,10 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
-
-        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
-        let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
-        if !account.has_code() {
-            return Err(EvmError::SystemContractEmpty(
-                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
 
         match report.result {
             TxResult::Success => Ok(report),
@@ -388,20 +279,10 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
-
-        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
-        // has any code after being deployed. If not, the whole block becomes invalid.
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
-        let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
-        if !acc.has_code() {
-            return Err(EvmError::SystemContractEmpty(
-                "CONSOLIDATION_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
 
         match report.result {
             TxResult::Success => Ok(report),
@@ -425,15 +306,20 @@ impl LEVM {
         let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         vm.stateless_execute()?;
-        let access_list = build_access_list(&vm.substate);
 
         // Execute the tx again, now with the created access list.
-        tx.access_list = access_list.iter().map(|item| item.into()).collect();
+        tx.access_list = vm.substate.make_access_list();
         let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 
-        Ok((report.into(), access_list))
+        Ok((
+            report.into(),
+            tx.access_list
+                .into_iter()
+                .map(|x| (x.address, x.storage_keys))
+                .collect(),
+        ))
     }
 
     pub fn prepare_block(
@@ -490,7 +376,7 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: u64::MAX, // System calls, have no constraint on the block's gas limit.
+        block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
     };
@@ -590,16 +476,6 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
     {
         env.block_excess_blob_gas = None;
     }
-}
-
-pub fn build_access_list(substate: &Substate) -> AccessList {
-    let access_list: AccessList = substate
-        .accessed_storage_slots
-        .iter()
-        .map(|(address, slots)| (*address, slots.iter().cloned().collect::<Vec<H256>>()))
-        .collect();
-
-    access_list
 }
 
 fn env_from_generic(

@@ -10,7 +10,7 @@ See [docs](https://eest.ethereum.org/v4.1.0/consuming_tests/state_test/).
 To run the test first:
 
 ```sh
-cd cmd/ef_tests/state
+cd tooling/ef_tests/state
 ```
 
 then download the test vectors:
@@ -34,7 +34,7 @@ See [docs](https://eest.ethereum.org/v4.1.0/consuming_tests/blockchain_test).
 To run the tests first:
 
 ```sh
-cd cmd/ef_tests/blockchain
+cd tooling/ef_tests/blockchain
 ```
 
 then run the tests:

@@ -1,0 +1,17 @@
+participants:
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.1.0
+    count: 1
+
+ethereum_metrics_exporter_enabled: true
+
+additional_services:
+  - prometheus_grafana
+
+network_params:
+  network: hoodi
+
+grafana_params:
+  additional_dashboards: ["./ethrex_l1_perf.json"]

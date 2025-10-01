@@ -17,7 +17,7 @@ pub struct RpcTransaction {
     pub tx: Transaction,
     #[serde(with = "serde_utils::u64::hex_str_opt")]
     block_number: Option<BlockNumber>,
-    block_hash: BlockHash,
+    block_hash: Option<BlockHash>,
     from: Address,
     pub hash: H256,
     #[serde(with = "serde_utils::u64::hex_str_opt")]
@@ -28,11 +28,11 @@ impl RpcTransaction {
     pub fn build(
         tx: Transaction,
         block_number: Option<BlockNumber>,
-        block_hash: BlockHash,
+        block_hash: Option<BlockHash>,
         transaction_index: Option<usize>,
     ) -> Result<Self, RpcErr> {
         let from = tx.sender()?;
-        let hash = tx.compute_hash();
+        let hash = tx.hash();
         let transaction_index = transaction_index.map(|n| n as u64);
         Ok(RpcTransaction {
             tx,

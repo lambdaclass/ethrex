@@ -1,10 +1,10 @@
 use std::fmt::Display;
 
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{calldata::Value, l1_messages::L1MESSENGER_ADDRESS};
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, calldata::encode_calldata};
 use ethrex_rpc::{EthClient, clients::Overrides, types::receipt::RpcLog};
-use keccak_hash::keccak;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -285,7 +285,7 @@ impl L2ToL1MessagesTable {
                         token_l1: Address::from_slice(
                             &log.log
                                 .topics
-                                .get(1)
+                                .get(WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX)
                                 .ok_or(MonitorError::LogsTopics(
                                     WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX,
                                 ))?
@@ -294,7 +294,7 @@ impl L2ToL1MessagesTable {
                         token_l2: Address::from_slice(
                             &log.log
                                 .topics
-                                .get(2)
+                                .get(WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX)
                                 .ok_or(MonitorError::LogsTopics(
                                     WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX,
                                 ))?

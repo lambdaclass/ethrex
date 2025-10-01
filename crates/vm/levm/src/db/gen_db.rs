@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
-use keccak_hash::H256;
-use keccak_hash::keccak;
+use ethrex_common::utils::keccak;
 
 use super::Database;
 use crate::account::LevmAccount;
@@ -17,6 +17,7 @@ use crate::errors::VMError;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
+pub use ethrex_common::types::AccountUpdate;
 use std::collections::btree_map::Entry;
 
 pub type CacheDB = BTreeMap<Address, LevmAccount>;
@@ -155,6 +156,110 @@ impl GeneralizedDatabase {
         restore_cache_state(self, tx_backup)?;
         Ok(())
     }
+
+    pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
+        let mut account_updates: Vec<AccountUpdate> = vec![];
+        for (address, new_state_account) in self.current_accounts_state.iter() {
+            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
+            let initial_state_account =
+                self.initial_accounts_state
+                    .get(address)
+                    .ok_or(VMError::Internal(InternalError::Custom(format!(
+                        "Failed to get account {address} from immutable cache",
+                    ))))?;
+
+            // Edge case: Account was destroyed and created again afterwards with CREATE2.
+            if self.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
+                // Push to account updates the removal of the account and then push the new state of the account.
+                // This is for clearing the account's storage when it was selfdestructed in the first place.
+                account_updates.push(AccountUpdate::removed(*address));
+                let new_account_update = AccountUpdate {
+                    address: *address,
+                    removed: false,
+                    info: Some(new_state_account.info.clone()),
+                    code: Some(
+                        self.codes
+                            .get(&new_state_account.info.code_hash)
+                            .ok_or(VMError::Internal(InternalError::Custom(format!(
+                                "Failed to get code for account {address}"
+                            ))))?
+                            .clone(),
+                    ),
+                    added_storage: new_state_account.storage.clone(),
+                };
+                account_updates.push(new_account_update);
+                continue;
+            }
+
+            let mut acc_info_updated = false;
+            let mut storage_updated = false;
+
+            // 1. Account Info has been updated if balance, nonce or bytecode changed.
+            if initial_state_account.info.balance != new_state_account.info.balance {
+                acc_info_updated = true;
+            }
+
+            if initial_state_account.info.nonce != new_state_account.info.nonce {
+                acc_info_updated = true;
+            }
+
+            let code =
+                if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                    acc_info_updated = true;
+                    // code should be in `codes`
+                    Some(self.codes.get(&new_state_account.info.code_hash).ok_or(
+                        VMError::Internal(InternalError::Custom(format!(
+                            "Failed to get code for account {address}"
+                        ))),
+                    )?)
+                } else {
+                    None
+                };
+
+            // 2. Storage has been updated if the current value is different from the one before execution.
+            let mut added_storage = BTreeMap::new();
+
+            for (key, new_value) in &new_state_account.storage {
+                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?;
+
+                if new_value != old_value {
+                    added_storage.insert(*key, *new_value);
+                    storage_updated = true;
+                }
+            }
+
+            let info = if acc_info_updated {
+                Some(new_state_account.info.clone())
+            } else {
+                None
+            };
+
+            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            // If the account was already empty then this is not an update
+            let was_empty = initial_state_account.is_empty();
+            let removed = new_state_account.is_empty() && !was_empty;
+
+            if !removed && !acc_info_updated && !storage_updated {
+                // Account hasn't been updated
+                continue;
+            }
+
+            let account_update = AccountUpdate {
+                address: *address,
+                removed,
+                info,
+                code: code.cloned(),
+                added_storage,
+            };
+
+            account_updates.push(account_update);
+        }
+        self.initial_accounts_state.clear();
+        //TODO: These down below don't need to be cleared every time we get state transitions. Clearing them slows down execution but consumes less memory. #3946
+        self.current_accounts_state.clear();
+        self.codes.clear();
+        Ok(account_updates)
+    }
 }
 
 impl<'a> VM<'a> {
@@ -281,12 +386,7 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<(U256, bool), InternalError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-        let storage_slot_was_cold = self
-            .substate
-            .accessed_storage_slots
-            .entry(address)
-            .or_default()
-            .insert(key);
+        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
 
         let storage_slot = self.get_storage_value(address, key)?;
 

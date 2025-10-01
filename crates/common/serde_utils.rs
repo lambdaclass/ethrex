@@ -7,6 +7,24 @@ pub mod u256 {
     use ethereum_types::U256;
     use serde_json::Number;
 
+    pub mod dec_str {
+        use super::*;
+        pub fn deserialize<'de, D>(d: D) -> Result<U256, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = String::deserialize(d)?;
+            U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
+        }
+
+        pub fn serialize<S>(value: &U256, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(&value.to_string())
+        }
+    }
+
     pub fn deser_number<'de, D>(d: D) -> Result<U256, D::Error>
     where
         D: Deserializer<'de>,
@@ -31,14 +49,6 @@ pub mod u256 {
             }
             None => Ok(None),
         }
-    }
-
-    pub fn deser_dec_str<'de, D>(d: D) -> Result<U256, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(d)?;
-        U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
     }
 
     pub fn deser_hex_str<'de, D>(d: D) -> Result<U256, D::Error>
@@ -125,6 +135,30 @@ pub mod u256 {
                     Ok((key, value))
                 })
                 .collect()
+        }
+    }
+}
+
+pub mod u32 {
+    use super::*;
+
+    pub mod hex_str {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<u32, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = String::deserialize(d)?;
+            u32::from_str_radix(value.trim_start_matches("0x"), 16)
+                .map_err(|_| D::Error::custom("Failed to deserialize u32 value"))
+        }
+
+        pub fn serialize<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(&format!("{value:#x}"))
         }
     }
 }
@@ -378,6 +412,13 @@ pub mod bool {
 pub mod bytes48 {
     use super::*;
 
+    pub fn serialize<S>(value: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{}", hex::encode(value)))
+    }
+
     pub mod vec {
         use super::*;
 
@@ -414,10 +455,16 @@ pub mod bytes48 {
 
 pub mod blob {
     use super::*;
+    use crate::types::BYTES_PER_BLOB;
+
+    pub fn serialize<S>(value: &[u8; BYTES_PER_BLOB], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{}", hex::encode(value)))
+    }
 
     pub mod vec {
-        use crate::types::BYTES_PER_BLOB;
-
         use super::*;
 
         pub fn serialize<S>(

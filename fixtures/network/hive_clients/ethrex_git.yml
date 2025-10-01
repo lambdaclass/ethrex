@@ -1,4 +1,0 @@
-- client: ethrex
-  dockerfile: git
-  build_args:
-    tag: main

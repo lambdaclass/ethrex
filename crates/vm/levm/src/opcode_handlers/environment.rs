@@ -22,14 +22,14 @@ impl<'a> VM<'a> {
             .stack
             .push1(u256_from_big_endian_const(addr.to_fixed_bytes()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // BALANCE operation
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
 
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account_balance = self.db.get_account(address)?.info.balance;
 
         let current_call_frame = &mut self.current_call_frame;
@@ -38,7 +38,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(account_balance)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // ORIGIN operation
@@ -51,7 +51,7 @@ impl<'a> VM<'a> {
             .stack
             .push1(u256_from_big_endian_const(origin.to_fixed_bytes()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // CALLER operation
@@ -59,12 +59,10 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
-        let caller = current_call_frame.msg_sender;
-        current_call_frame
-            .stack
-            .push(&[u256_from_big_endian_const(caller.to_fixed_bytes())])?;
+        let caller = u256_from_big_endian_const(current_call_frame.msg_sender.to_fixed_bytes());
+        current_call_frame.stack.push1(caller)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // CALLVALUE operation
@@ -76,7 +74,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(callvalue)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // CALLDATALOAD operation
@@ -91,8 +89,8 @@ impl<'a> VM<'a> {
         // If the offset is larger than the actual calldata, then you
         // have no data to return.
         if offset > calldata_size {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         };
         let offset: usize = offset
             .try_into()
@@ -100,22 +98,25 @@ impl<'a> VM<'a> {
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(offset)
-            .take(32)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        let size = 32;
+
+        if offset < current_call_frame.calldata.len() {
+            let diff = current_call_frame.calldata.len().wrapping_sub(offset);
+            let final_size = size.min(diff);
+            let end = offset.wrapping_add(final_size);
+
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            unsafe {
+                data.get_unchecked_mut(..final_size)
+                    .copy_from_slice(current_call_frame.calldata.get_unchecked(offset..end));
             }
         }
+
         let result = u256_from_big_endian_const(data);
 
         current_call_frame.stack.push1(result)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // CALLDATASIZE operation
@@ -127,7 +128,7 @@ impl<'a> VM<'a> {
             .stack
             .push1(U256::from(current_call_frame.calldata.len()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // CALLDATACOPY operation
@@ -146,28 +147,54 @@ impl<'a> VM<'a> {
         )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
-        let mut data = vec![0u8; size];
+        let calldata_len = current_call_frame.calldata.len();
 
-        if calldata_offset <= current_call_frame.calldata.len() {
-            for (i, byte) in current_call_frame
-                .calldata
-                .iter()
-                .skip(calldata_offset)
-                .take(size)
-                .enumerate()
-            {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
+        // offset is out of bounds, so fill zeroes
+        if calldata_offset >= calldata_len {
+            current_call_frame.memory.store_zeros(dest_offset, size)?;
+            return Ok(OpcodeResult::Continue);
+        }
+
+        #[expect(
+            clippy::arithmetic_side_effects,
+            clippy::indexing_slicing,
+            reason = "bounds checked"
+        )]
+        {
+            // we already verified calldata_len >= calldata_offset
+            let available_data = calldata_len - calldata_offset;
+            let copy_size = size.min(available_data);
+            let zero_fill_size = size - copy_size;
+
+            if zero_fill_size == 0 {
+                // no zero padding needed
+
+                // calldata_offset + copy_size can't overflow because its the min of size and (calldata_len - calldata_offset).
+                let src_slice =
+                    &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
+                current_call_frame
+                    .memory
+                    .store_data(dest_offset, src_slice)?;
+            } else {
+                let mut data = vec![0u8; size];
+
+                let available_data = calldata_len - calldata_offset;
+                let copy_size = size.min(available_data);
+
+                if copy_size > 0 {
+                    data[..copy_size].copy_from_slice(
+                        &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size],
+                    );
                 }
+
+                current_call_frame.memory.store_data(dest_offset, &data)?;
             }
+
+            Ok(OpcodeResult::Continue)
         }
-
-        current_call_frame.memory.store_data(dest_offset, &data)?;
-
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CODESIZE operation
@@ -179,7 +206,7 @@ impl<'a> VM<'a> {
             .stack
             .push1(U256::from(current_call_frame.bytecode.len()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // CODECOPY operation
@@ -199,12 +226,12 @@ impl<'a> VM<'a> {
         )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
         if let Some(code_offset_end) = code_offset.checked_add(size) {
-            if code_offset_end < current_call_frame.bytecode.len() {
+            if code_offset_end <= current_call_frame.bytecode.len() {
                 #[expect(unsafe_code, reason = "bounds checked beforehand")]
                 let slice = unsafe {
                     current_call_frame
@@ -213,7 +240,7 @@ impl<'a> VM<'a> {
                 };
                 current_call_frame.memory.store_data(dest_offset, slice)?;
 
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(OpcodeResult::Continue);
             }
         }
 
@@ -232,7 +259,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.memory.store_data(dest_offset, &data)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // GASPRICE operation
@@ -243,13 +270,13 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(gas_price)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account_code_length = self.db.get_account_code(address)?.len().into();
 
         let current_call_frame = &mut self.current_call_frame;
@@ -258,7 +285,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(account_code_length)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // EXTCODECOPY operation
@@ -271,7 +298,7 @@ impl<'a> VM<'a> {
         let offset = u256_to_usize(offset).unwrap_or(usize::MAX);
 
         let current_memory_size = call_frame.memory.len();
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         self.current_call_frame
@@ -283,19 +310,36 @@ impl<'a> VM<'a> {
             )?)?;
 
         if size == 0 {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
         let bytecode = self.db.get_account_code(address)?;
 
+        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
+        if let Some(offset_end) = offset.checked_add(size) {
+            if offset_end <= bytecode.len() {
+                #[expect(unsafe_code, reason = "bounds checked beforehand")]
+                let slice = unsafe { bytecode.get_unchecked(offset..offset_end) };
+                self.current_call_frame
+                    .memory
+                    .store_data(dest_offset, slice)?;
+
+                return Ok(OpcodeResult::Continue);
+            }
+        }
+
         let mut data = vec![0u8; size];
         if offset < bytecode.len() {
-            for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
-                }
+            let diff = bytecode.len().wrapping_sub(offset);
+            let final_size = size.min(diff);
+            let end = offset.wrapping_add(final_size);
+
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            unsafe {
+                data.get_unchecked_mut(..final_size)
+                    .copy_from_slice(bytecode.get_unchecked(offset..end));
             }
         }
 
@@ -303,7 +347,7 @@ impl<'a> VM<'a> {
             .memory
             .store_data(dest_offset, &data)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // RETURNDATASIZE operation
@@ -315,7 +359,7 @@ impl<'a> VM<'a> {
             .stack
             .push1(U256::from(current_call_frame.sub_return_data.len()))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // RETURNDATACOPY operation
@@ -336,7 +380,7 @@ impl<'a> VM<'a> {
         )?)?;
 
         if size == 0 && returndata_offset == 0 {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         let sub_return_data_len = current_call_frame.sub_return_data.len();
@@ -349,30 +393,21 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OutOfBounds.into());
         }
 
-        // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.
-        // I would've used copy_from_slice but it can panic.
-        let mut data = vec![0u8; size];
-        for (i, byte) in current_call_frame
-            .sub_return_data
-            .iter()
-            .skip(returndata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
-            }
-        }
+        #[expect(unsafe_code, reason = "bounds checked beforehand")]
+        let slice = unsafe {
+            current_call_frame
+                .sub_return_data
+                .get_unchecked(returndata_offset..copy_limit)
+        };
+        current_call_frame.memory.store_data(dest_offset, slice)?;
 
-        current_call_frame.memory.store_data(dest_offset, &data)?;
-
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // EXTCODEHASH operation
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let address_was_cold = !self.substate.add_accessed_address(address);
         let account = self.db.get_account(address)?;
         let account_is_empty = account.is_empty();
         let account_code_hash = account.info.code_hash.0;
@@ -382,13 +417,13 @@ impl<'a> VM<'a> {
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
         let hash = u256_from_big_endian_const(account_code_hash);
         current_call_frame.stack.push1(hash)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }

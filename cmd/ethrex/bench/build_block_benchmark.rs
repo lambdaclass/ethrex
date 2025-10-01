@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     str::FromStr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -10,19 +11,18 @@ use criterion::{
     measurement::{Measurement, ValueFormatter},
 };
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainOptions, BlockchainType,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
     Address, H160,
     types::{
-        Block, EIP1559Transaction, Genesis, GenesisAccount, Transaction, TxKind,
-        payload::PayloadBundle,
+        Block, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, Genesis, GenesisAccount, Transaction,
+        TxKind,
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
 use secp256k1::SecretKey;
 
 pub struct GasMeasurement;
@@ -118,17 +118,13 @@ fn recover_address_for_sk(sk: &SecretKey) -> Address {
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
-    let storage_path = tempdir::TempDir::new("storage").unwrap();
+    let storage_path = tempfile::TempDir::new().unwrap();
     if std::fs::exists(&storage_path).unwrap_or(false) {
         std::fs::remove_dir_all(&storage_path).unwrap();
     }
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
-    let store = Store::new(
-        &storage_path.into_path().display().to_string(),
-        EngineType::Libmdbx,
-    )
-    .unwrap();
+    let store = Store::new(storage_path, EngineType::RocksDB).unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
@@ -152,9 +148,10 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
         beacon_root: genesis_block.header.parent_beacon_block_root,
         version: 3,
         elasticity_multiplier: 1,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
     let id = payload_args.id();
-    let block = create_payload(&payload_args, store).unwrap();
+    let block = create_payload(&payload_args, store, Bytes::new()).unwrap();
     (block, id.unwrap())
 }
 
@@ -182,44 +179,29 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
     }
 }
 
-pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) -> (Duration, u64) {
-    let (b, genesis_block, store) = input;
+pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duration, u64) {
+    let (blockchain, genesis_block, store) = input;
     // 1. engine_forkChoiceUpdated is called, which ends up calling fork_choice::build_payload,
     // which finally calls payload::create_payload(), this mimics this step without
-    // the RPC handling. The payload is created and the id stored.
+    // the RPC handling. The payload is then sent to `Blockchain` to initiate the payload building
+    // Blockchain::initiate_payload_build eventually calls 'fill_transactions'
+    // which should take transactions from the previously filled mempool
     let (payload_block, payload_id) = create_payload_block(genesis_block, store).await;
-    store
-        .add_payload(payload_id, payload_block.clone())
-        .await
-        .unwrap();
-    // 2. engine_getPayload is called, this code path ends up calling Store::get_payload(id),
+    blockchain
+        .clone()
+        .initiate_payload_build(payload_block, payload_id)
+        .await;
+    // 2. engine_getPayload is called, this code path ends up calling Blockchain::get_payload(id),
     // so we also mimic that here without the RPC part.
-    // We also need to updated the payload to set it as completed.
-    // Blockchain::build_payload eventaully calls to 'fill_transactions'
-    // which should take transactions from the previously filled mempool.
-    let payload = store.get_payload(payload_id).await.unwrap().unwrap();
-    let (blobs_bundle, requests, block_value, block) = {
-        let PayloadBuildResult {
-            blobs_bundle,
-            block_value,
-            requests,
-            payload,
-            ..
-        } = b.build_payload(payload.block.clone()).await.unwrap();
-        (blobs_bundle, requests, block_value, payload)
+    // This method will wait for the building process to finish and retrieve the finalized block
+    let block = {
+        let PayloadBuildResult { payload, .. } = blockchain.get_payload(payload_id).await.unwrap();
+        payload
     };
-    let new_payload = PayloadBundle {
-        block: block.clone(),
-        block_value,
-        blobs_bundle,
-        requests,
-        completed: true,
-    };
-    store.update_payload(payload_id, new_payload).await.unwrap();
     // 3. engine_newPayload is called, this eventually calls Blockchain::add_block
     // which takes transactions from the mempool and fills the block with them.
     let since = Instant::now();
-    b.add_block(&block).await.unwrap();
+    blockchain.add_block(&block).await.unwrap();
     let executed = Instant::now();
     // EXTRA: Sanity check to not benchmark n empty block.
     let hash = &block.hash();
@@ -243,7 +225,7 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
             .iter_custom(|_iters| async move {
                 let mut total_duration = Duration::from_secs(0);
                 let mut total_gas_used = 0;
-                let (mut blockchain, genesis_block, store) = {
+                let (blockchain, genesis_block, store) = {
                     let accounts = read_private_keys();
                     let addresses = accounts
                         .clone()
@@ -253,15 +235,18 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
 
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let block_chain = Blockchain::new(
-                        EvmEngine::LEVM,
                         store_with_genesis.clone(),
-                        BlockchainType::L1, // TODO: Should we support L2?
+                        BlockchainOptions {
+                            r#type: BlockchainType::L1, // TODO: Should we support L2?
+                            perf_logs_enabled: false,
+                            ..Default::default()
+                        },
                     );
                     fill_mempool(&block_chain, accounts).await;
 
                     (block_chain, genesis.get_block(), store_with_genesis)
                 };
-                let input = (&mut blockchain, genesis_block, &store);
+                let input = (Arc::new(blockchain), genesis_block, &store);
                 let (duration, gas_used) = bench_payload(&input).await;
                 total_duration += duration;
                 total_gas_used += gas_used;

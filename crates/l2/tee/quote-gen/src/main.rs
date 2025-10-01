@@ -6,14 +6,14 @@ use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
+    utils::get_address_from_secret_key,
 };
-use ethrex_l2_sdk::get_address_from_secret_key;
-use keccak_hash::keccak;
+use guest_program::input::ProgramInput;
+use ethrex_common::utils::keccak;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;
 use tokio::time::sleep;
-use zkvm_interface::io::ProgramInput;
 
 const POLL_INTERVAL_MS: u64 = 5000;
 
@@ -32,13 +32,13 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 
     let (msg_signature_recovery_id, msg_signature) = signed_msg.serialize_compact();
 
-    let msg_signature_recovery_id = msg_signature_recovery_id.to_i32() + 27;
+    let msg_signature_recovery_id = Into::<i32>::into(msg_signature_recovery_id) + 27;
 
     [&msg_signature[..], &[msg_signature_recovery_id as u8]].concat()
 }
 
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
-    let output = zkvm_interface::execution::execution_program(input).map_err(|e| e.to_string())?;
+    let output = guest_program::execution::execution_program(input).map_err(|e| e.to_string())?;
 
     Ok(output.encode())
 }

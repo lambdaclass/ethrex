@@ -1,5 +1,9 @@
+// This is added because otherwise some tests would fail due to reaching the recursion limit
+#![recursion_limit = "400"]
+
 mod admin;
 mod authentication;
+pub mod debug;
 mod engine;
 mod eth;
 mod mempool;

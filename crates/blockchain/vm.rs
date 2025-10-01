@@ -7,6 +7,7 @@ use ethrex_common::{
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
 use std::{cmp::Ordering, collections::HashMap};
+use tracing::instrument;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -41,18 +42,21 @@ impl StoreVmDatabase {
 }
 
 impl VmDatabase for StoreVmDatabase {
+    #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
         self.store
             .get_account_info_by_hash(self.block_hash, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
+    #[instrument(level = "trace", name = "Storage read", skip_all)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
             .get_storage_at_hash(self.block_hash, address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
+    #[instrument(level = "trace", name = "Block hash read", skip_all)]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         // Check if we have it cached
         if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
@@ -99,6 +103,7 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
+    #[instrument(level = "trace", name = "Account code read", skip_all)]
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());

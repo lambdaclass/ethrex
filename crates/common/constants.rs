@@ -1,5 +1,5 @@
+use crate::H256;
 use ethrex_rlp::constants::RLP_NULL;
-use keccak_hash::H256;
 use sha3::{Digest as _, Keccak256};
 use std::{str::FromStr, sync::LazyLock};
 
@@ -53,7 +53,15 @@ pub static DEPOSIT_TOPIC: LazyLock<H256> = LazyLock::new(|| {
 // === EIP-4844 constants ===
 
 /// Gas consumption of a single data blob (== blob byte size).
-pub const GAS_PER_BLOB: u64 = 1 << 17;
+pub const GAS_PER_BLOB: u32 = 1 << 17;
 
 // Minimum base fee per blob
 pub const MIN_BASE_FEE_PER_BLOB_GAS: u64 = 1;
+
+// === EIP-7934 constants ===
+
+pub const MAX_BLOCK_SIZE: u64 = 10_485_760;
+pub const RLP_BLOCK_SIZE_SAFETY_MARGIN: u64 = 2_097_152;
+pub const MAX_RLP_BLOCK_SIZE: u64 = MAX_BLOCK_SIZE - RLP_BLOCK_SIZE_SAFETY_MARGIN;
+// Blob base cost defined in EIP-7918
+pub const BLOB_BASE_COST: u64 = 8192;

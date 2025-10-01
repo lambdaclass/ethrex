@@ -1,7 +1,6 @@
 use crate::{
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
-    opcode_handlers::bitwise_comparison::checked_shift_left,
     vm::VM,
 };
 use ethrex_common::{U256, U512};
@@ -19,7 +18,7 @@ impl<'a> VM<'a> {
         let sum = augend.overflowing_add(addend).0;
         current_call_frame.stack.push1(sum)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SUB operation
@@ -31,7 +30,7 @@ impl<'a> VM<'a> {
         let difference = minuend.overflowing_sub(subtrahend).0;
         current_call_frame.stack.push1(difference)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MUL operation
@@ -43,7 +42,7 @@ impl<'a> VM<'a> {
         let product = multiplicand.overflowing_mul(multiplier).0;
         current_call_frame.stack.push1(product)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // DIV operation
@@ -53,12 +52,12 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         let Some(quotient) = dividend.checked_div(divisor) else {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         };
         current_call_frame.stack.push1(quotient)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SDIV operation
@@ -68,8 +67,8 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         if divisor.is_zero() || dividend.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
         let abs_dividend = abs(dividend);
@@ -89,7 +88,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(quotient)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MOD operation
@@ -103,7 +102,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(remainder)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SMOD operation
@@ -114,8 +113,8 @@ impl<'a> VM<'a> {
         let [unchecked_dividend, unchecked_divisor] = *current_call_frame.stack.pop()?;
 
         if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
         let divisor = abs(unchecked_divisor);
@@ -124,8 +123,8 @@ impl<'a> VM<'a> {
         let unchecked_remainder = match dividend.checked_rem(divisor) {
             Some(remainder) => remainder,
             None => {
-                current_call_frame.stack.push1(U256::zero())?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                current_call_frame.stack.push_zero()?;
+                return Ok(OpcodeResult::Continue);
             }
         };
 
@@ -137,7 +136,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.stack.push1(remainder)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // ADDMOD operation
@@ -148,26 +147,32 @@ impl<'a> VM<'a> {
         let [augend, addend, modulus] = *current_call_frame.stack.pop()?;
 
         if modulus.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
         let new_augend: U512 = augend.into();
         let new_addend: U512 = addend.into();
 
-        let sum = new_augend
-            .checked_add(new_addend)
-            .ok_or(InternalError::Overflow)?;
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "both values come from a u256, so the product can fit in a U512"
+        )]
+        let sum = new_augend + new_addend;
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "can't trap because non-zero modulus"
+        )]
+        let sum_mod = sum % modulus;
 
-        let sum_mod = sum
-            .checked_rem(modulus.into())
-            .ok_or(InternalError::Overflow)?
+        #[allow(clippy::expect_used, reason = "can't overflow")]
+        let sum_mod: U256 = sum_mod
             .try_into()
-            .map_err(|_err| InternalError::Overflow)?;
+            .expect("can't fail because we applied % mod where mod is a U256 value");
 
         current_call_frame.stack.push1(sum_mod)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MULMOD operation
@@ -178,25 +183,29 @@ impl<'a> VM<'a> {
         let [multiplicand, multiplier, modulus] = *current_call_frame.stack.pop()?;
 
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
-            current_call_frame.stack.push1(U256::zero())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            current_call_frame.stack.push_zero()?;
+            return Ok(OpcodeResult::Continue);
         }
 
         let multiplicand: U512 = multiplicand.into();
         let multiplier: U512 = multiplier.into();
 
-        let product = multiplicand
-            .checked_mul(multiplier)
-            .ok_or(InternalError::Overflow)?;
-        let product_mod: U256 = product
-            .checked_rem(modulus.into())
-            .ok_or(InternalError::Overflow)?
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "both values come from a u256, so the product can fit in a U512"
+        )]
+        let product = multiplicand * multiplier;
+        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
+        let product_mod = product % modulus;
+
+        #[allow(clippy::expect_used, reason = "can't overflow")]
+        let product_mod: U256 = product_mod
             .try_into()
-            .map_err(|_err| InternalError::Overflow)?;
+            .expect("can't fail because we applied % mod where mod is a U256 value");
 
         current_call_frame.stack.push1(product_mod)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // EXP operation
@@ -211,7 +220,7 @@ impl<'a> VM<'a> {
         let power = base.overflowing_pow(exponent).0;
         current_call_frame.stack.push1(power)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SIGNEXTEND operation
@@ -223,33 +232,46 @@ impl<'a> VM<'a> {
 
         if byte_size_minus_one > U256::from(31) {
             current_call_frame.stack.push1(value_to_extend)?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
-        let bits_per_byte = U256::from(8);
-        let sign_bit_position_on_byte = U256::from(7);
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "Since byte_size_minus_one ≤ 31, overflow is impossible"
+        )]
+        let sign_bit_index = byte_size_minus_one * 8 + 7;
 
-        let sign_bit_index = bits_per_byte
-            .checked_mul(byte_size_minus_one)
-            .and_then(|total_bits| total_bits.checked_add(sign_bit_position_on_byte))
-            .ok_or(InternalError::Overflow)?;
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "sign_bit_index max value is 31 * 8 + 7 = 255, which can't overflow."
+        )]
+        {
+            let sign_bit = (value_to_extend >> sign_bit_index) & U256::one();
+            let mask = (U256::one() << sign_bit_index) - U256::one();
 
-        #[expect(clippy::arithmetic_side_effects)]
-        let shifted_value = value_to_extend >> sign_bit_index;
-        let sign_bit = shifted_value & U256::one();
+            let result = if sign_bit.is_zero() {
+                value_to_extend & mask
+            } else {
+                value_to_extend | !mask
+            };
 
-        let sign_bit_mask = checked_shift_left(U256::one(), sign_bit_index)?
-            .checked_sub(U256::one())
-            .ok_or(InternalError::Underflow)?; //Shifted should be at least one
+            current_call_frame.stack.push1(result)?;
 
-        let result = if sign_bit.is_zero() {
-            value_to_extend & sign_bit_mask
-        } else {
-            value_to_extend | !sign_bit_mask
-        };
-        current_call_frame.stack.push1(result)?;
+            Ok(OpcodeResult::Continue)
+        }
+    }
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+    pub fn op_clz(&mut self) -> Result<OpcodeResult, VMError> {
+        self.current_call_frame
+            .increase_consumed_gas(gas_cost::CLZ)?;
+
+        let value = self.current_call_frame.stack.pop1()?;
+
+        self.current_call_frame
+            .stack
+            .push1(U256::from(value.leading_zeros()))?;
+
+        Ok(OpcodeResult::Continue)
     }
 }
 

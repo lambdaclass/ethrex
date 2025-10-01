@@ -12,9 +12,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
-    types::{
-        AccessListEntry, BlockHash, BlockHeader, BlockNumber, Fork, GenericTransaction, TxKind,
-    },
+    types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
 use ethrex_rlp::encode::RLPEncode;
@@ -108,15 +106,12 @@ impl RpcHandler for CallRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let chain_config = context.storage.get_chain_config()?;
-        let fork = chain_config.get_fork(header.timestamp);
         // Run transaction
         let result = simulate_tx(
             &self.transaction,
             &header,
             context.storage,
             context.blockchain,
-            fork,
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -168,7 +163,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
         let tx = RpcTransaction::build(
             tx.clone(),
             Some(block_number),
-            block_header.hash(),
+            Some(block_header.hash()),
             Some(self.transaction_index),
         )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -215,7 +210,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
         let tx = RpcTransaction::build(
             tx.clone(),
             Some(block_number),
-            self.block,
+            Some(self.block),
             Some(self.transaction_index),
         )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -243,28 +238,32 @@ impl RpcHandler for GetTransactionByHashRequest {
             "Requested transaction with hash: {:#x}",
             self.transaction_hash,
         );
-        let (block_number, block_hash, index) = match storage
+        let transaction = if let Some((block_number, block_hash, index)) = storage
             .get_transaction_location(self.transaction_hash)
             .await?
         {
-            Some(location) => location,
-            _ => return Ok(Value::Null),
+            let Some(tx) = storage
+                .get_transaction_by_location(block_hash, index)
+                .await?
+            else {
+                return Ok(Value::Null);
+            };
+            RpcTransaction::build(
+                tx,
+                Some(block_number),
+                Some(block_hash),
+                Some(index as usize),
+            )?
+        } else {
+            let Some(tx) = context
+                .blockchain
+                .mempool
+                .get_transaction_by_hash(self.transaction_hash)?
+            else {
+                return Ok(Value::Null);
+            };
+            RpcTransaction::build(tx, None, None, None)?
         };
-
-        let transaction: ethrex_common::types::Transaction = match storage
-            .get_transaction_by_location(block_hash, index)
-            .await?
-        {
-            Some(transaction) => transaction,
-            _ => return Ok(Value::Null),
-        };
-
-        let transaction = RpcTransaction::build(
-            transaction,
-            Some(block_number),
-            block_hash,
-            Some(index as usize),
-        )?;
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -349,12 +348,9 @@ impl RpcHandler for CreateAccessListRequest {
 
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
         let mut vm = context.blockchain.new_evm(vm_db)?;
-        let chain_config = context.storage.get_chain_config()?;
-        let fork = chain_config.get_fork(header.timestamp);
 
         // Run transaction and obtain access list
-        let (gas_used, access_list, error) =
-            vm.create_access_list(&self.transaction, &header, fork)?;
+        let (gas_used, access_list, error) = vm.create_access_list(&self.transaction, &header)?;
         let result = AccessListResult {
             access_list: access_list
                 .into_iter()
@@ -394,16 +390,20 @@ impl RpcHandler for GetRawTransaction {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let tx = context
+        let mut tx = context
             .storage
             .get_transaction_by_hash(self.transaction_hash)
             .await?;
-
+        if tx.is_none() {
+            tx = context
+                .blockchain
+                .mempool
+                .get_transaction_by_hash(self.transaction_hash)?;
+        }
         let tx = match tx {
             Some(tx) => tx,
             _ => return Ok(Value::Null),
         };
-
         serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -457,9 +457,6 @@ impl RpcHandler for EstimateGasRequest {
             }
         };
 
-        let chain_config = storage.get_chain_config()?;
-        let fork = chain_config.get_fork(block_header.timestamp);
-
         // If the transaction is a plain value transfer, short circuit estimation.
         if let TxKind::Call(address) = transaction.to {
             let account_info = storage
@@ -474,7 +471,6 @@ impl RpcHandler for EstimateGasRequest {
                     &block_header,
                     storage.clone(),
                     blockchain.clone(),
-                    fork,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
                     return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
@@ -507,7 +503,6 @@ impl RpcHandler for EstimateGasRequest {
             &block_header,
             storage.clone(),
             blockchain.clone(),
-            fork,
         )?;
 
         let gas_used = result.gas_used();
@@ -536,7 +531,6 @@ impl RpcHandler for EstimateGasRequest {
                 &block_header,
                 storage.clone(),
                 blockchain.clone(),
-                fork,
             );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
@@ -572,12 +566,11 @@ fn simulate_tx(
     block_header: &BlockHeader,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
     let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash());
     let mut vm = blockchain.new_evm(vm_db)?;
 
-    match vm.simulate_tx_from_generic(transaction, block_header, fork)? {
+    match vm.simulate_tx_from_generic(transaction, block_header)? {
         ExecutionResult::Revert {
             gas_used: _,
             output,

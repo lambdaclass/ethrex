@@ -3,17 +3,17 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::Address;
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::{
-        configs::{AlignedConfig, MonitorConfig},
+        configs::{AdminConfig, AlignedConfig, MonitorConfig},
         utils::resolve_aligned_network,
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backends::Backend, config::ProverConfig};
+use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -76,6 +76,8 @@ pub struct SequencerOptions {
     pub aligned_opts: AlignedOptions,
     #[command(flatten)]
     pub monitor_opts: MonitorOptions,
+    #[command(flatten)]
+    pub admin_opts: AdminOptions,
     #[arg(
         long = "validium",
         default_value = "false",
@@ -97,7 +99,7 @@ pub struct SequencerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
-        env = "ETHREX_MONITOR",
+        env = "ETHREX_NO_MONITOR",
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
@@ -131,8 +133,6 @@ pub enum SequencerOptionsError {
     NoCoinbaseAddress,
     #[error("No on-chain proposer address was provided")]
     NoOnChainProposerAddress,
-    #[error("No proof coordinator TDX private key was provided")]
-    NoProofCoorditanorTdxPrivateKey,
     #[error("No bridge address was provided")]
     NoBridgeAddress,
 }
@@ -161,13 +161,16 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .coinbase_address
                     .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
+                block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
                     .committer_opts
                     .on_chain_proposer_address
                     .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?,
+                first_wake_up_time_ms: opts.committer_opts.first_wake_up_time_ms.unwrap_or(0),
                 commit_time_ms: opts.committer_opts.commit_time_ms,
+                batch_gas_limit: opts.committer_opts.batch_gas_limit,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
                 validium: opts.validium,
@@ -199,8 +202,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 signer: proof_coordinator_signer,
                 tdx_private_key: opts
                     .proof_coordinator_opts
-                    .proof_coordinator_tdx_private_key
-                    .ok_or(SequencerOptionsError::NoProofCoorditanorTdxPrivateKey)?,
+                    .proof_coordinator_tdx_private_key,
+                qpl_tool_path: opts.proof_coordinator_opts.proof_coordinator_qpl_tool_path,
                 validium: opts.validium,
             },
             based: BasedConfig {
@@ -232,6 +235,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 enabled: !opts.no_monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
                 batch_widget_height: opts.monitor_opts.batch_widget_height,
+            },
+            admin_server: AdminConfig {
+                listen_ip: opts.admin_opts.admin_listen_ip,
+                listen_port: opts.admin_opts.admin_listen_port,
             },
         })
     }
@@ -324,7 +331,7 @@ pub struct WatcherOptions {
     pub bridge_address: Option<Address>,
     #[arg(
         long = "watcher.watch-interval",
-        default_value = "1000",
+        default_value = "12000", // One L1 slot
         value_name = "UINT64",
         env = "ETHREX_WATCHER_WATCH_INTERVAL",
         help = "How often the L1 watcher checks for new blocks in milliseconds.",
@@ -388,6 +395,15 @@ pub struct BlockProducerOptions {
         help_heading = "Proposer options"
     )]
     pub elasticity_multiplier: u64,
+    #[arg(
+        long = "block-producer.block-gas-limit",
+        default_value = "30000000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT",
+        help = "Maximum gas limit for the L2 blocks.",
+        help_heading = "Block producer options"
+    )]
+    pub block_gas_limit: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -400,6 +416,7 @@ impl Default for BlockProducerOptions {
                     .unwrap(),
             ),
             elasticity_multiplier: 2,
+            block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }
@@ -457,6 +474,22 @@ pub struct CommitterOptions {
     )]
     pub commit_time_ms: u64,
     #[arg(
+        long = "committer.batch-gas-limit",
+        value_name = "UINT64",
+        env = "ETHREX_COMMITTER_BATCH_GAS_LIMIT",
+        help_heading = "L1 Committer options",
+        help = "Maximum gas limit for the batch"
+    )]
+    pub batch_gas_limit: Option<u64>,
+    #[arg(
+        long = "committer.first-wake-up-time",
+        value_name = "UINT64",
+        env = "ETHREX_COMMITTER_FIRST_WAKE_UP_TIME",
+        help_heading = "L1 Committer options",
+        help = "Time to wait before the sequencer seals a batch when started. After committing the first batch, `committer.commit-time` will be used."
+    )]
+    pub first_wake_up_time_ms: Option<u64>,
+    #[arg(
         long = "committer.arbitrary-base-blob-gas-price",
         default_value = "1000000000", // 1 Gwei
         value_name = "UINT64",
@@ -475,6 +508,8 @@ impl Default for CommitterOptions {
             .ok(),
             on_chain_proposer_address: None,
             commit_time_ms: 60000,
+            batch_gas_limit: None,
+            first_wake_up_time_ms: None,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
             committer_remote_signer_public_key: None,
@@ -503,9 +538,18 @@ pub struct ProofCoordinatorOptions {
         env = "ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY",
         help_heading = "Proof coordinator options",
         long_help = "Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.",
-        required_unless_present = "dev"
     )]
     pub proof_coordinator_tdx_private_key: Option<SecretKey>,
+    #[arg(
+        long = "proof-coordinator.qpl-tool-path",
+        value_name = "QPL_TOOL_PATH",
+        env = "ETHREX_PROOF_COORDINATOR_QPL_TOOL_PATH",
+        default_value = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool",
+        help_heading = "Proof coordinator options",
+        long_help = "Path to the QPL tool that will be used to generate TDX quotes."
+    )]
+    pub proof_coordinator_qpl_tool_path: Option<String>,
+
     #[arg(
         long = "proof-coordinator.remote-signer-url",
         value_name = "URL",
@@ -568,12 +612,8 @@ impl Default for ProofCoordinatorOptions {
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
-            proof_coordinator_tdx_private_key: Some(
-                utils::parse_private_key(
-                    "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
-                )
-                .unwrap(),
-            ),
+            proof_coordinator_tdx_private_key: None,
+            proof_coordinator_qpl_tool_path: None,
         }
     }
 }
@@ -734,6 +774,36 @@ impl Default for MonitorOptions {
     }
 }
 
+#[derive(Parser, Debug)]
+pub struct AdminOptions {
+    #[arg(
+        long = "admin-server.addr",
+        env = "ETHREX_ADMIN_SERVER_LISTEN_ADDRESS",
+        default_value = "127.0.0.1",
+        value_name = "IP_ADDRESS",
+        help_heading = "Admin server options"
+    )]
+    pub admin_listen_ip: IpAddr,
+
+    #[arg(
+        long = "admin-server.port",
+        env = "ETHREX_ADMIN_SERVER_LISTEN_PORT",
+        default_value_t = 5555,
+        value_name = "UINT16",
+        help_heading = "Admin server options"
+    )]
+    pub admin_listen_port: u16,
+}
+
+impl Default for AdminOptions {
+    fn default() -> Self {
+        Self {
+            admin_listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            admin_listen_port: 5555,
+        }
+    }
+}
+
 #[derive(Parser)]
 pub struct ProverClientOptions {
     #[arg(
@@ -745,13 +815,15 @@ pub struct ProverClientOptions {
     )]
     pub backend: Backend,
     #[arg(
-        long = "proof-coordinator",
+        long = "proof-coordinators",
         value_name = "URL",
+        num_args = 1..,
+        required = true,
         env = "PROVER_CLIENT_PROOF_COORDINATOR_URL",
         help_heading = "Prover client options",
-        help = "URL of the sequencer's proof coordinator"
+        help = "URLs of all the sequencers' proof coordinator"
     )]
-    pub proof_coordinator_endpoint: Url,
+    pub proof_coordinator_endpoints: Vec<Url>,
     #[arg(
         long = "proving-time",
         value_name = "PROVING_TIME",
@@ -779,15 +851,27 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub aligned: bool,
+    #[cfg(all(feature = "sp1", feature = "gpu"))]
+    #[arg(
+        long,
+        default_value = "None",
+        value_name = "URL",
+        env = "ETHREX_SP1_SERVER",
+        help = "Url to the moongate server to use when using sp1 backend",
+        help_heading = "Prover client options"
+    )]
+    pub sp1_server: Option<Url>,
 }
 
 impl From<ProverClientOptions> for ProverConfig {
     fn from(config: ProverClientOptions) -> Self {
         Self {
             backend: config.backend,
-            proof_coordinator: config.proof_coordinator_endpoint,
+            proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
             aligned_mode: config.aligned,
+            #[cfg(all(feature = "sp1", feature = "gpu"))]
+            sp1_server: config.sp1_server,
         }
     }
 }
@@ -795,11 +879,15 @@ impl From<ProverClientOptions> for ProverConfig {
 impl Default for ProverClientOptions {
     fn default() -> Self {
         Self {
-            proof_coordinator_endpoint: Url::from_str("127.0.0.1:3900").expect("Invalid URL"),
+            proof_coordinator_endpoints: vec![
+                Url::from_str("127.0.0.1:3900").expect("Invalid URL"),
+            ],
             proving_time_ms: 5000,
             log_level: Level::INFO,
             aligned: false,
             backend: Backend::Exec,
+            #[cfg(all(feature = "sp1", feature = "gpu"))]
+            sp1_server: None,
         }
     }
 }

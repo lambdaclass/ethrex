@@ -14,5 +14,6 @@ pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcEr
 
 pub async fn peer_count(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     let total_peers = context.peer_handler.count_total_peers().await;
+
     Ok(json!(format!("{:#x}", total_peers)))
 }

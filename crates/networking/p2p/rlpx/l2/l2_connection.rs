@@ -49,6 +49,13 @@ pub enum L2Cast {
 }
 
 impl L2ConnState {
+    pub(crate) fn is_supported(&self) -> bool {
+        match self {
+            Self::Unsupported => false,
+            Self::Disconnected(_) | Self::Connected(_) => true,
+        }
+    }
+
     pub(crate) fn connection_state_mut(&mut self) -> Result<&mut L2ConnectedState, RLPxError> {
         match self {
             Self::Unsupported => Err(RLPxError::IncompatibleProtocol),
@@ -212,11 +219,12 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                             &l2_state.committer_key,
                         )
                         .serialize_compact();
-                    let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
-                        RLPxError::InternalError(format!(
-                            "Failed to convert recovery id to u8: {e}. This is a bug."
-                        ))
-                    })?;
+                    let recovery_id: u8 =
+                        Into::<i32>::into(recovery_id).try_into().map_err(|e| {
+                            RLPxError::InternalError(format!(
+                                "Failed to convert recovery id to u8: {e}. This is a bug."
+                            ))
+                        })?;
                     let mut sig = [0u8; 65];
                     sig[..64].copy_from_slice(&signature);
                     sig[64] = recovery_id;
@@ -267,13 +275,18 @@ async fn should_process_new_block(
 
     let block_hash = msg.block.hash();
 
-    let recovered_lead_sequencer = recover_address(msg.signature, block_hash).map_err(|e| {
-        log_peer_error(
-            &established.node,
-            &format!("Failed to recover lead sequencer: {e}"),
-        );
-        RLPxError::CryptographyError(e.to_string())
-    })?;
+    let msg_signature = msg.signature;
+    let recovered_lead_sequencer =
+        tokio::task::spawn_blocking(move || recover_address(msg_signature, block_hash))
+            .await
+            .map_err(|_| RLPxError::InternalError("Recover Address task failed".to_string()))?
+            .map_err(|e| {
+                log_peer_error(
+                    &established.node,
+                    &format!("Failed to recover lead sequencer: {e}"),
+                );
+                RLPxError::CryptographyError(e.to_string())
+            })?;
 
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);

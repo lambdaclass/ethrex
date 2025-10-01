@@ -18,7 +18,7 @@ use ethrex_rlp::{
 // Snap Capability Messages
 
 #[derive(Debug, Clone)]
-pub(crate) struct GetAccountRange {
+pub struct GetAccountRange {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     pub id: u64,
     pub root_hash: H256,
@@ -28,7 +28,7 @@ pub(crate) struct GetAccountRange {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct AccountRange {
+pub struct AccountRange {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     pub id: u64,
     pub accounts: Vec<AccountRangeUnit>,
@@ -36,7 +36,7 @@ pub(crate) struct AccountRange {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct GetStorageRanges {
+pub struct GetStorageRanges {
     pub id: u64,
     pub root_hash: H256,
     pub account_hashes: Vec<H256>,
@@ -46,27 +46,27 @@ pub(crate) struct GetStorageRanges {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct StorageRanges {
+pub struct StorageRanges {
     pub id: u64,
     pub slots: Vec<Vec<StorageSlot>>,
     pub proof: Vec<Bytes>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct GetByteCodes {
+pub struct GetByteCodes {
     pub id: u64,
     pub hashes: Vec<H256>,
     pub bytes: u64,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ByteCodes {
+pub struct ByteCodes {
     pub id: u64,
     pub codes: Vec<Bytes>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct GetTrieNodes {
+pub struct GetTrieNodes {
     pub id: u64,
     pub root_hash: H256,
     // [[acc_path, slot_path_1, slot_path_2,...]...]
@@ -76,7 +76,7 @@ pub(crate) struct GetTrieNodes {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TrieNodes {
+pub struct TrieNodes {
     pub id: u64,
     pub nodes: Vec<Bytes>,
 }

@@ -116,7 +116,7 @@ impl BlobsBundle {
         let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
 
-        if blob_count > max_blobs as usize {
+        if blob_count > max_blobs {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
@@ -196,10 +196,10 @@ impl AddAssign for BlobsBundle {
     }
 }
 
-const MAX_BLOB_COUNT: u64 = 6;
-const MAX_BLOB_COUNT_ELECTRA: u64 = 9;
+const MAX_BLOB_COUNT: usize = 6;
+const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
-fn max_blobs_per_block(fork: Fork) -> u64 {
+fn max_blobs_per_block(fork: Fork) -> usize {
     if fork >= Fork::Prague {
         MAX_BLOB_COUNT_ELECTRA
     } else {
@@ -378,8 +378,7 @@ mod tests {
     fn transaction_with_too_many_blobs_should_fail() {
         let blob = blobs_bundle::blob_from_bytes("Im a Blob".as_bytes().into())
             .expect("Failed to create blob");
-        let blobs =
-            std::iter::repeat_n(blob, MAX_BLOB_COUNT_ELECTRA as usize + 1).collect::<Vec<_>>();
+        let blobs = std::iter::repeat_n(blob, MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
 
         let blobs_bundle =
             BlobsBundle::create_from_blobs(&blobs).expect("Failed to create blobs bundle");

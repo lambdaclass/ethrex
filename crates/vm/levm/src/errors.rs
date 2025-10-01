@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use derive_more::derive::Display;
-use ethrex_common::{Address, U256, types::Log};
+use ethrex_common::{Address, H256, U256, types::Log};
 use serde::{Deserialize, Serialize};
 use thiserror;
 
@@ -38,6 +38,14 @@ impl From<DatabaseError> for VMError {
 impl From<PrecompileError> for VMError {
     fn from(err: PrecompileError) -> Self {
         VMError::ExceptionalHalt(ExceptionalHalt::Precompile(err))
+    }
+}
+
+/// Useful to use ? in try_into, specially when slicing with known bounds to fixed size arrays,
+/// which is a error that never really happens.
+impl From<std::array::TryFromSliceError> for VMError {
+    fn from(_: std::array::TryFromSliceError) -> Self {
+        VMError::Internal(InternalError::TypeConversion)
     }
 }
 
@@ -129,6 +137,10 @@ pub enum TxValidationError {
     Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
+    #[error(
+        "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
+    )]
+    TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -190,6 +202,14 @@ pub enum PrecompileError {
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
     BLS12381G2PointNotInCurve,
+    #[error("Mod-exp base length is too large")]
+    ModExpBaseTooLarge,
+    #[error("Mod-exp exponent length is too large")]
+    ModExpExpTooLarge,
+    #[error("Mod-exp modulus length is too large")]
+    ModExpModulusTooLarge,
+    #[error("Coordinate Exceeds Field Modulus")]
+    CoordinateExceedsFieldModulus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -198,12 +218,9 @@ pub enum DatabaseError {
     Custom(String),
 }
 
-#[derive(Debug, Clone)]
-/// Note: "Halt" does not mean "Error during execution" it simply
-/// means that the execution stopped. It's not called "Stop" because
-/// "Stop" is an Opcode
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OpcodeResult {
-    Continue { pc_increment: usize },
+    Continue,
     Halt,
 }
 

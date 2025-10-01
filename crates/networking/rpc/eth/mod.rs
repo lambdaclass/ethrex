@@ -122,6 +122,7 @@ pub mod test_utils {
             s: U256::from_big_endian(&hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
+            ..Default::default()
         })
     }
     fn eip1559_tx_for_test(nonce: u64) -> Transaction {
@@ -141,6 +142,7 @@ pub mod test_utils {
             signature_y_parity: true,
             signature_r: U256::default(),
             signature_s: U256::default(),
+            ..Default::default()
         })
     }
 

@@ -32,16 +32,17 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
-        let name = match ctx.span(id) {
-            Some(span) => span.metadata().name(),
-            None => "Error retrieving span name",
-        };
+        if let Some(span) = ctx.span(id) {
+            if span.metadata().target().starts_with("ethrex") {
+                let name = span.metadata().name();
 
-        let timer = METRICS_BLOCK_PROCESSING_PROFILE
-            .with_label_values(&[name])
-            .start_timer();
-        let mut timers = self.function_timers.lock().unwrap();
-        timers.insert(id.clone(), timer);
+                let timer = METRICS_BLOCK_PROCESSING_PROFILE
+                    .with_label_values(&[name])
+                    .start_timer();
+                let mut timers = self.function_timers.lock().unwrap();
+                timers.insert(id.clone(), timer);
+            }
+        }
     }
 
     fn on_exit(&self, id: &Id, _ctx: Context<'_, S>) {
