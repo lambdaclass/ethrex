@@ -201,20 +201,23 @@ pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
     }
 }
 
-pub fn encoded_prefix_bytes(total_len: usize) -> usize {
+pub fn encoded_length(bytes: &[u8]) -> usize {
     const U8_MAX_PLUS_ONE: usize = u8::MAX as usize + 1;
     const U16_MAX_PLUS_ONE: usize = u16::MAX as usize + 1;
-    match total_len {
-        0..56 => 1,
-        56..U8_MAX_PLUS_ONE => 2,
-        U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 3,
+
+    match bytes.len() {
+        0 => 1,
+        1 if bytes[0] < 0x80 => 1,
+        1..56 => 1 + bytes.len(),
+        56..U8_MAX_PLUS_ONE => 2 + bytes.len(),
+        U8_MAX_PLUS_ONE..U16_MAX_PLUS_ONE => 3 + bytes.len(),
         _ => {
-            let leading_zeros = total_len
+            let leading_zeros = bytes.len()
                 .to_be_bytes()
                 .iter()
                 .position(|&x| x != 0)
                 .unwrap();
-            usize::BITS as usize / 8 - leading_zeros
+            usize::BITS as usize / 8 - leading_zeros + bytes.len()
         }
     }
 }
