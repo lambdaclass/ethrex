@@ -19,13 +19,17 @@ guest_program = { path = "../../", default-features = false, features = [
 rkyv = { version = "0.8.10", features = ["unaligned"] }
 
 
-ethrex-common = { path = "../../../../../../common", default-features = false }
+ethrex-common = { path = "../../../../../../common", default-features = false, features = [
+    "c-kzg",
+] }
 ethrex-storage = { path = "../../../../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
     "c-kzg",
 ] }
-ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false }
+ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false, features = [
+    "c-kzg",
+] }
 ethrex-l2-common = { path = "../../../../../common", default-features = false }
 
 [patch.crates-io]
