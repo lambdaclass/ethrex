@@ -720,7 +720,19 @@ async fn perform_needed_deletions(
                 store.delete_range(second.start, second.end).await?;
             }
         }
-        Node::Leaf(_) => {}
+        Node::Leaf(node) => {
+            // An extension node is equivalent to a series of branch nodes with only
+            // one valid child each, so we remove all the empty siblings on the path.
+            let full_path = apply_prefix(Some(hashed_account), node_path.clone());
+            let (first, second) = compute_subtree_ranges(&full_path, &node.partial);
+
+            if !first.is_empty() {
+                store.delete_range(first.start, first.end).await?;
+            }
+            if !second.is_empty() {
+                store.delete_range(second.start, second.end).await?;
+            }
+        }
     }
     Ok(())
 }
