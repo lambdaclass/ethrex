@@ -21,12 +21,9 @@ use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
-use ethrex_common::{
-    kzg::KzgError,
-    types::{
-        BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
-        kzg_commitment_to_versioned_hash,
-    },
+use ethrex_common::types::{
+    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
+    kzg_commitment_to_versioned_hash,
 };
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages,
@@ -60,7 +57,7 @@ pub enum StatelessExecutionError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[cfg(feature = "l2")]
     #[error("KZG error (proof couldn't be verified): {0}")]
-    KzgError(#[from] KzgError),
+    KzgError(#[from] ethrex_crypto::kzg::KzgError),
     #[cfg(feature = "l2")]
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
@@ -440,7 +437,7 @@ fn verify_blob(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
-    use ethrex_common::kzg::verify_blob_kzg_proof;
+    use ethrex_crypto::kzg::verify_blob_kzg_proof;
 
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
