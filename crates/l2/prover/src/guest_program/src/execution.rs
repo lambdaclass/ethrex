@@ -440,12 +440,12 @@ fn verify_blob(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
-    use ethrex_common::kzg::verify_blob_kzg_proof;
+    use ethrex_common::kzg::verify_blob_kzg_proof_batch;
 
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
 
-    if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
+    if !verify_blob_kzg_proof_batch(&[blob_data], &[commitment], &[proof])? {
         return Err(StatelessExecutionError::InvalidBlobProof);
     }
 

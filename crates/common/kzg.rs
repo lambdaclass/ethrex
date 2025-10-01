@@ -17,27 +17,36 @@ impl From<kzg_rs::KzgError> for KzgError {
 
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
 /// as defined by c-kzg-4844.
-pub fn verify_blob_kzg_proof(
-    blob: Blob,
-    commitment: Commitment,
-    proof: Proof,
+pub fn verify_blob_kzg_proof_batch(
+    blobs: &[Blob],
+    commitments: &[Commitment],
+    proofs: &[Proof],
 ) -> Result<bool, KzgError> {
     #[cfg(not(feature = "c-kzg"))]
     {
-        kzg_rs::KzgProof::verify_blob_kzg_proof(
-            kzg_rs::Blob(blob),
-            &kzg_rs::Bytes48(commitment),
-            &kzg_rs::Bytes48(proof),
+        kzg_rs::KzgProof::verify_blob_kzg_proof_batch(
+            blobs.iter().map(|blob| kzg_rs::Blob(*blob)).collect(),
+            commitments
+                .iter()
+                .map(|commitment| kzg_rs::Bytes48(*commitment))
+                .collect(),
+            proofs.iter().map(|proof| kzg_rs::Bytes48(*proof)).collect(),
             &kzg_rs::get_kzg_settings(),
         )
         .map_err(KzgError::from)
     }
     #[cfg(feature = "c-kzg")]
     {
-        c_kzg::KzgProof::verify_blob_kzg_proof(
-            &blob.into(),
-            &commitment.into(),
-            &proof.into(),
+        c_kzg::KzgProof::verify_blob_kzg_proof_batch(
+            &blobs.iter().map(|blob| (*blob).into()).collect::<Vec<_>>(),
+            &commitments
+                .iter()
+                .map(|commitment| (*commitment).into())
+                .collect::<Vec<_>>(),
+            &proofs
+                .iter()
+                .map(|proof| (*proof).into())
+                .collect::<Vec<_>>(),
             c_kzg::ethereum_kzg_settings(),
         )
         .map_err(KzgError::from)
