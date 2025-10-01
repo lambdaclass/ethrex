@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::report::EFTestsReport;
-#[cfg(feature = "revm")]
 use crate::runner::revm_runner::SpecId;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
@@ -17,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 
 pub mod levm_runner;
+pub mod revm_db;
 pub mod revm_runner;
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]

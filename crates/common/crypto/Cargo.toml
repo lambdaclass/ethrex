@@ -13,12 +13,17 @@ path = "./lib.rs"
 c-kzg = { version = "^1.0.3", optional = true }
 kzg-rs = { workspace = true, optional = true }
 # pinned to latest main commit at the time of writing this
-openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "1a01e080656a638643f563a461f96498052ffb2c", optional = true}
+openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "1a01e080656a638643f563a461f96498052ffb2c", optional = true }
 
 thiserror.workspace = true
 
 [features]
-default = []
+# The default feature is `c-kzg` because the default compilation should be
+# the one that is fastest for the L1.
+default = ["c-kzg"]
+# This feature should be used by the L1 and the RISC0 guest program.
 c-kzg = ["dep:c-kzg"]
+# This feature should be used by the SP1 guest program.
 kzg-rs = ["dep:kzg-rs"]
+# This feature should be used by the OpenVM guest program.
 openvm-kzg = ["dep:openvm-kzg"]
