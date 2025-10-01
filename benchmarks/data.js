@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759271054795,
+  "lastUpdate": 1759282108857,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -35995,6 +35995,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004620602214492756,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8653ddff8a8c66aeba79faee19872921a64bc9c",
+          "message": "feat(l2): add support for external moongate server sp1 (#4503)\n\n**Motivation**\n\nWe want to support using an already running moongate server for sp1\nproving\n\n**Description**\n\nRemove EnvProver and use either a CudaProver or a CpuProver depending on\nthe feature \"gpu\".\nTo set the server endpoint set the `--sp1-server` flag:\n\n```\ncargo run --release --features \"sp1,gpu\" --bin ethrex -- l2 prover --backend sp1 --sp1-server http://localhost:3000 --proof-coordinators http://localhost:3900\n```",
+          "timestamp": "2025-09-30T18:31:00Z",
+          "tree_id": "24110eb8316fd66876c385a3cb1e13cb8d572b70",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c8653ddff8a8c66aeba79faee19872921a64bc9c"
+        },
+        "date": 1759282108174,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004580791080088052,
             "unit": "Mgas/s"
           }
         ]
