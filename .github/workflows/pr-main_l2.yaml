@@ -155,6 +155,11 @@ jobs:
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           docker compose up contract_deployer
+      
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
 
       - name: Start Sequencer
         run: |
@@ -220,6 +225,11 @@ jobs:
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           COMPILE_CONTRACTS=true \
           docker compose up contract_deployer
+      
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
 
       - name: Install rex
         run: |
@@ -335,16 +345,19 @@ jobs:
           ETHREX_TDX_DEV_MODE=true \
           make deploy-l1
 
-      - name: Start Sequencer and test
+      - name: Start Sequencer
         run: |
           cd crates/l2
           ETHREX_WATCHER_BLOCK_DELAY=0 \
-          PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_COMMIT_TIME=15000 \
-          ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-          make init-l2 &
-          sleep 30
-          cd tee/quote-gen/
+          ETHREX_PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
+          docker compose -f docker-compose.yaml -f docker-compose-l2-tdx.yaml up --detach --no-deps ethrex_l2
+
+      - name: Run test
+        run: |
+          cd crates/l2/tee/quote-gen/
           qemu-system-x86_64 \
             -daemonize \
             -serial file:tdx_prover.log \
@@ -357,7 +370,7 @@ jobs:
             -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap"
           tail -f tdx_prover.log &
           cd ../../
-          docker logs --follow ethrex_l1 &
+          docker logs --follow ethrex_l2 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           pkill -9 -f ethrex_tdx_prover
 

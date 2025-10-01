@@ -24,7 +24,7 @@ impl<'a> VM<'a> {
         let current_call_frame = &mut self.current_call_frame;
         current_call_frame.increase_consumed_gas(gas_cost::POP)?;
         current_call_frame.stack.pop1()?;
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // TLOAD operation
@@ -38,7 +38,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::TLOAD)?;
 
         current_call_frame.stack.push1(value)?;
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // TSTORE operation
@@ -57,7 +57,7 @@ impl<'a> VM<'a> {
         };
         self.substate.set_transient(&to, &key, value);
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MLOAD operation
@@ -76,7 +76,7 @@ impl<'a> VM<'a> {
             .stack
             .push1(current_call_frame.memory.load_word(offset)?)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MSTORE operation
@@ -85,7 +85,7 @@ impl<'a> VM<'a> {
 
         // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
         if self.debug_mode.enabled && self.debug_mode.handle_debug(offset, value)? {
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            return Ok(OpcodeResult::Continue);
         }
 
         let offset = u256_to_usize(offset)?;
@@ -101,7 +101,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.memory.store_word(offset, value)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MSTORE8 operation
@@ -123,7 +123,7 @@ impl<'a> VM<'a> {
             .memory
             .store_data(offset, &u256_to_big_endian(value)[WORD_SIZE - 1..WORD_SIZE])?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SLOAD operation
@@ -144,7 +144,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
 
         current_call_frame.stack.push1(value)?;
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // SSTORE operation
@@ -225,7 +225,7 @@ impl<'a> VM<'a> {
             self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
         }
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MSIZE operation
@@ -235,7 +235,7 @@ impl<'a> VM<'a> {
         current_call_frame
             .stack
             .push1(current_call_frame.memory.len().into())?;
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // GAS operation
@@ -247,7 +247,7 @@ impl<'a> VM<'a> {
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push1(remaining_gas.into())?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // MCOPY operation
@@ -274,7 +274,7 @@ impl<'a> VM<'a> {
             .memory
             .copy_within(src_offset, dest_offset, size)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // JUMP operation
@@ -283,9 +283,9 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
 
         let jump_address = current_call_frame.stack.pop1()?;
-        let new_pc = Self::jump(current_call_frame, jump_address)?;
+        Self::jump(current_call_frame, jump_address)?;
 
-        Ok(OpcodeResult::SetPc { new_pc })
+        Ok(OpcodeResult::Continue)
     }
 
     /// Check if the jump destination is valid by:
@@ -306,7 +306,7 @@ impl<'a> VM<'a> {
     /// This function will change the PC for the specified call frame
     /// to be equal to the specified address. If the address is not a
     /// valid JUMPDEST, it will return an error
-    pub fn jump(call_frame: &mut CallFrame, jump_address: U256) -> Result<usize, VMError> {
+    pub fn jump(call_frame: &mut CallFrame, jump_address: U256) -> Result<(), VMError> {
         let jump_address_usize = jump_address
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -314,9 +314,8 @@ impl<'a> VM<'a> {
         #[expect(clippy::arithmetic_side_effects)]
         if Self::target_address_is_valid(call_frame, jump_address_usize) {
             call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
-
-            let new_pc = jump_address_usize + 1;
-            Ok(new_pc)
+            call_frame.pc = jump_address_usize + 1;
+            Ok(())
         } else {
             Err(ExceptionalHalt::InvalidJump.into())
         }
@@ -329,14 +328,12 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::JUMPI)?;
 
-        let result = if !condition.is_zero() {
+        if !condition.is_zero() {
             // Move the PC but don't increment it afterwards
-            let new_pc = Self::jump(&mut self.current_call_frame, jump_address)?;
-            OpcodeResult::SetPc { new_pc }
-        } else {
-            OpcodeResult::Continue { pc_increment: 1 }
-        };
-        Ok(result)
+            Self::jump(&mut self.current_call_frame, jump_address)?;
+        }
+
+        Ok(OpcodeResult::Continue)
     }
 
     // JUMPDEST operation
@@ -344,7 +341,7 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::JUMPDEST)?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 
     // PC operation
@@ -354,8 +351,8 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push1(U256::from(current_call_frame.pc))?;
+            .push1(U256::from(current_call_frame.pc.wrapping_sub(1)))?;
 
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        Ok(OpcodeResult::Continue)
     }
 }

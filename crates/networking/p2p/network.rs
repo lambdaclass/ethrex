@@ -6,7 +6,7 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
-        initiator::{RLPxInitiator, RLPxInitiatorError},
+        initiator::RLPxInitiator,
         l2::l2_connection::P2PBasedContext,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -92,8 +92,6 @@ impl P2PContext {
 pub enum NetworkError {
     #[error("Failed to start discovery server: {0}")]
     DiscoveryServerError(#[from] DiscoveryServerError),
-    #[error("Failed to start RLPx Initiator: {0}")]
-    RLPxInitiatorError(#[from] RLPxInitiatorError),
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
 }
@@ -117,11 +115,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery server: {e}");
     })?;
 
-    RLPxInitiator::spawn(context.clone())
-        .await
-        .inspect_err(|e| {
-            error!("Failed to start RLPx Initiator: {e}");
-        })?;
+    RLPxInitiator::spawn(context.clone()).await;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
