@@ -336,111 +336,106 @@ impl Syncer {
             current_head, sync_head
         );
 
-        match self
+        if !self
             .synced_new_to_old(&mut block_sync_state, sync_head, store)
             .await?
         {
-            // synced_new_to_old returns (sync_finished, sync_head_found)
-            (_, false) | (true, true) => Ok(()),
-            (false, true) => {
-                // if sync_finished is false that means we are more than 1024 blocks behind so, for now, we go back to syncing as it follows.
-                // TODO: Have full syncing always be from NewToOld, issue: https://github.com/lambdaclass/ethrex/issues/4717
-                loop {
-                    debug!("Sync Log 1: In Full Sync");
-                    debug!(
-                        "Sync Log 3: State current headers len {}",
-                        block_sync_state.current_headers.len()
-                    );
-                    debug!(
-                        "Sync Log 4: State current blocks len {}",
-                        block_sync_state.current_blocks.len()
-                    );
+            // synced_new_to_old returns true in case syncing was finished from NewToOld or if the requested headers were None
+            // if sync_finished is false that means we are more than 1024 blocks behind so, for now, we go back to syncing as it follows.
+            // TODO: Have full syncing always be from NewToOld, issue: https://github.com/lambdaclass/ethrex/issues/4717
+            loop {
+                debug!("Sync Log 1: In Full Sync");
+                debug!(
+                    "Sync Log 3: State current headers len {}",
+                    block_sync_state.current_headers.len()
+                );
+                debug!(
+                    "Sync Log 4: State current blocks len {}",
+                    block_sync_state.current_blocks.len()
+                );
 
-                    debug!(
-                        "Requesting Block Headers from OldToNew from current_head {current_head}"
-                    );
+                debug!("Requesting Block Headers from OldToNew from current_head {current_head}");
 
-                    let Some(mut block_headers) = self
-                        .peers
-                        .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
-                        .await
-                    else {
-                        warn!("Sync failed to find target block header, aborting");
-                        debug!("Sync Log 8: Sync failed to find target block header, aborting");
-                        return Ok(());
-                    };
+                let Some(mut block_headers) = self
+                    .peers
+                    .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
+                    .await
+                else {
+                    warn!("Sync failed to find target block header, aborting");
+                    debug!("Sync Log 8: Sync failed to find target block header, aborting");
+                    return Ok(());
+                };
 
-                    debug!("Sync Log 9: Received {} block headers", block_headers.len());
+                debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
-                    let (first_block_hash, first_block_number, first_block_parent_hash) =
-                        match block_headers.first() {
-                            Some(header) => (header.hash(), header.number, header.parent_hash),
-                            None => continue,
-                        };
-                    let (last_block_hash, last_block_number) = match block_headers.last() {
-                        Some(header) => (header.hash(), header.number),
+                let (first_block_hash, first_block_number, first_block_parent_hash) =
+                    match block_headers.first() {
+                        Some(header) => (header.hash(), header.number, header.parent_hash),
                         None => continue,
                     };
-                    // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
-                    // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
-                    if first_block_hash == last_block_hash
-                        && first_block_hash == current_head
-                        && current_head != sync_head
-                    {
-                        // There is no path to the sync head this goes back until it find a common ancerstor
-                        warn!(
-                            "Sync failed to find target block header, going back to the previous parent"
-                        );
-                        current_head = first_block_parent_hash;
-                        continue;
-                    }
-
-                    debug!(
-                        "Received {} block headers| First Number: {} Last Number: {}",
-                        block_headers.len(),
-                        first_block_number,
-                        last_block_number
+                let (last_block_hash, last_block_number) = match block_headers.last() {
+                    Some(header) => (header.hash(), header.number),
+                    None => continue,
+                };
+                // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
+                // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+                if first_block_hash == last_block_hash
+                    && first_block_hash == current_head
+                    && current_head != sync_head
+                {
+                    // There is no path to the sync head this goes back until it find a common ancerstor
+                    warn!(
+                        "Sync failed to find target block header, going back to the previous parent"
                     );
-
-                    // Filter out everything after the sync_head
-                    let mut sync_head_found = false;
-                    if let Some(index) = block_headers
-                        .iter()
-                        .position(|header| header.hash() == sync_head)
-                    {
-                        sync_head_found = true;
-                        block_headers.drain(index + 1..);
-                    }
-
-                    // Update current fetch head
-                    current_head = last_block_hash;
-
-                    // Discard the first header as we already have it
-                    block_headers.remove(0);
-                    if !block_headers.is_empty() {
-                        let mut finished = false;
-                        while !finished {
-                            (finished, sync_head_found) = block_sync_state
-                                .process_incoming_headers(
-                                    block_headers.clone(),
-                                    sync_head,
-                                    sync_head_found,
-                                    self.blockchain.clone(),
-                                    self.peers.clone(),
-                                    self.cancel_token.clone(),
-                                )
-                                .await?;
-                            block_headers.clear();
-                        }
-                    }
-
-                    if sync_head_found {
-                        break;
-                    };
+                    current_head = first_block_parent_hash;
+                    continue;
                 }
-                Ok(())
+
+                debug!(
+                    "Received {} block headers| First Number: {} Last Number: {}",
+                    block_headers.len(),
+                    first_block_number,
+                    last_block_number
+                );
+
+                // Filter out everything after the sync_head
+                let mut sync_head_found = false;
+                if let Some(index) = block_headers
+                    .iter()
+                    .position(|header| header.hash() == sync_head)
+                {
+                    sync_head_found = true;
+                    block_headers.drain(index + 1..);
+                }
+
+                // Update current fetch head
+                current_head = last_block_hash;
+
+                // Discard the first header as we already have it
+                block_headers.remove(0);
+                if !block_headers.is_empty() {
+                    let mut finished = false;
+                    while !finished {
+                        (finished, sync_head_found) = block_sync_state
+                            .process_incoming_headers(
+                                block_headers.clone(),
+                                sync_head,
+                                sync_head_found,
+                                self.blockchain.clone(),
+                                self.peers.clone(),
+                                self.cancel_token.clone(),
+                            )
+                            .await?;
+                        block_headers.clear();
+                    }
+                }
+
+                if sync_head_found {
+                    break;
+                };
             }
         }
+        Ok(())
     }
 
     /// Tries to perform syncing going backwards from the sync_head with one batch of requested headers.
@@ -451,15 +446,15 @@ impl Syncer {
     /// # Returns
     ///
     /// Returns an error if the sync fails at any given step and aborts all active processes
-    /// otherwise returns two bools (sync_finished, sync_head_found)
-    /// sync_finished could be false if we can't find a common ancestor within the requested headers, which means
-    /// the chain is more than 1024 block behind.
+    /// otherwise returns true whether syncing was finished or in case the request of headers returned None,
+    /// otherwise returns false, this means we couldn't find a common ancestor within the requested headers,
+    /// which in turn means the chain is more than 1024 blocks behind.
     async fn synced_new_to_old(
         &mut self,
         block_sync_state: &mut FullBlockSyncState,
         sync_head: H256,
         store: Store,
-    ) -> Result<(bool, bool), SyncError> {
+    ) -> Result<bool, SyncError> {
         debug!("Sync Log 1: In Full Sync");
         debug!(
             "Sync Log 3: State current headers len {}",
@@ -486,7 +481,7 @@ impl Syncer {
             // sync_head or sync_head parent was not found
             warn!("Sync failed to find target block header, aborting");
             debug!("Sync Log 8: Sync failed to find target block header, aborting");
-            return Ok((false, false));
+            return Ok(true);
         };
 
         debug!("Sync Log 9: Received {} block headers", block_headers.len());
@@ -516,9 +511,9 @@ impl Syncer {
                     self.cancel_token.clone(),
                 )
                 .await?;
-            return Ok((true, true));
+            return Ok(true);
         }
-        Ok((false, true))
+        Ok(false)
     }
 
     /// Executes the given blocks and stores them
@@ -713,15 +708,26 @@ impl FullBlockSyncState {
         self.current_blocks.extend(blocks);
         // }
 
-        // If we have the sync_head as a pending block from a new_payload request and its parent_hash matches the hash of the latest received header
-        // we set the sync_head as found. Then we add it in current_blocks for execution.
-        if let Some(block) = self.store.get_pending_block(sync_head).await? {
-            if let Some(last_block) = self.current_blocks.last() {
-                if last_block.hash() == block.header.parent_hash {
-                    self.current_blocks.push(block);
-                    sync_head_found = true;
-                }
+        // We check if we have pending blocks we didn't request that are needed for syncing
+        // Then we add it in current_blocks for execution.
+        let mut pending_block_to_sync = vec![];
+        let mut last_header_to_sync = sync_head;
+        while let Some(block) = self.store.get_pending_block(last_header_to_sync).await? {
+            pending_block_to_sync.push(block.clone());
+            if self
+                .current_blocks
+                .last()
+                .is_some_and(|block| block.hash() == block.header.parent_hash)
+            {
+                sync_head_found = true;
+                break;
             }
+            last_header_to_sync = block.header.parent_hash;
+        }
+
+        if sync_head_found {
+            pending_block_to_sync.reverse();
+            self.current_blocks.extend(pending_block_to_sync);
         }
         // Execute full blocks
         // while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
