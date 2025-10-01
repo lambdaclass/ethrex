@@ -54,7 +54,7 @@ async fn migrate_libmdbx_to_rocksdb(
     new_storage_path: &Path,
 ) {
     let old_store = ethrex_storage_libmdbx::Store::new(
-        old_storage_path,
+        old_storage_path.to_str().expect("Invalid old storage path"),
         ethrex_storage_libmdbx::EngineType::Libmdbx,
     )
     .expect("Cannot open libmdbx store");
@@ -109,15 +109,18 @@ async fn migrate_libmdbx_to_rocksdb(
     });
 
     let blocks = block_headers.zip(block_bodies);
+    let mut added_blocks = Vec::new();
     for (header, body) in blocks {
         let header = migrate_block_header(header);
         let body = migrate_block_body(body);
         let block_number = header.number;
+        let block = Block::new(header, body);
 
         blockchain
-            .add_block(&Block::new(header, body))
+            .add_block(&block)
             .await
             .unwrap_or_else(|e| panic!("Cannot add block {block_number} to rocksdb store: {e}"));
+        added_blocks.push((block.header.number, block.hash()));
     }
 
     let last_block = old_store
@@ -126,7 +129,13 @@ async fn migrate_libmdbx_to_rocksdb(
         .flatten()
         .expect("Cannot get last block from libmdbx store");
     new_store
-        .forkchoice_update(None, last_block.number, last_block.hash(), None, None)
+        .forkchoice_update(
+            Some(added_blocks),
+            last_block.number,
+            last_block.hash(),
+            None,
+            None,
+        )
         .await
         .expect("Cannot apply forkchoice update");
 }

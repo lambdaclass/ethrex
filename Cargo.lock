@@ -4113,14 +4113,15 @@ dependencies = [
 [[package]]
 name = "ethrex-common"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22#1ef53ccda5fd3f96118cadbd296fbff6e5c10b22"
+source = "git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha#5dfb043809bfde94b927325fe69a505d7762a1f5"
 dependencies = [
  "bytes",
  "crc32fast",
  "ethereum-types 0.15.1",
- "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
- "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha)",
  "hex",
+ "keccak-hash",
  "kzg-rs",
  "lazy_static",
  "once_cell",
@@ -4479,7 +4480,7 @@ dependencies = [
 [[package]]
 name = "ethrex-rlp"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22#1ef53ccda5fd3f96118cadbd296fbff6e5c10b22"
+source = "git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha#5dfb043809bfde94b927325fe69a505d7762a1f5"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4590,16 +4591,16 @@ dependencies = [
 [[package]]
 name = "ethrex-storage"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22#1ef53ccda5fd3f96118cadbd296fbff6e5c10b22"
+source = "git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha#5dfb043809bfde94b927325fe69a505d7762a1f5"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
- "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
- "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha)",
  "hex",
  "libmdbx",
  "serde",
@@ -4661,13 +4662,13 @@ dependencies = [
 [[package]]
 name = "ethrex-trie"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22#1ef53ccda5fd3f96118cadbd296fbff6e5c10b22"
+source = "git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha#5dfb043809bfde94b927325fe69a505d7762a1f5"
 dependencies = [
  "anyhow",
  "bytes",
  "digest 0.10.7",
  "ethereum-types 0.15.1",
- "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha)",
  "hex",
  "lazy_static",
  "libmdbx",
@@ -6615,6 +6616,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccak-hash"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e1b8590eb6148af2ea2d75f38e7d29f5ca970d5a4df456b3ef19b8b415d0264"
+dependencies = [
+ "primitive-types 0.13.1",
+ "tiny-keccak",
+]
+
+[[package]]
 name = "kurbo"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7422,9 +7433,9 @@ dependencies = [
  "clap 4.5.47",
  "ethrex-blockchain",
  "ethrex-common 0.1.0",
- "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha)",
  "ethrex-storage 0.1.0",
- "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=1ef53ccda5fd3f96118cadbd296fbff6e5c10b22)",
+ "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex?tag=v0.0.4-alpha)",
  "tokio",
 ]
 
