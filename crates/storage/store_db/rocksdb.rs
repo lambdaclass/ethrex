@@ -9,8 +9,8 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
-    OptimisticTransactionDB, Options, WriteBatchWithTransaction,
+    BoundColumnFamily, ColumnFamilyDescriptor, MultiThreaded, OptimisticTransactionDB, Options,
+    WriteBatchWithTransaction,
 };
 use std::{collections::HashSet, path::Path, sync::Arc};
 use tracing::info;
