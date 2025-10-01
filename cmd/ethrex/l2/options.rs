@@ -161,6 +161,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .coinbase_address
                     .ok_or(SequencerOptionsError::NoCoinbaseAddress)?,
                 fee_vault_address: opts.block_producer_opts.fee_vault_address,
+                operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
@@ -395,6 +396,14 @@ pub struct BlockProducerOptions {
         help_heading = "Block producer options"
     )]
     pub fee_vault_address: Option<Address>,
+    // TODO: rename fee_vault to base_fee_vault
+    #[arg(
+        long = "block-producer.operator-fee-vault-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub operator_fee_vault_address: Option<Address>,
     #[arg(
         long,
         default_value = "2",
@@ -424,6 +433,7 @@ impl Default for BlockProducerOptions {
                     .unwrap(),
             ),
             fee_vault_address: None,
+            operator_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }

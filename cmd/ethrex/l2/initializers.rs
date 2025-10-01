@@ -6,7 +6,7 @@ use std::time::Duration;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::Address;
 use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
-use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::network::peer_table;
@@ -170,7 +170,12 @@ pub async fn init_l2(
 
     let fee_config = FeeConfig {
         fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
-        ..Default::default()
+        operator_fee_config: OperatorFeeConfig {
+            operator_fee_vault: opts
+                .sequencer_opts
+                .block_producer_opts
+                .operator_fee_vault_address,
+        }..Default::default(),
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {

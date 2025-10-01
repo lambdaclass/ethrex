@@ -1,11 +1,14 @@
 use crate::{
-    errors::{ContextResult, InternalError},
+    errors::{ContextResult, InternalError, TxValidationError},
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
     vm::VM,
 };
 
-use ethrex_common::{Address, H160, U256, types::fee_config::FeeConfig};
+use ethrex_common::{
+    Address, H160, U256,
+    types::fee_config::{FeeConfig, OperatorFeeConfig},
+};
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -19,7 +22,9 @@ pub struct L2Hook {
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
-            return DefaultHook.prepare_execution(vm);
+            DefaultHook.prepare_execution(vm)?;
+            deduct_operator_fee(vm, &self.fee_config.operator_fee_config)?;
+            return Ok(());
         }
 
         let sender_address = vm.env.origin;
@@ -111,7 +116,8 @@ impl Hook for L2Hook {
         if !vm.env.is_privileged {
             DefaultHook.finalize_execution(vm, ctx_result)?;
             // Different from L1, the base fee is not burned
-            return pay_to_fee_vault(vm, ctx_result.gas_used, self.fee_config.fee_vault);
+            pay_fee_vault(vm, ctx_result.gas_used, self.fee_config.fee_vault)?;
+            pay_operator_fee(vm, self.fee_config.operator_fee_config)?;
         }
 
         if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
@@ -126,7 +132,22 @@ impl Hook for L2Hook {
     }
 }
 
-fn pay_to_fee_vault(
+fn deduct_operator_fee(
+    vm: &mut VM<'_>,
+    operator_fee_config: &Option<OperatorFeeConfig>,
+) -> Result<(), crate::errors::VMError> {
+    let Some(fee_config) = operator_fee_config else {
+        // No operator fee configured, operator fee is not paid
+        return Ok(());
+    };
+    let sender_address = vm.env.origin;
+
+    vm.decrease_account_balance(sender_address, fee_config.operator_fee)
+        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+    Ok(())
+}
+
+fn pay_fee_vault(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
     fee_vault: Option<Address>,
@@ -141,5 +162,18 @@ fn pay_to_fee_vault(
         .ok_or(InternalError::Overflow)?;
 
     vm.increase_account_balance(fee_vault, base_fee)?;
+    Ok(())
+}
+
+fn pay_operator_fee(
+    vm: &mut VM<'_>,
+    operator_fee_config: Option<OperatorFeeConfig>,
+) -> Result<(), crate::errors::VMError> {
+    let Some(fee_config) = operator_fee_config else {
+        // No operator fee configured, operator fee is not paid
+        return Ok(());
+    };
+
+    vm.increase_account_balance(fee_config.operator_fee_vault, fee_config.operator_fee)?;
     Ok(())
 }

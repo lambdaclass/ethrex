@@ -1,8 +1,8 @@
-use ethereum_types::Address;
+use ethereum_types::{Address, U256};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::rkyv_utils::{H160Wrapper, OptionH160Wrapper};
+use crate::rkyv_utils::{H160Wrapper, OptionH160Wrapper, U256Wrapper};
 
 #[derive(
     Serialize, Deserialize, RDeserialize, RSerialize, Archive, Clone, Copy, Debug, Default,
@@ -22,5 +22,6 @@ pub struct FeeConfig {
 pub struct OperatorFeeConfig {
     #[rkyv(with=H160Wrapper)]
     pub operator_fee_vault: Address,
-    pub operator_fee: u64,
+    #[rkyv(with=U256Wrapper)]
+    pub operator_fee: U256,
 }
