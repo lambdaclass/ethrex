@@ -172,15 +172,15 @@ impl StoreEngine {
 
         for header in block_headers {
             let block_hash = header.hash();
-            let hash_key = BlockHashRLP::from(block_hash).bytes().clone();
+            let hash_key = block_hash.as_bytes().to_vec();
             let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
 
-            batch_ops.push((HEADERS.to_string(), hash_key, header_value));
+            batch_ops.push((HEADERS.to_string(), hash_key.clone(), header_value));
 
             let number_key = header.number.to_le_bytes().to_vec();
             batch_ops.push((
                 BLOCK_NUMBERS.to_string(),
-                BlockHashRLP::from(block_hash).bytes().clone(),
+                hash_key,
                 number_key,
             ));
         }
