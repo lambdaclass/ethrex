@@ -1,5 +1,6 @@
-use ethrex_common::types::{Transaction, TxKind};
+use ethrex_common::types::{Block, Transaction, TxKind};
 use std::collections::HashMap;
+use tracing::info;
 
 use charming::{
     Chart, ImageRenderer,
@@ -7,8 +8,6 @@ use charming::{
     element::{Tooltip, Trigger},
     series::Pie,
 };
-
-use crate::cache::Cache;
 
 const TOP_N_DESTINATIONS: usize = 10;
 const TOP_N_SELECTORS: usize = 10;
@@ -155,19 +154,22 @@ impl BlockStats {
     }
 }
 
-pub async fn plot(cache: Cache) -> eyre::Result<()> {
+pub async fn plot(blocks: &[Block]) -> eyre::Result<()> {
     let mut stats = BlockStats::default();
-    let txs = cache
-        .blocks
+    let txs = blocks
         .iter()
         .flat_map(|b| b.body.transactions.clone())
         .collect::<Vec<_>>();
     for tx in txs {
         stats.process(tx);
     }
+    let first = blocks.first().map(|b| b.header.number).unwrap();
+    let last = blocks.last().map(|b| b.header.number).unwrap();
     let mut renderer = ImageRenderer::new(1000, 800);
     for (name, chart) in stats.chart() {
-        renderer.save(&chart, format!("chart_{name}.svg"))?;
+        let filename = format!("chart_{name}_{first}-{last}.svg");
+        info!("Saving chart to: {filename}");
+        renderer.save(&chart, &filename)?;
     }
     Ok(())
 }
