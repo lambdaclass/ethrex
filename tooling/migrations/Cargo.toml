@@ -9,9 +9,9 @@ documentation.workspace = true
 clap.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
-ethrex-common-libmdbx = { git = "https://github.com/lambdaclass/ethrex", tag = "v0.0.4-alpha", package = "ethrex-common" }
+ethrex-common-libmdbx = { git = "https://github.com/lambdaclass/ethrex", branch = "main", package = "ethrex-common" }
 ethrex-storage-libmdbx = { features = [
     "libmdbx",
-], git = "https://github.com/lambdaclass/ethrex", tag = "v0.0.4-alpha", package = "ethrex-storage" }
+], git = "https://github.com/lambdaclass/ethrex", branch = "main", package = "ethrex-storage" }
 ethrex-storage = { features = ["rocksdb"], workspace = true }
 tokio = { features = ["full"], workspace = true }
