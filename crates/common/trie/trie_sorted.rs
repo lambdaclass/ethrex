@@ -41,8 +41,8 @@ pub enum TrieGenerationError {
     ThreadJoinError(),
 }
 
-pub const SIZE_TO_WRITE_DB: u64 = 10_000;
-pub const BUFFER_COUNT: u64 = 16;
+pub const SIZE_TO_WRITE_DB: u64 = 20_000;
+pub const BUFFER_COUNT: u64 = 32;
 
 impl CenterSide {
     fn from_value(tuple: (H256, Vec<u8>)) -> CenterSide {
