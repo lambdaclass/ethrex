@@ -151,7 +151,7 @@ impl LEVM {
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
-        env.block_gas_limit = u64::MAX; // disable block gas limit
+        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
         adjust_disabled_base_fee(&mut env);
 
@@ -376,7 +376,7 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: u64::MAX, // System calls, have no constraint on the block's gas limit.
+        block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
     };
