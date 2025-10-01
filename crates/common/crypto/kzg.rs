@@ -67,17 +67,6 @@ pub fn verify_blob_kzg_proof(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<bool, KzgError> {
-    #[cfg(all(
-        not(feature = "c-kzg"),
-        not(feature = "kzg-rs"),
-        not(feature = "openvm-kzg")
-    ))]
-    {
-        compile_error!(
-            "Either the `c-kzg`, `kzg-rs` or `openvm-kzg` feature must be enabled to use KZG functionality."
-        );
-        return Ok(false);
-    }
     #[cfg(feature = "c-kzg")]
     {
         return c_kzg::KzgProof::verify_blob_kzg_proof(
@@ -131,17 +120,6 @@ pub fn verify_kzg_proof(
     y: [u8; 32],
     proof_bytes: [u8; 48],
 ) -> Result<bool, KzgError> {
-    #[cfg(all(
-        not(feature = "c-kzg"),
-        not(feature = "kzg-rs"),
-        not(feature = "openvm-kzg")
-    ))]
-    {
-        compile_error!(
-            "Either the `c-kzg`, `kzg-rs` or `openvm-kzg` feature must be enabled to use KZG functionality."
-        );
-        return Ok(false);
-    }
     #[cfg(feature = "c-kzg")]
     {
         return c_kzg::KzgProof::verify_kzg_proof(
