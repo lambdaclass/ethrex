@@ -434,6 +434,7 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
             &self.current_call_frame.to,
             self.env.config.fork,

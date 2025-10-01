@@ -107,7 +107,7 @@ pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
 pub const SSTORE_DEFAULT_DYNAMIC: u64 = 100;
 pub const SSTORE_STORAGE_CREATION: u64 = 20000;
 pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
-pub const SSTORE_STIPEND: u64 = 2300;
+pub const SSTORE_STIPEND: i64 = 2300;
 
 pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
 pub const BALANCE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
@@ -953,14 +953,12 @@ pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
 
 /// Max message call gas is all but one 64th of the remaining gas in the current context.
 /// https://eips.ethereum.org/EIPS/eip-150
+#[expect(clippy::arithmetic_side_effects, reason = "can't overflow")]
+#[expect(clippy::as_conversions, reason = "remaining gas conversion")]
 pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMError> {
     let mut remaining_gas = current_call_frame.gas_remaining;
 
     remaining_gas -= remaining_gas / 64;
-
-    if remaining_gas < 0 {
-        return Err(InternalError::Underflow.into());
-    }
 
     Ok(remaining_gas as u64)
 }

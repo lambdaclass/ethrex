@@ -162,7 +162,7 @@ impl<'a> VM<'a> {
 
         // EIP-2200
         let gas_left = self.current_call_frame.gas_remaining;
-        if gas_left as u64 <= SSTORE_STIPEND {
+        if gas_left <= SSTORE_STIPEND {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
