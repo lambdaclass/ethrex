@@ -1,12 +1,13 @@
 use ethrex_common::H256;
-use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
-use rocksdb::{DBWithThreadMode, MultiThreaded};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::{Node, NodeHash, TrieDB, error::TrieError};
+use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Column family name
     cf_name: String,
     /// Storage trie address prefix
@@ -15,7 +16,7 @@ pub struct RocksDBTrieDB {
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Arc<DBWithThreadMode<MultiThreaded>>,
+        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
@@ -40,7 +41,7 @@ impl RocksDBTrieDB {
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
-    fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
+    fn make_key(&self, node_hash: &NodeHash) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
                 // For storage tries, prefix with address
@@ -59,7 +60,7 @@ impl RocksDBTrieDB {
 impl TrieDB for RocksDBTrieDB {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle()?;
-        let db_key = self.make_key(key);
+        let db_key = self.make_key(&key);
 
         self.db
             .get_cf(&cf, db_key)
@@ -68,11 +69,29 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
-        let mut batch = rocksdb::WriteBatch::default();
+        let mut batch = rocksdb::WriteBatchWithTransaction::default();
 
         for (key, value) in key_values {
-            let db_key = self.make_key(key);
+            let db_key = self.make_key(&key);
             batch.put_cf(&cf, db_key, value);
+        }
+
+        self.db
+            .write(batch)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
+    }
+
+    fn put_batch_no_alloc(&self, key_values: &[(NodeHash, Node)]) -> Result<(), TrieError> {
+        let cf = self.cf_handle()?;
+        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        // 532 is the maximum size of an encoded branch node.
+        let mut buffer = Vec::with_capacity(532);
+
+        for (hash, node) in key_values {
+            let db_key = self.make_key(hash);
+            buffer.clear();
+            node.encode(&mut buffer);
+            batch.put_cf(&cf, db_key, &buffer);
         }
 
         self.db
@@ -85,7 +104,7 @@ impl TrieDB for RocksDBTrieDB {
 mod tests {
     use super::*;
     use ethrex_trie::NodeHash;
-    use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options};
+    use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
     use tempfile::TempDir;
 
     #[test]
@@ -99,7 +118,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
@@ -139,7 +158,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
@@ -176,7 +195,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],

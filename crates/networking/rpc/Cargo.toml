@@ -40,7 +40,6 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = ["flamegraph",
 envy = "0.4.2"
 thiserror.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 uuid.workspace = true
 
 cfg-if.workspace = true

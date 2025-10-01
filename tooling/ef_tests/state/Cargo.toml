@@ -1,30 +1,28 @@
 [package]
 name = "ef_tests-state"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-documentation.workspace = true
+version = "0.1.0"
+edition = "2024"
+authors = ["LambdaClass"]
 
 [dependencies]
-ethrex-blockchain.workspace = true
-ethrex-common.workspace = true
-ethrex-storage.workspace = true
-ethrex-rlp.workspace = true
-ethrex-vm.workspace = true
-ethrex-levm.workspace = true
+ethrex-blockchain = { path = "../../../crates/blockchain" }
+ethrex-common = { path = "../../../crates/common" }
+ethrex-storage = { path = "../../../crates/storage" }
+ethrex-rlp = { path = "../../../crates/common/rlp" }
+ethrex-vm = { path = "../../../crates/vm" }
+ethrex-levm = { path = "../../../crates/vm/levm" }
 
-serde.workspace = true
-serde_json.workspace = true
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
 # Since we do heavy parsing of ef tests, simd-json is more than 2x faster than serde_json
 simd-json = "0.15.1"
-bytes.workspace = true
-hex.workspace = true
-keccak-hash.workspace = true
+bytes = { version = "1.6.0", features = ["serde"] }
 colored = "2.1.0"
 spinoff = "0.8.0"
-thiserror.workspace = true
-clap.workspace = true
-clap_complete.workspace = true
+thiserror = "2.0.9"
+hex = "0.4.3"
+clap = { version = "4.3", features = ["derive", "env"] }
+clap_complete = "4.5.17"
 itertools = "0.13.0"
 revm = { version = "19.0.0", features = [
     "serde",
@@ -34,8 +32,8 @@ revm = { version = "19.0.0", features = [
     "optional_block_gas_limit",
 ], default-features = false }
 alloy-rlp = "0.3.12"
-tokio = { workspace = true, features = ["full"] }
-rayon.workspace = true
+tokio = { version = "1.41.1", features = ["full"] }
+rayon = "1.10.0"
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -44,10 +42,13 @@ hex = "0.4.3"
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg", "revm"]
+default = ["c-kzg"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
-revm = ["ethrex-vm/revm"]
 
 [[test]]
 name = "all"
 harness = false
+
+[profile.release-with-debug]
+inherits = "release"
+debug = 2

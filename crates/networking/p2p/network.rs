@@ -4,7 +4,7 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
-        initiator::{RLPxInitiator, RLPxInitiatorError},
+        initiator::RLPxInitiator,
         l2::l2_connection::P2PBasedContext,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -92,8 +92,6 @@ impl P2PContext {
 pub enum NetworkError {
     #[error("Failed to start discovery server: {0}")]
     DiscoveryServerError(#[from] DiscoveryServerError),
-    #[error("Failed to start RLPx Initiator: {0}")]
-    RLPxInitiatorError(#[from] RLPxInitiatorError),
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
 }
@@ -121,11 +119,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery server: {e}");
     })?;
 
-    RLPxInitiator::spawn(context.clone())
-        .await
-        .inspect_err(|e| {
-            error!("Failed to start RLPx Initiator: {e}");
-        })?;
+    RLPxInitiator::spawn(context.clone()).await;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
@@ -262,6 +256,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Storage leaves metrics
             let storage_leaves_downloaded =
                 METRICS.downloaded_storage_slots.load(Ordering::Relaxed);
+            let storage_accounts_inserted = METRICS.storage_tries_state_roots_computed.get();
             let storage_accounts = METRICS.storage_accounts_initial.load(Ordering::Relaxed);
             let storage_accounts_healed = METRICS.storage_accounts_healed.load(Ordering::Relaxed);
             let storage_leaves_time = format_duration({
@@ -366,7 +361,7 @@ headers progress: {headers_download_progress} (total: {headers_to_download}, dow
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
 account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {account_leaves_inserted_time}
 storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed} 
-storage leaves insertion: {storage_leaves_inserted_time}
+storage leaves insertion: {storage_accounts_inserted}, {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
 bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_download_time})"
             );

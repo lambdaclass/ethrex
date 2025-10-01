@@ -4,6 +4,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
     error::ChainError,
@@ -12,10 +13,10 @@ use ethrex_blockchain::{
     validate_block,
 };
 use ethrex_common::Address;
+use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
-use keccak_hash::H256;
 pub use payload_builder::build_payload;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
@@ -150,7 +151,7 @@ impl BlockProducer {
             elasticity_multiplier: self.elasticity_multiplier,
             gas_ceil: self.block_gas_limit,
         };
-        let payload = create_payload(&args, &self.store)?;
+        let payload = create_payload(&args, &self.store, Bytes::new())?;
 
         // Blockchain builds the payload from mempool txs and executes them
         let payload_build_result = build_payload(

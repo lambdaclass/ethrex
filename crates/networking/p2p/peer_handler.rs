@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::atomic::Ordering,
@@ -12,6 +12,7 @@ use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::seq::SliceRandom;
@@ -38,8 +39,8 @@ use crate::{
     snap::encodable_to_proof,
     sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
     utils::{
-        SendMessageError, dump_to_file, get_account_state_snapshot_file,
-        get_account_storages_snapshot_file,
+        AccountsWithStorage, SendMessageError, dump_accounts_to_file, dump_storages_to_file,
+        get_account_state_snapshot_file, get_account_storages_snapshot_file,
     },
 };
 use tracing::{debug, error, info, trace, warn};
@@ -54,7 +55,7 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 // How much we store in memory of request_account_range and request_storage_ranges
 // before we dump it into the file. This tunes how much memory ethrex uses during
 // the first steps of snap sync
-pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 128; // 128MB
+pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64; // 64MB
 pub const SNAP_LIMIT: usize = 128;
 
 // Request as many as 128 block bodies per request
@@ -761,10 +762,6 @@ impl PeerHandler {
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
-        // channel to send the result of dumping accounts
-        let (dump_account_result_sender, mut dump_account_result_receiver) =
-            tokio::sync::mpsc::channel::<Result<(), DumpError>>(1000);
-
         info!("Starting to download account ranges from peers");
 
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
@@ -772,6 +769,7 @@ impl PeerHandler {
         let mut completed_tasks = 0;
         let mut chunk_file = 0;
         let mut last_update: SystemTime = SystemTime::now();
+        let mut write_set = tokio::task::JoinSet::new();
 
         loop {
             if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
@@ -781,8 +779,7 @@ impl PeerHandler {
                 let account_state_chunk = current_account_hashes
                     .into_iter()
                     .zip(current_account_states)
-                    .collect::<Vec<(H256, AccountState)>>()
-                    .encode_to_vec();
+                    .collect::<Vec<(H256, AccountState)>>();
 
                 if !std::fs::exists(account_state_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
@@ -792,22 +789,13 @@ impl PeerHandler {
                 }
 
                 let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
-                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                tokio::task::spawn(async move {
+                write_set.spawn(async move {
                     let path = get_account_state_snapshot_file(
                         &account_state_snapshots_dir_cloned,
                         chunk_file,
                     );
                     // TODO: check the error type and handle it properly
-                    let result = dump_to_file(&path, account_state_chunk);
-                    dump_account_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send account dump result through channel. Error: {err}"
-                            )
-                        })
+                    dump_accounts_to_file(&path, account_state_chunk)
                 });
 
                 chunk_file += 1;
@@ -858,30 +846,6 @@ impl PeerHandler {
                 );
             }
 
-            // Check if any dump account task finished
-            // TODO: consider tracking in-flight (dump) tasks
-            if let Ok(Err(dump_account_data)) = dump_account_result_receiver.try_recv() {
-                if dump_account_data.error == ErrorKind::StorageFull {
-                    return Err(PeerHandlerError::StorageFull);
-                }
-                // If the dumping failed, retry it
-                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                tokio::task::spawn(async move {
-                    let DumpError { path, contents, .. } = dump_account_data;
-                    // Dump the account data
-                    let result = dump_to_file(&path, contents);
-                    // Send the result through the channel
-                    dump_account_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send account dump result through channel. Error: {err}"
-                            )
-                        })
-                });
-            }
-
             let Some((peer_id, peer_channel)) = self
                 .peer_table
                 .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
@@ -924,6 +888,13 @@ impl PeerHandler {
             ));
         }
 
+        write_set
+            .join_all()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<()>, DumpError>>()
+            .map_err(PeerHandlerError::DumpError)?;
+
         // TODO: This is repeated code, consider refactoring
         {
             let current_account_hashes = std::mem::take(&mut all_account_hashes);
@@ -932,8 +903,7 @@ impl PeerHandler {
             let account_state_chunk = current_account_hashes
                 .into_iter()
                 .zip(current_account_states)
-                .collect::<Vec<(H256, AccountState)>>()
-                .encode_to_vec();
+                .collect::<Vec<(H256, AccountState)>>();
 
             if !std::fs::exists(account_state_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStateSnapshotsDir)?
@@ -943,7 +913,13 @@ impl PeerHandler {
             }
 
             let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
-            std::fs::write(path, account_state_chunk)
+            dump_accounts_to_file(&path, account_state_chunk)
+                .inspect_err(|err| {
+                    error!(
+                        "We had an error dumping the last accounts to disk {}",
+                        err.error
+                    )
+                })
                 .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
         }
 
@@ -1237,7 +1213,7 @@ impl PeerHandler {
                     let validated_codes: Vec<Bytes> = codes
                         .into_iter()
                         .zip(hashes_to_request)
-                        .take_while(|(b, hash)| keccak_hash::keccak(b) == *hash)
+                        .take_while(|(b, hash)| ethrex_common::utils::keccak(b) == *hash)
                         .map(|(b, _hash)| b)
                         .collect();
                     let result = TaskResult {
@@ -1279,21 +1255,47 @@ impl PeerHandler {
         account_storages_snapshots_dir: &Path,
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
+        store: Store,
     ) -> Result<u64, PeerHandlerError> {
         *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
         debug!("Starting request_storage_ranges function");
         // 1) split the range in chunks of same length
+        let mut accounts_by_root_hash: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (account, (maybe_root_hash, _)) in &account_storage_roots.accounts_with_storage_root {
+            match maybe_root_hash {
+                Some(root) => {
+                    accounts_by_root_hash
+                        .entry(*root)
+                        .or_default()
+                        .push(*account);
+                }
+                None => {
+                    let root = store
+                        .get_account_state_by_acc_hash(pivot_header.hash(), *account)
+                        .expect("Failed to get account in state trie")
+                        .expect("Could not find account that should have been downloaded or healed")
+                        .storage_root;
+                    accounts_by_root_hash
+                        .entry(root)
+                        .or_default()
+                        .push(*account);
+                }
+            }
+        }
+        let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
+        // TODO: Turn this into a stable sort for binary search.
+        accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
         let chunk_size = 300;
-        let chunk_count = (account_storage_roots.accounts_with_storage_root.len() / chunk_size) + 1;
+        let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
+
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
-            let chunk_end = (chunk_start + chunk_size)
-                .min(account_storage_roots.accounts_with_storage_root.len());
+            let chunk_end = (chunk_start + chunk_size).min(accounts_by_root_hash.len());
             tasks_queue_not_started.push_back(StorageTask {
                 start_index: chunk_start,
                 end_index: chunk_end,
@@ -1301,10 +1303,6 @@ impl PeerHandler {
                 end_hash: None,
             });
         }
-
-        // 2) request the chunks from peers
-        let mut all_account_storages =
-            vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
@@ -1318,27 +1316,21 @@ impl PeerHandler {
         let mut completed_tasks = 0;
 
         // TODO: in a refactor, delete this replace with a structure that can handle removes
-        let mut accounts_done: Vec<H256> = Vec::new();
-        let current_account_hashes = account_storage_roots
-            .accounts_with_storage_root
-            .iter()
-            .map(|a| *a.0)
-            .collect::<Vec<_>>();
+        let mut accounts_done: HashMap<H256, Vec<(H256, H256)>> = HashMap::new();
+        // Maps storage root to vector of hashed addresses matching that root and
+        // vector of hashed storage keys and storage values.
+        let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
 
         debug!("Starting request_storage_ranges loop");
         loop {
-            if all_account_storages.iter().map(Vec::len).sum::<usize>() * 64 > RANGE_FILE_CHUNK_SIZE
+            if current_account_storages
+                .values()
+                .map(|accounts| 32 * accounts.accounts.len() + 64 * accounts.storages.len())
+                .sum::<usize>()
+                > RANGE_FILE_CHUNK_SIZE
             {
-                let current_account_storages = std::mem::take(&mut all_account_storages);
-                all_account_storages =
-                    vec![vec![]; account_storage_roots.accounts_with_storage_root.len()];
-
-                let snapshot = current_account_hashes
-                    .clone()
-                    .into_iter()
-                    .zip(current_account_storages)
-                    .collect::<Vec<_>>()
-                    .encode_to_vec();
+                let current_account_storages = std::mem::take(&mut current_account_storages);
+                let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
                 if !std::fs::exists(account_storages_snapshots_dir)
                     .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
@@ -1365,7 +1357,7 @@ impl PeerHandler {
                         &account_storages_snapshots_dir_cloned,
                         chunk_index,
                     );
-                    dump_to_file(&path, snapshot)
+                    dump_storages_to_file(&path, snapshot)
                 });
 
                 chunk_index += 1;
@@ -1384,8 +1376,12 @@ impl PeerHandler {
 
                 self.peer_table.free_peer(peer_id).await;
 
-                for account in &current_account_hashes[start_index..remaining_start] {
-                    accounts_done.push(*account);
+                for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
+                    for account in accounts {
+                        if !accounts_done.contains_key(account) {
+                            accounts_done.insert(*account, vec![]);
+                        }
+                    }
                 }
 
                 if remaining_start < remaining_end {
@@ -1411,10 +1407,57 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
-                            accounts_done.push(current_account_hashes[remaining_start]);
+
+                            let acc_hash = accounts_by_root_hash[remaining_start].1[0];
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(&acc_hash).ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                            for (old_start, end) in old_intervals {
+                                if end == &hash_end {
+                                    *old_start = hash_start;
+                                }
+                            }
                             account_storage_roots
                                 .healed_accounts
-                                .insert(current_account_hashes[start_index]);
+                                .extend(accounts_by_root_hash[start_index].1.iter().copied());
+                        } else {
+                            let mut acc_hash: H256 = H256::zero();
+                            // This search could potentially be expensive, but it's something that should happen very
+                            // infrequently (only when we encounter an account we think it's big but it's not). In
+                            // normal cases the vec we are iterating over just has one element (the big account).
+                            for account in accounts_by_root_hash[remaining_start].1.iter() {
+                                if let Some((_, old_intervals)) = account_storage_roots
+                                    .accounts_with_storage_root
+                                    .get(account)
+                                {
+                                    if !old_intervals.is_empty() {
+                                        acc_hash = *account;
+                                    }
+                                } else {
+                                    continue;
+                                }
+                            }
+                            if acc_hash.is_zero() {
+                                panic!("Should have found the account hash");
+                            }
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(&acc_hash)
+                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                            old_intervals.remove(
+                                old_intervals
+                                    .iter()
+                                    .position(|(_old_start, end)| end == &hash_end)
+                                    .ok_or(PeerHandlerError::UnrecoverableError(
+                                        "Could not find an old interval that we were tracking"
+                                            .to_owned(),
+                                    ))?,
+                            );
+                            if old_intervals.is_empty() {
+                                for account in accounts_by_root_hash[remaining_start].1.iter() {
+                                    accounts_done.insert(*account, vec![]);
+                                }
+                            }
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
@@ -1445,27 +1488,96 @@ impl PeerHandler {
 
                         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
-                        for i in 0..chunk_count {
-                            let start_hash_u256 = start_hash_u256 + chunk_size * i;
-                            let start_hash = H256::from_uint(&start_hash_u256);
-                            let end_hash = if i == chunk_count - 1 {
-                                H256::repeat_byte(0xff)
-                            } else {
-                                let end_hash_u256 =
-                                    start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
-                                H256::from_uint(&end_hash_u256)
-                            };
+                        let maybe_old_intervals = account_storage_roots
+                            .accounts_with_storage_root
+                            .get(&accounts_by_root_hash[remaining_start].1[0]);
 
-                            let task = StorageTask {
-                                start_index: remaining_start,
-                                end_index: remaining_start + 1,
-                                start_hash,
-                                end_hash: Some(end_hash),
-                            };
-                            tasks_queue_not_started.push_back(task);
-                            task_count += 1;
+                        if let Some((_, old_intervals)) = maybe_old_intervals {
+                            if !old_intervals.is_empty() {
+                                for (start_hash, end_hash) in old_intervals {
+                                    let task = StorageTask {
+                                        start_index: remaining_start,
+                                        end_index: remaining_start + 1,
+                                        start_hash: *start_hash,
+                                        end_hash: Some(*end_hash),
+                                    };
+
+                                    tasks_queue_not_started.push_back(task);
+                                    task_count += 1;
+                                }
+                            } else {
+                                // TODO: DRY
+                                account_storage_roots.accounts_with_storage_root.insert(
+                                    accounts_by_root_hash[remaining_start].1[0],
+                                    (None, vec![]),
+                                );
+                                let (_, intervals) = account_storage_roots
+                                    .accounts_with_storage_root
+                                    .get_mut(&accounts_by_root_hash[remaining_start].1[0])
+                                    .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+
+                                for i in 0..chunk_count {
+                                    let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                    let start_hash = H256::from_uint(&start_hash_u256);
+                                    let end_hash = if i == chunk_count - 1 {
+                                        H256::repeat_byte(0xff)
+                                    } else {
+                                        let end_hash_u256 = start_hash_u256
+                                            .checked_add(chunk_size)
+                                            .unwrap_or(U256::MAX);
+                                        H256::from_uint(&end_hash_u256)
+                                    };
+
+                                    let task = StorageTask {
+                                        start_index: remaining_start,
+                                        end_index: remaining_start + 1,
+                                        start_hash,
+                                        end_hash: Some(end_hash),
+                                    };
+
+                                    intervals.push((start_hash, end_hash));
+
+                                    tasks_queue_not_started.push_back(task);
+                                    task_count += 1;
+                                }
+                                debug!("Split big storage account into {chunk_count} chunks.");
+                            }
+                        } else {
+                            account_storage_roots.accounts_with_storage_root.insert(
+                                accounts_by_root_hash[remaining_start].1[0],
+                                (None, vec![]),
+                            );
+                            let (_, intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(&accounts_by_root_hash[remaining_start].1[0])
+                                .ok_or(PeerHandlerError::UnrecoverableError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
+
+                            for i in 0..chunk_count {
+                                let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                                let start_hash = H256::from_uint(&start_hash_u256);
+                                let end_hash = if i == chunk_count - 1 {
+                                    H256::repeat_byte(0xff)
+                                } else {
+                                    let end_hash_u256 = start_hash_u256
+                                        .checked_add(chunk_size)
+                                        .unwrap_or(U256::MAX);
+                                    H256::from_uint(&end_hash_u256)
+                                };
+
+                                let task = StorageTask {
+                                    start_index: remaining_start,
+                                    end_index: remaining_start + 1,
+                                    start_hash,
+                                    end_hash: Some(end_hash),
+                                };
+
+                                intervals.push((start_hash, end_hash));
+
+                                tasks_queue_not_started.push_back(task);
+                                task_count += 1;
+                            }
+                            debug!("Split big storage account into {chunk_count} chunks.");
                         }
-                        debug!("Split big storage account into {chunk_count} chunks.");
                     }
                 }
 
@@ -1497,12 +1609,29 @@ impl PeerHandler {
                     "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
                     tasks_queue_not_started.len()
                 );
+                // THEN: update insert to read with the correct structure and reuse
+                // tries, only changing the prefix for insertion.
                 if account_storages.len() == 1 {
+                    let (root_hash, accounts) = &accounts_by_root_hash[start_index];
                     // We downloaded a big storage account
-                    all_account_storages[start_index].extend(account_storages.remove(0));
+                    current_account_storages
+                        .entry(*root_hash)
+                        .or_insert_with(|| AccountsWithStorage {
+                            accounts: accounts.clone(),
+                            storages: Vec::new(),
+                        })
+                        .storages
+                        .extend(account_storages.remove(0));
                 } else {
-                    for (i, storage) in account_storages.into_iter().enumerate() {
-                        all_account_storages[start_index + i] = storage;
+                    for (i, storages) in account_storages.into_iter().enumerate() {
+                        let (root_hash, accounts) = &accounts_by_root_hash[start_index + i];
+                        current_account_storages.insert(
+                            *root_hash,
+                            AccountsWithStorage {
+                                accounts: accounts.clone(),
+                                storages,
+                            },
+                        );
                     }
                 }
             }
@@ -1530,13 +1659,11 @@ impl PeerHandler {
 
             let tx = task_sender.clone();
 
+            // FIXME: this unzip is probably pointless and takes up unnecessary memory.
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
-                account_storage_roots
-                    .accounts_with_storage_root
+                accounts_by_root_hash[task.start_index..task.end_index]
                     .iter()
-                    .skip(task.start_index)
-                    .take(task.end_index - task.start_index)
-                    .map(|(hash, root)| (*hash, *root))
+                    .map(|(root, storages)| (storages[0], *root))
                     .unzip();
 
             if task_count - completed_tasks < 30 {
@@ -1559,18 +1686,7 @@ impl PeerHandler {
         }
 
         {
-            let current_account_hashes = account_storage_roots
-                .accounts_with_storage_root
-                .iter()
-                .map(|a| *a.0)
-                .collect::<Vec<_>>();
-            let current_account_storages = std::mem::take(&mut all_account_storages);
-
-            let snapshot = current_account_hashes
-                .into_iter()
-                .zip(current_account_storages)
-                .collect::<Vec<_>>()
-                .encode_to_vec();
+            let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
             if !std::fs::exists(account_storages_snapshots_dir)
                 .map_err(|_| PeerHandlerError::NoStorageSnapshotsDir)?
@@ -1580,7 +1696,7 @@ impl PeerHandler {
             }
             let path =
                 get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
-            std::fs::write(path, snapshot)
+            dump_storages_to_file(&path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(chunk_index))?;
         }
         disk_joinset
@@ -1594,10 +1710,12 @@ impl PeerHandler {
             .collect::<Result<Vec<()>, DumpError>>()
             .map_err(PeerHandlerError::DumpError)?;
 
-        for account_done in accounts_done {
-            account_storage_roots
-                .accounts_with_storage_root
-                .remove(&account_done);
+        for (account_done, intervals) in accounts_done {
+            if intervals.is_empty() {
+                account_storage_roots
+                    .accounts_with_storage_root
+                    .remove(&account_done);
+            }
         }
 
         // Dropping the task sender so that the recv returns None
@@ -1990,6 +2108,8 @@ pub enum PeerHandlerError {
     NoResponseFromPeer,
     #[error("Dumping snapshots to disk failed {0:?}")]
     DumpError(DumpError),
+    #[error("Encountered an unexpected error. This is a bug {0}")]
+    UnrecoverableError(String),
 }
 
 #[derive(Debug, Clone, std::hash::Hash)]

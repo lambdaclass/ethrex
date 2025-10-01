@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, HashMap};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
-use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
@@ -15,7 +14,10 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
+use crate::{
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    utils::keccak,
+};
 
 #[allow(unused)]
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,7 +82,7 @@ impl From<GenesisAccount> for Account {
 }
 
 pub fn code_hash(code: &Bytes) -> H256 {
-    keccak_hash::keccak(code.as_ref())
+    keccak(code.as_ref())
 }
 
 impl RLPEncode for AccountInfo {

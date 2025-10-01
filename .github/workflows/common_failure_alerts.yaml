@@ -11,6 +11,8 @@ on:
       - L2 TDX build
       - LEVM
       - Publish Docker
+      - Publish Ethrex docs page
+      - Replay
       - Replay proving
     branches:
       - main
