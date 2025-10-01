@@ -50,11 +50,12 @@ impl<'a> VM<'a> {
                 let callframe = &mut self.current_call_frame;
                 callframe.gas_remaining = 0;
 
+                #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
                 return Ok(ContextResult {
                     result: TxResult::Revert(error),
                     gas_used: callframe
                         .gas_limit
-                        .checked_sub(callframe.gas_remaining)
+                        .checked_sub(callframe.gas_remaining as u64)
                         .ok_or(InternalError::Underflow)?,
                     output: Bytes::new(),
                 });
@@ -66,13 +67,14 @@ impl<'a> VM<'a> {
             self.update_account_bytecode(contract_address, code)?;
         }
 
+        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         Ok(ContextResult {
             result: TxResult::Success,
             gas_used: {
                 let callframe = &mut self.current_call_frame;
                 callframe
                     .gas_limit
-                    .checked_sub(callframe.gas_remaining)
+                    .checked_sub(callframe.gas_remaining as u64)
                     .ok_or(InternalError::Underflow)?
             },
             output: std::mem::take(&mut self.current_call_frame.output),
@@ -92,11 +94,12 @@ impl<'a> VM<'a> {
             callframe.gas_remaining = 0;
         }
 
+        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         Ok(ContextResult {
             result: TxResult::Revert(error),
             gas_used: callframe
                 .gas_limit
-                .checked_sub(callframe.gas_remaining)
+                .checked_sub(callframe.gas_remaining as u64)
                 .ok_or(InternalError::Underflow)?,
             output: std::mem::take(&mut callframe.output),
         })

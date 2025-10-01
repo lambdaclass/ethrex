@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-01
+
+- Change remaining_gas to i64, improving performance in gas cost calculations [#4684](https://github.com/lambdaclass/ethrex/pull/4684)
+
 ### 2025-09-30
 
 - Downloading all slots of big accounts during the initial leaves download step of snap sync [#4689](https://github.com/lambdaclass/ethrex/pull/4689)

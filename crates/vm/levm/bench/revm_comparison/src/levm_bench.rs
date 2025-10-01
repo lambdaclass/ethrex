@@ -73,8 +73,8 @@ fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> Result<
     let env = Environment {
         origin: Address::from_low_u64_be(SENDER_ADDRESS),
         tx_nonce: nonce,
-        gas_limit: u64::MAX - 1,
-        block_gas_limit: u64::MAX - 1,
+        gas_limit: (i64::MAX - 1) as u64,
+        block_gas_limit: (i64::MAX - 1) as u64,
         ..Default::default()
     };
 

@@ -229,7 +229,11 @@ pub struct CallFrame {
     /// Max gas a callframe can use
     pub gas_limit: u64,
     /// Keeps track of the remaining gas in the current context.
-    pub gas_remaining: u64,
+    ///
+    /// This is a i64 for performance reasons, to allow faster gas cost substraction and checks.
+    ///
+    /// Additionally, gas limit won't be a problem since https://eips.ethereum.org/EIPS/eip-7825 limits it to 2^24, which is lower than i64::MAX.
+    pub gas_remaining: i64,
     /// Program Counter
     pub pc: usize,
     /// Address of the account that sent the message
@@ -329,9 +333,10 @@ impl CallFrame {
     ) -> Self {
         // Note: Do not use ..Default::default() because it has runtime cost.
 
+        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         Self {
             gas_limit,
-            gas_remaining: gas_limit,
+            gas_remaining: gas_limit as i64,
             msg_sender,
             to,
             code_address,
@@ -371,11 +376,16 @@ impl CallFrame {
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    #[expect(clippy::arithmetic_side_effects, reason = "arithmethic checked")]
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
-        self.gas_remaining = self
-            .gas_remaining
-            .checked_sub(gas)
-            .ok_or(ExceptionalHalt::OutOfGas)?;
+        self.gas_remaining -= gas as i64;
+
+        if self.gas_remaining < 0 {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
+
         Ok(())
     }
 
