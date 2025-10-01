@@ -153,7 +153,7 @@ impl RLPDecode for WrappedEIP4844Transaction {
                 blobs,
                 commitments,
                 proofs,
-                version: wrapper_version,
+                version: wrapper_version.unwrap_or_default(),
             },
         };
         Ok((wrapped, decoder.finish()?))

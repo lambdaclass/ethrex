@@ -871,7 +871,7 @@ mod tests {
                 blobs: blobs.to_vec(),
                 commitments: commitments.to_vec(),
                 proofs: proofs.to_vec(),
-                version: None,
+                version: 0,
             };
             mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
         }

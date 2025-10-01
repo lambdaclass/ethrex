@@ -35,8 +35,8 @@ pub struct BlobsBundle {
     pub commitments: Vec<Commitment>,
     #[serde(with = "serde_utils::bytes48::vec")]
     pub proofs: Vec<Proof>,
-    #[serde(skip)]
-    pub version: Option<u8>,
+    #[serde(skip, default)]
+    pub version: u8,
 }
 
 pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
@@ -103,7 +103,7 @@ impl BlobsBundle {
             blobs: blobs.clone(),
             commitments,
             proofs,
-            version: None,
+            version: 0,
         })
     }
 
@@ -132,9 +132,8 @@ impl BlobsBundle {
 
         // Check if the blob versioned hashes and blobs bundle content length mismatch
         if blob_count != self.commitments.len()
-            || (self.version.is_none_or(|v| v == 0) && blob_count != self.proofs.len())
-            || (self.version.is_some_and(|v| v != 0)
-                && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
+            || (self.version == 0 && blob_count != self.proofs.len())
+            || (self.version != 0 && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
             || blob_count != tx.blob_versioned_hashes.len()
         {
             return Err(BlobsBundleError::BlobsBundleWrongLen);
@@ -149,7 +148,7 @@ impl BlobsBundle {
             }
         }
 
-        if self.version.is_some_and(|v| v != 0) {
+        if self.version != 0 {
             // Validate the blobs with the commitments and cell proofs
             use crate::kzg::verify_cell_kzg_proof_batch;
             if !verify_cell_kzg_proof_batch(&self.blobs, &self.commitments, &self.proofs)? {
@@ -182,6 +181,7 @@ impl RLPEncode for BlobsBundle {
             .encode_field(&self.blobs)
             .encode_field(&self.commitments)
             .encode_field(&self.proofs)
+            .encode_optional_field(&(self.version != 0).then_some(self.version))
             .finish();
     }
 }
@@ -192,12 +192,13 @@ impl RLPDecode for BlobsBundle {
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
+        let (version, decoder) = decoder.decode_optional_field();
         Ok((
             Self {
                 blobs,
                 commitments,
                 proofs,
-                version: None,
+                version: version.unwrap_or_default(),
             },
             decoder.finish()?,
         ))
@@ -307,7 +308,7 @@ mod tests {
                                 shared::convert_str_to_bytes48(s)
                             })
                             .collect(),
-                            version: None,
+                            version: 0,
         };
 
         let tx = EIP4844Transaction {
@@ -359,7 +360,7 @@ mod tests {
                                 shared::convert_str_to_bytes48(s)
                               })
                               .collect(),
-                              version: None,
+                              version: 0,
         };
 
         let tx = EIP4844Transaction {

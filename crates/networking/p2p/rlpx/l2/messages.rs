@@ -149,7 +149,7 @@ impl RLPxMessage for BatchSealed {
                 blobs,
                 commitments,
                 proofs,
-                version: None,
+                version: 0,
             },
             commit_tx,
             verify_tx,
