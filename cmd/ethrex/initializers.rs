@@ -110,6 +110,8 @@ pub fn open_store(datadir: &Path) -> Store {
                 panic!("Specify the desired database engine.");
             }
         };
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")
     }
 }
