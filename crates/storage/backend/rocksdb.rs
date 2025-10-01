@@ -2,7 +2,9 @@ use crate::api::{
     PrefixResult, StorageBackend, StorageLocked, StorageRoTx, StorageRwTx, TABLES, TableOptions,
 };
 use crate::error::StoreError;
-use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode};
+use rocksdb::{
+    BlockBasedOptions, ColumnFamilyDescriptor, MultiThreaded, Options, SnapshotWithThreadMode,
+};
 use rocksdb::{OptimisticTransactionDB, WriteBatchWithTransaction};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -50,7 +52,18 @@ impl StorageBackend for RocksDBBackend {
 
         let cf_descriptors = all_cfs_to_open
             .iter()
-            .map(|cf| ColumnFamilyDescriptor::new(cf, Options::default()))
+            .map(|cf| {
+                let mut cf_opts = Options::default();
+                let mut bb_opts = BlockBasedOptions::default();
+                bb_opts.set_block_size(16 * 1024);
+                bb_opts.set_cache_index_and_filter_blocks(true);
+                bb_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+                // Newest in this [list](https://github.com/facebook/rocksdb/blob/v8.6.7/include/rocksdb/table.h#L493-L521)
+                // We can check main
+                bb_opts.set_format_version(6);
+                cf_opts.set_block_based_table_factory(&bb_opts);
+                ColumnFamilyDescriptor::new(cf, cf_opts)
+            })
             .collect::<Vec<_>>();
 
         let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
