@@ -72,7 +72,7 @@ pub async fn get_blockdata(
     }
 }
 
-/// Retreives data from RPC
+/// Retrieves data from RPC
 async fn get_blockdata_rpc(
     eth_client: EthClient,
     network: Network,
