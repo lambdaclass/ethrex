@@ -158,10 +158,9 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
         let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
-        txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
-        txn.commit()
+        self.write_async(HEADERS, block_hash.as_bytes().to_vec(), header_value)
+            .await
     }
 
     /// Add a batch of block headers
@@ -169,19 +168,24 @@ impl StoreEngine {
         &self,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
-        for block_header in block_headers {
-            let block_hash = block_header.hash();
-            let block_number = block_header.number;
-            let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
-            txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
-            txn.put(
-                BLOCK_NUMBERS,
-                block_hash.as_bytes(),
-                &block_number.to_le_bytes(),
-            )?;
-        }
-        txn.commit()
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            for block_header in block_headers {
+                let block_hash = block_header.hash();
+                let block_number = block_header.number;
+                let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
+                txn.put(HEADERS, block_hash.as_bytes(), header_value.as_slice())?;
+                txn.put(
+                    BLOCK_NUMBERS,
+                    block_hash.as_bytes(),
+                    &block_number.to_le_bytes(),
+                )?;
+            }
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Obtain canonical block header
@@ -207,10 +211,9 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
         let body_value = BlockBodyRLP::from(block_body).bytes().clone();
-        txn.put(BODIES, block_hash.as_bytes(), body_value.as_slice())?;
-        txn.commit()
+        self.write_async(BODIES, block_hash.as_bytes().to_vec(), body_value)
+            .await
     }
 
     /// Obtain canonical block body
@@ -231,15 +234,20 @@ impl StoreEngine {
             return Ok(());
         };
 
-        let mut txn = self.backend.begin_write()?;
-        txn.delete(
-            CANONICAL_BLOCK_HASHES,
-            block_number.to_le_bytes().as_slice(),
-        )?;
-        txn.delete(BODIES, hash.as_bytes())?;
-        txn.delete(HEADERS, hash.as_bytes())?;
-        txn.delete(BLOCK_NUMBERS, hash.as_bytes())?;
-        txn.commit()
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            txn.delete(
+                CANONICAL_BLOCK_HASHES,
+                block_number.to_le_bytes().as_slice(),
+            )?;
+            txn.delete(BODIES, hash.as_bytes())?;
+            txn.delete(HEADERS, hash.as_bytes())?;
+            txn.delete(BLOCK_NUMBERS, hash.as_bytes())?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Obtain canonical block bodies in from..=to
@@ -248,50 +256,40 @@ impl StoreEngine {
         from: BlockNumber,
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        let numbers: Vec<BlockNumber> = (from..=to).collect();
-        let mut block_bodies = Vec::new();
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let numbers: Vec<BlockNumber> = (from..=to).collect();
+            let mut block_bodies = Vec::new();
 
-        // FIXME: We are opening two transaction for each iteration
-        // for number in numbers {
-        //     let Some(hash) = self.get_canonical_block_hash_sync(number)? else {
-        //         return Err(StoreError::Custom(format!(
-        //             "Block hash not found for number: {number}"
-        //         )));
-        //     };
-        //     let Some(block_body) = self.get_block_body_by_hash(hash).await? else {
-        //         return Err(StoreError::Custom(format!(
-        //             "Block body not found for hash: {hash}"
-        //         )));
-        //     };
+            let txn = backend.begin_read()?;
+            for number in numbers {
+                let Some(hash) = txn
+                    .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
+                    .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+                    .transpose()
+                    .map_err(StoreError::from)?
+                else {
+                    return Err(StoreError::Custom(format!(
+                        "Block hash not found for number: {number}"
+                    )));
+                };
+                let Some(block_body) = txn
+                    .get(BODIES, hash.as_bytes())?
+                    .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
+                    .transpose()
+                    .map_err(StoreError::from)?
+                else {
+                    return Err(StoreError::Custom(format!(
+                        "Block body not found for hash: {hash}"
+                    )));
+                };
+                block_bodies.push(block_body);
+            }
 
-        //     block_bodies.push(block_body);
-        // }
-        let txn = self.backend.begin_read()?;
-        for number in numbers {
-            let Some(hash) = txn
-                .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
-                .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
-                .transpose()
-                .map_err(StoreError::from)?
-            else {
-                return Err(StoreError::Custom(format!(
-                    "Block hash not found for number: {number}"
-                )));
-            };
-            let Some(block_body) = txn
-                .get(BODIES, hash.as_bytes())?
-                .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
-                .transpose()
-                .map_err(StoreError::from)?
-            else {
-                return Err(StoreError::Custom(format!(
-                    "Block body not found for hash: {hash}"
-                )));
-            };
-            block_bodies.push(block_body);
-        }
-
-        Ok(block_bodies)
+            Ok(block_bodies)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Obtain block bodies from a list of hashes
@@ -299,22 +297,27 @@ impl StoreEngine {
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        let txn = self.backend.begin_read()?;
-        let mut block_bodies = Vec::new();
-        for hash in hashes {
-            let Some(block_body) = txn
-                .get(BODIES, hash.as_bytes())?
-                .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
-                .transpose()
-                .map_err(StoreError::from)?
-            else {
-                return Err(StoreError::Custom(format!(
-                    "Block body not found for hash: {hash}"
-                )));
-            };
-            block_bodies.push(block_body);
-        }
-        Ok(block_bodies)
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            let mut block_bodies = Vec::new();
+            for hash in hashes {
+                let Some(block_body) = txn
+                    .get(BODIES, hash.as_bytes())?
+                    .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
+                    .transpose()
+                    .map_err(StoreError::from)?
+                else {
+                    return Err(StoreError::Custom(format!(
+                        "Block body not found for hash: {hash}"
+                    )));
+                };
+                block_bodies.push(block_body);
+            }
+            Ok(block_bodies)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Obtain any block body using the hash
@@ -322,11 +325,16 @@ impl StoreEngine {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        let txn = self.backend.begin_read()?;
-        txn.get(BODIES, block_hash.as_bytes())?
-            .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            txn.get(BODIES, block_hash.as_bytes())?
+                .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
+                .transpose()
+                .map_err(StoreError::from)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     pub fn get_block_header_by_hash(
@@ -343,24 +351,28 @@ impl StoreEngine {
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let block_value = BlockRLP::from(block.clone()).bytes().clone();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(
+        self.write_async(
             PENDING_BLOCKS,
-            block.hash().as_bytes(),
-            block_value.as_slice(),
-        )?;
-        txn.commit()
+            block.hash().as_bytes().to_vec(),
+            block_value,
+        )
+        .await
     }
     pub async fn get_pending_block(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<Block>, StoreError> {
-        let txn = self.backend.begin_read()?;
-        let block_value = txn.get(PENDING_BLOCKS, block_hash.as_bytes())?;
-        block_value
-            .map(|bytes| BlockRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            let block_value = txn.get(PENDING_BLOCKS, block_hash.as_bytes())?;
+            block_value
+                .map(|bytes| BlockRLP::from_bytes(bytes).to())
+                .transpose()
+                .map_err(StoreError::from)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Add block number for a given hash
@@ -369,10 +381,9 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        let number_value = block_number.to_le_bytes();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(BLOCK_NUMBERS, block_hash.as_bytes(), &number_value)?;
-        txn.commit()
+        let number_value = block_number.to_le_bytes().to_vec();
+        self.write_async(BLOCK_NUMBERS, block_hash.as_bytes().to_vec(), number_value)
+            .await
     }
 
     /// Obtain block number for a given hash
@@ -380,16 +391,21 @@ impl StoreEngine {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        self.backend
-            .begin_read()?
-            .get(BLOCK_NUMBERS, block_hash.as_bytes())?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            backend
+                .begin_read()?
+                .get(BLOCK_NUMBERS, block_hash.as_bytes())?
+                .map(|bytes| -> Result<BlockNumber, StoreError> {
+                    let array: [u8; 8] = bytes
+                        .try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(BlockNumber::from_le_bytes(array))
+                })
+                .transpose()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Store transaction location (block number and index of the transaction within the block)
@@ -401,18 +417,13 @@ impl StoreEngine {
         index: Index,
     ) -> Result<(), StoreError> {
         // FIXME: Use dupsort table
-        let mut composite_key = [0; 64];
-        composite_key[..32].copy_from_slice(transaction_hash.as_bytes());
-        composite_key[32..].copy_from_slice(block_hash.as_bytes());
+        let mut composite_key = Vec::with_capacity(64);
+        composite_key.extend_from_slice(transaction_hash.as_bytes());
+        composite_key.extend_from_slice(block_hash.as_bytes());
         let location_value = (block_number, block_hash, index).encode_to_vec();
 
-        let mut txn = self.backend.begin_write()?;
-        txn.put(
-            TRANSACTION_LOCATIONS,
-            composite_key.as_slice(),
-            location_value.as_slice(),
-        )?;
-        txn.commit()
+        self.write_async(TRANSACTION_LOCATIONS, composite_key, location_value)
+            .await
     }
 
     /// Store transaction locations in batch (one db transaction for all)
@@ -420,20 +431,22 @@ impl StoreEngine {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<(&str, Vec<u8>, Vec<u8>)> = locations
+        let batch_items: Vec<(String, Vec<u8>, Vec<u8>)> = locations
             .iter()
             .map(|(tx_hash, block_number, block_hash, index)| {
                 let mut composite_key = Vec::with_capacity(64);
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (*block_number, *block_hash, *index).encode_to_vec();
-                (TRANSACTION_LOCATIONS, composite_key, location_value)
+                (
+                    TRANSACTION_LOCATIONS.to_string(),
+                    composite_key,
+                    location_value,
+                )
             })
             .collect();
 
-        let mut txn = self.backend.begin_write()?;
-        txn.put_batch(batch_items)?;
-        txn.commit()
+        self.write_batch_async(batch_items).await
     }
 
     // FIXME: Check libmdbx implementation to see if we can replicate it
@@ -494,9 +507,7 @@ impl StoreEngine {
         // FIXME: Use dupsort table
         let key = (block_hash, index).encode_to_vec();
         let value = receipt.encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(RECEIPTS, key.as_slice(), value.as_slice())?;
-        txn.commit()
+        self.write_async(RECEIPTS, key, value).await
     }
 
     /// Add receipts
@@ -505,18 +516,16 @@ impl StoreEngine {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<(&str, Vec<u8>, Vec<u8>)> = receipts
+        let batch_items: Vec<(String, Vec<u8>, Vec<u8>)> = receipts
             .into_iter()
             .enumerate()
             .map(|(index, receipt)| {
                 let key = (block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
-                (RECEIPTS, key, value)
+                (RECEIPTS.to_string(), key, value)
             })
             .collect();
-        let mut txn = self.backend.begin_write()?;
-        txn.put_batch(batch_items)?;
-        txn.commit()
+        self.write_batch_async(batch_items).await
     }
 
     /// Obtain receipt by block hash and index
@@ -525,12 +534,17 @@ impl StoreEngine {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
+        let backend = self.backend.clone();
         let key = (block_hash, index).encode_to_vec();
-        let txn = self.backend.begin_read()?;
-        txn.get(RECEIPTS, key.as_slice())?
-            .map(|bytes| Receipt::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            txn.get(RECEIPTS, key.as_slice())?
+                .map(|bytes| Receipt::decode(bytes.as_slice()))
+                .transpose()
+                .map_err(StoreError::from)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Obtain account code via code hash
@@ -546,9 +560,8 @@ impl StoreEngine {
     /// Add account code
     pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         let code_value = AccountCodeRLP::from(code).bytes().clone();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(ACCOUNT_CODES, code_hash.as_bytes(), code_value.as_slice())?;
-        txn.commit()
+        self.write_async(ACCOUNT_CODES, code_hash.as_bytes().to_vec(), code_value)
+            .await
     }
 
     /// Clears all checkpoint data created during the last snap sync
@@ -614,27 +627,30 @@ impl StoreEngine {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.backend
-            .begin_read()?
-            .get(
-                CANONICAL_BLOCK_HASHES,
-                block_number.to_le_bytes().as_slice(),
-            )?
-            .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            backend
+                .begin_read()?
+                .get(
+                    CANONICAL_BLOCK_HASHES,
+                    block_number.to_le_bytes().as_slice(),
+                )?
+                .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+                .transpose()
+                .map_err(StoreError::from)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Stores the chain configuration values, should only be called once after reading the genesis file
     /// Ignores previously stored values if present
     pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        let key = [ChainDataIndex::ChainConfig as u8];
+        let key = vec![ChainDataIndex::ChainConfig as u8];
         let value = serde_json::to_string(chain_config)
             .map_err(|_| StoreError::Custom("Failed to serialize chain config".to_string()))?
             .into_bytes();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(CHAIN_DATA, &key, &value)?;
-        txn.commit()
+        self.write_async(CHAIN_DATA, key, value).await
     }
 
     /// Update earliest block number
@@ -642,19 +658,16 @@ impl StoreEngine {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        let key = [ChainDataIndex::EarliestBlockNumber as u8];
-        let value = block_number.to_le_bytes();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(CHAIN_DATA, &key, &value)?;
-        txn.commit()
+        let key = vec![ChainDataIndex::EarliestBlockNumber as u8];
+        let value = block_number.to_le_bytes().to_vec();
+        self.write_async(CHAIN_DATA, key, value).await
     }
 
     /// Obtain earliest block number
     pub async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = [ChainDataIndex::EarliestBlockNumber as u8];
-        let txn = self.backend.begin_read()?;
-        let value = txn.get(CHAIN_DATA, &key)?;
-        value
+        let key = vec![ChainDataIndex::EarliestBlockNumber as u8];
+        self.read_async(CHAIN_DATA, key)
+            .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
@@ -666,10 +679,9 @@ impl StoreEngine {
 
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = [ChainDataIndex::FinalizedBlockNumber as u8];
-        let txn = self.backend.begin_read()?;
-        let value = txn.get(CHAIN_DATA, &key)?;
-        value
+        let key = vec![ChainDataIndex::FinalizedBlockNumber as u8];
+        self.read_async(CHAIN_DATA, key)
+            .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
@@ -681,10 +693,9 @@ impl StoreEngine {
 
     /// Obtain safe block number
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = [ChainDataIndex::SafeBlockNumber as u8];
-        let txn = self.backend.begin_read()?;
-        let value = txn.get(CHAIN_DATA, &key)?;
-        value
+        let key = vec![ChainDataIndex::SafeBlockNumber as u8];
+        self.read_async(CHAIN_DATA, key)
+            .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
@@ -696,10 +707,9 @@ impl StoreEngine {
 
     /// Obtain latest block number
     pub async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = [ChainDataIndex::LatestBlockNumber as u8];
-        let txn = self.backend.begin_read()?;
-        let value = txn.get(CHAIN_DATA, &key)?;
-        value
+        let key = vec![ChainDataIndex::LatestBlockNumber as u8];
+        self.read_async(CHAIN_DATA, key)
+            .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
@@ -714,19 +724,16 @@ impl StoreEngine {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        let key = [ChainDataIndex::PendingBlockNumber as u8];
-        let value = block_number.to_le_bytes();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(CHAIN_DATA, &key, &value)?;
-        txn.commit()
+        let key = vec![ChainDataIndex::PendingBlockNumber as u8];
+        let value = block_number.to_le_bytes().to_vec();
+        self.write_async(CHAIN_DATA, key, value).await
     }
 
     /// Obtain pending block number
     pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = [ChainDataIndex::PendingBlockNumber as u8];
-        let txn = self.backend.begin_read()?;
-        let value = txn.get(CHAIN_DATA, &key)?;
-        value
+        let key = vec![ChainDataIndex::PendingBlockNumber as u8];
+        self.read_async(CHAIN_DATA, key)
+            .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
                 let array: [u8; 8] = bytes
                     .try_into()
@@ -901,11 +908,9 @@ impl StoreEngine {
         &self,
         block_hash: BlockHash,
     ) -> Result<(), StoreError> {
-        let key = [SnapStateIndex::HeaderDownloadCheckpoint as u8];
+        let key = vec![SnapStateIndex::HeaderDownloadCheckpoint as u8];
         let value = block_hash.encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(SNAP_STATE, &key, &value)?;
-        txn.commit()
+        self.write_async(SNAP_STATE, key, value).await
     }
 
     /// Gets the hash of the last header downloaded during a snap sync
@@ -924,11 +929,9 @@ impl StoreEngine {
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
-        let key = [SnapStateIndex::StateTrieKeyCheckpoint as u8];
+        let key = vec![SnapStateIndex::StateTrieKeyCheckpoint as u8];
         let value = last_keys.to_vec().encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(SNAP_STATE, &key, &value)?;
-        txn.commit()
+        self.write_async(SNAP_STATE, key, value).await
     }
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
@@ -957,11 +960,9 @@ impl StoreEngine {
         &self,
         paths: Vec<(Nibbles, H256)>,
     ) -> Result<(), StoreError> {
-        let key = [SnapStateIndex::StateHealPaths as u8];
+        let key = vec![SnapStateIndex::StateHealPaths as u8];
         let value = paths.encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(SNAP_STATE, &key, &value)?;
-        txn.commit()
+        self.write_async(SNAP_STATE, key, value).await
     }
 
     /// Gets the state trie paths in need of healing
@@ -981,11 +982,9 @@ impl StoreEngine {
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        let key = [SnapStateIndex::StateTrieRebuildCheckpoint as u8];
+        let key = vec![SnapStateIndex::StateTrieRebuildCheckpoint as u8];
         let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
-        let mut txn = self.backend.begin_write()?;
-        txn.put(SNAP_STATE, &key, &value)?;
-        txn.commit()
+        self.write_async(SNAP_STATE, key, value).await
     }
 
     /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
@@ -1015,10 +1014,9 @@ impl StoreEngine {
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
-        let key = [SnapStateIndex::StorageTrieRebuildPending as u8];
-        let mut txn = self.backend.begin_write()?;
-        txn.put(SNAP_STATE, &key, &pending.encode_to_vec())?;
-        txn.commit()
+        let key = vec![SnapStateIndex::StorageTrieRebuildPending as u8];
+        let value = pending.encode_to_vec();
+        self.write_async(SNAP_STATE, key, value).await
     }
 
     /// Get the accont hashes and roots of the storage tries awaiting rebuild
@@ -1043,10 +1041,9 @@ impl StoreEngine {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
         let value = BlockHashRLP::from(latest_valid).bytes().clone();
-        txn.put(INVALID_CHAINS, bad_block.as_bytes(), value.as_slice())?;
-        txn.commit()
+        self.write_async(INVALID_CHAINS, bad_block.as_bytes().to_vec(), value)
+            .await
     }
 
     /// Returns the latest valid ancestor hash for a given invalid block hash.
@@ -1103,13 +1100,11 @@ impl StoreEngine {
                 let mut key = Vec::with_capacity(64);
                 key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
-                batch_items.push((STORAGE_TRIE_NODES, key, node_data));
+                batch_items.push((STORAGE_TRIE_NODES.to_string(), key, node_data));
             }
         }
 
-        let mut txn = self.backend.begin_write()?;
-        txn.put_batch(batch_items)?;
-        txn.commit()
+        self.write_batch_async(batch_items).await
     }
 
     pub async fn write_account_code_batch(
@@ -1119,11 +1114,74 @@ impl StoreEngine {
         let mut batch_items = Vec::new();
         for (code_hash, code) in account_codes {
             let value = AccountCodeRLP::from(code).bytes().clone();
-            batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), value));
+            batch_items.push((
+                ACCOUNT_CODES.to_string(),
+                code_hash.as_bytes().to_vec(),
+                value,
+            ));
         }
 
-        let mut txn = self.backend.begin_write()?;
-        txn.put_batch(batch_items)?;
-        txn.commit()
+        self.write_batch_async(batch_items).await
+    }
+
+    // Helper methods for async operations with spawn_blocking
+    // These methods ensure RocksDB I/O doesn't block the tokio runtime
+
+    /// Helper method for async writes
+    /// Spawns blocking task to avoid blocking tokio runtime
+    async fn write_async(
+        &self,
+        table: &str,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        let table = table.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            txn.put(&table, &key, &value)?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Helper method for async reads
+    /// Spawns blocking task to avoid blocking tokio runtime
+    pub async fn read_async(&self, table: &str, key: Vec<u8>) -> Result<Option<Vec<u8>>, StoreError> {
+        let backend = self.backend.clone();
+        let table = table.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            txn.get(&table, &key)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Helper method for batch writes
+    /// Spawns blocking task to avoid blocking tokio runtime
+    /// This is the most important optimization for healing performance
+    pub async fn write_batch_async(
+        &self,
+        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+
+        tokio::task::spawn_blocking(move || {
+            // Convert String to &str for put_batch
+            let batch_refs: Vec<(&str, Vec<u8>, Vec<u8>)> = batch_ops
+                .iter()
+                .map(|(table, key, value)| (table.as_str(), key.clone(), value.clone()))
+                .collect();
+
+            let mut txn = backend.begin_write()?;
+            txn.put_batch(batch_refs)?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 }
