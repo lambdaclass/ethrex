@@ -860,30 +860,6 @@ impl PeerHandler {
                 );
             }
 
-            // Check if any dump account task finished
-            // TODO: consider tracking in-flight (dump) tasks
-            if let Ok(Err(dump_account_data)) = dump_account_result_receiver.try_recv() {
-                if dump_account_data.error == ErrorKind::StorageFull {
-                    return Err(PeerHandlerError::StorageFull);
-                }
-                // If the dumping failed, retry it
-                let dump_account_result_sender_cloned = dump_account_result_sender.clone();
-                tokio::task::spawn(async move {
-                    let DumpError { path, contents, .. } = dump_account_data;
-                    // Dump the account data
-                    let result = dump_to_file(&path, contents);
-                    // Send the result through the channel
-                    dump_account_result_sender_cloned
-                        .send(result)
-                        .await
-                        .inspect_err(|err| {
-                            error!(
-                                "Failed to send account dump result through channel. Error: {err}"
-                            )
-                        })
-                });
-            }
-
             let Some((peer_id, peer_channel)) = self
                 .peer_table
                 .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
