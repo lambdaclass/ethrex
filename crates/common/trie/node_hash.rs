@@ -93,7 +93,7 @@ impl NodeHash {
     pub fn encoded_len(&self) -> usize {
         match self {
             NodeHash::Hashed(_) => 33, // 1 byte prefix + 32 bytes
-            NodeHash::Inline((_, len)) => (*len as usize).min(1), // already encoded, if empty then it's encoded to RLP_NULL
+            NodeHash::Inline((_, len)) => (*len as usize).max(1), // already encoded, if empty then it's encoded to RLP_NULL
         }
     }
 
