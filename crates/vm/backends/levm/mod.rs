@@ -381,8 +381,10 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
-    let account_code_length = db.get_account_code(contract_address)?.len();
-    if account_code_length == 0 && contract_address != HISTORY_STORAGE_ADDRESS.address {
+    if !(contract_address == HISTORY_STORAGE_ADDRESS.address
+        || contract_address == BEACON_ROOTS_ADDRESS.address)
+        && db.get_account_code(contract_address)?.len() == 0
+    {
         return Err(EvmError::SystemContractCallFailed(format!(
             "System contract: {contract_address} has no code after deployment"
         )));
