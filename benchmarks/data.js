@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759282108857,
+  "lastUpdate": 1759283721117,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36024,6 +36024,31 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004580791080088052,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "c775ad50b863b66aab56d604712e923f9051a181",
+          "message": "refactor(replay): improve replay code quality",
+          "timestamp": "2025-09-30T19:37:24Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/4692/commits/c775ad50b863b66aab56d604712e923f9051a181"
+        },
+        "date": 1759283720458,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004601275544205798,
             "unit": "Mgas/s"
           }
         ]
