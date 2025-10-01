@@ -90,14 +90,6 @@ impl NodeHash {
         }
     }
 
-    pub fn encoded_len(&self) -> usize {
-        match self {
-            NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
-            NodeHash::Inline((_, 0)) => 1,               // if empty then it's encoded to RLP_NULL
-            NodeHash::Inline((_, len)) => *len as usize, // already encoded
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         match self {
             NodeHash::Hashed(h256) => h256.as_bytes().is_empty(),
@@ -150,6 +142,14 @@ impl Default for NodeHash {
 impl RLPEncode for NodeHash {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         RLPEncode::encode(&Into::<Vec<u8>>::into(self), buf)
+    }
+
+    fn length(&self) -> usize {
+        match self {
+            NodeHash::Hashed(_) => 33,                   // 1 byte prefix + 32 bytes
+            NodeHash::Inline((_, 0)) => 1,               // if empty then it's encoded to RLP_NULL
+            NodeHash::Inline((_, len)) => *len as usize, // already encoded
+        }
     }
 }
 

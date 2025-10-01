@@ -79,10 +79,7 @@ impl NodeRef {
     }
 
     pub fn compute_hash(&self) -> NodeHash {
-        match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
-            NodeRef::Hash(hash) => *hash,
-        }
+        *self.compute_hash_ref()
     }
 
     pub fn compute_hash_ref(&self) -> &NodeHash {

@@ -1,6 +1,6 @@
 use ethrex_rlp::{
     constants::RLP_NULL,
-    encode::{RLPEncode, encode_length, encoded_length},
+    encode::{RLPEncode, encode_length},
 };
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
@@ -211,11 +211,10 @@ impl BranchNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let value_len = encoded_length(&self.value);
-        let choices_len = self
-            .choices
-            .iter()
-            .fold(0, |acc, child| acc + child.compute_hash_ref().encoded_len());
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let choices_len = self.choices.iter().fold(0, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref())
+        });
         let payload_len = choices_len + value_len;
 
         let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
