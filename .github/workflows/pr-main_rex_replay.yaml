@@ -16,6 +16,12 @@ on:
 
 jobs:
   build-b:
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read
+      issues: read
     uses: lambdaclass/ethrex-replay/.github/workflows/test.yaml@workflow_call
     with:
       a_repo: lambdaclass/ethrex
