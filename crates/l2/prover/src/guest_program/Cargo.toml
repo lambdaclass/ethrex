@@ -44,9 +44,9 @@ risc0 = [
 sp1 = [
     "dep:sp1-build",
     "dep:sp1-sdk",
-    "ethrex-vm/k256",
-    "ethrex-common/k256",
-    "ethrex-blockchain/k256",
+    "ethrex-vm/kzg-rs",
+    "ethrex-common/kzg-rs",
+    "ethrex-blockchain/kzg-rs",
 ]
 l2 = []
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
