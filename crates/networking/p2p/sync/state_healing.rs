@@ -10,7 +10,7 @@
 
 use std::{
     cmp::min,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -108,7 +108,7 @@ async fn heal_state_trie(
     let mut leafs_healed = 0;
     let mut empty_try_recv: u64 = 0;
     let mut heals_per_cycle: u64 = 0;
-    let mut nodes_to_write: Vec<(Nibbles, Vec<u8>)> = Vec::new();
+    let mut nodes_to_write: BTreeMap<Nibbles, Vec<u8>> = BTreeMap::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -270,7 +270,7 @@ async fn heal_state_trie(
 
         if nodes_to_write.len() > 100_000 || is_done || is_stale {
             let to_write = nodes_to_write;
-            nodes_to_write = Vec::new();
+            nodes_to_write = BTreeMap::new();
             let store = store.clone();
             if db_joinset.len() > 3 {
                 db_joinset.join_next().await;
@@ -282,7 +282,7 @@ async fn heal_state_trie(
                         .open_direct_state_trie(*EMPTY_TRIE_HASH)
                         .expect("Store should open");
                     let db = trie_db.db();
-                    db.put_batch(to_write)
+                    db.put_batch(to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
                 })
             });
@@ -322,7 +322,7 @@ async fn heal_state_batch(
     nodes: Vec<Node>,
     store: Store,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>, // TODO: change tuple to struct
+    nodes_to_write: &mut BTreeMap<Nibbles, Vec<u8>>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
@@ -356,12 +356,12 @@ async fn perform_needed_deletions(
     store: &Store,
     node: Node,
     node_path: &Nibbles,
-    nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
+    nodes_to_write: &mut BTreeMap<Nibbles, Vec<u8>>,
 ) -> Result<(), SyncError> {
     // Delete all the parents of this node.
     // Nodes should be in the DB only if their children are also in the DB.
     for i in 0..node_path.len() {
-        nodes_to_write.push((node_path.slice(0, i), vec![]));
+        nodes_to_write.insert(node_path.slice(0, i), vec![]);
     }
     match node {
         Node::Branch(node) => {
@@ -408,14 +408,14 @@ async fn commit_node(
     path: &Nibbles,
     parent_path: &Nibbles,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut Vec<(Nibbles, Vec<u8>)>,
+    nodes_to_write: &mut BTreeMap<Nibbles, Vec<u8>>,
 ) {
     perform_needed_deletions(store, node.clone(), &path, nodes_to_write)
         .await
         .unwrap();
-    nodes_to_write.push((path.clone(), node.encode_to_vec()));
+    nodes_to_write.insert(path.clone(), node.encode_to_vec());
     if let Node::Leaf(leaf) = &node {
-        nodes_to_write.push((path.concat(leaf.partial.clone()), leaf.value.clone()));
+        nodes_to_write.insert(path.concat(leaf.partial.clone()), leaf.value.clone());
     }
 
     if parent_path == path {
