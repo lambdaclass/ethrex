@@ -181,10 +181,9 @@ build-prover:
 	@if [ -z "$$PROVER" ]; then \
 		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> <G=true>"; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> G=<true>"; \
 		echo "The prover can also be run with GPU (G)"; \
 	fi; \
-	: "$${PROVER:=exec}"; \
 	if [ -z "$$G" ]; then \
 		GPU=""; \
 	else \
