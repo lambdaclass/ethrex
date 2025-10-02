@@ -139,7 +139,7 @@ impl Blockchain {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
+            self.storage.add_pending_block(block.clone()).await?; // ok-clone: storing block will require cloning it down the line
             return Err(ChainError::ParentNotFound);
         };
 
@@ -148,6 +148,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
+        // ok-clone: initializing StoreVmDatabase struct requires a copy of the Store anyways
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
 
@@ -185,13 +186,12 @@ impl Blockchain {
         &self,
         blocks: &[Block],
     ) -> Result<ExecutionWitness, ChainError> {
-        let first_block_header = blocks
+        let first_block_header = &blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
                 "Empty block batch".to_string(),
             ))?
-            .header
-            .clone();
+            .header;
 
         // Get state at previous block
         let trie = self
@@ -216,10 +216,12 @@ impl Blockchain {
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
+            // ok-clone: initializing StoreVmDatabase struct requires a copy of the Store anyways
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.options.r#type {
+                // ok-clone: increasing Arc reference count for logger
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
                 BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
             };
@@ -241,14 +243,10 @@ impl Blockchain {
             }
 
             // Get the used block hashes from the logger
-            let logger_block_hashes = logger
-                .block_hashes_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to get block hashes".to_string())
-                })?
-                .clone();
-            block_hashes.extend(logger_block_hashes);
+            let mut logger_block_hashes = logger.block_hashes_accessed.lock().map_err(|_e| {
+                ChainError::WitnessGeneration("Failed to get block hashes".to_string())
+            })?;
+            block_hashes.extend(logger_block_hashes.drain());
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
                 for withdrawal in withdrawals {
@@ -399,7 +397,7 @@ impl Blockchain {
 
     pub async fn store_block(
         &self,
-        block: &Block,
+        block: Block,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
@@ -421,9 +419,9 @@ impl Blockchain {
             .map_err(|e| e.into())
     }
 
-    pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub async fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(block).await?;
+        let (res, updates) = self.execute_block(&block).await?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root
@@ -433,18 +431,36 @@ impl Blockchain {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        let (gas_used, gas_limit, block_number, transactions_count) = (
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.number,
+            block.body.transactions.len(),
+        );
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
-            Self::print_add_block_logs(block, since, executed, merkleized, stored);
+            Self::print_add_block_logs(
+                gas_used,
+                gas_limit,
+                block_number,
+                transactions_count,
+                since,
+                executed,
+                merkleized,
+                stored,
+            );
         }
         result
     }
 
     fn print_add_block_logs(
-        block: &Block,
+        gas_used: u64,
+        gas_limit: u64,
+        block_number: u64,
+        transactions_count: usize,
         since: Instant,
         executed: Instant,
         merkleized: Instant,
@@ -452,24 +468,24 @@ impl Blockchain {
     ) {
         let interval = stored.duration_since(since).as_millis() as f64;
         if interval != 0f64 {
-            let as_gigas = block.header.gas_used as f64 / 10_f64.powf(9_f64);
+            let as_gigas = gas_used as f64 / 10_f64.powf(9_f64);
             let throughput = as_gigas / interval * 1000_f64;
 
             metrics!(
-                let _ = METRICS_BLOCKS.set_block_number(block.header.number);
-                METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
-                METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
+                let _ = METRICS_BLOCKS.set_block_number(block_number);
+                METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
+                METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
             );
 
             let base_log = format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
-                block.header.number,
+                block_number,
                 throughput,
                 interval,
                 as_gigas,
-                (block.header.gas_used as f64 / block.header.gas_limit as f64) * 100.0,
-                block.body.transactions.len()
+                (gas_used as f64 / gas_limit as f64) * 100.0,
+                transactions_count
             );
 
             fn percentage(init: Instant, end: Instant, total: f64) -> f64 {
