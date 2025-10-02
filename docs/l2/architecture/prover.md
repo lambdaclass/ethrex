@@ -38,7 +38,7 @@ sequenceDiagram
   4. `rzup install rust`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
-  2. `sp1up --version 5.0.8`
+  2. `sp1up --version 5.2.1`
 - [SOLC](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
@@ -303,6 +303,7 @@ For more details, refer to [Overview](./overview.md), [Withdrawals](../fundament
 The program validates the initial state by converting the `ExecutionWitness` into a `GuestProgramState` and verifying that its trie structure correctly represents the expected state. This involves checking that the calculated state trie root hash matches the initial state hash (obtained from the first block's parent block header).
 
 The validation happens in several steps:
+
 1. The `ExecutionWitness` (collected during pre-execution) is converted to `GuestProgramState`
 2. A `GuestProgramStateWrapper` is created to provide database functionality
 3. The state trie root is calculated and compared against the parent block header's state root

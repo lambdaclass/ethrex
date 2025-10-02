@@ -26,19 +26,19 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches �
 
 ## Supported Clients
 
-| Client     | `ethrex-replay block`         | notes                                            |
-| ---------- | ----------------------------- | ------------------------------------------------ |
-| ethrex     | ✅                            | `debug_executionWitness`                         |
-| reth       | ✅                            | `debug_executionWitness`                         |
-| geth       | ✅                            | `eth_getProof`                                   |
-| nethermind | ✅                            | `eth_getProof`                                   |
-| erigon     | ❌                            | V3 supports `eth_getProof` only for latest block |
-| besu       | ❌                            | Doesn't return proof for non-existing accounts   |
+| Client     | `ethrex-replay block` | notes                                            |
+| ---------- | --------------------- | ------------------------------------------------ |
+| ethrex     | ✅                    | `debug_executionWitness`                         |
+| reth       | ✅                    | `debug_executionWitness`                         |
+| geth       | ✅                    | `eth_getProof`                                   |
+| nethermind | ✅                    | `eth_getProof`                                   |
+| erigon     | ❌                    | V3 supports `eth_getProof` only for latest block |
+| besu       | ❌                    | Doesn't return proof for non-existing accounts   |
 
 We support any other client that is compliant with `eth_getProof` or `debug_executionWitness` endpoints.
 You can set the max requests per second to the RPC url with the environment variable `REPLAY_RPC_RPS`. This is particularly useful when using `eth_getProof`. Default is 10.
 
-Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using these it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a **full node** using `eth_getProof` if for some reason information retrieval were to take longer than 25 minutes it would probably fail because the node may have pruned its state (128 blocks * 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.
+Execution of some particular blocks with the `eth_getProof` method won't work with zkVMs. But without using these it should work for any block. Read more about this in [FAQ](./faq.md). Also, when running against a **full node** using `eth_getProof` if for some reason information retrieval were to take longer than 25 minutes it would probably fail because the node may have pruned its state (128 blocks \* 12 seconds = 25,6 min), normally it doesn't take that much but be wary of that.
 
 ## Supported zkVM Replays (execution & proving)
 
@@ -46,22 +46,22 @@ Execution of some particular blocks with the `eth_getProof` method won't work wi
 > ⚠️: supported, but flaky.
 > 🔜: to be supported.
 
-| zkVM   | Hoodi      | Sepolia   | Mainnet    | Public ethrex L2s |
-| ------ | ---------- | --------- | ---------- | ----------------- |
-| RISC0  | ✅         | ✅         | ✅         | ✅                |
-| SP1    | ✅         | ✅         | ✅         | ✅                |
-| OpenVM | ⚠️         | 🔜         | 🔜         | 🔜                |
-| ZisK   | 🔜         | 🔜         | ⚠️         | 🔜                |
-| Jolt   | 🔜         | 🔜         | 🔜         | 🔜                |
-| Nexus  | 🔜         | 🔜         | 🔜         | 🔜                |
-| Pico   | 🔜         | 🔜         | 🔜         | 🔜                |
-| Ziren  | 🔜         | 🔜         | 🔜         | 🔜                |
+| zkVM   | Hoodi | Sepolia | Mainnet | Public ethrex L2s |
+| ------ | ----- | ------- | ------- | ----------------- |
+| RISC0  | ✅    | ✅      | ✅      | ✅                |
+| SP1    | ✅    | ✅      | ✅      | ✅                |
+| OpenVM | ⚠️    | 🔜      | 🔜      | 🔜                |
+| ZisK   | 🔜    | 🔜      | ⚠️      | 🔜                |
+| Jolt   | 🔜    | 🔜      | 🔜      | 🔜                |
+| Nexus  | 🔜    | 🔜      | 🔜      | 🔜                |
+| Pico   | 🔜    | 🔜      | 🔜      | 🔜                |
+| Ziren  | 🔜    | 🔜      | 🔜      | 🔜                |
 
 ## Getting Started
 
 ### Dependencies
 
-These dependencies are optional, install them only if you want to run with the features `risc0` or `sp1` respectively. 
+These dependencies are optional, install them only if you want to run with the features `risc0` or `sp1` respectively.
 Make sure to use the correct versions of these.
 
 #### [RISC0](https://dev.risczero.com/api/zkvm/install)
@@ -77,7 +77,7 @@ rzup install rust
 
 ```sh
 curl -L https://sp1up.succinct.xyz | bash
-sp1up --version 5.0.8
+sp1up --version 5.2.1
 ```
 
 ### Installation
@@ -259,6 +259,7 @@ ethrex-replay block-composition --start-block <START_BLOCK> --end-block <END_BLO
 ### Run Samply
 
 We recommend building in `release-with-debug` mode so that the flamegraph is the most accurate.
+
 ```bash
 cargo build -p ethrex-replay --profile release-with-debug --features <FEATURES>
 ```

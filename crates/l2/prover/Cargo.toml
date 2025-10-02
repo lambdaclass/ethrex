@@ -41,9 +41,9 @@ guest_program = { path = "./src/guest_program", default-features = false }
 risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
 risc0-zkp = { version = "=3.0.2", optional = true }
 
-sp1-sdk = { version = "=5.0.8", optional = true }
-sp1-prover = { version = "=5.0.8", optional = true }
-sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
+sp1-sdk = { version = "=5.2.1", optional = true }
+sp1-prover = { version = "=5.2.1", optional = true }
+sp1-recursion-gnark-ffi = { version = "=5.2.1", optional = true }
 
 [dev-dependencies]
 ethrex-storage.workspace = true
