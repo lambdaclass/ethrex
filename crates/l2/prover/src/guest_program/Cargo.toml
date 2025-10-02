@@ -33,7 +33,7 @@ sp1-sdk = { version = "=5.0.8", optional = true }
 methods = ["src/risc0"]
 
 [features]
-default = []
+default = ["c-kzg"]
 risc0 = ["dep:risc0-build", "dep:risc0-zkvm", "c-kzg"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk", "kzg-rs"]
 l2 = []
@@ -42,12 +42,14 @@ c-kzg = [
     "ethrex-common/c-kzg",
     "ethrex-blockchain/c-kzg",
     "ethrex-storage/c-kzg",
+    "ethrex-crypto/c-kzg",
 ]
 kzg-rs = [
     "ethrex-vm/kzg-rs",
     "ethrex-common/kzg-rs",
     "ethrex-blockchain/kzg-rs",
     "ethrex-storage/kzg-rs",
+    "ethrex-crypto/kzg-rs",
 ]
 
 [lib]

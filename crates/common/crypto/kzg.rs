@@ -9,7 +9,7 @@ type Blob = [u8; BYTES_PER_BLOB];
 type Commitment = Bytes48;
 type Proof = Bytes48;
 
-// Compile-time check to ensure exactly one backend feature is enabled
+// Compile-time check to ensure that at least one backend feature is enabled.
 #[cfg(all(
     not(feature = "c-kzg"),
     not(feature = "kzg-rs"),
@@ -17,7 +17,19 @@ type Proof = Bytes48;
 ))]
 const _: () = {
     compile_error!(
-        "Either the `c-kzg`, `kzg-rs` or `openvm-kzg` feature must be enabled to use KZG functionality."
+        "One of `c-kzg`, `kzg-rs`, or `openvm-kzg` features must be enabled to use KZG functionality."
+    );
+};
+
+// Compile-time check to ensure exactly one backend feature is enabled.
+#[cfg(any(
+    all(feature = "c-kzg", feature = "kzg-rs"),
+    all(feature = "c-kzg", feature = "openvm-kzg"),
+    all(feature = "kzg-rs", feature = "openvm-kzg"),
+))]
+const _: () = {
+    compile_error!(
+        "Exactly one of `c-kzg`, `kzg-rs`, or `openvm-kzg` features must be enabled to use KZG functionality."
     );
 };
 
