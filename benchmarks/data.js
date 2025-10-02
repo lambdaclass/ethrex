@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759361182297,
+  "lastUpdate": 1759429028875,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36306,6 +36306,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004591692264234372,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "93b061452aa47f1cae727b905438694f0912d44a",
+          "message": "chore(l1, l2): remove `cfg-if` crate (#4737)\n\n**Description**\n\nRemoves `cfg-if` usage and adds compile-time checks to ensure that at\nleast one DB feature is enabled.",
+          "timestamp": "2025-10-02T15:39:59Z",
+          "tree_id": "fbc10c9a0e9121b4c38f82d6bbd6a084964cd347",
+          "url": "https://github.com/lambdaclass/ethrex/commit/93b061452aa47f1cae727b905438694f0912d44a"
+        },
+        "date": 1759429028036,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.0046037972401108225,
             "unit": "Mgas/s"
           }
         ]
