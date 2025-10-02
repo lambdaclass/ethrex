@@ -50,6 +50,7 @@ services:
       - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=${ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS:-false}
+      - ETHREX_DEPLOYER_OPERATOR_FEE=${ETHREX_DEPLOYER_OPERATOR_FEE:-0}
       - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
       - COMPILE_CONTRACTS=true
     depends_on:
@@ -88,7 +89,7 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - export $(xargs < /env/.env); ./ethrex l2 "$0" "$@" 
+      - export $(xargs < /env/.env); ./ethrex l2 "$0" "$@"
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
       --network /genesis/l2.json
