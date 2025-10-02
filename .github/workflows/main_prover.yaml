@@ -66,7 +66,6 @@ jobs:
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
-          ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE=10000000000000 \
           docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work
