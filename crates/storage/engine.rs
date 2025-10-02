@@ -421,7 +421,6 @@ impl StoreEngine {
         self.write_batch_async(batch_items).await
     }
 
-    // FIXME: Check libmdbx implementation to see if we can replicate it
     /// Obtain transaction location (block hash and index)
     pub async fn get_transaction_location(
         &self,

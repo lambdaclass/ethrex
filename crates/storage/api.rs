@@ -42,10 +42,10 @@ pub trait StorageBackend: Debug + Send + Sync {
         Self: Sized;
 
     /// Creates a new table, allowing to specify [`TableOptions`].
-    fn create_table(&self, name: &str, options: TableOptions) -> Result<(), StoreError>;
+    fn create_table(&self, name: &'static str, options: TableOptions) -> Result<(), StoreError>;
 
     /// Removes all data from the specified table.
-    fn clear_table(&self, table: &str) -> Result<(), StoreError>;
+    fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 
     /// Begins a new read-only transaction.
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError>;
@@ -57,19 +57,19 @@ pub trait StorageBackend: Debug + Send + Sync {
     ///
     /// This provides a persistent read-only view of a single table, optimized
     /// for batch read operations. The snapshot remains valid until dropped.
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError>;
+    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError>;
 }
 
 /// Read-only transaction interface.
 /// Provides methods to read data from the database
 pub trait StorageRoTx {
     /// Retrieves a value by key from the specified table.
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Returns an iterator over all key-value pairs with the given prefix.
     fn prefix_iterator(
         &self,
-        table: &str,
+        table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
 }
@@ -80,15 +80,16 @@ pub trait StorageRoTx {
 /// Changes are not persisted until [`commit()`](StorageRwTx::commit) is called.
 pub trait StorageRwTx: StorageRoTx {
     /// Stores a key-value pair in the specified table.
-    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+    fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.put_batch(vec![(table, key.to_vec(), value.to_vec())])
     }
 
     /// Stores multiple key-value pairs in the specified table within the transaction.
-    fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError>;
+    fn put_batch(&mut self, batch: Vec<(&'static str, Vec<u8>, Vec<u8>)>)
+    -> Result<(), StoreError>;
 
     /// Removes a key-value pair from the specified table.
-    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError>;
+    fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
     /// Commits all changes made in this transaction.
     fn commit(self: Box<Self>) -> Result<(), StoreError>;

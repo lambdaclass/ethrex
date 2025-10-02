@@ -9,7 +9,7 @@ pub struct BackendTrieDB {
     /// Storage backend
     backend: Arc<dyn StorageBackend>,
     /// Table name for storing trie nodes
-    table_name: String,
+    table_name: &'static str,
     /// Storage trie address prefix (for storage tries)
     /// None for state tries, Some(address) for storage tries
     address_prefix: Option<H256>,
@@ -18,12 +18,12 @@ pub struct BackendTrieDB {
 impl BackendTrieDB {
     pub fn new(
         backend: Arc<dyn StorageBackend>,
-        table_name: &str,
+        table_name: &'static str,
         address_prefix: Option<H256>,
     ) -> Self {
         Self {
             backend,
-            table_name: table_name.to_string(),
+            table_name,
             address_prefix,
         }
     }
@@ -51,14 +51,14 @@ impl TrieDB for BackendTrieDB {
             TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
         })?;
 
-        txn.get(&self.table_name, &key)
+        txn.get(self.table_name, &key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let mut batch = Vec::with_capacity(key_values.len());
         for (node_hash, value) in key_values {
-            batch.push((self.table_name.as_str(), self.make_key(node_hash), value));
+            batch.push((self.table_name, self.make_key(node_hash), value));
         }
 
         let mut txn = self.backend.begin_write().map_err(|e| {

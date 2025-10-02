@@ -75,13 +75,13 @@ impl StorageBackend for RocksDBBackend {
         Ok(Self { db: Arc::new(db) })
     }
 
-    fn create_table(&self, _name: &str, _options: TableOptions) -> Result<(), StoreError> {
+    fn create_table(&self, _name: &'static str, _options: TableOptions) -> Result<(), StoreError> {
         // Now we are creating the tables in the open() function
         // Check if this function is still needed
         Ok(())
     }
 
-    fn clear_table(&self, table: &str) -> Result<(), StoreError> {
+    fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
         let cf = self
             .db
             .cf_handle(table)
@@ -114,7 +114,7 @@ impl StorageBackend for RocksDBBackend {
         }))
     }
 
-    fn begin_locked(&self, table_name: &str) -> Result<Box<dyn StorageLocked>, StoreError> {
+    fn begin_locked(&self, table_name: &'static str) -> Result<Box<dyn StorageLocked>, StoreError> {
         let db = Box::leak(Box::new(self.db.clone()));
         let lock = db.snapshot();
         let cf = db
@@ -132,7 +132,7 @@ pub struct RocksDBRoTx {
 }
 
 impl StorageRoTx for RocksDBRoTx {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
             .db
             .cf_handle(table)
@@ -145,7 +145,7 @@ impl StorageRoTx for RocksDBRoTx {
 
     fn prefix_iterator(
         &self,
-        table: &str,
+        table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
     {
@@ -193,7 +193,7 @@ pub struct RocksDBRwTx {
 }
 
 impl StorageRoTx for RocksDBRwTx {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let cf = self
             .db
             .cf_handle(table)
@@ -206,7 +206,7 @@ impl StorageRoTx for RocksDBRwTx {
 
     fn prefix_iterator(
         &self,
-        table: &str,
+        table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
     {
@@ -234,7 +234,10 @@ impl StorageRoTx for RocksDBRwTx {
 impl StorageRwTx for RocksDBRwTx {
     /// Stores multiple key-value pairs in different tables using WriteBatch.
     /// Changes are accumulated in the batch and written atomically on commit.
-    fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
+    fn put_batch(
+        &mut self,
+        batch: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
         // Fast-path if we have only one table in the batch
         let Some(first_table) = batch.first().map(|(t, _, _)| *t) else {
             // Empty batch
@@ -275,7 +278,7 @@ impl StorageRwTx for RocksDBRwTx {
         Ok(())
     }
 
-    fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
+    fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
         let cf = self
             .db
             .cf_handle(table)
