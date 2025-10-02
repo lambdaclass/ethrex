@@ -6,7 +6,7 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, default-features = false }
 ethrex-levm = { path = "./levm", default-features = false }
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
@@ -30,8 +30,10 @@ ethereum-types.workspace = true
 path = "./lib.rs"
 
 [features]
-default = []
+default = ["c-kzg"]
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+kzg-rs = ["ethrex-levm/kzg-rs", "ethrex-common/kzg-rs"]
+openvm-kzg = ["ethrex-levm/openvm-kzg", "ethrex-common/openvm-kzg"]
 debug = ["ethrex-levm/debug"]
 
 [lints.clippy]

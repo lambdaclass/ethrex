@@ -7,14 +7,12 @@ use bls12_381::{
 };
 use bytes::{Buf, Bytes};
 use ethrex_common::H160;
-use ethrex_common::utils::{keccak, u256_from_big_endian_const};
+use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H256, U256, serde_utils::bool, types::Fork, types::Fork::*,
     utils::u256_from_big_endian,
 };
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
-use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use k256::elliptic_curve::Field;
 use lambdaworks_math::{
     elliptic_curve::{
         short_weierstrass::{
@@ -54,16 +52,15 @@ use std::borrow::Cow;
 use std::ops::Mul;
 
 use crate::constants::{P256_A, P256_B, P256_N};
-use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
+use crate::gas_cost::{BLS12_381_G1_K_DISCOUNT, G1_MUL_COST, MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
 use crate::{
     constants::{P256_P, VERSIONED_HASH_VERSION_KZG},
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
-        BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
-        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
-        G2_MUL_COST, POINT_EVALUATION_COST,
+        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G2_K_DISCOUNT,
+        BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST, BLS12_381_MAP_FP2_TO_G2_COST,
+        ECADD_COST, ECMUL_COST, G2_MUL_COST, POINT_EVALUATION_COST,
     },
 };
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
@@ -72,6 +69,12 @@ use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curv
 use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::field_extension::BLS12381FieldModulus;
 use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
 use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
+
+// Compile-time check to ensure exactly one backend feature is enabled
+#[cfg(all(feature = "secp256k1", feature = "k256"))]
+const _: () = {
+    compile_error!("Either the `secp256k1` or `k256` feature must be enabled to use ecrecover.");
+};
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
@@ -384,6 +387,23 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
+#[allow(unreachable_code)]
+pub fn ecrecover(
+    _calldata: &Bytes,
+    _gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
+    #[cfg(feature = "secp256k1")]
+    {
+        return ecrecover_secp256k1(_calldata, _gas_remaining, _fork);
+    }
+    #[cfg(feature = "k256")]
+    {
+        return ecrecover_k256(_calldata, _gas_remaining, _fork);
+    }
+    unreachable!()
+}
+
 /// ## ECRECOVER precompile.
 /// Elliptic curve digital signature algorithm (ECDSA) public key recovery function.
 ///
@@ -393,8 +413,14 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
+#[cfg(feature = "k256")]
+pub fn ecrecover_k256(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
+    use sha3::Keccak256;
+    increase_precompile_consumed_gas(gas_cost::ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;
     const WORD: usize = 32;
@@ -412,7 +438,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     };
 
     // Parse signature (r||s). If malformed → empty return.
-    let Ok(mut sig) = Signature::from_slice(raw_sig) else {
+    let Ok(mut sig) = k256::ecdsa::Signature::from_slice(raw_sig) else {
         return Ok(Bytes::new());
     };
 
@@ -424,12 +450,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     }
 
     // Recovery id from the adjusted byte.
-    let Some(recid) = RecoveryId::from_byte(recid_byte) else {
+    let Some(recid) = k256::ecdsa::RecoveryId::from_byte(recid_byte) else {
         return Ok(Bytes::new());
     };
 
     // Recover the verifying key from the prehash (32-byte digest).
-    let Ok(vk) = VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
+    let Ok(vk) = k256::ecdsa::VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
         return Ok(Bytes::new());
     };
 
@@ -439,8 +465,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     #[allow(clippy::indexing_slicing)]
     let xy = &mut uncompressed[1..65];
 
-    // keccak256(X||Y).
-    let xy = keccak(xy);
+    let xy = Keccak256::digest(&xy);
 
     // Address is the last 20 bytes of the hash.
     let mut out = [0u8; 32];
@@ -448,6 +473,66 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     out[12..32].copy_from_slice(&xy[12..32]);
 
     Ok(Bytes::copy_from_slice(&out))
+}
+
+/// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
+/// Given a hash, a Signature and a recovery Id, returns the public key recovered by secp256k1
+#[cfg(feature = "secp256k1")]
+pub fn ecrecover_secp256k1(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
+    use sha3::Keccak256;
+
+    increase_precompile_consumed_gas(gas_cost::ECRECOVER_COST, gas_remaining)?;
+
+    // If calldata does not reach the required length, we should fill the rest with zeros
+    let calldata = fill_with_zeros(calldata, 128);
+
+    // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
+    let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let Ok(message) = secp256k1::Message::from_digest_slice(hash) else {
+        return Ok(Bytes::new());
+    };
+
+    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+
+    // The Recovery identifier is expected to be 27 or 28, any other value is invalid
+    if !(v == U256::from(27) || v == U256::from(28)) {
+        return Ok(Bytes::new());
+    }
+
+    let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
+    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
+    let Ok(recovery_id) =
+        secp256k1::ecdsa::RecoveryId::try_from(Into::<i32>::into(recovery_id_from_rpc))
+    else {
+        return Ok(Bytes::new());
+    };
+
+    // signature is made up of the parameters r and s
+    let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
+    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(sig, recovery_id)
+    else {
+        return Ok(Bytes::new());
+    };
+
+    // Recover the address using secp256k1
+    let Ok(public_key) = signature.recover(&message) else {
+        return Ok(Bytes::new());
+    };
+
+    let public_key = public_key.serialize_uncompressed();
+
+    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
+    let public_key_hash = Keccak256::digest(&public_key[1..65]);
+
+    // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
+    let mut output = vec![0u8; 12];
+    output.extend_from_slice(public_key_hash.get(13..33).ok_or(InternalError::Slicing)?);
+
+    Ok(Bytes::from(output.to_vec()))
 }
 
 /// Returns the calldata received
@@ -1262,6 +1347,8 @@ pub fn bls12_g1msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
+    use p256::elliptic_curve::Field;
+
     if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
         return Err(PrecompileError::ParsingInputError.into());
     }
