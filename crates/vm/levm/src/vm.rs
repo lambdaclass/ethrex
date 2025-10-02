@@ -580,15 +580,10 @@ impl Substate {
         // Add access lists contents to accessed accounts and accessed storage slots.
         for (address, keys) in tx.access_list().clone() {
             initial_accessed_addresses.insert(address);
-            let mut warm_slots = BTreeSet::new();
+            let set = initial_accessed_storage_slots.entry(address).or_default();
             for slot in keys {
-                warm_slots.insert(slot);
+                set.insert(slot);
             }
-            // We don't directly insert because it could happen that an access list has 2 entries for the same address. That's why we extend.
-            initial_accessed_storage_slots
-                .entry(address)
-                .or_default()
-                .extend(warm_slots);
         }
 
         let substate =
