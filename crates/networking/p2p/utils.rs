@@ -77,6 +77,11 @@ pub fn dump_accounts_to_rocks_db(
     path: &Path,
     mut contents: Vec<(H256, AccountState)>,
 ) -> Result<(), rocksdb::Error> {
+    // This can happen sometimes during download, and the sst ingestion method
+    // fails with empty chunk files
+    if contents.is_empty() {
+        return Ok(());
+    }
     contents.sort_by_key(|(k, _)| *k);
     contents.dedup_by_key(|(k, _)| {
         let mut buf = [0u8; 32];
@@ -100,6 +105,11 @@ pub fn dump_storages_to_rocks_db(
     path: &Path,
     mut contents: Vec<(H256, H256, U256)>,
 ) -> Result<(), rocksdb::Error> {
+    // This can happen sometimes during download, and the sst ingestion method
+    // fails with empty chunk files
+    if contents.is_empty() {
+        return Ok(());
+    }
     contents.sort();
     contents.dedup_by_key(|(k0, k1, _)| {
         let mut buffer = [0_u8; 64];
