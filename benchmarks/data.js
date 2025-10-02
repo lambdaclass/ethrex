@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759442323923,
+  "lastUpdate": 1759448147274,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36393,6 +36393,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004601396714699097,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "66b0b5eb29b2ae38a3427e42449a0da71a4e677c",
+          "message": "docs(l1,l2): update README with LOC comparission (#4698)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd a LOC comparission plot between EL clients \n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Leandro Ferrigno <leanrafa@gmail.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-10-02T20:48:40Z",
+          "tree_id": "3b3c91cb8c8b2ce5578b6080fb9dfef8bd5516c7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/66b0b5eb29b2ae38a3427e42449a0da71a4e677c"
+        },
+        "date": 1759448146207,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.0045952506694552225,
             "unit": "Mgas/s"
           }
         ]
