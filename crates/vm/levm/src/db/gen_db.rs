@@ -62,6 +62,7 @@ impl GeneralizedDatabase {
             .collect();
         Self {
             store,
+            // ok-clone: need two separate copies of levm_accounts
             current_accounts_state: levm_accounts.clone(),
             initial_accounts_state: levm_accounts,
             tx_backup: None,
