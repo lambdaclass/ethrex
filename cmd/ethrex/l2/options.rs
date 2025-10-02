@@ -854,7 +854,6 @@ pub struct ProverClientOptions {
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     #[arg(
         long,
-        default_value = "None",
         value_name = "URL",
         env = "ETHREX_SP1_SERVER",
         help = "Url to the moongate server to use when using sp1 backend",
