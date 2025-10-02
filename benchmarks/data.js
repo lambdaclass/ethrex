@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759429028875,
+  "lastUpdate": 1759432140214,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36335,6 +36335,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.0046037972401108225,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b30f0056663dbc9d715b2709a05d947af84d17e",
+          "message": "feat(l1): bump c-kzg version (#4707)\n\n**Motivation**\nWe need to bump `c-kzg` version in order to use the new\n`verify_cell_kzg_proof_batch` to verify extended blobs\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Bump c-kzg version to 2.1.1\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None, but is needed for #3844",
+          "timestamp": "2025-10-02T18:16:41Z",
+          "tree_id": "271cf8178f0bbe1e079b3f8125ef19c5a47c0de7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9b30f0056663dbc9d715b2709a05d947af84d17e"
+        },
+        "date": 1759432139417,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.0045913073435216,
             "unit": "Mgas/s"
           }
         ]
