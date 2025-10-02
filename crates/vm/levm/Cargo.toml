@@ -6,7 +6,6 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-lazy_static.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
