@@ -147,26 +147,16 @@ impl StorageRoTx for RocksDBRoTx {
         &self,
         table: &'static str,
         prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
-    {
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         let cf = self
             .db
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
-        let iter = self.db.prefix_iterator_cf(&cf, prefix);
-        let results: Vec<PrefixResult> = iter
-            .map(|result| {
-                result
-                    .map(|(k, v)| (k.to_vec(), v.to_vec()))
-                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-            })
-            .collect();
-
-        let rocks_iter = RocksDBPrefixIter {
-            results: results.into_iter(),
-        };
-        Ok(Box::new(rocks_iter))
+        let iter = self.db.prefix_iterator_cf(&cf, prefix).map(|result| {
+            result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+        });
+        Ok(Box::new(iter))
     }
 }
 
@@ -177,7 +167,7 @@ pub struct RocksDBPrefixIter {
 }
 
 impl Iterator for RocksDBPrefixIter {
-    type Item = Result<(Vec<u8>, Vec<u8>), StoreError>;
+    type Item = PrefixResult;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.results.next()
@@ -208,8 +198,7 @@ impl StorageRoTx for RocksDBRwTx {
         &self,
         table: &'static str,
         prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
-    {
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         let cf = self
             .db
             .cf_handle(table)
@@ -217,11 +206,7 @@ impl StorageRoTx for RocksDBRwTx {
 
         let iter = self.db.prefix_iterator_cf(&cf, prefix);
         let results: Vec<PrefixResult> = iter
-            .map(|result| {
-                result
-                    .map(|(k, v)| (k.to_vec(), v.to_vec()))
-                    .map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
-            })
+            .map(|result| result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}"))))
             .collect();
 
         let rocks_iter = RocksDBPrefixIter {

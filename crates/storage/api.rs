@@ -22,7 +22,9 @@ use std::{fmt::Debug, path::Path};
 pub use tables::LIST as TABLES;
 
 /// Type alias for the result of a prefix iterator.
-pub type PrefixResult = Result<(Vec<u8>, Vec<u8>), StoreError>;
+/// Uses Box<[u8]> instead of Vec<u8> to avoid unnecessary allocations
+/// when the data comes directly from the database.
+pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 
 /// Configuration options for table creation.
 #[derive(Debug, Clone)]

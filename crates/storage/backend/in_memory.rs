@@ -117,7 +117,7 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
         &self,
         table: &str,
         prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>
     {
         let db = self
             .backend
@@ -130,7 +130,7 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
         let results: Vec<PrefixResult> = table_data
             .into_iter()
             .filter(|(key, _)| key.starts_with(&prefix_vec))
-            .map(|(k, v)| Ok((k, v)))
+            .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
             .collect();
 
         let iter = InMemoryPrefixIter {
@@ -161,7 +161,7 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
         &self,
         table: &str,
         prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>, StoreError>
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>
     {
         let db = self
             .backend
@@ -174,7 +174,7 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
         let results: Vec<PrefixResult> = table_data
             .into_iter()
             .filter(|(key, _)| key.starts_with(&prefix_vec))
-            .map(|(k, v)| Ok((k, v)))
+            .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
             .collect();
 
         let iter = InMemoryPrefixIter {

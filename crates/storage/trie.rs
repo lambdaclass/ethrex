@@ -28,7 +28,7 @@ impl BackendTrieDB {
         }
     }
 
-    fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
+    fn make_key(&self, node_hash: &NodeHash) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
                 // For storage tries, prefix with address
@@ -37,7 +37,7 @@ impl BackendTrieDB {
                 key
             }
             None => {
-                // For state tries, use node hash directly
+                // For state trie, use node hash directly
                 node_hash.as_ref().to_vec()
             }
         }
@@ -46,7 +46,7 @@ impl BackendTrieDB {
 
 impl TrieDB for BackendTrieDB {
     fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = self.make_key(node_hash);
+        let key = self.make_key(&node_hash);
         let txn = self.backend.begin_read().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
         })?;
@@ -58,7 +58,7 @@ impl TrieDB for BackendTrieDB {
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let mut batch = Vec::with_capacity(key_values.len());
         for (node_hash, value) in key_values {
-            batch.push((self.table_name, self.make_key(node_hash), value));
+            batch.push((self.table_name, self.make_key(&node_hash), value));
         }
 
         let mut txn = self.backend.begin_write().map_err(|e| {
