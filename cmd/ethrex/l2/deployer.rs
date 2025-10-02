@@ -1016,11 +1016,7 @@ async fn make_deposits(
                 opts.native_token_l1_address,
                 signer.address(),
                 encode_calldata("freeMint()", &[])?.into(),
-                Overrides {
-                    nonce: Some(nonce),
-                    gas_limit: Some(1_000_000u64), // This is for not estimating the gas and use the nonce it will have
-                    ..Default::default()
-                },
+                Default::default(),
             )
             .await?;
             if let Err(e) = send_generic_transaction(eth_client, mint_tx, &signer).await {
@@ -1040,8 +1036,10 @@ async fn make_deposits(
                 calldata.into(),
                 Overrides {
                     from: Some(signer.address()),
-                    gas_limit: Some(1_000_000u64),
+                    // We set the nonce and gas limit manually to avoid the estimation step and having nonce issues.
+                    // We do nonce + 1 because the mint transaction is sent just before.
                     nonce: Some(nonce + 1),
+                    gas_limit: Some(1_000_000u64),
                     ..Default::default()
                 },
             )
@@ -1071,6 +1069,9 @@ async fn make_deposits(
         let overrides = Overrides {
             value: native_token_is_eth.then_some(value_to_deposit).or(None),
             from: Some(signer.address()),
+            // When doing the deposits for ERC20 as the native token, we previously did an approve and mint.
+            // So to make the deposits fast and not wait for the node to have the nonce updated, we set it manually.
+            // Also we set the gas limit manually to avoid the estimation step and having nonce issues.
             nonce: if !native_token_is_eth {
                 Some(nonce + 2)
             } else {
