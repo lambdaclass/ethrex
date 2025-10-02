@@ -2145,19 +2145,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
-dependencies = [
- "crossbeam-channel 0.5.15",
- "crossbeam-deque 0.8.6",
- "crossbeam-epoch 0.9.18",
- "crossbeam-queue 0.3.12",
- "crossbeam-utils 0.8.21",
-]
-
-[[package]]
 name = "crossbeam-channel"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3748,14 +3735,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d#4e504ed5d4849805f7f8172c1de8d80f316396d9"
+version = "1.0.0"
+source = "git+https://github.com/lambdaclass/ethrex?tag=v1.0.0#a976db3e20acb441b930e1afd156586f222e8f79"
 dependencies = [
  "bytes",
  "crc32fast",
  "ethereum-types 0.15.1",
- "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
- "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
+ "ethrex-rlp 1.0.0",
+ "ethrex-trie 1.0.0",
  "hex",
  "kzg-rs",
  "lazy_static",
@@ -3974,7 +3961,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "concat-kdf",
- "crossbeam 0.8.4",
  "ctr",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
@@ -3982,7 +3968,6 @@ dependencies = [
  "ethrex-rlp 0.1.0",
  "ethrex-storage 0.1.0",
  "ethrex-storage-rollup",
- "ethrex-threadpool 0.1.0",
  "ethrex-trie 0.1.0",
  "futures",
  "hex",
@@ -3992,7 +3977,6 @@ dependencies = [
  "prometheus 0.14.0",
  "rand 0.8.5",
  "rayon",
- "rocksdb",
  "secp256k1",
  "serde",
  "serde_json",
@@ -4102,8 +4086,8 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d#4e504ed5d4849805f7f8172c1de8d80f316396d9"
+version = "1.0.0"
+source = "git+https://github.com/lambdaclass/ethrex?tag=v1.0.0#a976db3e20acb441b930e1afd156586f222e8f79"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4213,17 +4197,17 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d#4e504ed5d4849805f7f8172c1de8d80f316396d9"
+version = "1.0.0"
+source = "git+https://github.com/lambdaclass/ethrex?tag=v1.0.0#a976db3e20acb441b930e1afd156586f222e8f79"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
  "bytes",
  "ethereum-types 0.15.1",
- "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
- "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
- "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
+ "ethrex-common 1.0.0",
+ "ethrex-rlp 1.0.0",
+ "ethrex-trie 1.0.0",
  "hex",
  "libmdbx",
  "serde",
@@ -4255,21 +4239,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-threadpool"
-version = "0.1.0"
-dependencies = [
- "crossbeam 0.8.4",
-]
-
-[[package]]
-name = "ethrex-threadpool"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d#4e504ed5d4849805f7f8172c1de8d80f316396d9"
-dependencies = [
- "crossbeam 0.8.4",
-]
-
-[[package]]
 name = "ethrex-trie"
 version = "0.1.0"
 dependencies = [
@@ -4277,11 +4246,9 @@ dependencies = [
  "bytes",
  "cita_trie",
  "criterion",
- "crossbeam 0.8.4",
  "digest 0.10.7",
  "ethereum-types 0.15.1",
  "ethrex-rlp 0.1.0",
- "ethrex-threadpool 0.1.0",
  "hasher",
  "hex",
  "hex-literal",
@@ -4301,16 +4268,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d#4e504ed5d4849805f7f8172c1de8d80f316396d9"
+version = "1.0.0"
+source = "git+https://github.com/lambdaclass/ethrex?tag=v1.0.0#a976db3e20acb441b930e1afd156586f222e8f79"
 dependencies = [
  "anyhow",
  "bytes",
- "crossbeam 0.8.4",
  "digest 0.10.7",
  "ethereum-types 0.15.1",
- "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
- "ethrex-threadpool 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
+ "ethrex-rlp 1.0.0",
  "hex",
  "lazy_static",
  "libmdbx",
@@ -7032,9 +6997,9 @@ dependencies = [
  "clap 4.5.47",
  "ethrex-blockchain",
  "ethrex-common 0.1.0",
- "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
+ "ethrex-common 1.0.0",
  "ethrex-storage 0.1.0",
- "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex?rev=4e504ed5d)",
+ "ethrex-storage 1.0.0",
  "tokio",
 ]
 
@@ -11352,7 +11317,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76347472cc448d47dbf9f67541fde19dbb054793e8e0546ce8917bfb695e1b56"
 dependencies = [
- "crossbeam 0.7.3",
+ "crossbeam",
  "tokio",
  "tokio-stream",
  "tokio-util",
