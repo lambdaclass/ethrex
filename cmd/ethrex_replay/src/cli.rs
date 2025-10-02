@@ -1,7 +1,9 @@
+use crate::helpers::get_block_numbers_in_cache_dir;
 use bytes::Bytes;
 use std::{
     cmp::max,
     fmt::Display,
+    path::PathBuf,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -24,7 +26,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::{
     EthClient,
     debug::execution_witness::{RpcExecutionWitness, execution_witness_from_rpc_chain_config},
-    types::block_identifier::{BlockIdentifier, BlockTag},
+    types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{
     EngineType, Store, hash_address, store_db::in_memory::Store as InMemoryStore,
@@ -38,16 +40,14 @@ use ethrex_trie::{
 use reqwest::Url;
 #[cfg(feature = "l2")]
 use std::path::Path;
-use tracing::info;
+use tracing::{debug, info};
 
 #[cfg(feature = "l2")]
 use crate::fetcher::get_batchdata;
-#[cfg(not(feature = "l2"))]
-use crate::fetcher::get_rangedata;
+use crate::helpers::get_referenced_hashes;
 #[cfg(not(feature = "l2"))]
 use crate::plot_composition::plot;
-use crate::{cache::Cache, report::Report};
-use crate::{fetcher::get_blockdata, helpers::get_referenced_hashes};
+use crate::{cache::Cache, fetcher::get_blockdata, report::Report};
 use crate::{
     run::{exec, prove, run_tx},
     slack::try_send_report_to_slack,
@@ -81,21 +81,8 @@ pub enum EthrexReplayCommand {
         #[arg(help = "Ending block. (Inclusive)")]
         end: u64,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
-        #[arg(
-            long,
-            help = "Name of the network or genesis file. Supported: mainnet, holesky, sepolia, hoodi. Default: mainnet",
-            value_parser = clap::value_parser!(Network),
-            default_value_t = Network::default(),
-        )]
-        network: Network,
+        rpc_url: Url,
     },
-    #[cfg(not(feature = "l2"))]
-    #[command(
-        subcommand,
-        about = "Store the state prior to the execution of the block"
-    )]
-    Cache(CacheSubcommand),
     #[cfg(not(feature = "l2"))]
     #[command(subcommand, about = "Replay a custom block or batch")]
     Custom(CustomSubcommand),
@@ -158,12 +145,38 @@ pub struct EthrexReplayOptions {
     #[command(flatten)]
     pub common: CommonOptions,
     #[arg(long, group = "data_source", help_heading = "Replay Options")]
-    pub rpc_url: Url,
-    #[arg(long, group = "data_source", help_heading = "Replay Options")]
+    pub rpc_url: Option<Url>,
+    #[arg(
+        long,
+        group = "data_source",
+        help = "use cache as input instead of fetching from RPC",
+        help_heading = "Replay Options",
+        requires = "network",
+        conflicts_with = "cache_level"
+    )]
     pub cached: bool,
-    #[arg(long, required = false, help_heading = "Replay Options")]
-    pub to_csv: bool,
-    #[arg(long, default_value = "on", help_heading = "Replay Options")]
+    #[arg(
+        long,
+        help = "Network to use for replay (i.e. mainnet, sepolia, hoodi). If not specified will fetch from RPC",
+        value_enum,
+        help_heading = "Replay Options"
+    )]
+    pub network: Option<Network>,
+    #[arg(
+        long,
+        help = "Directory to store and load cache files",
+        value_parser,
+        default_value = "./replay_cache",
+        help_heading = "Replay Options"
+    )]
+    pub cache_dir: PathBuf,
+    #[arg(
+        long,
+        default_value = "on",
+        help_heading = "Replay Options",
+        help = "Criteria to save a cache when fetching from RPC",
+        requires = "rpc_url"
+    )]
     pub cache_level: CacheLevel,
     #[arg(long, env = "SLACK_WEBHOOK_URL", help_heading = "Replay Options")]
     pub slack_webhook_url: Option<Url>,
@@ -267,7 +280,7 @@ pub enum CacheLevel {
     On,
 }
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 pub struct BlockOptions {
     #[arg(
         help = "Block to use. Uses the latest if not specified.",
@@ -280,7 +293,7 @@ pub struct BlockOptions {
 
 #[cfg(not(feature = "l2"))]
 #[derive(Parser)]
-#[command(group(ArgGroup::new("block_list").required(true).args(["blocks", "from"])))]
+#[command(group(ArgGroup::new("block_list").required(true).multiple(true).args(["blocks", "from", "endless", "cached"])))]
 pub struct BlocksOptions {
     #[arg(help = "List of blocks to execute.", num_args = 1.., value_delimiter = ',', conflicts_with_all = ["from", "to"], help_heading = "Command Options")]
     blocks: Vec<u64>,
@@ -297,6 +310,20 @@ pub struct BlocksOptions {
         help_heading = "Command Options"
     )]
     to: Option<u64>,
+    #[arg(
+        long,
+        help = "Run blocks endlessly, starting from the specified block or the latest if not specified.",
+        help_heading = "Replay Options",
+        conflicts_with_all = ["blocks", "to", "cached"]
+    )]
+    pub endless: bool,
+    #[arg(
+        long,
+        help = "Only fetch Ethereum proofs blocks (i.e., no L2 blocks).",
+        help_heading = "Replay Options",
+        conflicts_with = "blocks"
+    )]
+    pub only_eth_proofs_blocks: bool,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -305,6 +332,12 @@ pub struct BlocksOptions {
 pub struct TransactionOpts {
     #[arg(help = "Transaction hash.", help_heading = "Command Options")]
     tx_hash: H256,
+    #[arg(
+        long,
+        help = "Block number containing the transaction. Necessary in cached mode.",
+        help_heading = "Command Options"
+    )]
+    pub block_number: Option<u64>,
     #[command(flatten)]
     opts: EthrexReplayOptions,
 }
@@ -340,74 +373,140 @@ impl EthrexReplayCommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             #[cfg(not(feature = "l2"))]
-            Self::Block(block_opts) => replay_block(block_opts).await?,
+            Self::Block(block_opts) => replay_block(block_opts.clone()).await?,
             #[cfg(not(feature = "l2"))]
             Self::Blocks(BlocksOptions {
-                blocks,
+                mut blocks,
                 from,
                 to,
+                endless,
+                only_eth_proofs_blocks,
                 opts,
             }) => {
-                if opts.cached {
-                    unimplemented!("cached mode is not implemented yet");
+                // Necessary checks for running cached blocks only.
+                if opts.cached && blocks.is_empty() {
+                    if from.is_none() && to.is_none() {
+                        let network = opts.network.clone().unwrap(); // enforced by clap
+                        let dir = opts.cache_dir.clone();
+
+                        info!("Running all {} blocks inside `{}`", network, dir.display());
+                        // In order not to repeat code, this just fills the blocks variable so that they are run afterwards.
+                        blocks = get_block_numbers_in_cache_dir(&dir, &network)?;
+                        info!("Found {} cached blocks: {:?}", blocks.len(), blocks);
+                    } else if from.is_none() ^ to.is_none() {
+                        return Err(eyre::Error::msg(
+                            "Either both `from` and `to` must be specified, or neither.",
+                        ));
+                    }
                 }
 
-                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
+                // Case ethrex-replay blocks n,...,m
+                if !blocks.is_empty() {
+                    blocks.sort();
 
-                for (i, block_number) in blocks.iter().enumerate() {
-                    info!(
-                        "{} block {}/{}: {block_number}",
-                        if opts.common.action == Action::Execute {
-                            "Executing"
-                        } else {
-                            "Proving"
-                        },
-                        i + 1,
-                        blocks.len()
-                    );
+                    for block in blocks.clone() {
+                        info!(
+                            "{} block: {block}",
+                            if opts.common.action == Action::Execute {
+                                "Executing"
+                            } else {
+                                "Proving"
+                            }
+                        );
 
-                    replay_block(BlockOptions {
-                        block: Some(*block_number),
-                        opts: opts.clone(),
+                        Box::pin(async {
+                            Self::Block(BlockOptions {
+                                block: Some(block),
+                                opts: opts.clone(),
+                            })
+                            .run()
+                            .await
+                        })
+                        .await?;
+                    }
+
+                    return Ok(());
+                }
+
+                // It will only be used in case from or to weren't specified or in endless mode. We can unwrap as cached mode won't reach those places.
+                let maybe_rpc = opts.rpc_url.as_ref();
+
+                let from = match from {
+                    // Case --from is set
+                    // * --endless and --to cannot be set together (constraint by clap).
+                    // * If --endless is set, we start from --from and keep checking for new blocks
+                    // * If --to is set, we run from --from to --to and stop
+                    Some(from) => from,
+                    // Case --from is not set
+                    // * If we reach this point, --endless must be set (constraint by clap)
+                    None => {
+                        fetch_latest_block_number(maybe_rpc.unwrap(), only_eth_proofs_blocks)
+                            .await?
+                    }
+                };
+
+                let to = match to {
+                    // Case --to is set
+                    // * If we reach this point, --from must be set and --endless is not set (constraint by clap)
+                    Some(to) => to,
+                    // Case --to is not set
+                    // * If we reach this point, --from or --endless must be set (constraint by clap)
+                    None => {
+                        fetch_latest_block_number(maybe_rpc.unwrap(), only_eth_proofs_blocks)
+                            .await?
+                    }
+                };
+
+                if from > to {
+                    return Err(eyre::Error::msg(
+                        "starting point can't be greater than ending point",
+                    ));
+                }
+
+                let mut block_to_replay = from;
+                let mut last_block_to_replay = to;
+
+                while block_to_replay <= last_block_to_replay {
+                    if only_eth_proofs_blocks && block_to_replay % 100 != 0 {
+                        block_to_replay += 1;
+
+                        // Case --endless is set, we want to update the `to` so
+                        // we can keep checking for new blocks
+                        if endless && block_to_replay > last_block_to_replay {
+                            last_block_to_replay = fetch_latest_block_number(
+                                maybe_rpc.unwrap(),
+                                only_eth_proofs_blocks,
+                            )
+                            .await?;
+
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+
+                        continue;
+                    }
+
+                    Box::pin(async {
+                        Self::Block(BlockOptions {
+                            block: Some(block_to_replay),
+                            opts: opts.clone(),
+                        })
+                        .run()
+                        .await
                     })
                     .await?;
+
+                    block_to_replay += 1;
+
+                    // Case --endless is set, we want to update the `to` so
+                    // we can keep checking for new blocks
+                    while endless && block_to_replay > last_block_to_replay {
+                        last_block_to_replay =
+                            fetch_latest_block_number(maybe_rpc.unwrap(), only_eth_proofs_blocks)
+                                .await?;
+
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
                 }
-            }
-            #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::Block(BlockOptions { block, opts })) => {
-                let (eth_client, network) = setup(&opts).await?;
-
-                let block_identifier = or_latest(block)?;
-
-                get_blockdata(eth_client, network.clone(), block_identifier).await?;
-
-                if let Some(block_number) = block {
-                    info!("Block {block_number} data cached successfully.");
-                } else {
-                    info!("Latest block data cached successfully.");
-                }
-            }
-            #[cfg(not(feature = "l2"))]
-            Self::Cache(CacheSubcommand::Blocks(BlocksOptions {
-                blocks,
-                from,
-                to,
-                opts,
-            })) => {
-                let blocks = resolve_blocks(blocks, from, to, opts.rpc_url.clone()).await?;
-
-                let (eth_client, network) = setup(&opts).await?;
-
-                for block_number in blocks {
-                    get_blockdata(
-                        eth_client.clone(),
-                        network.clone(),
-                        BlockIdentifier::Number(block_number),
-                    )
-                    .await?;
-                }
-
-                info!("Blocks data cached successfully.");
             }
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Block(CustomBlockOptions { common })) => {
@@ -424,15 +523,16 @@ impl EthrexReplayCommand {
             #[cfg(not(feature = "l2"))]
             Self::Custom(CustomSubcommand::Batch(CustomBatchOptions { n_blocks, common })) => {
                 let opts = EthrexReplayOptions {
-                    rpc_url: Url::parse("http://localhost:8545")?,
+                    rpc_url: Some(Url::parse("http://localhost:8545")?),
                     cached: false,
-                    to_csv: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
                     common,
                     slack_webhook_url: None,
                     verbose: false,
                     bench: false,
+                    cache_dir: PathBuf::from("./replay_cache"),
+                    network: None,
                 };
 
                 let report = replay_custom_l1_blocks(max(1, n_blocks), opts).await?;
@@ -446,7 +546,6 @@ impl EthrexReplayCommand {
                 start,
                 end,
                 rpc_url,
-                network,
             } => {
                 if start >= end {
                     return Err(eyre::Error::msg(
@@ -454,15 +553,40 @@ impl EthrexReplayCommand {
                     ));
                 }
 
-                let eth_client = EthClient::new(&rpc_url)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
 
-                let cache = get_rangedata(eth_client, network, start, end).await?;
+                info!(
+                    "Fetching blocks from RPC: {start} to {end} ({} blocks)",
+                    end - start + 1
+                );
+                let mut blocks = vec![];
+                for block_number in start..=end {
+                    debug!("Fetching block {block_number}");
+                    let rpc_block = eth_client
+                        .get_block_by_number(BlockIdentifier::Number(block_number), true)
+                        .await?;
 
-                plot(cache).await?;
+                    let block = rpc_block
+                        .try_into()
+                        .map_err(|e| eyre::eyre!("Failed to convert rpc block to block: {}", e))?;
+
+                    blocks.push(block);
+                }
+
+                plot(&blocks).await?;
             }
             #[cfg(feature = "l2")]
-            Self::L2(L2Subcommand::Transaction(TransactionOpts { tx_hash, opts })) => {
-                replay_transaction(TransactionOpts { tx_hash, opts }).await?
+            Self::L2(L2Subcommand::Transaction(TransactionOpts {
+                tx_hash,
+                opts,
+                block_number,
+            })) => {
+                replay_transaction(TransactionOpts {
+                    tx_hash,
+                    opts,
+                    block_number,
+                })
+                .await?
             }
             #[cfg(feature = "l2")]
             Self::L2(L2Subcommand::Batch(BatchOptions { batch, opts })) => {
@@ -470,9 +594,9 @@ impl EthrexReplayCommand {
                     unimplemented!("cached mode is not implemented yet");
                 }
 
-                let (eth_client, network) = setup(&opts).await?;
+                let (eth_client, network) = setup_rpc(&opts).await?;
 
-                let cache = get_batchdata(eth_client, network, batch).await?;
+                let cache = get_batchdata(eth_client, network, batch, opts.cache_dir).await?;
 
                 let backend = backend(&opts.common.zkvm)?;
 
@@ -514,12 +638,15 @@ impl EthrexReplayCommand {
             }))) => {
                 let opts = EthrexReplayOptions {
                     common,
-                    rpc_url: Url::parse("http://localhost:8545")?,
+                    rpc_url: Some(Url::parse("http://localhost:8545")?),
                     cached: false,
-                    to_csv: false,
                     no_zkvm: false,
                     cache_level: CacheLevel::default(),
                     slack_webhook_url: None,
+                    bench: false,
+                    cache_dir: PathBuf::from("./replay_cache"),
+                    verbose: false,
+                    network: None,
                 };
 
                 let report = replay_custom_l2_blocks(max(1, n_blocks), opts).await?;
@@ -532,8 +659,8 @@ impl EthrexReplayCommand {
     }
 }
 
-async fn setup(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)> {
-    let eth_client = EthClient::new(opts.rpc_url.as_str())?;
+pub async fn setup_rpc(opts: &EthrexReplayOptions) -> eyre::Result<(EthClient, Network)> {
+    let eth_client = EthClient::new(opts.rpc_url.as_ref().unwrap().as_str())?;
     let chain_id = eth_client.get_chain_id().await?.as_u64();
     let network = network_from_chain_id(chain_id);
     Ok((eth_client, network))
@@ -683,26 +810,27 @@ async fn replay_no_zkvm(cache: Cache, opts: &EthrexReplayOptions) -> eyre::Resul
 }
 
 async fn replay_transaction(tx_opts: TransactionOpts) -> eyre::Result<()> {
-    if tx_opts.opts.cached {
-        unimplemented!("cached mode is not implemented yet");
-    }
-
     let tx_hash = tx_opts.tx_hash;
 
-    let (eth_client, network) = setup(&tx_opts.opts).await?;
+    if tx_opts.opts.cached && tx_opts.block_number.is_none() {
+        return Err(eyre::Error::msg(
+            "In cached mode, --block-number must be specified for transaction replay",
+        ));
+    }
 
-    // Get the block number of the transaction
-    let tx = eth_client
-        .get_transaction_by_hash(tx_hash)
-        .await?
-        .ok_or(eyre::Error::msg("error fetching transaction"))?;
-
-    let cache = get_blockdata(
-        eth_client,
-        network,
-        BlockIdentifier::Number(tx.block_number.as_u64()),
-    )
-    .await?;
+    let cache = if let Some(n) = tx_opts.block_number {
+        get_blockdata(tx_opts.opts, Some(n)).await?.0
+    } else {
+        let (eth_client, _network) = setup_rpc(&tx_opts.opts).await?;
+        // Get the block number of the transaction
+        let tx = eth_client
+            .get_transaction_by_hash(tx_hash)
+            .await?
+            .ok_or(eyre::Error::msg("error fetching transaction"))?;
+        get_blockdata(tx_opts.opts, Some(tx.block_number.as_u64()))
+            .await?
+            .0
+    };
 
     let (receipt, transitions) = run_tx(cache, tx_hash).await?;
 
@@ -720,17 +848,7 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     let block = block_opts.block;
 
-    if opts.cached {
-        unimplemented!("cached mode is not implemented yet");
-    }
-
-    let (eth_client, network) = setup(&opts).await?;
-
-    let cache = get_blockdata(eth_client, network.clone(), or_latest(block)?).await?;
-
-    // Always write the cache after fetching from RPC.
-    // It will be deleted later if not needed.
-    cache.write()?;
+    let (cache, network) = get_blockdata(opts.clone(), block).await?;
 
     let block =
         cache.blocks.first().cloned().ok_or_else(|| {
@@ -773,20 +891,22 @@ async fn replay_block(block_opts: BlockOptions) -> eyre::Result<()> {
 
     try_send_report_to_slack(&report, opts.slack_webhook_url).await?;
 
-    // Apply cache level rules
-    match opts.cache_level {
-        // Cache is already saved
-        CacheLevel::On => {}
-        // Only save the cache if the block run failed
-        CacheLevel::Failed => {
-            if report.execution_result.is_ok()
-                || report.proving_result.as_ref().is_some_and(|r| r.is_ok())
-            {
-                cache.delete()?;
+    // Decide whether or not to keep the cache when fetching data from RPC.
+    if !opts.cached {
+        match opts.cache_level {
+            // Cache is already saved
+            CacheLevel::On => {}
+            // Only save the cache if the block run or proving failed
+            CacheLevel::Failed => {
+                if report.execution_result.is_ok()
+                    && report.proving_result.as_ref().is_none_or(|r| r.is_ok())
+                {
+                    cache.delete()?;
+                }
             }
+            // Don't keep the cache
+            CacheLevel::Off => cache.delete()?,
         }
-        // Don't keep the cache
-        CacheLevel::Off => cache.delete()?,
     }
 
     // CAUTION
@@ -840,33 +960,6 @@ pub(crate) fn network_from_chain_id(chain_id: u64) -> Network {
             }
         }
     }
-}
-
-fn or_latest(maybe_number: Option<u64>) -> eyre::Result<BlockIdentifier> {
-    Ok(match maybe_number {
-        Some(n) => BlockIdentifier::Number(n),
-        None => BlockIdentifier::Tag(BlockTag::Latest),
-    })
-}
-
-#[cfg(not(feature = "l2"))]
-async fn resolve_blocks(
-    mut blocks: Vec<u64>,
-    from: Option<u64>,
-    to: Option<u64>,
-    rpc_url: Url,
-) -> eyre::Result<Vec<u64>> {
-    if let Some(start) = from {
-        let end = to.unwrap_or(fetch_latest_block_number(rpc_url).await?);
-
-        for block in start..=end {
-            blocks.push(block);
-        }
-    } else {
-        blocks.sort();
-    }
-
-    Ok(blocks)
 }
 
 fn print_transition(update: AccountUpdate) {
@@ -948,6 +1041,7 @@ pub async fn replay_custom_l1_blocks(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         chain_config,
+        opts.cache_dir,
     );
 
     let execution_result = exec(backend(&opts.common.zkvm)?, cache.clone()).await;
@@ -1063,6 +1157,8 @@ pub async fn replay_custom_l2_blocks(
     n_blocks: u64,
     opts: EthrexReplayOptions,
 ) -> eyre::Result<Report> {
+    use ethrex_blockchain::{BlockchainOptions, BlockchainType};
+
     let network = Network::LocalDevnetL2;
 
     let genesis = network.get_genesis()?;
@@ -1083,7 +1179,9 @@ pub async fn replay_custom_l2_blocks(
         rollup_store
     };
 
-    let blockchain = Arc::new(Blockchain::new(store.clone(), BlockchainType::L2, false));
+    let mut blockchain_options = BlockchainOptions::default();
+    blockchain_options.r#type = BlockchainType::L2;
+    let blockchain = Arc::new(Blockchain::new(store.clone(), blockchain_options));
 
     let genesis_hash = genesis.get_block().hash();
 
@@ -1103,6 +1201,7 @@ pub async fn replay_custom_l2_blocks(
         blocks,
         RpcExecutionWitness::from(execution_witness),
         genesis.config,
+        opts.cache_dir.clone(),
     );
 
     let backend = backend(&opts.common.zkvm)?;
@@ -1182,7 +1281,7 @@ pub async fn produce_custom_l2_block(
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
-    let payload = create_payload(&build_payload_args, store)?;
+    let payload = create_payload(&build_payload_args, store, Bytes::new())?;
 
     let payload_build_result = build_payload(
         blockchain.clone(),
@@ -1236,10 +1335,49 @@ pub async fn produce_custom_l2_block(
 }
 
 #[cfg(not(feature = "l2"))]
-async fn fetch_latest_block_number(rpc_url: Url) -> eyre::Result<u64> {
+async fn fetch_latest_block_number(
+    rpc_url: &Url,
+    only_eth_proofs_blocks: bool,
+) -> eyre::Result<u64> {
     let eth_client = EthClient::new(rpc_url.as_str())?;
 
-    let latest_block = eth_client.get_block_number().await?;
+    let mut latest_block_number = eth_client.get_block_number().await?.as_u64();
 
-    Ok(latest_block.as_u64())
+    while only_eth_proofs_blocks && latest_block_number % 100 != 0 {
+        let blocks_left_for_next_eth_proofs_block = 100 - (latest_block_number % 100);
+
+        let time_for_next_eth_proofs_block = Duration::from_secs(
+            blocks_left_for_next_eth_proofs_block * 12, // assuming 12s block time
+        );
+
+        info!(
+            "Latest block is {latest_block_number}, waiting for next eth proofs block ({}) in ~{}",
+            latest_block_number + blocks_left_for_next_eth_proofs_block,
+            format_duration(&time_for_next_eth_proofs_block)
+        );
+
+        tokio::time::sleep(time_for_next_eth_proofs_block).await;
+
+        latest_block_number = eth_client.get_block_number().await?.as_u64();
+    }
+
+    Ok(latest_block_number)
+}
+
+fn format_duration(duration: &Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let milliseconds = duration.subsec_millis();
+
+    if hours > 0 {
+        return format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:03}ms");
+    }
+
+    if minutes == 0 {
+        return format!("{seconds:02}s {milliseconds:03}ms");
+    }
+
+    format!("{minutes:02}m {seconds:02}s")
 }

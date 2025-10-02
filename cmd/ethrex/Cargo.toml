@@ -45,8 +45,6 @@ thiserror.workspace = true
 itertools = "0.14.0"
 tui-logger.workspace = true
 
-cfg-if = "1.0.0"
-
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
@@ -88,7 +86,6 @@ sync-test = ["ethrex-p2p/sync-test"]
 sp1 = ["ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0"]
-revm = ["ethrex-vm/revm"]
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = [

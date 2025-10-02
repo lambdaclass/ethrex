@@ -3,7 +3,7 @@ use std::path::Path;
 
 const TEST_FOLDER: &str = "vectors/";
 
-#[cfg(not(any(feature = "revm", feature = "sp1", feature = "stateless")))]
+#[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const SKIPPED_TESTS: &[&str] = &[
     "system_contract_deployment",
     "stTransactionTest/HighGasPriceParis", // Skipped because it sets a gas price higher than u64::MAX, which most clients don't implement and is a virtually impossible scenario
@@ -19,25 +19,6 @@ const SKIPPED_TESTS: &[&str] = &[
 // This test has a block with "gasLimit": "0x055d4a80", "gasUsed": "0x05000000" and six transactions with "gasLimit": "0x01000000",
 // Apparently each transaction consumes up to its gas limit, which together is larger than the block's. Then when executing validate_gas_used
 // after the block's execution, it throws InvalidBlock(GasUsedMismatch(0x06000000,0x05000000)) on comparing the receipt's cumulative gas used agains the block's gas limit.
-
-#[cfg(feature = "revm")]
-const SKIPPED_TESTS: &[&str] = &[
-    "system_contract_deployment",
-    // We skip these tests because the version of REVM we're using doesn't support Osaka
-    "fork_Osaka",
-    "fork_PragueToOsaka",
-    "fork_BPO0",
-    "fork_BPO1",
-    "fork_BPO2",
-    "test_reserve_price_at_transition",
-    "CreateTransactionHighNonce",
-    "lowGasLimit",
-    // We skip these because they fail in REVM
-    "stTransactionTest/HighGasPriceParis",
-    "create2collisionStorageParis",
-    "dynamicAccountOverwriteEmpty_Paris",
-    "RevertInCreateInInitCreate2Paris",
-];
 #[cfg(any(feature = "sp1", feature = "stateless"))]
 const SKIPPED_TESTS: &[&str] = &[
     // We skip most of these for the same reason we skip them in LEVM; since we need to do a LEVM run before doing one with the stateless backend
@@ -73,9 +54,5 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
 
 datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");
 
-#[cfg(any(
-    all(feature = "sp1", feature = "stateless"),
-    all(feature = "sp1", feature = "revm"),
-    all(feature = "stateless", feature = "revm"),
-))]
-compile_error!("Only one of `sp1`, `stateless`, or `revm` can be enabled at a time.");
+#[cfg(any(all(feature = "sp1", feature = "stateless"),))]
+compile_error!("Only one of `sp1`, `stateless` can be enabled at a time.");
