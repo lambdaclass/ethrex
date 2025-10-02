@@ -105,7 +105,7 @@ impl StorageBackend for RocksDBBackend {
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError> {
+    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError> {
         let batch = WriteBatchWithTransaction::<true>::default();
 
         Ok(Box::new(RocksDBRwTx {
@@ -254,9 +254,11 @@ impl StorageRwTx for RocksDBRwTx {
         Ok(())
     }
 
-    fn commit(self: Box<Self>) -> Result<(), StoreError> {
+    fn commit(&mut self) -> Result<(), StoreError> {
+        // Take ownership of the batch (replaces it with an empty one) since db.write() consumes it
+        let batch = std::mem::take(&mut self.batch);
         self.db
-            .write(self.batch)
+            .write(batch)
             .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))
     }
 }

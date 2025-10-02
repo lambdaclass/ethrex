@@ -53,7 +53,7 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn begin_read(&self) -> Result<Box<dyn StorageRoTx + '_>, StoreError>;
 
     /// Begins a new read-write transaction.
-    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError>;
+    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError>;
 
     /// Creates a locked snapshot for a specific table.
     ///
@@ -80,7 +80,7 @@ pub trait StorageRoTx {
 ///
 /// Extends [`StorageRoTx`] with methods to modify the database.
 /// Changes are not persisted until [`commit()`](StorageRwTx::commit) is called.
-pub trait StorageRwTx: StorageRoTx {
+pub trait StorageRwTx: StorageRoTx + Send {
     /// Stores a key-value pair in the specified table.
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.put_batch(vec![(table, key.to_vec(), value.to_vec())])
@@ -94,7 +94,7 @@ pub trait StorageRwTx: StorageRoTx {
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
     /// Commits all changes made in this transaction.
-    fn commit(self: Box<Self>) -> Result<(), StoreError>;
+    fn commit(&mut self) -> Result<(), StoreError>;
 }
 
 /// Locked snapshot interface for batch read operations.

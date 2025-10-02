@@ -52,9 +52,9 @@ impl StorageBackend for InMemoryBackend {
         }))
     }
 
-    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + '_>, StoreError> {
+    fn begin_write(&self) -> Result<Box<dyn StorageRwTx + 'static>, StoreError> {
         Ok(Box::new(InMemoryRwTx {
-            backend: &self.inner,
+            backend: self.inner.clone(),
         }))
     }
 
@@ -140,11 +140,11 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
     }
 }
 
-pub struct InMemoryRwTx<'a> {
-    backend: &'a RwLock<Database>,
+pub struct InMemoryRwTx {
+    backend: Arc<RwLock<Database>>,
 }
 
-impl<'a> StorageRoTx for InMemoryRwTx<'a> {
+impl StorageRoTx for InMemoryRwTx {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let db = self
             .backend
@@ -184,7 +184,7 @@ impl<'a> StorageRoTx for InMemoryRwTx<'a> {
     }
 }
 
-impl<'a> StorageRwTx for InMemoryRwTx<'a> {
+impl StorageRwTx for InMemoryRwTx {
     fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
         let mut db = self
             .backend
@@ -211,7 +211,7 @@ impl<'a> StorageRwTx for InMemoryRwTx<'a> {
         Ok(())
     }
 
-    fn commit(self: Box<Self>) -> Result<(), StoreError> {
+    fn commit(&mut self) -> Result<(), StoreError> {
         // We don't need to commit for in-memory backend
         Ok(())
     }

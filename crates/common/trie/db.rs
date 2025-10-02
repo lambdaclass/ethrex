@@ -12,6 +12,11 @@ pub trait TrieDB: Send + Sync {
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
+    /// Commits any pending changes to the underlying storage
+    /// For read-only or in-memory implementations, this is a no-op
+    fn commit(&self) -> Result<(), TrieError> {
+        Ok(())
+    }
 }
 
 /// TODO: Now we have BackendTrieDB, should we remove this?

@@ -713,8 +713,9 @@ impl StoreEngine {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
+        let tx = self.backend.begin_write()?;
         let trie_db = BackendTrieDB::new(
-            self.backend.clone(),
+            tx,
             STORAGE_TRIE_NODES,
             Some(hashed_address), // Use address as prefix for storage trie
         );
@@ -725,8 +726,9 @@ impl StoreEngine {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let tx = self.backend.begin_write()?;
         let trie_db = BackendTrieDB::new(
-            self.backend.clone(),
+            tx,
             STATE_TRIE_NODES,
             None, // No prefix for state trie
         );

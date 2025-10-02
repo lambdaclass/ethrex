@@ -1,13 +1,13 @@
-use crate::api::{StorageBackend, StorageLocked};
+use crate::api::{StorageLocked, StorageRwTx};
 use ethrex_common::H256;
 use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
-use std::sync::Arc;
+use std::sync::Mutex;
 
-/// StorageBackend implementation for the TrieDB trait
-/// Works with any database that implements StorageBackend
+/// StorageRwTx implementation for the TrieDB trait
+/// Wraps a transaction to allow multiple trie operations on the same transaction
 pub struct BackendTrieDB {
-    /// Storage backend
-    backend: Arc<dyn StorageBackend>,
+    /// Read-write transaction wrapped in Mutex for interior mutability
+    tx: Mutex<Box<dyn StorageRwTx + 'static>>,
     /// Table name for storing trie nodes
     table_name: &'static str,
     /// Storage trie address prefix (for storage tries)
@@ -17,12 +17,12 @@ pub struct BackendTrieDB {
 
 impl BackendTrieDB {
     pub fn new(
-        backend: Arc<dyn StorageBackend>,
+        tx: Box<dyn StorageRwTx + 'static>,
         table_name: &'static str,
         address_prefix: Option<H256>,
     ) -> Self {
         Self {
-            backend,
+            tx: Mutex::new(tx),
             table_name,
             address_prefix,
         }
@@ -44,11 +44,8 @@ impl BackendTrieDB {
 impl TrieDB for BackendTrieDB {
     fn get(&self, node_hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let key = self.make_key(&node_hash);
-        let txn = self.backend.begin_read().map_err(|e| {
-            TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
-        })?;
-
-        txn.get(self.table_name, &key)
+        let tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
+        tx.get(self.table_name, &key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
@@ -58,14 +55,16 @@ impl TrieDB for BackendTrieDB {
             batch.push((self.table_name, self.make_key(&node_hash), value));
         }
 
-        let mut txn = self.backend.begin_write().map_err(|e| {
-            TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
-        })?;
+        let mut tx = self.tx.lock().map_err(|_| TrieError::LockError)?;
+        tx.put_batch(batch)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
+    }
 
-        txn.put_batch(batch)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
-
-        txn.commit()
+    fn commit(&self) -> Result<(), TrieError> {
+        self.tx
+            .lock()
+            .map_err(|_| TrieError::LockError)?
+            .commit()
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to commit transaction: {}", e)))
     }
 }
