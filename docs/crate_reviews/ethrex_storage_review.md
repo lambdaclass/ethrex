@@ -14,7 +14,7 @@ Target crate: `crates/storage`
 
 - Files analyzed: 19 Rust sources (no exclusions)
 - Functions: 391 total with 15 flagged as complex (see heuristics)
-- Longest routine(s): `store_db::rocksdb::Store::new` (crates/storage/store_db/rocksdb.rs:109, 194 lines/12 branches); `store_db::rocksdb::Store::apply_updates` (crates/storage/store_db/rocksdb.rs:439, 91 lines/9 branches); `store_db::libmdbx::Store::apply_updates` (crates/storage/store_db/libmdbx.rs:129, 83 lines/10 branches)
+- Longest routine(s): `store_db::rocksdb::Store::new` ([crates/storage/store_db/rocksdb.rs:109](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/rocksdb.rs#L109), 194 lines/12 branches); `store_db::rocksdb::Store::apply_updates` ([crates/storage/store_db/rocksdb.rs:439](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/rocksdb.rs#L439), 91 lines/9 branches); `store_db::libmdbx::Store::apply_updates` ([crates/storage/store_db/libmdbx.rs:129](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/libmdbx.rs#L129), 83 lines/10 branches)
 - Async/concurrency signals (crate-wide):
   - `async fn`: 0
   - `.await`: 0
@@ -26,9 +26,9 @@ Target crate: `crates/storage`
   - Other noteworthy primitives: hand-rolled `Box::leak`/`Drop` pairs to provide `'static` RocksDB snapshots; libmdbx dupsort tables
 
 ## 2. High-Risk Components
-- crates/storage/store_db/rocksdb.rs:439 — `Store::apply_updates` funnels all trie, block, and receipt writes through one 90+ line `spawn_blocking` closure; error handling is coarse and the composite-key assembly is duplicated across backends.
-- crates/storage/store.rs:416 — `Store::apply_account_updates_from_trie_batch` mutates state and storage tries sequentially, opens storage tries per account, and mixes code writes with trie hashing; failure to propagate storage updates atomically risks state/code divergence.
-- crates/storage/trie_db/rocksdb_locked.rs:19 — `RocksDBLockedTrieDB::new` leaks an `Arc` to force `'static` lifetimes and reclaims it in `Drop`; the unsafe `Box::from_raw` dance is fragile if constructors fail mid-way or clone counts drift.
+- [crates/storage/store_db/rocksdb.rs:439](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/rocksdb.rs#L439) — `Store::apply_updates` funnels all trie, block, and receipt writes through one 90+ line `spawn_blocking` closure; error handling is coarse and the composite-key assembly is duplicated across backends.
+- [crates/storage/store.rs:416](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store.rs#L416) — `Store::apply_account_updates_from_trie_batch` mutates state and storage tries sequentially, opens storage tries per account, and mixes code writes with trie hashing; failure to propagate storage updates atomically risks state/code divergence.
+- [crates/storage/trie_db/rocksdb_locked.rs:19](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/trie_db/rocksdb_locked.rs#L19) — `RocksDBLockedTrieDB::new` leaks an `Arc` to force `'static` lifetimes and reclaims it in `Drop`; the unsafe `Box::from_raw` dance is fragile if constructors fail mid-way or clone counts drift.
 
 ## 3. Concurrency Observations
 - Heavy reliance on `tokio::task::spawn_blocking` (18 call sites) to wrap synchronous RocksDB/libmdbx transactions; frequent per-operation thread handoffs can saturate Tokio’s blocking pool under load.

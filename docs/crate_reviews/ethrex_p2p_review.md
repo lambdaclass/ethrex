@@ -14,7 +14,7 @@ Target crate: `crates/networking/p2p`
 
 - Files analyzed: 45 Rust sources (tests inline, no sibling crates)
 - Functions: 501 total with 56 flagged as complex (heuristic: ≥60 lines or high branch count)
-- Longest production routine: `sync.rs:817` (`snap_sync`, 409 lines, 30 branches)
+- Longest production routine: [sync.rs:817](https://github.com/lambdaclass/ethrex/blob/31e19504485904c70bd5294aa65becf91358d0e3/crates/networking/p2p/sync.rs#L817) (`snap_sync`, 409 lines, 30 branches)
 - Async/concurrency signals (crate-wide):
   - `async fn`: 173
   - `.await`: 505

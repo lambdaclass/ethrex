@@ -71,6 +71,7 @@ Use these steps when preparing a complexity-focused review for an `ethrex` crate
 - Highlight top risky areas with file + line references (long functions, mixed locking patterns, async hotspots).
 - Assign a 1–5 engineering risk/complexity score based on size, branching density, concurrency surface, and critical-path functions.
 - Include the commit hash and date captured earlier near the top of the write-up so future reviews know exactly what was analyzed. Start from the template in `docs/crate_reviews/toolkit/_report_template.md` so reports stay consistent.
+- Before publishing, run `docs/crate_reviews/toolkit/linkify_report_refs.py <report.md>` to translate plain `path.rs:123` mentions into GitHub permalinks anchored at the commit you recorded. The script is idempotent, so rerun it whenever you update an existing report.
 - Suggest actionable next steps (e.g., refactoring targets, instrumentation ideas, lock/actor strategy adjustments, migrations away from mutexes toward actors where appropriate). Log results in the shared tracker if one exists for cross-crate comparisons.
 
 ## 8. Optional Enhancements

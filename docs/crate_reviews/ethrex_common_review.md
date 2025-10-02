@@ -26,12 +26,12 @@ Target crate: `crates/common` (excludes nested crates: `config/`, `crypto/`, `rl
   - Other noteworthy primitives: `rayon` parallel iterators for signature recovery in `BlockBody`
 
 ## 2. High-Risk Components
-- `crates/common/types/transaction.rs:937` — `Transaction::sender` duplicates variant-specific RLP encoding and signature packing across 100+ lines; drift risk and redundant allocations on a hot path.
-- `crates/common/types/block_execution_witness.rs:216` — `apply_account_updates` orchestrates trie mutations with `expect` calls; a malformed witness panics instead of surfacing structured errors.
-- `crates/common/serde_utils.rs:554` — `parse_duration` implements a bespoke parser with silent `None` failures on malformed input; edge cases (empty numeric buffer, stray unit chars) go unreported.
+- [crates/common/types/transaction.rs:937](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/types/transaction.rs#L937) — `Transaction::sender` duplicates variant-specific RLP encoding and signature packing across 100+ lines; drift risk and redundant allocations on a hot path.
+- [crates/common/types/block_execution_witness.rs:216](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/types/block_execution_witness.rs#L216) — `apply_account_updates` orchestrates trie mutations with `expect` calls; a malformed witness panics instead of surfacing structured errors.
+- [crates/common/serde_utils.rs:554](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/serde_utils.rs#L554) — `parse_duration` implements a bespoke parser with silent `None` failures on malformed input; edge cases (empty numeric buffer, stray unit chars) go unreported.
 
 ## 3. Concurrency Observations
-- `crates/common/types/block.rs:259` uses `rayon::par_iter` to parallelize sender recovery; good for throughput but can saturate CPU under large batches.
+- [crates/common/types/block.rs:259](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/types/block.rs#L259) uses `rayon::par_iter` to parallelize sender recovery; good for throughput but can saturate CPU under large batches.
 - No async runtime integration or shared-state mutexes detected; concurrency risk is low and mostly tied to CPU fan-out.
 - `OnceCell` caches (e.g., transaction inner hashes) rely on single-writer semantics—ensure population occurs before sharing between threads to avoid redundant work.
 

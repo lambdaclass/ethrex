@@ -26,12 +26,12 @@ Target crate: `crates/blockchain`
   - Other noteworthy primitives: `CancellationToken` for payload builders, `tokio::time::timeout`
 
 ## 2. High-Risk Components
-- `crates/blockchain/blockchain.rs:184` `generate_witness_for_blocks`: 212-line re-execution pipeline that interleaves trie logging, storage lookups, and manual witness assembly; error handling spans many branches and mixes sync + async storage access.
-- `crates/blockchain/blockchain.rs:501` `add_blocks_in_batch`: batch executor writes through shared `Store`, keeps mutable VM across loop, and performs partial cancellation handling; throughput logging and state validation live alongside persistence logic.
-- `crates/blockchain/payload.rs:320` `get_payload`: acquires `TokioMutex<Vec<_>>`, removes entry, then awaits `PayloadOrTask::to_payload` while still holding the guard—any concurrent `initiate_payload_build`/`get_payload` call must wait for the build task to finish.
+- [crates/blockchain/blockchain.rs:184](https://github.com/lambdaclass/ethrex/blob/31e19504485904c70bd5294aa65becf91358d0e3/crates/blockchain/blockchain.rs#L184) `generate_witness_for_blocks`: 212-line re-execution pipeline that interleaves trie logging, storage lookups, and manual witness assembly; error handling spans many branches and mixes sync + async storage access.
+- [crates/blockchain/blockchain.rs:501](https://github.com/lambdaclass/ethrex/blob/31e19504485904c70bd5294aa65becf91358d0e3/crates/blockchain/blockchain.rs#L501) `add_blocks_in_batch`: batch executor writes through shared `Store`, keeps mutable VM across loop, and performs partial cancellation handling; throughput logging and state validation live alongside persistence logic.
+- [crates/blockchain/payload.rs:320](https://github.com/lambdaclass/ethrex/blob/31e19504485904c70bd5294aa65becf91358d0e3/crates/blockchain/payload.rs#L320) `get_payload`: acquires `TokioMutex<Vec<_>>`, removes entry, then awaits `PayloadOrTask::to_payload` while still holding the guard—any concurrent `initiate_payload_build`/`get_payload` call must wait for the build task to finish.
 
 ## 3. Concurrency Observations
-- Awaiting while holding the `payloads` `TokioMutexGuard` (`payload.rs:320-327`) risks deadlock/priority inversion if the spawned builder needs to re-lock or if multiple requests try to materialize payloads simultaneously.
+- Awaiting while holding the `payloads` `TokioMutexGuard` ([payload.rs:320-327](https://github.com/lambdaclass/ethrex/blob/31e19504485904c70bd5294aa65becf91358d0e3/crates/blockchain/payload.rs#L320-L327)) risks deadlock/priority inversion if the spawned builder needs to re-lock or if multiple requests try to materialize payloads simultaneously.
 - Runtime code still leans on blocking `std::sync::RwLock` for the mempool; `validate_transaction` and payload construction invoke those methods from async contexts, so heavy contention could stall the Tokio scheduler.
 - Witness generation uses `Arc<Mutex<_>>` loggers inside an async loop; guards are dropped before awaits today, but the pattern is fragile and complicates a future move toward actors.
 
