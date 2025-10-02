@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
@@ -20,11 +22,18 @@ pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
 
 impl<'a> VM<'a> {
     // POP operation
-    pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::POP)?;
-        current_call_frame.stack.pop1()?;
-        Ok(OpcodeResult::Continue)
+    pub fn op_pop(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::POP) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        if let Err(err) = self.current_call_frame.stack.pop1() {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        };
+
+        OpcodeResult::Continue
     }
 
     // TLOAD operation
@@ -278,14 +287,29 @@ impl<'a> VM<'a> {
     }
 
     // JUMP operation
-    pub fn op_jump(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
+    pub fn op_jump(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::JUMP)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let jump_address = current_call_frame.stack.pop1()?;
-        Self::jump(current_call_frame, jump_address)?;
+        let jump_address = match self.current_call_frame.stack.pop1() {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        Ok(OpcodeResult::Continue)
+        if let Err(err) = Self::jump(&mut self.current_call_frame, jump_address) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     /// Check if the jump destination is valid by:
@@ -337,11 +361,16 @@ impl<'a> VM<'a> {
     }
 
     // JUMPDEST operation
-    pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::JUMPDEST)?;
+    pub fn op_jumpdest(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::JUMPDEST)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // PC operation

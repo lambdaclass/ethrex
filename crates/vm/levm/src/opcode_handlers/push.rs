@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use crate::{
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
@@ -43,10 +45,20 @@ impl<'a> VM<'a> {
     }
 
     // PUSH0
-    pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::PUSH0)?;
-        self.current_call_frame.stack.push_zero()?;
-        Ok(OpcodeResult::Continue)
+    pub fn op_push0(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::PUSH0)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        if let Err(err) = self.current_call_frame.stack.push_zero() {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 }
