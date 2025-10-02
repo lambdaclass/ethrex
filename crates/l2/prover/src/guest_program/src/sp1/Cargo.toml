@@ -8,7 +8,7 @@ edition = "2024"
 [dependencies]
 sp1-zkvm = { version = "=5.0.8" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
-
+# TODO: Enable k256 feature.
 guest_program = { path = "../../", default-features = false, features = [
     "kzg-rs",
 ] }

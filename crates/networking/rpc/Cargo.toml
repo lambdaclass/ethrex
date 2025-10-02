@@ -42,8 +42,6 @@ thiserror.workspace = true
 secp256k1.workspace = true
 uuid.workspace = true
 
-cfg-if.workspace = true
-
 [dev-dependencies]
 hex-literal = "0.4.1"
 

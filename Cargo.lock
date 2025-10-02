@@ -1455,9 +1455,9 @@ dependencies = [
 
 [[package]]
 name = "c-kzg"
-version = "1.0.3"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0307f72feab3300336fb803a57134159f6e20139af1357f36c54cb90d8e8928"
+checksum = "7318cfa722931cb5fe0838b98d3ce5621e75f6a6408abc21721d80de9223f2e4"
 dependencies = [
  "blst",
  "cc",
@@ -2155,19 +2155,6 @@ dependencies = [
  "crossbeam-epoch 0.8.2",
  "crossbeam-queue 0.2.3",
  "crossbeam-utils 0.7.2",
-]
-
-[[package]]
-name = "crossbeam"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
-dependencies = [
- "crossbeam-channel 0.5.15",
- "crossbeam-deque 0.8.6",
- "crossbeam-epoch 0.9.18",
- "crossbeam-queue 0.3.12",
- "crossbeam-utils 0.8.21",
 ]
 
 [[package]]
@@ -3665,7 +3652,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
- "cfg-if 1.0.3",
  "clap 4.5.47",
  "clap_complete",
  "criterion",
@@ -3714,7 +3700,6 @@ name = "ethrex-blockchain"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "cfg-if 1.0.3",
  "ethrex-common",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -3806,7 +3791,6 @@ dependencies = [
  "axum 0.8.4",
  "bincode",
  "bytes",
- "cfg-if 1.0.3",
  "chrono",
  "clap 4.5.47",
  "color-eyre",
@@ -3960,7 +3944,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "concat-kdf",
- "crossbeam 0.8.4",
  "ctr",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
@@ -3968,7 +3951,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
- "ethrex-threadpool",
  "ethrex-trie",
  "futures",
  "hex",
@@ -3978,7 +3960,6 @@ dependencies = [
  "prometheus 0.14.0",
  "rand 0.8.5",
  "rayon",
- "rocksdb",
  "secp256k1",
  "serde",
  "serde_json",
@@ -4001,7 +3982,6 @@ dependencies = [
  "anyhow",
  "bincode",
  "bytes",
- "cfg-if 1.0.3",
  "clap 4.5.47",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
@@ -4093,7 +4073,6 @@ dependencies = [
  "axum 0.8.4",
  "axum-extra",
  "bytes",
- "cfg-if 1.0.3",
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
@@ -4204,13 +4183,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-threadpool"
-version = "0.1.0"
-dependencies = [
- "crossbeam 0.8.4",
-]
-
-[[package]]
 name = "ethrex-trie"
 version = "0.1.0"
 dependencies = [
@@ -4218,11 +4190,9 @@ dependencies = [
  "bytes",
  "cita_trie",
  "criterion",
- "crossbeam 0.8.4",
  "digest 0.10.7",
  "ethereum-types 0.15.1",
  "ethrex-rlp",
- "ethrex-threadpool",
  "hasher",
  "hex",
  "hex-literal 0.4.1",
@@ -4246,7 +4216,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
- "cfg-if 1.0.3",
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types 0.15.1",
@@ -11556,7 +11525,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76347472cc448d47dbf9f67541fde19dbb054793e8e0546ce8917bfb695e1b56"
 dependencies = [
- "crossbeam 0.7.3",
+ "crossbeam",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -12836,7 +12805,7 @@ version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
- "cfg-if 1.0.3",
+ "cfg-if 0.1.10",
  "static_assertions",
 ]
 
