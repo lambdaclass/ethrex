@@ -78,22 +78,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Pull image
-        run: |
-          docker pull ghcr.io/lambdaclass/ethrex:main
-          # Tests use ethrex:ci so we retag it
-          docker tag ghcr.io/lambdaclass/ethrex:main ethrex:ci
-
-      - name: Load hive client config
-        id: client-config
-        shell: bash
-        run: |
-          {
-            echo "config<<EOF"
-            cat .github/config/hive/clients.yaml
-            echo "EOF"
-          } >>"$GITHUB_OUTPUT"
-
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
       - name: Determine hive flags
@@ -116,7 +100,7 @@ jobs:
 
       - name: Run Hive Simulation
         id: run-hive-action
-        uses: ethpandaops/hive-github-action@a9ec89442df18ee579d3179b76c47f5f93954307
+        uses: ethpandaops/hive-github-action@v0.5.0
         continue-on-error: true
         with:
           # This uses ethereum/hive as default
@@ -125,7 +109,6 @@ jobs:
           # hive_version: master
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
-          client_config: ${{ steps.client-config.outputs.config }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_${{ inputs.job_type }}
