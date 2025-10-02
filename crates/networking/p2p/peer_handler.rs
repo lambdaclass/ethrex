@@ -1282,7 +1282,7 @@ impl PeerHandler {
             .current_step
             .set(CurrentStepValue::RequestingStorageRanges);
         debug!("Starting request_storage_ranges function");
-        // 1) split the range in chunks of same length
+        // 1) collect pairs of (account_hash, storage_root)
         let account_root_pairs: Vec<(H256, Option<H256>)> = account_storage_roots
             .accounts_with_storage_root
             .iter()
@@ -1290,7 +1290,9 @@ impl PeerHandler {
             .collect();
         let mut chunk_groups: BTreeMap<H256, Vec<H256>> = BTreeMap::new();
 
+        // 2) group accounts by storage root and process them in chunks of STORAGE_ROOTS_PER_CHUNK
         for (account, maybe_root_hash) in account_root_pairs {
+            // 2.1) Make sure we have the storage root for the account
             let root = match maybe_root_hash {
                 Some(root) => root,
                 None => {
@@ -1306,6 +1308,7 @@ impl PeerHandler {
 
             chunk_groups.entry(root).or_default().push(account);
 
+            // 2.2) If we have enough roots, process them
             if chunk_groups.len() >= STORAGE_ROOTS_PER_CHUNK {
                 let chunk_accounts = Vec::from_iter(chunk_groups.into_iter());
                 self.process_storage_chunk(
@@ -1320,6 +1323,7 @@ impl PeerHandler {
             }
         }
 
+        // 2.3) Process remaining roots if any
         if !chunk_groups.is_empty() {
             let chunk_accounts = Vec::from_iter(chunk_groups.into_iter());
             self.process_storage_chunk(
