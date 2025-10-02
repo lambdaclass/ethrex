@@ -374,14 +374,29 @@ impl Syncer {
 
                 debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
-                let first_block_number = match block_headers.first() {
-                    Some(header) => header.number,
-                    None => continue,
-                };
+                let (first_block_hash, first_block_number, first_block_parent_hash) =
+                    match block_headers.first() {
+                        Some(header) => (header.hash(), header.number, header.parent_hash),
+                        None => continue,
+                    };
                 let (last_block_hash, last_block_number) = match block_headers.last() {
                     Some(header) => (header.hash(), header.number),
                     None => continue,
                 };
+
+                // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
+                // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+                if first_block_hash == last_block_hash
+                    && first_block_hash == current_head
+                    && current_head != sync_head
+                {
+                    // There is no path to the sync head this goes back until it find a common ancerstor
+                    warn!(
+                        "Sync failed to find target block header, going back to the previous parent"
+                    );
+                    current_head = first_block_parent_hash;
+                    continue;
+                }
 
                 debug!(
                     "Received {} block headers| First Number: {} Last Number: {}",
