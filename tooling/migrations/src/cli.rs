@@ -18,7 +18,6 @@ pub struct CLI {
     pub command: Subcommand,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(ClapSubcommand)]
 pub enum Subcommand {
     #[command(
