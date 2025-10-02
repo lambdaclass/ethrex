@@ -1,5 +1,6 @@
 //! Engine for storing and retrieving data from the database
-//! NOTE: Breaking changes will be made in the way that we encode/decode data to/from the database
+//! NOTE: We changed the way that we encode/decode data to/from the database
+//! We should check that we are not breaking anything with this change
 //!
 use bytes::Bytes;
 use ethrex_common::{
