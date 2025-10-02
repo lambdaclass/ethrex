@@ -175,7 +175,7 @@ pub async fn init_l2(
 
     let fee_config = FeeConfig {
         fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
-        operator_fee_config: operator_fee_config,
+        operator_fee_config,
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
@@ -312,10 +312,7 @@ pub async fn get_operator_fee_config(
     // Fetch operator fee from the on-chain proposer contract
     let operator_fee = fetch_operator_fee(
         sequencer_opts.eth_opts.rpc_url.clone(),
-        sequencer_opts
-            .committer_opts
-            .on_chain_proposer_address
-            .clone(),
+        sequencer_opts.committer_opts.on_chain_proposer_address,
     )
     .await?;
 
@@ -326,7 +323,7 @@ pub async fn get_operator_fee_config(
 
     let operator_fee_config = if let Some(address) = operator_address {
         Some(OperatorFeeConfig {
-            operator_fee: operator_fee,
+            operator_fee,
             operator_fee_vault: address,
         })
     } else {
