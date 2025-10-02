@@ -1,6 +1,6 @@
 # Crate Complexity & Concurrency Analysis Checklist
 
-Use these steps when preparing a complexity-focused review for an `ethrex` crate (or a similar Rust workspace component). Adjust paths and filters as needed. Throughout this document, treat `$CRATE_ROOT` as the path to the crate under analysis (for example, `crates/networking/p2p`).
+Use these steps when preparing a complexity-focused review for an `ethrex` crate (or a similar Rust workspace component). Adjust paths and filters as needed. Throughout this document, treat `$CRATE_ROOT` as the path to the crate under analysis (for example, `crates/networking/p2p`). Some crate directories include additional nested crates (e.g., sibling `dev/` or `metrics/` packages); make sure your analysis only covers the target crate’s own sources.
 
 `ethrex` increasingly relies on the [`spawned`](https://github.com/lambdaclass/spawned) actor framework (Erlang-style `GenServer`s and message channels). When you see paired mutex/state structures, check whether they predate the actor migration and call them out for alignment with the actor model.
 
@@ -10,17 +10,20 @@ Use these steps when preparing a complexity-focused review for an `ethrex` crate
   git rev-parse HEAD
   ```
 - Note the current date/time and any relevant feature flags or build settings supplied by the requester.
+- Deliverable: commit your findings to a new or updated report under `docs/crate_reviews/reports/`, using `_report_template.md` as the structure.
+
 
 ## 1. Scope the Target Crate
 - Locate the crate directory and set `$CRATE_ROOT` accordingly.
-- Confirm which subdirectories must be excluded (e.g., `dev/`, `metrics/`, generated code, or other sibling crates).
+- Confirm which subdirectories must be excluded. Only skip `dev/`, `metrics/`, or similar directories when they contain separate crates that are **not** part of the current review scope.
 - Verify the crate’s entry point and dependency list via `Cargo.toml`.
 
 ## 2. Inventory Source Files
-- List Rust source files in scope, skipping excluded subtrees:
+- List Rust source files in scope, skipping excluded subtrees. Example when you need to ignore sibling crates:
   ```bash
-  rg --files -g'*.rs' -g'!dev/**' -g'!metrics/**' "$CRATE_ROOT"
+  rg --files -g'*.rs' -g'!other-crate/**' "$CRATE_ROOT"
   ```
+- For crates without nested subcrates simply omit the exclusion patterns.
 - Capture counts: number of files, total lines, code lines (non-empty, non-comment) per file. `tokei --files "$CRATE_ROOT"` is a quick cross-check when you need a second source for LOC numbers.
 - Flag inline test modules (`#[cfg(test)]`) or dedicated test files; you may keep their metrics separate when they skew results (e.g., large fixtures) and explicitly note when production totals exclude files such as `*_test.rs`.
 
@@ -31,9 +34,9 @@ Use these steps when preparing a complexity-focused review for an `ethrex` crate
   - Length ≥ 40 lines **and** ≥ 3 branches.
 - Prefer the reusable helper script to gather stats:
   ```bash
-  docs/crate_reviews/analyze_crate.py "$CRATE_ROOT" --exclude dev --exclude metrics
+  docs/crate_reviews/analyze_crate.py "$CRATE_ROOT"
   ```
-  The script emits file totals, complex function candidates, and concurrency keyword counts. Extend the search surface with `--keyword LABEL=REGEX` if you need crate-specific signals.
+  Pass `--exclude <dir>` only when the crate directory contains sibling crates you need to drop (e.g., `--exclude dev`). Use `--exclude-prefix <path>` when you need to skip a nested crate subtree (for example `--exclude-prefix levm` while keeping `backends/levm`). The script emits file totals, complex function candidates, and concurrency keyword counts. Extend the search surface with `--keyword LABEL=REGEX` if you need crate-specific signals.
 - If you need raw data for spreadsheets, add `--json > crate_analysis.json` and import the output into your tooling of choice.
 
 ## 4. Concurrency & Blocking Signals

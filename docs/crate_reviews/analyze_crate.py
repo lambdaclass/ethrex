@@ -55,7 +55,16 @@ def parse_args() -> argparse.Namespace:
         "--exclude",
         action="append",
         default=[],
-        help="Relative directory names to skip (can be passed multiple times)",
+        help="Relative directory names to skip everywhere (can be passed multiple times)",
+    )
+    parser.add_argument(
+        "--exclude-prefix",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help=
+        "Relative path prefixes to skip (e.g. 'levm' to drop crates/vm/levm without "
+        "touching backends/levm)",
     )
     parser.add_argument(
         "--keyword",
@@ -112,14 +121,41 @@ def load_keyword_patterns(extra_patterns: Iterable[str]) -> Mapping[str, re.Patt
     return {label: re.compile(pattern) for label, pattern in patterns.items()}
 
 
-def should_exclude(path: pathlib.Path, crate_root: pathlib.Path, exclusions: set[str]) -> bool:
-    if not exclusions:
+def normalize_prefixes(raw_prefixes: Iterable[str]) -> list[tuple[str, ...]]:
+    prefixes: list[tuple[str, ...]] = []
+    for raw in raw_prefixes:
+        prefix = pathlib.PurePosixPath(raw.strip())
+        if prefix.is_absolute():
+            raise ValueError(f"Prefix '{raw}' must be relative to the crate root")
+        parts = tuple(part for part in prefix.parts if part not in ("", "."))
+        if not parts:
+            raise ValueError("Empty prefix provided; remove redundant '/' or '.' entries")
+        prefixes.append(parts)
+    return prefixes
+
+
+def should_exclude(
+    path: pathlib.Path,
+    crate_root: pathlib.Path,
+    name_exclusions: set[str],
+    prefix_exclusions: list[tuple[str, ...]],
+) -> bool:
+    if not name_exclusions and not prefix_exclusions:
         return False
     try:
         rel_parts = path.relative_to(crate_root).parts
     except ValueError:
         return False
-    return any(part in exclusions for part in rel_parts[:-1])
+
+    if name_exclusions and any(part in name_exclusions for part in rel_parts[:-1]):
+        return True
+
+    if prefix_exclusions:
+        for prefix_parts in prefix_exclusions:
+            if rel_parts[: len(prefix_parts)] == prefix_parts:
+                return True
+
+    return False
 
 
 def count_keyword_occurrences(text: str, compiled_patterns: Mapping[str, re.Pattern[str]]) -> Mapping[str, int]:
@@ -129,7 +165,12 @@ def count_keyword_occurrences(text: str, compiled_patterns: Mapping[str, re.Patt
     return totals
 
 
-def analyze(crate_root: pathlib.Path, exclusions: set[str], compiled_patterns: Mapping[str, re.Pattern[str]], *,
+def analyze(
+    crate_root: pathlib.Path,
+    name_exclusions: set[str],
+    prefix_exclusions: list[tuple[str, ...]],
+    compiled_patterns: Mapping[str, re.Pattern[str]],
+    *,
             complex_line_threshold: int,
             branch_threshold: int,
             combined_line_threshold: int,
@@ -139,7 +180,7 @@ def analyze(crate_root: pathlib.Path, exclusions: set[str], compiled_patterns: M
     files = [
         path
         for path in sorted(crate_root.rglob("*.rs"))
-        if not should_exclude(path, crate_root, exclusions)
+        if not should_exclude(path, crate_root, name_exclusions, prefix_exclusions)
     ]
 
     totals = {
@@ -288,11 +329,13 @@ def main() -> None:
         raise SystemExit(f"Crate path '{crate_root}' does not exist")
 
     exclusions = set(args.exclude)
+    prefix_exclusions = normalize_prefixes(args.exclude_prefix)
     compiled_patterns = load_keyword_patterns(args.keyword)
 
     summary = analyze(
         crate_root,
         exclusions,
+        prefix_exclusions,
         compiled_patterns,
         complex_line_threshold=args.complex_line_threshold,
         branch_threshold=args.branch_threshold,
