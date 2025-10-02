@@ -23,7 +23,7 @@ use crate::{
         },
     },
     error::StoreError,
-    rlp::{BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
+    rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     store::StorageUpdates,
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -870,9 +870,8 @@ impl StoreEngine {
         self.backend
             .begin_read()?
             .get(SNAP_STATE, &key)?
-            .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+            .map(|bytes| Ok(H256::from_slice(&bytes)))
             .transpose()
-            .map_err(StoreError::from)
     }
 
     /// Sets the last key fetched from the state trie being fetched during snap sync
