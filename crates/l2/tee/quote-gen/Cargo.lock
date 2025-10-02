@@ -521,6 +521,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
+name = "bitcoin-io"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b47c4ab7a93edb0c7198c5535ed9b52b63095f4e9b45279c6736cec4b856baf"
+
+[[package]]
+name = "bitcoin_hashes"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb18c03d0db0247e147a21a6faafd5a7eb851c743db062de72018b6b7e8e4d16"
+dependencies = [
+ "bitcoin-io",
+ "hex-conservative",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2049,7 +2065,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "keccak-hash",
  "kzg-rs",
  "lazy_static",
  "once_cell",
@@ -2073,7 +2088,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-p2p",
  "hex",
- "keccak-hash",
  "serde",
  "serde_json",
 ]
@@ -2092,7 +2106,6 @@ dependencies = [
  "ethrex-rpc",
  "hex",
  "jsonwebtoken 9.3.1",
- "keccak-hash",
  "reqwest 0.12.23",
  "serde",
  "serde_json",
@@ -2107,6 +2120,7 @@ name = "ethrex-l2"
 version = "0.1.0"
 dependencies = [
  "aligned-sdk",
+ "axum",
  "bincode",
  "bytes",
  "cfg-if 1.0.3",
@@ -2138,7 +2152,6 @@ dependencies = [
  "guest_program",
  "hex",
  "jsonwebtoken 9.3.1",
- "keccak-hash",
  "lazy_static",
  "rand 0.8.5",
  "ratatui",
@@ -2171,7 +2184,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "keccak-hash",
  "lambdaworks-crypto 0.11.0",
  "secp256k1",
  "serde",
@@ -2195,7 +2207,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-storage-rollup",
  "hex",
- "keccak-hash",
  "reqwest 0.12.23",
  "rustc-hex",
  "secp256k1",
@@ -2224,7 +2235,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "k256",
- "keccak-hash",
  "lambdaworks-math 0.11.0",
  "lazy_static",
  "malachite",
@@ -2270,7 +2280,6 @@ dependencies = [
  "futures",
  "hex",
  "hmac",
- "keccak-hash",
  "lazy_static",
  "prometheus",
  "rand 0.8.5",
@@ -2322,7 +2331,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "jsonwebtoken 9.3.1",
- "keccak-hash",
  "rand 0.8.5",
  "reqwest 0.12.23",
  "secp256k1",
@@ -2354,7 +2362,6 @@ dependencies = [
  "eyre",
  "hex",
  "itertools 0.13.0",
- "keccak-hash",
  "lazy_static",
  "reqwest 0.12.23",
  "secp256k1",
@@ -2821,7 +2828,6 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "hex",
- "keccak-hash",
  "rkyv",
  "serde",
  "serde_json",
@@ -2944,6 +2950,15 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hex-conservative"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5313b072ce3c597065a808dbf612c4c8e8590bdbf8b579508bf7a762c5eae6cd"
+dependencies = [
+ "arrayvec",
+]
 
 [[package]]
 name = "hmac"
@@ -3562,16 +3577,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
 dependencies = [
  "cpufeatures",
-]
-
-[[package]]
-name = "keccak-hash"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e1b8590eb6148af2ea2d75f38e7d29f5ca970d5a4df456b3ef19b8b415d0264"
-dependencies = [
- "primitive-types 0.13.1",
- "tiny-keccak",
 ]
 
 [[package]]
@@ -4705,7 +4710,6 @@ dependencies = [
  "ethrex-vm",
  "guest_program",
  "hex",
- "keccak-hash",
  "secp256k1",
  "serde",
  "serde_json",
@@ -5400,10 +5404,11 @@ dependencies = [
 
 [[package]]
 name = "secp256k1"
-version = "0.29.1"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
+checksum = "b50c5943d326858130af85e049f2661ba3c78b26589b8ab98e65e80ae44a1252"
 dependencies = [
+ "bitcoin_hashes",
  "rand 0.8.5",
  "secp256k1-sys",
 ]

@@ -38,6 +38,9 @@ where
                     "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
                         TransactionExpectedException::IntrinsicGasTooLow
                     }
+                    "TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST" => {
+                        TransactionExpectedException::IntrinsicGasBelowFloorGasCost
+                    }
                     "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                         TransactionExpectedException::InsufficientAccountFunds
                     }
