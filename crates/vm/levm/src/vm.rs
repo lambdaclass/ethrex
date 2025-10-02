@@ -584,7 +584,11 @@ impl Substate {
             for slot in keys {
                 warm_slots.insert(slot);
             }
-            initial_accessed_storage_slots.insert(address, warm_slots);
+            // We don't directly insert because it could happen that an access list has 2 entries for the same address. That's why we extend.
+            initial_accessed_storage_slots
+                .entry(address)
+                .or_insert_with(BTreeSet::new)
+                .extend(warm_slots);
         }
 
         let substate =
