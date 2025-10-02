@@ -20,7 +20,7 @@ use crate::{
         },
     },
     error::StoreError,
-    rlp::{AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
+    rlp::{BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP},
     store::StorageUpdates,
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -64,8 +64,7 @@ impl StoreEngine {
 
             // Code updates
             for (code_hash, code) in update_batch.code_updates {
-                let code_value = AccountCodeRLP::from(code).bytes().clone();
-                batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), code_value));
+                batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), code.to_vec()));
             }
 
             // Receipt updates
@@ -82,18 +81,7 @@ impl StoreEngine {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
 
-                let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
-
-                let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                batch_items.push((BODIES, block_hash.as_bytes().to_vec(), body_value));
-
-                batch_items.push((
-                    BLOCK_NUMBERS,
-                    block_hash.as_bytes().to_vec(),
-                    block_number.to_le_bytes().to_vec(),
-                ));
-
+                // Guardamos transacciones antes de mover block
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let mut composite_key = Vec::with_capacity(64);
                     composite_key.extend_from_slice(transaction.hash().as_bytes());
@@ -101,6 +89,19 @@ impl StoreEngine {
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
                     batch_items.push((TRANSACTION_LOCATIONS, composite_key, location_value));
                 }
+
+                // Ahora movemos block sin clone
+                let header_value = BlockHeaderRLP::from(block.header).into_vec();
+                batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
+
+                let body_value = BlockBodyRLP::from(block.body).into_vec();
+                batch_items.push((BODIES, block_hash.as_bytes().to_vec(), body_value));
+
+                batch_items.push((
+                    BLOCK_NUMBERS,
+                    block_hash.as_bytes().to_vec(),
+                    block_number.to_le_bytes().to_vec(),
+                ));
             }
 
             let mut txn = db.begin_write()?;
@@ -123,18 +124,7 @@ impl StoreEngine {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
 
-                let header_value = BlockHeaderRLP::from(block.header.clone()).bytes().clone();
-                batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
-
-                let body_value = BlockBodyRLP::from(block.body.clone()).bytes().clone();
-                batch_items.push((BODIES, block_hash.as_bytes().to_vec(), body_value));
-
-                batch_items.push((
-                    BLOCK_NUMBERS,
-                    block_hash.as_bytes().to_vec(),
-                    block_number.to_le_bytes().to_vec(),
-                ));
-
+                // Guardamos transacciones antes de mover block
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let mut composite_key = Vec::with_capacity(64);
                     composite_key.extend_from_slice(transaction.hash().as_bytes());
@@ -142,6 +132,19 @@ impl StoreEngine {
                     let location_value = (block_number, block_hash, index as u64).encode_to_vec();
                     batch_items.push((TRANSACTION_LOCATIONS, composite_key, location_value));
                 }
+
+                // Ahora movemos block sin clone
+                let header_value = BlockHeaderRLP::from(block.header).into_vec();
+                batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
+
+                let body_value = BlockBodyRLP::from(block.body).into_vec();
+                batch_items.push((BODIES, block_hash.as_bytes().to_vec(), body_value));
+
+                batch_items.push((
+                    BLOCK_NUMBERS,
+                    block_hash.as_bytes().to_vec(),
+                    block_number.to_le_bytes().to_vec(),
+                ));
             }
 
             let mut txn = db.begin_write()?;
@@ -158,7 +161,7 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        let header_value = BlockHeaderRLP::from(block_header).bytes().clone();
+        let header_value = BlockHeaderRLP::from(block_header).into_vec();
         self.write_async(HEADERS, block_hash.as_bytes().to_vec(), header_value)
             .await
     }
@@ -172,12 +175,13 @@ impl StoreEngine {
 
         for header in block_headers {
             let block_hash = header.hash();
+            let block_number = header.number;
             let hash_key = block_hash.as_bytes().to_vec();
-            let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
+            let header_value = BlockHeaderRLP::from(header).into_vec();
 
             batch_ops.push((HEADERS, hash_key.clone(), header_value));
 
-            let number_key = header.number.to_le_bytes().to_vec();
+            let number_key = block_number.to_le_bytes().to_vec();
             batch_ops.push((BLOCK_NUMBERS, hash_key, number_key));
         }
 
@@ -202,7 +206,7 @@ impl StoreEngine {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        let body_value = BlockBodyRLP::from(block_body).bytes().clone();
+        let body_value = BlockBodyRLP::from(block_body).into_vec();
         self.write_async(BODIES, block_hash.as_bytes().to_vec(), body_value)
             .await
     }
@@ -257,9 +261,7 @@ impl StoreEngine {
             for number in numbers {
                 let Some(hash) = txn
                     .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
-                    .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
-                    .transpose()
-                    .map_err(StoreError::from)?
+                    .map(|bytes| H256::from_slice(&bytes))
                 else {
                     return Err(StoreError::Custom(format!(
                         "Block hash not found for number: {number}"
@@ -338,10 +340,11 @@ impl StoreEngine {
     }
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        let block_value = BlockRLP::from(block.clone()).bytes().clone();
+        let block_hash = block.hash();
+        let block_value = BlockRLP::from(block).into_vec();
         self.write_async(
             PENDING_BLOCKS,
-            block.hash().as_bytes().to_vec(),
+            block_hash.as_bytes().to_vec(),
             block_value,
         )
         .await
@@ -454,7 +457,7 @@ impl StoreEngine {
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().as_slice(),
                     )?
-                    .and_then(|bytes| BlockHashRLP::from_bytes(bytes).to().ok())
+                    .map(|bytes| H256::from_slice(&bytes))
                 };
 
                 if canonical_hash == Some(block_hash) {
@@ -515,18 +518,16 @@ impl StoreEngine {
 
     /// Obtain account code via code hash
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        self.backend
+        Ok(self
+            .backend
             .begin_read()?
             .get(ACCOUNT_CODES, code_hash.as_bytes())?
-            .map(|bytes| AccountCodeRLP::from_bytes(bytes).to())
-            .transpose()
-            .map_err(StoreError::from)
+            .map(Bytes::from))
     }
 
     /// Add account code
     pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        let code_value = AccountCodeRLP::from(code).bytes().clone();
-        self.write_async(ACCOUNT_CODES, code_hash.as_bytes().to_vec(), code_value)
+        self.write_async(ACCOUNT_CODES, code_hash.as_bytes().to_vec(), code.to_vec())
             .await
     }
 
@@ -601,9 +602,8 @@ impl StoreEngine {
                     CANONICAL_BLOCK_HASHES,
                     block_number.to_le_bytes().as_slice(),
                 )?
-                .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+                .map(|bytes| Ok(H256::from_slice(&bytes)))
                 .transpose()
-                .map_err(StoreError::from)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -741,11 +741,6 @@ impl StoreEngine {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        // let trie_db = BackendTrieDB::new(
-        //     self.backend.clone(),
-        //     STATE_TRIE_NODES,
-        //     None, // No address prefix for state trie
-        // );
         let lock = self.backend.begin_locked(STATE_TRIE_NODES)?;
         let trie_db = BackendTrieDBLocked::new(
             lock, None, // No address prefix for state trie
@@ -761,11 +756,6 @@ impl StoreEngine {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        // let trie_db = BackendTrieDB::new(
-        //     self.backend.clone(),
-        //     STORAGE_TRIE_NODES,
-        //     Some(hashed_address), // Use address as prefix for storage trie
-        // );
         let lock = self.backend.begin_locked(STORAGE_TRIE_NODES)?;
         let trie_db = BackendTrieDBLocked::new(
             lock,
@@ -790,7 +780,7 @@ impl StoreEngine {
 
             if let Some(canonical_blocks) = new_canonical_blocks {
                 for (block_number, block_hash) in canonical_blocks {
-                    let head_value = BlockHashRLP::from(block_hash).bytes().clone();
+                    let head_value = block_hash.as_bytes().to_vec();
                     batch_items.push((
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().to_vec(),
@@ -804,7 +794,7 @@ impl StoreEngine {
             }
 
             // Make head canonical
-            let head_value = BlockHashRLP::from(head_hash).bytes().clone();
+            let head_value = head_hash.as_bytes().to_vec();
             batch_items.push((
                 CANONICAL_BLOCK_HASHES,
                 head_number.to_le_bytes().to_vec(),
@@ -1007,7 +997,7 @@ impl StoreEngine {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
-        let value = BlockHashRLP::from(latest_valid).bytes().clone();
+        let value = latest_valid.as_bytes().to_vec();
         self.write_async(INVALID_CHAINS, bad_block.as_bytes().to_vec(), value)
             .await
     }
@@ -1020,9 +1010,8 @@ impl StoreEngine {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_async(INVALID_CHAINS, block.as_bytes().to_vec())
             .await?
-            .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+            .map(|bytes| Ok(H256::from_slice(&bytes)))
             .transpose()
-            .map_err(StoreError::from)
     }
 
     /// Obtain block number for a given hash
@@ -1051,9 +1040,8 @@ impl StoreEngine {
             CANONICAL_BLOCK_HASHES,
             block_number.to_le_bytes().as_slice(),
         )?
-        .map(|bytes| BlockHashRLP::from_bytes(bytes).to())
+        .map(|bytes| Ok(H256::from_slice(&bytes)))
         .transpose()
-        .map_err(StoreError::from)
     }
 
     pub async fn write_storage_trie_nodes_batch(
@@ -1079,8 +1067,7 @@ impl StoreEngine {
     ) -> Result<(), StoreError> {
         let mut batch_items = Vec::new();
         for (code_hash, code) in account_codes {
-            let value = AccountCodeRLP::from(code).bytes().clone();
-            batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), value));
+            batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), code.to_vec()));
         }
 
         self.write_batch_async(batch_items).await

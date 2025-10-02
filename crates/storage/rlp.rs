@@ -47,4 +47,8 @@ impl<T> Rlp<T> {
     pub fn bytes(&self) -> &Vec<u8> {
         &self.0
     }
+
+    pub fn into_vec(self) -> Vec<u8> {
+        self.0
+    }
 }
