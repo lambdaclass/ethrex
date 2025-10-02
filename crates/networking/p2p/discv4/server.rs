@@ -116,7 +116,7 @@ impl DiscoveryServer {
             .new_contacts(bootnodes, local_node.node_id())
             .await?;
 
-        discovery_server.start_blocking();
+        discovery_server.start();
         Ok(())
     }
 

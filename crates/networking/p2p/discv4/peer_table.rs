@@ -545,7 +545,7 @@ pub struct PeerTable {
 
 impl PeerTable {
     pub fn spawn() -> PeerTableHandle {
-        PeerTableHandle(Self::default().start_blocking())
+        PeerTableHandle(Self::default().start())
     }
 
     // Internal functions //

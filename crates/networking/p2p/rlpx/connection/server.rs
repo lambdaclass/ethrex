@@ -88,12 +88,12 @@ pub struct Receiver {
     pub(crate) stream: Arc<TcpStream>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Established {
     pub(crate) signer: SecretKey,
     // Sending part of the TcpStream to connect with the remote peer
     // The receiving part is owned by the stream listen loop task
-    pub(crate) sink: Arc<Mutex<SplitSink<Framed<TcpStream, RLPxCodec>, Message>>>,
+    pub(crate) sink: SplitSink<Framed<TcpStream, RLPxCodec>, Message>,
     pub(crate) node: Node,
     pub(crate) storage: Store,
     pub(crate) blockchain: Arc<Blockchain>,
@@ -122,20 +122,18 @@ pub struct Established {
 }
 
 impl Established {
-    async fn teardown(&self) {
+    async fn teardown(&mut self) {
         // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
         // Just logging a debug line if that's the case.
         let _ = self
             .sink
-            .lock()
-            .await
             .close()
             .await
             .inspect_err(|err| debug!("Could not close the socket: {err}"));
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum InnerState {
     HandshakeFailed,
     Initiator(Initiator),
@@ -618,8 +616,6 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &RL
             );
         }
     }
-
-    state.teardown().await;
 }
 
 fn match_disconnect_reason(error: &RLPxError) -> Option<DisconnectReason> {
@@ -724,7 +720,7 @@ where
 }
 
 pub(crate) async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
-    state.sink.lock().await.send(message).await
+    state.sink.send(message).await
 }
 
 /// Reads from the frame until a frame is available.
