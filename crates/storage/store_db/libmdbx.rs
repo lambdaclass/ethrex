@@ -1615,7 +1615,7 @@ mod tests {
         Receipt {
             tx_type: TxType::EIP7702,
             succeeded: true,
-            cumulative_gas_used: u64::MAX,
+            cumulative_gas_used: i64::MAX as u64,
             logs,
         }
     }
