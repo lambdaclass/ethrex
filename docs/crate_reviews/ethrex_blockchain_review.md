@@ -38,6 +38,5 @@ Target crate: `crates/blockchain`
 3. Evaluate replacing the mempool `std::sync::RwLock` with an async-friendly primitive or routing access through an actor to prevent blocking the runtime during high-throughput validation.
 
 ## 6. Follow-Ups / Tooling Ideas
-- Extend `docs/crate_reviews/toolkit/analyze_crate.py` to detect `tokio::task::spawn` / `MutexGuard`-while-await patterns so future scans flag the payload issue automatically.
 - Add tracing around `add_blocks_in_batch` (per-batch duration, gas throughput) to watch for stalls when the cancellation token trips.
 - Capture integration tests exercising payload build + retrieval concurrency once the mutex fix lands.

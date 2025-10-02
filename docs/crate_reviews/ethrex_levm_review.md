@@ -38,6 +38,5 @@ Target crate: `crates/vm/levm`
 3. Document the fork/EIP matrix exercised by `DefaultHook::prepare_execution` and enforce it with table-driven tests so new protocol features can be introduced without touching the entire method (`crates/vm/levm/src/hooks/default_hook.rs:29`).
 
 ## 6. Follow-Ups / Tooling Ideas
-- Extend `docs/crate_reviews/toolkit/analyze_crate.py` to classify extremely long lookup tables (e.g., opcode builders) separately from executable logic, keeping complexity alerts focused on behavioral code.
 - Add microbenchmarks or profiling hooks around precompile entry points to detect regressions in cryptographic helpers before they impact block execution (`crates/vm/levm/src/precompiles.rs:1`).
 - Explore swapping `Rc<RefCell<_>>` pools for explicit actor-style ownership so the VM can run safely inside async or multi-threaded environments without extensive wrapping (`crates/vm/levm/src/vm.rs:20`).
