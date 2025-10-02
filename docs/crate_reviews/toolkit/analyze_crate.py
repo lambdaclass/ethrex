@@ -9,7 +9,9 @@ import pathlib
 import re
 import sys
 from collections import Counter, defaultdict
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Optional, TypedDict, cast
 
 
 DEFAULT_BRANCH_MARKERS = [
@@ -46,72 +48,134 @@ FN_REGEX = re.compile(r"^\s*(pub\s+)?(async\s+)?(const\s+)?fn\s+(?P<name>\w+)")
 COMMENT_REGEX = re.compile(r"^\s*//")
 BLOCK_COMMENT_START = re.compile(r"/\*")
 BLOCK_COMMENT_END = re.compile(r"\*/")
+class Totals(TypedDict):
+    files: int
+    total_lines: int
+    code_lines: int
+    function_count: int
+    complex_function_count: int
 
 
-def parse_args() -> argparse.Namespace:
+class ComplexFunctionEntry(TypedDict):
+    file: str
+    name: str
+    lines: int
+    branches: int
+
+
+class Summary(TypedDict):
+    crate: str
+    totals: Totals
+    keyword_totals: dict[str, int]
+    keyword_hotspots: dict[str, list[tuple[str, int]]]
+    complex_functions: list[ComplexFunctionEntry]
+
+
+@dataclass
+class CLIArgs:
+    crate_path: str
+    exclude: list[str]
+    exclude_prefix: list[str]
+    keyword: list[str]
+    complex_line_threshold: int
+    branch_threshold: int
+    combined_line_threshold: int
+    combined_branch_threshold: int
+    top_complex: int
+    json: bool
+
+
+def parse_args(argv: Sequence[str] | None = None) -> CLIArgs:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("crate_path", help="Path to the crate root (e.g. crates/networking/p2p)")
-    parser.add_argument(
+    _ = parser.add_argument("crate_path", help="Path to the crate root (e.g. crates/networking/p2p)")
+    _ = parser.add_argument(
         "--exclude",
         action="append",
         default=[],
         help="Relative directory names to skip everywhere (can be passed multiple times)",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--exclude-prefix",
         action="append",
         default=[],
         metavar="PATH",
-        help=
-        "Relative path prefixes to skip (e.g. 'levm' to drop crates/vm/levm without "
-        "touching backends/levm)",
+        help=(
+            "Relative path prefixes to skip (e.g. 'levm' to drop crates/vm/levm without "
+            "touching backends/levm)"
+        ),
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--keyword",
         action="append",
         default=[],
         metavar="LABEL=REGEX",
         help="Additional keyword pattern to tally (may be repeated)",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--complex-line-threshold",
         type=int,
         default=60,
         help="Function line count threshold for complexity flagging",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--branch-threshold",
         type=int,
         default=6,
         help="Branch keyword threshold for complexity flagging",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--combined-line-threshold",
         type=int,
         default=40,
         help="Minimum lines for the combined line+branch heuristic",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--combined-branch-threshold",
         type=int,
         default=3,
         help="Minimum branches for the combined line+branch heuristic",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--top-complex",
         type=int,
         default=20,
         help="Number of complex functions to list explicitly",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON instead of the default human-readable summary",
     )
-    return parser.parse_args()
+    parsed = parser.parse_args(argv)
+    crate_path = cast(str, parsed.crate_path)
+    raw_exclude = cast(Optional[list[str]], parsed.exclude)
+    raw_exclude_prefix = cast(Optional[list[str]], parsed.exclude_prefix)
+    raw_keyword = cast(Optional[list[str]], parsed.keyword)
+    exclude = list(raw_exclude or [])
+    exclude_prefix = list(raw_exclude_prefix or [])
+    keyword = list(raw_keyword or [])
+    complex_line_threshold = cast(int, parsed.complex_line_threshold)
+    branch_threshold = cast(int, parsed.branch_threshold)
+    combined_line_threshold = cast(int, parsed.combined_line_threshold)
+    combined_branch_threshold = cast(int, parsed.combined_branch_threshold)
+    top_complex = cast(int, parsed.top_complex)
+    json_output = cast(bool, parsed.json)
+
+    return CLIArgs(
+        crate_path=crate_path,
+        exclude=exclude,
+        exclude_prefix=exclude_prefix,
+        keyword=keyword,
+        complex_line_threshold=complex_line_threshold,
+        branch_threshold=branch_threshold,
+        combined_line_threshold=combined_line_threshold,
+        combined_branch_threshold=combined_branch_threshold,
+        top_complex=top_complex,
+        json=json_output,
+    )
 
 
-def load_keyword_patterns(extra_patterns: Iterable[str]) -> Mapping[str, re.Pattern[str]]:
+def load_keyword_patterns(extra_patterns: Iterable[str]) -> dict[str, re.Pattern[str]]:
     patterns = dict(DEFAULT_KEYWORD_PATTERNS)
     for item in extra_patterns:
         if "=" not in item:
@@ -156,13 +220,15 @@ def should_exclude(
                 return True
 
     return False
-
-
-def count_keyword_occurrences(text: str, compiled_patterns: Mapping[str, re.Pattern[str]]) -> Mapping[str, int]:
+def count_keyword_occurrences(text: str, compiled_patterns: Mapping[str, re.Pattern[str]]) -> dict[str, int]:
     totals: dict[str, int] = {}
     for label, pattern in compiled_patterns.items():
         totals[label] = len(pattern.findall(text))
     return totals
+
+
+def _new_counter() -> Counter[str]:
+    return Counter()
 
 
 def analyze(
@@ -171,19 +237,19 @@ def analyze(
     prefix_exclusions: list[tuple[str, ...]],
     compiled_patterns: Mapping[str, re.Pattern[str]],
     *,
-            complex_line_threshold: int,
-            branch_threshold: int,
-            combined_line_threshold: int,
-            combined_branch_threshold: int,
-            top_complex: int,
-            ):
+    complex_line_threshold: int,
+    branch_threshold: int,
+    combined_line_threshold: int,
+    combined_branch_threshold: int,
+    top_complex: int,
+) -> Summary:
     files = [
         path
         for path in sorted(crate_root.rglob("*.rs"))
         if not should_exclude(path, crate_root, name_exclusions, prefix_exclusions)
     ]
 
-    totals = {
+    totals: Totals = {
         "files": len(files),
         "total_lines": 0,
         "code_lines": 0,
@@ -191,9 +257,9 @@ def analyze(
         "complex_function_count": 0,
     }
 
-    keyword_totals = Counter()
-    keyword_by_file: dict[pathlib.Path, Counter] = defaultdict(Counter)
-    complex_fns: list[dict[str, object]] = []
+    keyword_totals: Counter[str] = Counter()
+    keyword_by_file: defaultdict[pathlib.Path, Counter[str]] = defaultdict(_new_counter)
+    complex_fns: list[ComplexFunctionEntry] = []
 
     for path in files:
         text = path.read_text()
@@ -297,15 +363,23 @@ def analyze(
     }
 
 
-def emit_human(summary: Mapping[str, object]) -> None:
-    totals = summary["totals"]
+def emit_human(summary: Summary) -> None:
+    totals: Totals = summary["totals"]
     print(f"Crate: {summary['crate']}")
-    print(
+    totals_line = (
         "Totals: {files} files | {total_lines} lines | {code_lines} code lines | "
-        "{function_count} functions ({complex_function_count} complex)".format(**totals)
+        "{function_count} functions ({complex_function_count} complex)"
+    ).format(
+        files=totals["files"],
+        total_lines=totals["total_lines"],
+        code_lines=totals["code_lines"],
+        function_count=totals["function_count"],
+        complex_function_count=totals["complex_function_count"],
     )
+    print(totals_line)
     print("\nKeyword counts:")
-    for label, count in sorted(summary["keyword_totals"].items(), key=lambda item: (-item[1], item[0])):
+    keyword_items = sorted(summary["keyword_totals"].items(), key=lambda item: (-item[1], item[0]))
+    for label, count in keyword_items:
         print(f"  - {label}: {count}")
 
     if summary["keyword_hotspots"]:
