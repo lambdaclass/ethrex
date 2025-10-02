@@ -1312,11 +1312,11 @@ impl Store {
             .await
     }
 
-    pub async fn delete_subtrees(
+    pub fn get_ranges_to_delete_in_subtree(
         &self,
         root: Nibbles,
         mut children: Vec<u8>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<Vec<(Nibbles,Nibbles)>, StoreError> {
         children.sort();
         children.dedup();
 
@@ -1332,18 +1332,20 @@ impl Store {
             }
         }
 
+        let mut ranges_to_delete = vec![];
+
         for (from, to) in ranges {
             let from = root.append_new(from);
             let to = root.append_new(to);
-            self.engine.delete_range(from, to).await?;
+            ranges_to_delete.push((from, to));
         }
 
-        Ok(())
+        Ok(ranges_to_delete)
     }
 
     /// Removes entries in the range [from, to)
-    pub async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
-        self.engine.delete_range(from, to).await
+    pub async fn delete_range_batch(&self, ranges: Vec<(Nibbles,Nibbles)>) -> Result<(), StoreError> {
+        self.engine.delete_range_batch(ranges).await
     }
 
     pub async fn write_account_code_batch(

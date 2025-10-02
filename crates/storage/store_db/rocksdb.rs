@@ -15,8 +15,7 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
-    OptimisticTransactionDB, Options, WriteBatchWithTransaction,
+    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, OptimisticTransactionDB, Options, WriteBatch, WriteBatchWithTransaction
 };
 use std::{
     collections::HashSet,
@@ -103,7 +102,7 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
 pub struct Store {
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
     trie_cache: Arc<RwLock<TrieWrapperInner>>,
 }
 
@@ -274,7 +273,7 @@ impl Store {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             path,
             cf_descriptors,
@@ -1500,6 +1499,25 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    async fn delete_range_batch(&self, ranges: Vec<(Nibbles,Nibbles)>) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut batch = WriteBatch::default();
+            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
+            })?;
+
+            for (from, to) in ranges {
+                batch.delete_range_cf(&cf, from, to);
+            }
+
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch delete range error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
     async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
@@ -1532,7 +1550,7 @@ impl StoreEngine for Store {
 
 /// Open column families
 fn open_cfs<'a, const N: usize>(
-    db: &'a Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: &'a Arc<DBWithThreadMode<MultiThreaded>>,
     names: [&str; N],
 ) -> Result<[Arc<BoundColumnFamily<'a>>; N], StoreError> {
     let mut handles = Vec::with_capacity(N);

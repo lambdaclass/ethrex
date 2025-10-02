@@ -189,7 +189,7 @@ SERVER_SYNC_BRANCH ?= main
 SERVER_SYNC_NETWORK ?= hoodi
 
 ifeq ($(SERVER_SYNC_NETWORK),hoodi)
-CHECKPOINT_URL = https://hoodi-checkpoint-sync.attestant.io/
+CHECKPOINT_URL = https://hoodi-checkpoint-sync.stakely.io
 else ifeq ($(SERVER_SYNC_NETWORK),sepolia)
 CHECKPOINT_URL = https://checkpoint-sync.sepolia.ethpandaops.io
 else ifeq ($(SERVER_SYNC_NETWORK),mainnet)

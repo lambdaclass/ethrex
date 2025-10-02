@@ -660,6 +660,13 @@ impl StoreEngine for Store {
     async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
         todo!()
     }
+
+    async fn delete_range_batch(
+        &self,
+        ranges: Vec<(Nibbles, Nibbles)>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {

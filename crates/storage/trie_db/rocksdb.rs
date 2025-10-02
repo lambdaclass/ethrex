@@ -1,6 +1,6 @@
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
-use rocksdb::{MultiThreaded, OptimisticTransactionDB};
+use rocksdb::{DBWithThreadMode, MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
 
 use crate::trie_db::layering::apply_prefix;
@@ -8,7 +8,7 @@ use crate::trie_db::layering::apply_prefix;
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Column family name
     cf_name: String,
     /// Storage trie address prefix
@@ -17,7 +17,7 @@ pub struct RocksDBTrieDB {
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+        db: Arc<DBWithThreadMode<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
@@ -99,7 +99,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
@@ -139,7 +139,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
@@ -176,7 +176,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],

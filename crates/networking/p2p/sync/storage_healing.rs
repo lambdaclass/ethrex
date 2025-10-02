@@ -214,6 +214,7 @@ pub async fn heal_storage_trie(
             db_joinset.spawn_blocking(|| {
                 spawned_rt::tasks::block_on(async move {
                     let mut encoded_to_write = vec![];
+                    let mut ranges_to_delete = vec![];
                     for (hashed_account, nodes) in to_write {
                         let mut account_nodes = vec![];
                         let mut to_delete = HashSet::new();
@@ -225,6 +226,7 @@ pub async fn heal_storage_trie(
                                 hashed_account,
                                 &path,
                                 &mut to_delete,
+                                &mut ranges_to_delete
                             )
                             .await
                             .unwrap();
@@ -246,6 +248,7 @@ pub async fn heal_storage_trie(
                         .write_storage_trie_nodes_batch(encoded_to_write)
                         .await
                         .expect("db write failed");
+                    store.delete_range_batch(ranges_to_delete).await.expect("The range deletions on the store failed");
                 })
             });
         }
@@ -725,6 +728,7 @@ async fn perform_needed_deletions(
     hashed_account: H256,
     node_path: &Nibbles,
     to_delete: &mut HashSet<Nibbles>,
+    ranges_to_delete: &mut Vec<(Nibbles, Nibbles)>,
 ) -> Result<(), SyncError> {
     // Delete all the parents of this node.
     // Nodes should be in the DB only if their children are also in the DB.
@@ -749,7 +753,7 @@ async fn perform_needed_deletions(
                 .map(|(choice, _)| choice as u8)
                 .collect();
             let full_path = apply_prefix(Some(hashed_account), node_path.clone());
-            store.delete_subtrees(full_path, children).await?;
+            ranges_to_delete.append(&mut store.get_ranges_to_delete_in_subtree(full_path, children)?);
         }
         Node::Extension(node) => {
             if let Some(Node::Leaf(_)) = previous {
@@ -761,10 +765,10 @@ async fn perform_needed_deletions(
             let (first, second) = compute_subtree_ranges(&full_path, &node.prefix);
 
             if !first.is_empty() {
-                store.delete_range(first.start, first.end).await?;
+                ranges_to_delete.push((first.start, first.end));
             }
             if !second.is_empty() {
-                store.delete_range(second.start, second.end).await?;
+                ranges_to_delete.push((second.start, second.end));
             }
         }
         Node::Leaf(node) => {
@@ -777,10 +781,10 @@ async fn perform_needed_deletions(
             let (first, second) = compute_subtree_ranges(&full_path, &node.partial);
 
             if !first.is_empty() {
-                store.delete_range(first.start, first.end).await?;
+                ranges_to_delete.push((first.start, first.end));
             }
             if !second.is_empty() {
-                store.delete_range(second.start, second.end).await?;
+                ranges_to_delete.push((second.start, second.end));
             }
         }
     }
