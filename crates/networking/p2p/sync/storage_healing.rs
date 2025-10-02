@@ -735,7 +735,7 @@ async fn perform_needed_deletions(
     // Delete all the parents of this node.
     // Nodes should be in the DB only if their children are also in the DB.
     for i in 0..node_path.len() {
-        to_delete.insert(node_path.slice(0, i));
+        to_delete.insert(apply_prefix(Some(hashed_account), node_path.slice(0, i)));
     }
     match node {
         Node::Branch(node) => {
