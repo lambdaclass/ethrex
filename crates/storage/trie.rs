@@ -31,15 +31,12 @@ impl BackendTrieDB {
     fn make_key(&self, node_hash: &NodeHash) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
-                // For storage tries, prefix with address
-                let mut key = address.as_bytes().to_vec();
+                let mut key = Vec::with_capacity(64);
+                key.extend_from_slice(address.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
                 key
             }
-            None => {
-                // For state trie, use node hash directly
-                node_hash.as_ref().to_vec()
-            }
+            None => node_hash.as_ref().to_vec(),
         }
     }
 }
@@ -90,12 +87,11 @@ impl BackendTrieDBLocked {
     fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
-                // For storage tries, prefix with address
-                let mut key = address.as_bytes().to_vec();
+                let mut key = Vec::with_capacity(64);
+                key.extend_from_slice(address.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
                 key
             }
-            // For state tries, use node hash directly
             None => node_hash.as_ref().to_vec(),
         }
     }
