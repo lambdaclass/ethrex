@@ -84,6 +84,7 @@ impl BlockProducer {
             block_time_ms,
             coinbase_address,
             fee_vault_address,
+            operator_fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
         } = config;
@@ -92,6 +93,14 @@ impl BlockProducer {
             if fee_vault == coinbase_address {
                 warn!(
                     "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
+                );
+            }
+        }
+
+        if let Some(operator_fee_vault) = operator_fee_vault_address {
+            if operator_fee_vault == coinbase_address {
+                warn!(
+                    "The coinbase address and operator fee vault address are the same. Coinbase balance behavior will be affected.",
                 );
             }
         }

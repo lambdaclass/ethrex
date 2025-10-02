@@ -94,7 +94,8 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+	--genesis-l2-path ../../fixtures/genesis/l2.json \
+	--operator-fee 0
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts

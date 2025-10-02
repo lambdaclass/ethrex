@@ -4,16 +4,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::Address;
 use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
+use ethrex_common::{Address, U256};
 use ethrex_l2::SequencerConfig;
+use ethrex_l2_sdk::get_operator_fee;
 use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::network::peer_table;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
+use ethrex_rpc::EthClient;
+use ethrex_rpc::clients::EthClientError;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::SecretKey;
@@ -31,7 +34,7 @@ use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
     get_network, get_signer, init_blockchain, init_network, init_store,
 };
-use crate::l2::L2Options;
+use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
@@ -168,14 +171,11 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
+    let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
+
     let fee_config = FeeConfig {
         fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
-        operator_fee_config: OperatorFeeConfig {
-            operator_fee_vault: opts
-                .sequencer_opts
-                .block_producer_opts
-                .operator_fee_vault_address,
-        }..Default::default(),
+        operator_fee_config: operator_fee_config,
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
@@ -304,4 +304,50 @@ pub async fn init_l2(
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
     Ok(())
+}
+
+pub async fn get_operator_fee_config(
+    sequencer_opts: &SequencerOptions,
+) -> eyre::Result<Option<OperatorFeeConfig>> {
+    // Fetch operator fee from the on-chain proposer contract
+    let operator_fee = fetch_operator_fee(
+        sequencer_opts.eth_opts.rpc_url.clone(),
+        sequencer_opts
+            .committer_opts
+            .on_chain_proposer_address
+            .clone(),
+    )
+    .await?;
+
+    // Check if operator fee vault address is provided in the config
+    let operator_address = sequencer_opts
+        .block_producer_opts
+        .operator_fee_vault_address;
+
+    let operator_fee_config = if let Some(address) = operator_address {
+        Some(OperatorFeeConfig {
+            operator_fee: operator_fee,
+            operator_fee_vault: address,
+        })
+    } else {
+        if !operator_fee.is_zero() {
+            error!(
+                "The operator fee is set on-chain, but no operator fee vault address is provided in the configuration."
+            );
+            return Err(eyre::eyre!("Missing operator fee vault address"));
+        }
+        None
+    };
+    Ok(operator_fee_config)
+}
+
+pub async fn fetch_operator_fee(
+    rpc_urls: Vec<String>,
+    on_chain_proposer_address: Option<Address>,
+) -> Result<U256, EthClientError> {
+    let contract_address = on_chain_proposer_address.ok_or(EthClientError::Custom(
+        "on_chain_proposer_address not set in config".to_string(),
+    ))?;
+    let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
+    get_operator_fee(&eth_client, contract_address).await
 }

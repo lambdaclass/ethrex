@@ -91,6 +91,9 @@ contract OnChainProposer is
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
 
+    /// @notice Fee in wei to be paid to the operator fee vault on each transaction
+    uint256 public OPERATOR_FEE;
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -117,7 +120,8 @@ contract OnChainProposer is
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses,
-        uint256 chainId
+        uint256 chainId,
+        uint256 operatorFee
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -166,6 +170,7 @@ contract OnChainProposer is
         }
 
         CHAIN_ID = chainId;
+        OPERATOR_FEE = operatorFee;
 
         OwnableUpgradeable.__Ownable_init(owner);
     }
