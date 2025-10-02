@@ -34,6 +34,8 @@ rocksdb = ["dep:rocksdb", "ethrex-trie/rocksdb", "dep:tokio"]
 c-kzg = ["ethrex-common/c-kzg"]
 kzg-rs = ["ethrex-common/kzg-rs"]
 
+sp1 = ["kzg-rs"]
+
 [dev-dependencies]
 hex.workspace = true
 hex-literal.workspace = true
