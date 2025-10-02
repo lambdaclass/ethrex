@@ -3709,7 +3709,6 @@ name = "ethrex-common"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "c-kzg",
  "crc32fast",
  "ethereum-types 0.15.1",
  "ethrex-crypto",
