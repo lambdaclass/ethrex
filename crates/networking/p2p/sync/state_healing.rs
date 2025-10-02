@@ -304,7 +304,9 @@ async fn heal_state_trie(
                     let db = trie_db.db();
                     db.put_batch(encoded_to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
+                    info!("Deliting ranges State healing: {:?}", ranges_to_delete.len());
                     store.delete_range_batch(ranges_to_delete).await.expect("The range deletions on the store failed");
+                    info!("Deleted ranges State healing");
                 })
             });
         }

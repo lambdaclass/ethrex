@@ -248,7 +248,9 @@ pub async fn heal_storage_trie(
                         .write_storage_trie_nodes_batch(encoded_to_write)
                         .await
                         .expect("db write failed");
+                    info!("Deleting ranges Storage healing: {:?}", ranges_to_delete.len());
                     store.delete_range_batch(ranges_to_delete).await.expect("The range deletions on the store failed");
+                    info!("Deleted ranges Storage healing");
                 })
             });
         }
