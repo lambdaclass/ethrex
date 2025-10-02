@@ -232,63 +232,9 @@ impl StorageRoTx for RocksDBRwTx {
 }
 
 impl StorageRwTx for RocksDBRwTx {
-    /// Optimized method to add directly to the WriteBatch without intermediate Vec allocation.
-    fn put_raw(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-
-        self.batch.put_cf(&cf, key, value);
-        Ok(())
-    }
-
     /// Stores multiple key-value pairs in different tables using WriteBatch.
     /// Changes are accumulated in the batch and written atomically on commit.
     fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError> {
-        // Fast-path if we have only one table in the batch
-        let Some(first_table) = batch.first().map(|(t, _, _)| *t) else {
-            // Empty batch
-            return Ok(());
-        };
-
-        if batch.iter().all(|(t, _, _)| *t == first_table) {
-            // All tables are the same
-            let cf = self
-                .db
-                .cf_handle(first_table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", first_table)))?;
-
-            for (_, key, value) in batch {
-                self.batch.put_cf(&cf, key, value);
-            }
-            return Ok(());
-        }
-
-        // Load the column families for the tables in the batch
-        let unique_tables: HashSet<&str> = batch.iter().map(|(t, _, _)| *t).collect();
-        let mut cfs = HashMap::with_capacity(unique_tables.len());
-
-        for &table in unique_tables.iter() {
-            let cf = self
-                .db
-                .cf_handle(table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-            cfs.insert(table, cf);
-        }
-
-        for (table, key, value) in batch {
-            let cf = cfs
-                .get(table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-            self.batch.put_cf(cf, key, value);
-        }
-        Ok(())
-    }
-
-    /// Optimized batch write for trie nodes.
-    /// Takes pre-encoded values as slices to avoid cloning/allocations.
-    fn put_trie_batch(&mut self, batch: Vec<(&str, Vec<u8>, &[u8])>) -> Result<(), StoreError> {
         // Fast-path if we have only one table in the batch
         let Some(first_table) = batch.first().map(|(t, _, _)| *t) else {
             // Empty batch

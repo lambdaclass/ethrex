@@ -87,31 +87,6 @@ pub trait StorageRwTx: StorageRoTx {
     /// Stores multiple key-value pairs in the specified table within the transaction.
     fn put_batch(&mut self, batch: Vec<(&str, Vec<u8>, Vec<u8>)>) -> Result<(), StoreError>;
 
-    /// Optimized method to add a single key-value pair directly to the internal batch.
-    /// This avoids creating intermediate Vec allocations when building batches incrementally.
-    ///
-    /// Backends with internal batch structures (like RocksDB's WriteBatch) can override
-    /// this to add items directly without wrapping them in a Vec.
-    ///
-    /// Default implementation delegates to `put()`.
-    fn put_raw(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.put(table, key, value)
-    }
-
-    /// Optimized batch write for trie nodes that takes pre-encoded values.
-    /// This allows the caller to reuse encoding buffers and reduce allocations.
-    ///
-    /// The batch contains tuples of (table, key, value) where values are already encoded.
-    fn put_trie_batch(&mut self, batch: Vec<(&str, Vec<u8>, &[u8])>) -> Result<(), StoreError> {
-        // Default implementation converts to regular put_batch
-        self.put_batch(
-            batch
-                .into_iter()
-                .map(|(table, key, value)| (table, key, value.to_vec()))
-                .collect(),
-        )
-    }
-
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError>;
 
