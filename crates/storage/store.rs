@@ -1313,7 +1313,7 @@ impl Iterator for AncestorIterator {
     }
 }
 
-pub fn hash_address(address: &ethereum_types::Address) -> Vec<u8> {
+pub fn hash_address(address: &Address) -> Vec<u8> {
     Keccak256::new_with_prefix(address.to_fixed_bytes())
         .finalize()
         .to_vec()
