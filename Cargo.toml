@@ -125,5 +125,5 @@ tower-http = { version = "0.6.2", features = ["cors"] }
 rocksdb = "0.24.0"
 
 [patch.crates-io]
-rocksdb = { git = "https://github.com/Oppen/rust-rocksdb", ref = "4b9e6ce0555729f38f6b7896e219532156ce9510" }
+rocksdb = { git = "https://github.com/Oppen/rust-rocksdb" }
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }
