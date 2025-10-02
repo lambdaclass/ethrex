@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use again::{RetryPolicy, Task};
@@ -14,16 +14,13 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
-use lazy_static::lazy_static;
 use sha3::Digest;
 
 pub mod db;
 
 pub type NodeRLP = Vec<u8>;
 
-lazy_static! {
-    static ref CLIENT: reqwest::Client = reqwest::Client::new();
-}
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 #[derive(Clone, Debug)]
 pub enum Account {
