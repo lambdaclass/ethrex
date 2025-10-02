@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
@@ -12,25 +14,57 @@ use sha3::{Digest, Keccak256};
 // Opcodes: KECCAK256
 
 impl<'a> VM<'a> {
-    pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [offset, size] = *current_call_frame.stack.pop()?;
-        let (size, offset) = size_offset_to_usize(size, offset)?;
+    pub fn op_keccak256(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        let [offset, size] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        let (size, offset) = match size_offset_to_usize(size, offset) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let new_memory_size = calculate_memory_size(offset, size)?;
+        let new_memory_size = match calculate_memory_size(offset, size) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        current_call_frame.increase_consumed_gas(gas_cost::keccak256(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
+        if let Err(err) =
+            gas_cost::keccak256(new_memory_size, self.current_call_frame.memory.len(), size)
+                .and_then(|x| Ok(self.current_call_frame.increase_consumed_gas(x)?))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         let mut hasher = Keccak256::new();
-        hasher.update(current_call_frame.memory.load_range(offset, size)?);
-        current_call_frame
+        hasher.update(
+            match self.current_call_frame.memory.load_range(offset, size) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            },
+        );
+        if let Err(err) = self
+            .current_call_frame
             .stack
-            .push1(u256_from_big_endian(&hasher.finalize()))?;
+            .push1(u256_from_big_endian(&hasher.finalize()))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 }

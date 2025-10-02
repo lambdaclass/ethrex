@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use crate::{
     constants::WORD_SIZE,
     errors::{InternalError, OpcodeResult, VMError},
@@ -11,32 +13,65 @@ use ethrex_common::U256;
 
 impl<'a> VM<'a> {
     // LT operation
-    pub fn op_lt(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::LT)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
-        let result = u256_from_bool(lho < rho);
-        current_call_frame.stack.push1(result)?;
+    pub fn op_lt(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::LT) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        let [lho, rho] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        let result = u256_from_bool(lho < rho);
+        if let Err(err) = self.current_call_frame.stack.push1(result) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // GT operation
-    pub fn op_gt(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GT)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
-        let result = u256_from_bool(lho > rho);
-        current_call_frame.stack.push1(result)?;
+    pub fn op_gt(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::GT) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        let [lho, rho] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        let result = u256_from_bool(lho > rho);
+        if let Err(err) = self.current_call_frame.stack.push1(result) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // SLT operation (signed less than)
-    pub fn op_slt(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
+    pub fn op_slt(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::SLT) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        let [lho, rho] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let lho_is_negative = lho.bit(255);
         let rho_is_negative = rho.bit(255);
         let result = if lho_is_negative == rho_is_negative {
@@ -46,16 +81,28 @@ impl<'a> VM<'a> {
             // Negative is smaller if signs differ
             u256_from_bool(lho_is_negative)
         };
-        current_call_frame.stack.push1(result)?;
+        if let Err(err) = self.current_call_frame.stack.push1(result) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // SGT operation (signed greater than)
-    pub fn op_sgt(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
+    pub fn op_sgt(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::SGT) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        let [lho, rho] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let lho_is_negative = lho.bit(255);
         let rho_is_negative = rho.bit(255);
         let result = if lho_is_negative == rho_is_negative {
@@ -65,144 +112,287 @@ impl<'a> VM<'a> {
             // Positive is bigger if signs differ
             u256_from_bool(rho_is_negative)
         };
-        current_call_frame.stack.push1(result)?;
+        if let Err(err) = self.current_call_frame.stack.push1(result) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // EQ operation (equality check)
-    pub fn op_eq(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
-        let [lho, rho] = *current_call_frame.stack.pop()?;
+    pub fn op_eq(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::EQ) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        let [lho, rho] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let result = u256_from_bool(lho == rho);
+        if let Err(err) = self.current_call_frame.stack.push1(result) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        current_call_frame.stack.push1(result)?;
-
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // ISZERO operation (check if zero)
-    pub fn op_iszero(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ISZERO)?;
+    pub fn op_iszero(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::ISZERO)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [operand] = current_call_frame.stack.pop()?;
+        let [operand] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let result = u256_from_bool(operand.is_zero());
 
-        current_call_frame.stack.push1(result)?;
+        if let Err(err) = self.current_call_frame.stack.push1(result) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // AND operation
-    pub fn op_and(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::AND)?;
-        let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(&[a & b])?;
+    pub fn op_and(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::AND) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        let [a, b] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        if let Err(err) = self.current_call_frame.stack.push(&[a & b]) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // OR operation
-    pub fn op_or(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::OR)?;
-        let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(&[a | b])?;
+    pub fn op_or(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::OR) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        let [a, b] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        if let Err(err) = self.current_call_frame.stack.push(&[a | b]) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // XOR operation
-    pub fn op_xor(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
-        let [a, b] = *current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(&[a ^ b])?;
+    pub fn op_xor(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::XOR) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        let [a, b] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        if let Err(err) = self.current_call_frame.stack.push(&[a ^ b]) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // NOT operation
-    pub fn op_not(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
-        let a = current_call_frame.stack.pop1()?;
-        current_call_frame.stack.push(&[!a])?;
+    pub fn op_not(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::NOT) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        let a = match self.current_call_frame.stack.pop1() {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        if let Err(err) = self.current_call_frame.stack.push(&[!a]) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // BYTE operation
-    pub fn op_byte(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::BYTE)?;
-        let [op1, op2] = *current_call_frame.stack.pop()?;
+    pub fn op_byte(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::BYTE)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        let [op1, op2] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let byte_index = match op1.try_into() {
             Ok(byte_index) => byte_index,
             Err(_) => {
                 // Index is out of bounds, then push 0
-                current_call_frame.stack.push_zero()?;
-                return Ok(OpcodeResult::Continue);
+                if let Err(err) = self.current_call_frame.stack.push_zero() {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+                return OpcodeResult::Continue;
             }
         };
 
         if byte_index < WORD_SIZE {
-            let byte_to_push = WORD_SIZE
+            let byte_to_push = match WORD_SIZE
                 .checked_sub(byte_index)
-                .ok_or(InternalError::Underflow)?
-                .checked_sub(1)
-                .ok_or(InternalError::Underflow)?; // Same case as above
-            current_call_frame
+                .and_then(|x| x.checked_sub(1))
+            {
+                Some(x) => x,
+                None => {
+                    error.set(InternalError::Underflow.into());
+                    return OpcodeResult::Halt;
+                }
+            };
+            if let Err(err) = self
+                .current_call_frame
                 .stack
-                .push(&[U256::from(op2.byte(byte_to_push))])?;
+                .push(&[U256::from(op2.byte(byte_to_push))])
+            {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
         } else {
-            current_call_frame.stack.push_zero()?;
+            if let Err(err) = self.current_call_frame.stack.push_zero() {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
         }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     #[expect(clippy::arithmetic_side_effects)]
     // SHL operation (shift left)
-    pub fn op_shl(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
-        let [shift, value] = *current_call_frame.stack.pop()?;
-
-        if shift < U256::from(256) {
-            current_call_frame.stack.push(&[value << shift])?;
-        } else {
-            current_call_frame.stack.push_zero()?;
+    pub fn op_shl(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::SHL) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
         }
 
-        Ok(OpcodeResult::Continue)
+        let [shift, value] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+
+        if shift < U256::from(256) {
+            if let Err(err) = self.current_call_frame.stack.push(&[value << shift]) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        } else {
+            if let Err(err) = self.current_call_frame.stack.push_zero() {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        }
+
+        OpcodeResult::Continue
     }
 
     #[expect(clippy::arithmetic_side_effects)]
     // SHR operation (shift right)
-    pub fn op_shr(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
-        let [shift, value] = *current_call_frame.stack.pop()?;
-
-        if shift < U256::from(256) {
-            current_call_frame.stack.push(&[value >> shift])?;
-        } else {
-            current_call_frame.stack.push_zero()?;
+    pub fn op_shr(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::SHR) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
         }
 
-        Ok(OpcodeResult::Continue)
+        let [shift, value] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+
+        if shift < U256::from(256) {
+            if let Err(err) = self.current_call_frame.stack.push(&[value >> shift]) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        } else {
+            if let Err(err) = self.current_call_frame.stack.push_zero() {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        }
+
+        OpcodeResult::Continue
     }
 
     #[allow(clippy::arithmetic_side_effects)]
     // SAR operation (arithmetic shift right)
-    pub fn op_sar(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
-        let [shift, value] = *current_call_frame.stack.pop()?;
+    pub fn op_sar(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::SAR) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        let [shift, value] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         // In 2's complement arithmetic, the most significant bit being one means the number is negative
         let is_negative = value.bit(255);
@@ -218,9 +408,13 @@ impl<'a> VM<'a> {
         } else {
             U256::zero()
         };
-        current_call_frame.stack.push1(res)?;
 
-        Ok(OpcodeResult::Continue)
+        if let Err(err) = self.current_call_frame.stack.push1(res) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 }
 

@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
@@ -10,65 +12,130 @@ use ethrex_common::{U256, U512};
 
 impl<'a> VM<'a> {
     // ADD operation
-    pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
+    pub fn op_add(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::ADD) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [augend, addend] = *current_call_frame.stack.pop()?;
+        let [augend, addend] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let sum = augend.overflowing_add(addend).0;
-        current_call_frame.stack.push1(sum)?;
 
-        Ok(OpcodeResult::Continue)
+        if let Err(err) = self.current_call_frame.stack.push1(sum) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // SUB operation
-    pub fn op_sub(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
+    pub fn op_sub(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::SUB) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [minuend, subtrahend] = *current_call_frame.stack.pop()?;
+        let [minuend, subtrahend] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let difference = minuend.overflowing_sub(subtrahend).0;
-        current_call_frame.stack.push1(difference)?;
 
-        Ok(OpcodeResult::Continue)
+        if let Err(err) = self.current_call_frame.stack.push1(difference) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // MUL operation
-    pub fn op_mul(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
+    pub fn op_mul(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::MUL) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [multiplicand, multiplier] = *current_call_frame.stack.pop()?;
+        let [multiplicand, multiplier] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let product = multiplicand.overflowing_mul(multiplier).0;
-        current_call_frame.stack.push1(product)?;
 
-        Ok(OpcodeResult::Continue)
+        if let Err(err) = self.current_call_frame.stack.push1(product) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // DIV operation
-    pub fn op_div(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
+    pub fn op_div(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::DIV) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
-        let Some(quotient) = dividend.checked_div(divisor) else {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+        let [dividend, divisor] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
         };
-        current_call_frame.stack.push1(quotient)?;
+        let Some(quotient) = dividend.checked_div(divisor) else {
+            if let Err(err) = self.current_call_frame.stack.push_zero() {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
 
-        Ok(OpcodeResult::Continue)
+            return OpcodeResult::Continue;
+        };
+        if let Err(err) = self.current_call_frame.stack.push1(quotient) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        OpcodeResult::Continue
     }
 
     // SDIV operation
-    pub fn op_sdiv(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SDIV)?;
+    pub fn op_sdiv(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::SDIV)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
+        let [dividend, divisor] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         if divisor.is_zero() || dividend.is_zero() {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+            if let Err(err) = self.current_call_frame.stack.push_zero() {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            };
+            return OpcodeResult::Continue;
         }
 
         let abs_dividend = abs(dividend);
@@ -86,35 +153,63 @@ impl<'a> VM<'a> {
             None => U256::zero(),
         };
 
-        current_call_frame.stack.push1(quotient)?;
+        if let Err(err) = self.current_call_frame.stack.push1(quotient) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // MOD operation
-    pub fn op_mod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
+    pub fn op_mod(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::MOD) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
+        let [dividend, divisor] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         let remainder = dividend.checked_rem(divisor).unwrap_or_default();
 
-        current_call_frame.stack.push1(remainder)?;
+        if let Err(err) = self.current_call_frame.stack.push1(remainder) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // SMOD operation
-    pub fn op_smod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SMOD)?;
+    pub fn op_smod(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::SMOD)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [unchecked_dividend, unchecked_divisor] = *current_call_frame.stack.pop()?;
+        let [unchecked_dividend, unchecked_divisor] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+            if let Err(err) = self.current_call_frame.stack.push_zero() {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+            return OpcodeResult::Continue;
         }
 
         let divisor = abs(unchecked_divisor);
@@ -123,8 +218,11 @@ impl<'a> VM<'a> {
         let unchecked_remainder = match dividend.checked_rem(divisor) {
             Some(remainder) => remainder,
             None => {
-                current_call_frame.stack.push_zero()?;
-                return Ok(OpcodeResult::Continue);
+                if let Err(err) = self.current_call_frame.stack.push_zero() {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+                return OpcodeResult::Continue;
             }
         };
 
@@ -134,21 +232,38 @@ impl<'a> VM<'a> {
             unchecked_remainder
         };
 
-        current_call_frame.stack.push1(remainder)?;
+        if let Err(err) = self.current_call_frame.stack.push1(remainder) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // ADDMOD operation
-    pub fn op_addmod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ADDMOD)?;
+    pub fn op_addmod(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::ADDMOD)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [augend, addend, modulus] = *current_call_frame.stack.pop()?;
+        let [augend, addend, modulus] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         if modulus.is_zero() {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+            if let Err(err) = self.current_call_frame.stack.push_zero() {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            };
+            return OpcodeResult::Continue;
         }
 
         let new_augend: U512 = augend.into();
@@ -170,21 +285,38 @@ impl<'a> VM<'a> {
             .try_into()
             .expect("can't fail because we applied % mod where mod is a U256 value");
 
-        current_call_frame.stack.push1(sum_mod)?;
+        if let Err(err) = self.current_call_frame.stack.push1(sum_mod) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // MULMOD operation
-    pub fn op_mulmod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MULMOD)?;
+    pub fn op_mulmod(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::MULMOD)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [multiplicand, multiplier, modulus] = *current_call_frame.stack.pop()?;
+        let [multiplicand, multiplier, modulus] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+            if let Err(err) = self.current_call_frame.stack.push_zero() {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+            return OpcodeResult::Continue;
         }
 
         let multiplicand: U512 = multiplicand.into();
@@ -203,36 +335,70 @@ impl<'a> VM<'a> {
             .try_into()
             .expect("can't fail because we applied % mod where mod is a U256 value");
 
-        current_call_frame.stack.push1(product_mod)?;
+        if let Err(err) = self.current_call_frame.stack.push1(product_mod) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // EXP operation
-    pub fn op_exp(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [base, exponent] = *current_call_frame.stack.pop()?;
+    pub fn op_exp(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        let [base, exponent] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let gas_cost = gas_cost::exp(exponent)?;
+        let gas_cost = match gas_cost::exp(exponent) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        current_call_frame.increase_consumed_gas(gas_cost)?;
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         let power = base.overflowing_pow(exponent).0;
-        current_call_frame.stack.push1(power)?;
+        if let Err(err) = self.current_call_frame.stack.push1(power) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        };
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     // SIGNEXTEND operation
-    pub fn op_signextend(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SIGNEXTEND)?;
+    pub fn op_signextend(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::SIGNEXTEND)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let [byte_size_minus_one, value_to_extend] = *current_call_frame.stack.pop()?;
+        let [byte_size_minus_one, value_to_extend] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         if byte_size_minus_one > U256::from(31) {
-            current_call_frame.stack.push1(value_to_extend)?;
-            return Ok(OpcodeResult::Continue);
+            if let Err(err) = self.current_call_frame.stack.push1(value_to_extend) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+            return OpcodeResult::Continue;
         }
 
         #[allow(
@@ -255,23 +421,39 @@ impl<'a> VM<'a> {
                 value_to_extend | !mask
             };
 
-            current_call_frame.stack.push1(result)?;
+            if let Err(err) = self.current_call_frame.stack.push1(result) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
 
-            Ok(OpcodeResult::Continue)
+            OpcodeResult::Continue
         }
     }
 
-    pub fn op_clz(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::CLZ)?;
+    pub fn op_clz(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_cost::CLZ) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        let value = self.current_call_frame.stack.pop1()?;
+        let value = match self.current_call_frame.stack.pop1() {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        self.current_call_frame
+        if let Err(err) = self
+            .current_call_frame
             .stack
-            .push1(U256::from(value.leading_zeros()))?;
+            .push1(U256::from(value.leading_zeros()))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 }
 

@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
@@ -19,7 +21,7 @@ use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
 
 impl<'a> VM<'a> {
     // CALL operation
-    pub fn op_call(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_call(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         let (
             gas,
             callee,
@@ -30,7 +32,6 @@ impl<'a> VM<'a> {
             return_data_offset,
             return_data_size,
         ) = {
-            let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 callee,
@@ -39,12 +40,30 @@ impl<'a> VM<'a> {
                 args_size,
                 return_data_offset,
                 return_data_size,
-            ] = *current_call_frame.stack.pop()?;
+            ] = match self.current_call_frame.stack.pop() {
+                Ok(x) => *x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let callee: Address = word_to_address(callee);
-            let (args_size, args_offset) = size_offset_to_usize(args_size, args_offset)?;
+            let (args_size, args_offset) = match size_offset_to_usize(args_size, args_offset) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let (return_data_size, return_data_offset) =
-                size_offset_to_usize(return_data_size, return_data_offset)?;
-            let current_memory_size = current_call_frame.memory.len();
+                match size_offset_to_usize(return_data_size, return_data_offset) {
+                    Ok(x) => x,
+                    Err(err) => {
+                        error.set(err.into());
+                        return OpcodeResult::Halt;
+                    }
+                };
+            let current_memory_size = self.current_call_frame.memory.len();
             (
                 gas,
                 callee,
@@ -59,15 +78,22 @@ impl<'a> VM<'a> {
 
         // VALIDATIONS
         if self.current_call_frame.is_static && !value.is_zero() {
-            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+            error.set(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+            return OpcodeResult::Halt;
         }
 
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.substate, callee)?;
+            match eip7702_get_code(self.db, &mut self.substate, callee) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
 
         // GAS
-        let (new_memory_size, gas_left, account_is_empty, address_was_cold) = self
+        let (new_memory_size, gas_left, account_is_empty, address_was_cold) = match self
             .get_call_gas_params(
                 args_offset,
                 args_size,
@@ -75,9 +101,15 @@ impl<'a> VM<'a> {
                 return_data_size,
                 eip7702_gas_consumed,
                 callee,
-            )?;
+            ) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let (cost, gas_limit) = gas_cost::call(
+        let (cost, gas_limit) = match gas_cost::call(
             new_memory_size,
             current_memory_size,
             address_was_cold,
@@ -85,23 +117,41 @@ impl<'a> VM<'a> {
             value,
             gas,
             gas_left,
-        )?;
+        ) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let callframe = &mut self.current_call_frame;
-        callframe.increase_consumed_gas(
-            cost.checked_add(eip7702_gas_consumed)
-                .ok_or(ExceptionalHalt::OutOfGas)?,
-        )?;
+        if let Err(err) = cost
+            .checked_add(eip7702_gas_consumed)
+            .ok_or(ExceptionalHalt::OutOfGas)
+            .and_then(|x| self.current_call_frame.increase_consumed_gas(x))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        callframe.memory.resize(new_memory_size)?;
+        if let Err(err) = self.current_call_frame.memory.resize(new_memory_size) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // OPERATION
-        let from = callframe.to; // The new sender will be the current contract.
+        let from = self.current_call_frame.to; // The new sender will be the current contract.
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
-        let is_static = callframe.is_static;
-        let data = self.get_calldata(args_offset, args_size)?;
+        let is_static = self.current_call_frame.is_static;
+        let data = match self.get_calldata(args_offset, args_size) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         self.tracer.enter(CALL, from, to, value, gas_limit, &data);
 
@@ -118,11 +168,12 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            error,
         )
     }
 
     // CALLCODE operation
-    pub fn op_callcode(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_callcode(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         // STACK
         let (
             gas,
@@ -134,7 +185,6 @@ impl<'a> VM<'a> {
             return_data_offset,
             return_data_size,
         ) = {
-            let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 address,
@@ -143,12 +193,30 @@ impl<'a> VM<'a> {
                 args_size,
                 return_data_offset,
                 return_data_size,
-            ] = *current_call_frame.stack.pop()?;
+            ] = match self.current_call_frame.stack.pop() {
+                Ok(x) => *x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let address = word_to_address(address);
-            let (args_size, args_offset) = size_offset_to_usize(args_size, args_offset)?;
+            let (args_size, args_offset) = match size_offset_to_usize(args_size, args_offset) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let (return_data_size, return_data_offset) =
-                size_offset_to_usize(return_data_size, return_data_offset)?;
-            let current_memory_size = current_call_frame.memory.len();
+                match size_offset_to_usize(return_data_size, return_data_offset) {
+                    Ok(x) => x,
+                    Err(err) => {
+                        error.set(err.into());
+                        return OpcodeResult::Halt;
+                    }
+                };
+            let current_memory_size = self.current_call_frame.memory.len();
             (
                 gas,
                 address,
@@ -163,9 +231,16 @@ impl<'a> VM<'a> {
 
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.substate, address)?;
+            match eip7702_get_code(self.db, &mut self.substate, address) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
+
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = match self
             .get_call_gas_params(
                 args_offset,
                 args_size,
@@ -173,32 +248,56 @@ impl<'a> VM<'a> {
                 return_data_size,
                 eip7702_gas_consumed,
                 address,
-            )?;
+            ) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let (cost, gas_limit) = gas_cost::callcode(
+        let (cost, gas_limit) = match gas_cost::callcode(
             new_memory_size,
             current_memory_size,
             address_was_cold,
             value,
             gas,
             gas_left,
-        )?;
+        ) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let callframe = &mut self.current_call_frame;
-        callframe.increase_consumed_gas(
-            cost.checked_add(eip7702_gas_consumed)
-                .ok_or(ExceptionalHalt::OutOfGas)?,
-        )?;
+        if let Err(err) = cost
+            .checked_add(eip7702_gas_consumed)
+            .ok_or(ExceptionalHalt::OutOfGas)
+            .and_then(|x| self.current_call_frame.increase_consumed_gas(x))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        callframe.memory.resize(new_memory_size)?;
+        if let Err(err) = self.current_call_frame.memory.resize(new_memory_size) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
-        let from = callframe.to;
-        let to = callframe.to;
-        let is_static = callframe.is_static;
-        let data = self.get_calldata(args_offset, args_size)?;
+        let from = self.current_call_frame.to;
+        let to = self.current_call_frame.to;
+        let is_static = self.current_call_frame.is_static;
+        let data = match self.get_calldata(args_offset, args_size) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         self.tracer
             .enter(CALLCODE, from, code_address, value, gas_limit, &data);
@@ -216,32 +315,61 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            error,
         )
     }
 
     // RETURN operation
-    pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [offset, size] = *current_call_frame.stack.pop()?;
+    pub fn op_return(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        let [offset, size] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         if size.is_zero() {
-            return Ok(OpcodeResult::Halt);
+            return OpcodeResult::Halt;
         }
 
-        let (size, offset) = size_offset_to_usize(size, offset)?;
-        let new_memory_size = calculate_memory_size(offset, size)?;
-        let current_memory_size = current_call_frame.memory.len();
+        let (size, offset) = match size_offset_to_usize(size, offset) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        let new_memory_size = match calculate_memory_size(offset, size) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        let current_memory_size = self.current_call_frame.memory.len();
 
-        current_call_frame
-            .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
+        if let Err(err) = gas_cost::exit_opcode(new_memory_size, current_memory_size)
+            .and_then(|x| Ok(self.current_call_frame.increase_consumed_gas(x)?))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
+        self.current_call_frame.output =
+            match self.current_call_frame.memory.load_range(offset, size) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
 
-        Ok(OpcodeResult::Halt)
+        OpcodeResult::Halt
     }
 
     // DELEGATECALL operation
-    pub fn op_delegatecall(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_delegatecall(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         // STACK
         let (
             gas,
@@ -252,7 +380,6 @@ impl<'a> VM<'a> {
             return_data_offset,
             return_data_size,
         ) = {
-            let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 address,
@@ -260,12 +387,30 @@ impl<'a> VM<'a> {
                 args_size,
                 return_data_offset,
                 return_data_size,
-            ] = *current_call_frame.stack.pop()?;
+            ] = match self.current_call_frame.stack.pop() {
+                Ok(x) => *x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let address = word_to_address(address);
-            let (args_size, args_offset) = size_offset_to_usize(args_size, args_offset)?;
+            let (args_size, args_offset) = match size_offset_to_usize(args_size, args_offset) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let (return_data_size, return_data_offset) =
-                size_offset_to_usize(return_data_size, return_data_offset)?;
-            let current_memory_size = current_call_frame.memory.len();
+                match size_offset_to_usize(return_data_size, return_data_offset) {
+                    Ok(x) => x,
+                    Err(err) => {
+                        error.set(err.into());
+                        return OpcodeResult::Halt;
+                    }
+                };
+            let current_memory_size = self.current_call_frame.memory.len();
             (
                 gas,
                 address,
@@ -279,10 +424,16 @@ impl<'a> VM<'a> {
 
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.substate, address)?;
+            match eip7702_get_code(self.db, &mut self.substate, address) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
 
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = match self
             .get_call_gas_params(
                 args_offset,
                 args_size,
@@ -290,32 +441,56 @@ impl<'a> VM<'a> {
                 return_data_size,
                 eip7702_gas_consumed,
                 address,
-            )?;
+            ) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let (cost, gas_limit) = gas_cost::delegatecall(
+        let (cost, gas_limit) = match gas_cost::delegatecall(
             new_memory_size,
             current_memory_size,
             address_was_cold,
             gas,
             gas_left,
-        )?;
+        ) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let callframe = &mut self.current_call_frame;
-        callframe.increase_consumed_gas(
-            cost.checked_add(eip7702_gas_consumed)
-                .ok_or(ExceptionalHalt::OutOfGas)?,
-        )?;
+        if let Err(err) = cost
+            .checked_add(eip7702_gas_consumed)
+            .ok_or(ExceptionalHalt::OutOfGas)
+            .and_then(|x| self.current_call_frame.increase_consumed_gas(x))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        callframe.memory.resize(new_memory_size)?;
+        if let Err(err) = self.current_call_frame.memory.resize(new_memory_size) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        };
 
         // OPERATION
-        let from = callframe.msg_sender;
-        let value = callframe.msg_value;
-        let to = callframe.to;
-        let is_static = callframe.is_static;
-        let data = self.get_calldata(args_offset, args_size)?;
+        let from = self.current_call_frame.msg_sender;
+        let value = self.current_call_frame.msg_value;
+        let to = self.current_call_frame.to;
+        let is_static = self.current_call_frame.is_static;
+        let data = match self.get_calldata(args_offset, args_size) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
         self.tracer
@@ -334,11 +509,12 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            error,
         )
     }
 
     // STATICCALL operation
-    pub fn op_staticcall(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_staticcall(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         // STACK
         let (
             gas,
@@ -349,7 +525,6 @@ impl<'a> VM<'a> {
             return_data_offset,
             return_data_size,
         ) = {
-            let current_call_frame = &mut self.current_call_frame;
             let [
                 gas,
                 address,
@@ -357,12 +532,30 @@ impl<'a> VM<'a> {
                 args_size,
                 return_data_offset,
                 return_data_size,
-            ] = *current_call_frame.stack.pop()?;
+            ] = match self.current_call_frame.stack.pop() {
+                Ok(x) => *x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let address = word_to_address(address);
-            let (args_size, args_offset) = size_offset_to_usize(args_size, args_offset)?;
+            let (args_size, args_offset) = match size_offset_to_usize(args_size, args_offset) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let (return_data_size, return_data_offset) =
-                size_offset_to_usize(return_data_size, return_data_offset)?;
-            let current_memory_size = current_call_frame.memory.len();
+                match size_offset_to_usize(return_data_size, return_data_offset) {
+                    Ok(x) => x,
+                    Err(err) => {
+                        error.set(err.into());
+                        return OpcodeResult::Halt;
+                    }
+                };
+            let current_memory_size = self.current_call_frame.memory.len();
             (
                 gas,
                 address,
@@ -376,10 +569,16 @@ impl<'a> VM<'a> {
 
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
-            eip7702_get_code(self.db, &mut self.substate, address)?;
+            match eip7702_get_code(self.db, &mut self.substate, address) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
 
         // GAS
-        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = match self
             .get_call_gas_params(
                 args_offset,
                 args_size,
@@ -387,31 +586,55 @@ impl<'a> VM<'a> {
                 return_data_size,
                 eip7702_gas_consumed,
                 address,
-            )?;
+            ) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let (cost, gas_limit) = gas_cost::staticcall(
+        let (cost, gas_limit) = match gas_cost::staticcall(
             new_memory_size,
             current_memory_size,
             address_was_cold,
             gas,
             gas_left,
-        )?;
+        ) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let callframe = &mut self.current_call_frame;
-        callframe.increase_consumed_gas(
-            cost.checked_add(eip7702_gas_consumed)
-                .ok_or(ExceptionalHalt::OutOfGas)?,
-        )?;
+        if let Err(err) = cost
+            .checked_add(eip7702_gas_consumed)
+            .ok_or(ExceptionalHalt::OutOfGas)
+            .and_then(|x| self.current_call_frame.increase_consumed_gas(x))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // Make sure we have enough memory to write the return data
         // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        callframe.memory.resize(new_memory_size)?;
+        if let Err(err) = self.current_call_frame.memory.resize(new_memory_size) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // OPERATION
         let value = U256::zero();
-        let from = callframe.to; // The new sender will be the current contract.
+        let from = self.current_call_frame.to; // The new sender will be the current contract.
         let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
-        let data = self.get_calldata(args_offset, args_size)?;
+        let data = match self.get_calldata(args_offset, args_size) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         self.tracer
             .enter(STATICCALL, from, to, value, gas_limit, &data);
@@ -429,99 +652,176 @@ impl<'a> VM<'a> {
             return_data_size,
             bytecode,
             is_delegation_7702,
+            error,
         )
     }
 
     // CREATE operation
-    pub fn op_create(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_create(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         let fork = self.env.config.fork;
-        let current_call_frame = &mut self.current_call_frame;
         let [
             value_in_wei_to_send,
             code_offset_in_memory,
             code_size_in_memory,
-        ] = *current_call_frame.stack.pop()?;
+        ] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let (code_size_in_memory, code_offset_in_memory) =
-            size_offset_to_usize(code_size_in_memory, code_offset_in_memory)?;
+            match size_offset_to_usize(code_size_in_memory, code_offset_in_memory) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
 
-        let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
+        let new_size = match calculate_memory_size(code_offset_in_memory, code_size_in_memory) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        current_call_frame.increase_consumed_gas(gas_cost::create(
+        if let Err(err) = gas_cost::create(
             new_size,
-            current_call_frame.memory.len(),
+            self.current_call_frame.memory.len(),
             code_size_in_memory,
             fork,
-        )?)?;
+        )
+        .and_then(|x| Ok(self.current_call_frame.increase_consumed_gas(x)?))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         self.generic_create(
             value_in_wei_to_send,
             code_offset_in_memory,
             code_size_in_memory,
             None,
+            error,
         )
     }
 
     // CREATE2 operation
-    pub fn op_create2(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_create2(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         let fork = self.env.config.fork;
-        let current_call_frame = &mut self.current_call_frame;
         let [
             value_in_wei_to_send,
             code_offset_in_memory,
             code_size_in_memory,
             salt,
-        ] = *current_call_frame.stack.pop()?;
+        ] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         let (code_size_in_memory, code_offset_in_memory) =
-            size_offset_to_usize(code_size_in_memory, code_offset_in_memory)?;
-        let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
+            match size_offset_to_usize(code_size_in_memory, code_offset_in_memory) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
+        let new_size = match calculate_memory_size(code_offset_in_memory, code_size_in_memory) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        current_call_frame.increase_consumed_gas(gas_cost::create_2(
+        if let Err(err) = gas_cost::create_2(
             new_size,
-            current_call_frame.memory.len(),
+            self.current_call_frame.memory.len(),
             code_size_in_memory,
             fork,
-        )?)?;
+        )
+        .and_then(|x| Ok(self.current_call_frame.increase_consumed_gas(x)?))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         self.generic_create(
             value_in_wei_to_send,
             code_offset_in_memory,
             code_size_in_memory,
             Some(salt),
+            error,
         )
     }
 
     // REVERT operation
-    pub fn op_revert(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_revert(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         // Description: Gets values from stack, calculates gas cost and sets return data.
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
-        let current_call_frame = &mut self.current_call_frame;
 
-        let [offset, size] = *current_call_frame.stack.pop()?;
+        let [offset, size] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let (size, offset) = size_offset_to_usize(size, offset)?;
+        let (size, offset) = match size_offset_to_usize(size, offset) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let new_memory_size = calculate_memory_size(offset, size)?;
-        let current_memory_size = current_call_frame.memory.len();
+        let new_memory_size = match calculate_memory_size(offset, size) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        let current_memory_size = self.current_call_frame.memory.len();
 
-        current_call_frame
-            .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
+        if let Err(err) = gas_cost::exit_opcode(new_memory_size, current_memory_size)
+            .and_then(|x| Ok(self.current_call_frame.increase_consumed_gas(x)?))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
-        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?;
+        self.current_call_frame.output =
+            match self.current_call_frame.memory.load_range(offset, size) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
 
-        Err(VMError::RevertOpcode)
+        error.set(VMError::RevertOpcode);
+        OpcodeResult::Halt
     }
 
     /// ### INVALID operation
     /// Reverts consuming all gas, no return data.
-    pub fn op_invalid(&mut self) -> Result<OpcodeResult, VMError> {
-        Err(ExceptionalHalt::InvalidOpcode.into())
+    pub fn op_invalid(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        error.set(ExceptionalHalt::InvalidOpcode.into());
+        OpcodeResult::Halt
     }
 
     // SELFDESTRUCT operation
-    pub fn op_selfdestruct(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_selfdestruct(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         // Sends all ether in the account to the target address
         // Steps:
         // 1. Pop the target address from the stack
@@ -535,40 +835,78 @@ impl<'a> VM<'a> {
         let (beneficiary, to) = {
             let current_call_frame = &mut self.current_call_frame;
             if current_call_frame.is_static {
-                return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+                error.set(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+                return OpcodeResult::Halt;
             }
-            let target_address = word_to_address(current_call_frame.stack.pop1()?);
+            let target_address = match current_call_frame.stack.pop1().map(word_to_address) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             let to = current_call_frame.to;
             (target_address, to)
         };
 
         let target_account_is_cold = !self.substate.add_accessed_address(beneficiary);
-        let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
+        let target_account_is_empty = match self.db.get_account(beneficiary) {
+            Ok(x) => x.is_empty(),
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
-        let current_account = self.db.get_account(to)?;
+        let current_account = match self.db.get_account(to) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         let balance = current_account.info.balance;
 
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::selfdestruct(
-                target_account_is_cold,
-                target_account_is_empty,
-                balance,
-            )?)?;
+        if let Err(err) =
+            gas_cost::selfdestruct(target_account_is_cold, target_account_is_empty, balance)
+                .and_then(|x| Ok(self.current_call_frame.increase_consumed_gas(x)?))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.config.fork >= Fork::Cancun {
-            self.transfer(to, beneficiary, balance)?;
+            if let Err(err) = self.transfer(to, beneficiary, balance) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
 
             // Selfdestruct is executed in the same transaction as the contract was created
             if self.substate.is_account_created(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
-                self.get_account_mut(to)?.info.balance = U256::zero();
+                match self.get_account_mut(to) {
+                    Ok(x) => x.info.balance = U256::zero(),
+                    Err(err) => {
+                        error.set(err.into());
+                        return OpcodeResult::Halt;
+                    }
+                }
 
                 self.substate.add_selfdestruct(to);
             }
         } else {
-            self.increase_account_balance(beneficiary, balance)?;
-            self.get_account_mut(to)?.info.balance = U256::zero();
+            if let Err(err) = self.increase_account_balance(beneficiary, balance) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+            match self.get_account_mut(to) {
+                Ok(x) => x.info.balance = U256::zero(),
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
 
             self.substate.add_selfdestruct(to);
         }
@@ -576,9 +914,12 @@ impl<'a> VM<'a> {
         self.tracer
             .enter(SELFDESTRUCT, to, beneficiary, balance, 0, &Bytes::new());
 
-        self.tracer.exit_early(0, None)?;
+        if let Err(err) = self.tracer.exit_early(0, None) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        };
 
-        Ok(OpcodeResult::Halt)
+        OpcodeResult::Halt
     }
 
     /// Common behavior for CREATE and CREATE2 opcodes
@@ -588,42 +929,72 @@ impl<'a> VM<'a> {
         code_offset_in_memory: usize,
         code_size_in_memory: usize,
         salt: Option<U256>,
-    ) -> Result<OpcodeResult, VMError> {
+        error: &mut OnceCell<VMError>,
+    ) -> OpcodeResult {
         // Validations that can cause out of gas.
         // 1. [EIP-3860] - Cant exceed init code max size
         if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
-            return Err(ExceptionalHalt::OutOfGas.into());
+            error.set(ExceptionalHalt::OutOfGas.into());
+            return OpcodeResult::Halt;
         }
 
-        let current_call_frame = &mut self.current_call_frame;
         // 2. CREATE can't be called in a static context
-        if current_call_frame.is_static {
-            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        if self.current_call_frame.is_static {
+            error.set(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+            return OpcodeResult::Halt;
         }
 
         // Clear callframe subreturn data
-        current_call_frame.sub_return_data = Bytes::new();
+        self.current_call_frame.sub_return_data = Bytes::new();
 
         // Reserve gas for subcall
-        let gas_limit = max_message_call_gas(current_call_frame)?;
-        current_call_frame.increase_consumed_gas(gas_limit)?;
+        let gas_limit = match max_message_call_gas(&self.current_call_frame) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        if let Err(err) = self.current_call_frame.increase_consumed_gas(gas_limit) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // Load code from memory
-        let code = self
+        let code = match self
             .current_call_frame
             .memory
-            .load_range(code_offset_in_memory, code_size_in_memory)?;
+            .load_range(code_offset_in_memory, code_size_in_memory)
+        {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
         let (deployer_balance, deployer_nonce) = {
-            let deployer_account = self.db.get_account(deployer)?;
+            let deployer_account = match self.db.get_account(deployer) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
             (deployer_account.info.balance, deployer_account.info.nonce)
         };
 
         // Calculate create address
         let new_address = match salt {
-            Some(salt) => calculate_create2_address(deployer, &code, salt)?,
+            Some(salt) => match calculate_create2_address(deployer, &code, salt) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            },
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
@@ -638,11 +1009,18 @@ impl<'a> VM<'a> {
         self.tracer
             .enter(call_type, deployer, new_address, value, gas_limit, &code);
 
-        let new_depth = self
+        let new_depth = match self
             .current_call_frame
             .depth
             .checked_add(1)
-            .ok_or(InternalError::Overflow)?;
+            .ok_or(InternalError::Overflow)
+        {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         // Validations that push 0 (FAIL) to the stack and return reserved gas to deployer
         // 1. Sender doesn't have enough balance to send value.
@@ -655,21 +1033,41 @@ impl<'a> VM<'a> {
         ];
         for (condition, reason) in checks {
             if condition {
-                self.early_revert_message_call(gas_limit, reason.to_string())?;
-                return Ok(OpcodeResult::Continue);
+                if let Err(err) = self.early_revert_message_call(gas_limit, reason.to_string()) {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                };
+                return OpcodeResult::Continue;
             }
         }
 
         // Increment sender nonce (irreversible change)
-        self.increment_account_nonce(deployer)?;
+        if let Err(err) = self.increment_account_nonce(deployer) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         // Deployment will fail (consuming all gas) if the contract already exists.
-        let new_account = self.get_account_mut(new_address)?;
+        let new_account = match self.get_account_mut(new_address) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         if new_account.has_code_or_nonce() {
-            self.current_call_frame.stack.push1(FAIL)?;
-            self.tracer
-                .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
-            return Ok(OpcodeResult::Continue);
+            if let Err(err) = self.current_call_frame.stack.push1(FAIL) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+            if let Err(err) = self
+                .tracer
+                .exit_early(gas_limit, Some("CreateAccExists".to_string()))
+            {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+            return OpcodeResult::Continue;
         }
 
         let mut stack = self.stack_pool.pop().unwrap_or_default();
@@ -697,13 +1095,20 @@ impl<'a> VM<'a> {
         self.add_callframe(new_call_frame);
 
         // Changes that revert in case the Create fails.
-        self.increment_account_nonce(new_address)?; // 0 -> 1
-        self.transfer(deployer, new_address, value)?;
+        // 0 -> 1
+        if let Err(err) = self.increment_account_nonce(new_address) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+        if let Err(err) = self.transfer(deployer, new_address, value) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -728,83 +1133,144 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Bytes,
         is_delegation_7702: bool,
-    ) -> Result<OpcodeResult, VMError> {
+        error: &mut OnceCell<VMError>,
+    ) -> OpcodeResult {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
 
         // Validate sender has enough value
         if should_transfer_value && !value.is_zero() {
-            let sender_balance = self.db.get_account(msg_sender)?.info.balance;
+            let sender_balance = match self.db.get_account(msg_sender) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            }
+            .info
+            .balance;
             if sender_balance < value {
-                self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
-                return Ok(OpcodeResult::Continue);
+                if let Err(err) = self.early_revert_message_call(gas_limit, "OutOfFund".to_string())
+                {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+                return OpcodeResult::Continue;
             }
         }
 
         // Validate max depth has not been reached yet.
-        let new_depth = self
+        let new_depth = match self
             .current_call_frame
             .depth
             .checked_add(1)
-            .ok_or(InternalError::Overflow)?;
+            .ok_or(InternalError::Overflow)
+        {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
         if new_depth > 1024 {
-            self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
-            return Ok(OpcodeResult::Continue);
+            if let Err(err) = self.early_revert_message_call(gas_limit, "MaxDepth".to_string()) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+            return OpcodeResult::Continue;
         }
 
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
             && !is_delegation_7702
         {
             let mut gas_remaining = gas_limit;
-            let ctx_result = Self::execute_precompile(
+            let ctx_result = match Self::execute_precompile(
                 code_address,
                 &calldata,
                 gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
-            )?;
-
-            let call_frame = &mut self.current_call_frame;
+            ) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            };
 
             // Return gas left from subcontext
             #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
             if ctx_result.is_success() {
-                call_frame.gas_remaining = (call_frame.gas_remaining as u64)
-                    .checked_add(
-                        gas_limit
+                self.current_call_frame.gas_remaining =
+                    match (self.current_call_frame.gas_remaining as u64).checked_add(
+                        match gas_limit
                             .checked_sub(ctx_result.gas_used)
-                            .ok_or(InternalError::Underflow)?,
-                    )
-                    .ok_or(InternalError::Overflow)?
-                    as i64;
+                            .ok_or(InternalError::Underflow)
+                        {
+                            Ok(x) => x,
+                            Err(err) => {
+                                error.set(err.into());
+                                return OpcodeResult::Halt;
+                            }
+                        },
+                    ) {
+                        Some(x) => x as i64,
+                        None => {
+                            error.set(InternalError::Overflow.into());
+                            return OpcodeResult::Halt;
+                        }
+                    };
             }
 
             // Store return data of sub-context
-            call_frame.memory.store_data(
+            if let Err(err) = self.current_call_frame.memory.store_data(
                 ret_offset,
                 if ctx_result.output.len() >= ret_size {
-                    ctx_result
+                    match ctx_result
                         .output
                         .get(..ret_size)
-                        .ok_or(ExceptionalHalt::OutOfBounds)?
+                        .ok_or(ExceptionalHalt::OutOfBounds)
+                    {
+                        Ok(x) => x,
+                        Err(err) => {
+                            error.set(err.into());
+                            return OpcodeResult::Halt;
+                        }
+                    }
                 } else {
                     &ctx_result.output
                 },
-            )?;
-            call_frame.sub_return_data = ctx_result.output.clone();
+            ) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            };
+            self.current_call_frame.sub_return_data = ctx_result.output.clone();
 
             // What to do, depending on TxResult
-            call_frame.stack.push1(match &ctx_result.result {
-                TxResult::Success => SUCCESS,
-                TxResult::Revert(_) => FAIL,
-            })?;
+            if let Err(err) = self
+                .current_call_frame
+                .stack
+                .push1(match &ctx_result.result {
+                    TxResult::Success => SUCCESS,
+                    TxResult::Revert(_) => FAIL,
+                })
+            {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
 
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
-                self.transfer(msg_sender, to, value)?;
+                if let Err(err) = self.transfer(msg_sender, to, value) {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                };
             }
 
-            self.tracer.exit_context(&ctx_result, false)?;
+            if let Err(err) = self.tracer.exit_context(&ctx_result, false) {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
@@ -832,13 +1298,16 @@ impl<'a> VM<'a> {
 
             // Transfer value from caller to callee.
             if should_transfer_value {
-                self.transfer(msg_sender, to, value)?;
+                if let Err(err) = self.transfer(msg_sender, to, value) {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
             }
 
             self.substate.push_backup();
         }
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.

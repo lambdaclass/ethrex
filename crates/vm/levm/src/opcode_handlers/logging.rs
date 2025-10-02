@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use crate::{
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
@@ -12,39 +14,74 @@ use ethrex_common::{H256, U256, types::Log};
 
 impl<'a> VM<'a> {
     // LOG operation
-    pub fn op_log<const N_TOPICS: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        if current_call_frame.is_static {
-            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+    pub fn op_log<const N_TOPICS: usize>(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        if self.current_call_frame.is_static {
+            error.set(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+            return OpcodeResult::Halt;
         }
 
-        let [offset, size] = *current_call_frame.stack.pop()?;
-        let (size, offset) = size_offset_to_usize(size, offset)?;
-
-        let topics = current_call_frame
-            .stack
-            .pop::<N_TOPICS>()?
-            .map(|topic| H256(U256::to_big_endian(&topic)));
-
-        let new_memory_size = calculate_memory_size(offset, size)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::log(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-            N_TOPICS,
-        )?)?;
-
-        let log = Log {
-            address: current_call_frame.to,
-            topics: topics.to_vec(),
-            data: current_call_frame.memory.load_range(offset, size)?,
+        let [offset, size] = match self.current_call_frame.stack.pop() {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+        let (size, offset) = match size_offset_to_usize(size, offset) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
         };
 
-        self.tracer.log(&log)?;
+        let topics = match self.current_call_frame.stack.pop::<N_TOPICS>() {
+            Ok(x) => x.map(|topic| H256(U256::to_big_endian(&topic))),
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+
+        let new_memory_size = match calculate_memory_size(offset, size) {
+            Ok(x) => x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
+
+        if let Err(err) = gas_cost::log(
+            new_memory_size,
+            self.current_call_frame.memory.len(),
+            size,
+            N_TOPICS,
+        )
+        .and_then(|x| Ok(self.current_call_frame.increase_consumed_gas(x)?))
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
+
+        let log = Log {
+            address: self.current_call_frame.to,
+            topics: topics.to_vec(),
+            data: match self.current_call_frame.memory.load_range(offset, size) {
+                Ok(x) => x,
+                Err(err) => {
+                    error.set(err.into());
+                    return OpcodeResult::Halt;
+                }
+            },
+        };
+
+        if let Err(err) = self.tracer.log(&log) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        }
 
         self.substate.add_log(log);
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 }

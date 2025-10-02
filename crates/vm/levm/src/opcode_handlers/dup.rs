@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
@@ -9,17 +11,31 @@ use crate::{
 
 impl<'a> VM<'a> {
     // DUP operation
-    pub fn op_dup<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
+    pub fn op_dup<const N: usize>(&mut self, error: &mut OnceCell<VMError>) -> OpcodeResult {
         // Increase the consumed gas
-        current_call_frame.increase_consumed_gas(gas_cost::DUPN)?;
+        if let Err(err) = self
+            .current_call_frame
+            .increase_consumed_gas(gas_cost::DUPN)
+        {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        };
 
         // Get the value at the specified depth
-        let value_at_depth = *current_call_frame.stack.get(N)?;
+        let value_at_depth = match self.current_call_frame.stack.get(N) {
+            Ok(x) => *x,
+            Err(err) => {
+                error.set(err.into());
+                return OpcodeResult::Halt;
+            }
+        };
 
         // Push the duplicated value onto the stack
-        current_call_frame.stack.push1(value_at_depth)?;
+        if let Err(err) = self.current_call_frame.stack.push1(value_at_depth) {
+            error.set(err.into());
+            return OpcodeResult::Halt;
+        };
 
-        Ok(OpcodeResult::Continue)
+        OpcodeResult::Continue
     }
 }
