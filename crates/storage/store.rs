@@ -1313,9 +1313,7 @@ impl Iterator for AncestorIterator {
     }
 }
 
-// Hash utility functions
 pub fn hash_address(address: &ethereum_types::Address) -> Vec<u8> {
-    use sha3::{Digest as _, Keccak256};
     Keccak256::new_with_prefix(address.to_fixed_bytes())
         .finalize()
         .to_vec()
@@ -1330,7 +1328,6 @@ fn hash_address_fixed(address: &Address) -> H256 {
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
-    use sha3::{Digest as _, Keccak256};
     Keccak256::new_with_prefix(key.to_fixed_bytes())
         .finalize()
         .to_vec()

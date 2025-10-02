@@ -8,7 +8,6 @@ pub mod store;
 pub mod trie;
 pub mod utils;
 
-// Re-exports for public API
 pub use store::{
     AccountUpdatesList, EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, UpdateBatch,
     hash_address, hash_key,
