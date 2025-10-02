@@ -1,6 +1,6 @@
 # Healing Algorithm Explanation and Documentation (Before Path Based)
 
-Healing is the last step of Snap Sync. Snap begins the downloading of the state and storage tries by downloading the leaves (account states and storage slots), and from those leaves we reconstruct the intermediate nodes (branches and extension). Afterwards we may be left with an malformed trie, as that step will resume the download of leaves with a new state root if the old one times out.
+Healing is the last step of Snap Sync. Snap begins the downloading of the state and storage tries by downloading the leaves (account states and storage slots), and from those leaves we reconstruct the intermediate nodes (branches and extension). Afterwards we may be left with a malformed trie, as that step will resume the download of leaves with a new state root if the old one times out.
 
 The purpose of the healing algorithm is “heal” that trie so that it ends up in a consistent state.
 
@@ -36,7 +36,7 @@ The algorithm is implemented in ethrex currently in `crates/networking/p2p/sync/
 
 ### API
 
-The API used is the ethereum capability snap/1, documented at https://github.com/ethereum/devp2p/blob/master/caps/snap.md and for healing the only method used is `GetTrieNodes`. This method allows us to ask out peers for nodes in a trie. We ask the nodes by **path** to the node, not by hash. 
+The API used is the ethereum capability snap/1, documented at https://github.com/ethereum/devp2p/blob/master/caps/snap.md and for healing the only method used is `GetTrieNodes`. This method allows us to ask our peers for nodes in a trie. We ask the nodes by **path** to the node, not by hash. 
 
 ```rust
 pub struct GetTrieNodes {    
@@ -89,6 +89,6 @@ pub struct MembatchEntryValue {
 ## Known Optimization Issues
 
 - Membatch gets cleared between iterations, while it could be preserved and the hash checked.
-- When checking if a children is present in storage, we can also check if it’s in the membatch. If it is, we can skip that download and act like we have immediatly downloaded that node.
+- When checking if a child is present in storage, we can also check if it’s in the membatch. If it is, we can skip that download and act like we have immediately downloaded that node.
 - Membatch is currently a `HashMap`, a `BTreeMap` or other structures may be faster in real use.
 - Storage healing receives as a parameter a list of accounts that need to be healed and it has get their state before it can run. Doing those reads could be more efficient.

@@ -3,7 +3,7 @@
 ### How it happens
 
 Ethereum accounts are broadly divided into two categories:
-- Externaly Owned Accounts (EOA): accounts for general users to transfer eth and call contracts.
+- Externally Owned Accounts (EOA): accounts for general users to transfer eth and call contracts.
 - Contracts: which execute code and store data.
 
 Creating EOA is done through sending ETH into a new address, at which point the account is created and added into the state trie.
@@ -20,7 +20,7 @@ Snap-sync is broadly divided into two stages:
 
 Healing is needed because the leaves can be downloaded from disparate blocks, and to "fix" only the nodes of the trie that changed between nodes. [In depth explanation](https://www.notion.so/lambdaclass/Healing-Algorithm-Explanation-and-Documentation-269b9462471380e4a275edd77c8b5dc5?source=copy_link).
 
-We were working under the asumption that accouts were never deleted, so we adopted some specific optimizations. During the state healing stage every account that was "healed" was added into a list of accounts that needed to be checked for storage healing. When healing the storage of those accounts the alogrithm requested their account states and expected them to be there to see if the had any storage that needed healing. This lead to the storage healing threads panicking when they failed to find the account that was deleted.
+We were working under the assumption that accounts were never deleted, so we adopted some specific optimizations. During the state healing stage every account that was "healed" was added into a list of accounts that needed to be checked for storage healing. When healing the storage of those accounts the alogrithm requested their account states and expected them to be there to see if the had any storage that needed healing. This lead to the storage healing threads panicking when they failed to find the account that was deleted.
 
 During the test of snapsync mainnet, we started seeing that storage healing was panicking, so we added some logs to see what account hashes were being accessed and when where they healed vs accessed. Exploring the database we saw that the offending account was present in a previous state and missing in the next one, with the corresponding merkle proof matching the block state root. Originally we suspected a reorg, but searching the blocks we saw they were finalized in the chain. 
 
