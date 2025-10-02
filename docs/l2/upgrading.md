@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-This guide assumes that you already have an L2 node deployed and running as stated in the [Deploying a node](./running.md) instructions.
+This guide assumes that you already have an L2 node deployed and running as stated in the [Deploying a node](./deploy.md) instructions.
 
 ## Migrate the DB
 
