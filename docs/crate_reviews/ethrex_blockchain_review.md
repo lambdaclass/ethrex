@@ -14,7 +14,7 @@ Target crate: `crates/blockchain`
 
 - Files analyzed: 9 Rust sources (excludes `dev/` and `metrics/`)
 - Functions: 134 total with 15 flagged as complex (line/branch heuristics)
-- Longest routine(s): `blockchain.rs::generate_witness_for_blocks` (212 lines, 22 branches); `blockchain.rs::add_blocks_in_batch` (140 lines, 11 branches); `blockchain.rs::validate_transaction` (91 lines, 22 branches)
+- Longest routine(s): [crates/blockchain/blockchain.rs:184](https://github.com/lambdaclass/ethrex/blob/31e19504485904c70bd5294aa65becf91358d0e3/crates/blockchain/blockchain.rs#L184) (`generate_witness_for_blocks`, 212 lines, 22 branches); [crates/blockchain/blockchain.rs:501](https://github.com/lambdaclass/ethrex/blob/31e19504485904c70bd5294aa65becf91358d0e3/crates/blockchain/blockchain.rs#L501) (`add_blocks_in_batch`, 140 lines, 11 branches); [crates/blockchain/blockchain.rs:749](https://github.com/lambdaclass/ethrex/blob/31e19504485904c70bd5294aa65becf91358d0e3/crates/blockchain/blockchain.rs#L749) (`validate_transaction`, 91 lines, 22 branches)
 - Async/concurrency signals (crate-wide):
   - `async fn`: 31 (production paths; +7 in `smoke_test.rs`)
   - `.await`: 45 (production paths; +74 in `smoke_test.rs`)

@@ -14,7 +14,7 @@ Target crate: `crates/storage`
 
 - Files analyzed: 19 Rust sources (no exclusions)
 - Functions: 391 total with 15 flagged as complex (see heuristics)
-- Longest routine(s): `store_db::rocksdb::Store::new` ([crates/storage/store_db/rocksdb.rs:109](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/rocksdb.rs#L109), 194 lines/12 branches); `store_db::rocksdb::Store::apply_updates` ([crates/storage/store_db/rocksdb.rs:439](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/rocksdb.rs#L439), 91 lines/9 branches); `store_db::libmdbx::Store::apply_updates` ([crates/storage/store_db/libmdbx.rs:129](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/libmdbx.rs#L129), 83 lines/10 branches)
+- Longest routine(s): [crates/storage/store_db/rocksdb.rs:109](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/rocksdb.rs#L109) (`Store::new`, 194 lines/12 branches); [crates/storage/store_db/rocksdb.rs:439](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/rocksdb.rs#L439) (`Store::apply_updates`, 91 lines/9 branches); [crates/storage/store_db/libmdbx.rs:129](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/storage/store_db/libmdbx.rs#L129) (`Store::apply_updates`, 83 lines/10 branches)
 - Async/concurrency signals (crate-wide):
   - `async fn`: 0
   - `.await`: 0

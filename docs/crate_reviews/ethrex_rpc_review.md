@@ -14,7 +14,7 @@ Target crate: `crates/networking/rpc`
 
 - Files analyzed: 43 Rust sources (tests included; no nested crates)
 - Functions: 331 total with 21 flagged as complex (≥60 lines or branch-heavy)
-- Longest routine(s): `engine::fork_choice::handle_forkchoice` (134 lines, 20 branches), `eth::transaction::handle` (110 lines, 11 branches), `eth::fee_market::handle` (97 lines, 11 branches)
+- Longest routine(s): [crates/networking/rpc/engine/fork_choice.rs:166](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/networking/rpc/engine/fork_choice.rs#L166) (`handle_forkchoice`, 134 lines, 20 branches); [crates/networking/rpc/eth/transaction.rs:436](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/networking/rpc/eth/transaction.rs#L436) (`EstimateGasRequest::handle`, 110 lines, 11 branches); [crates/networking/rpc/eth/fee_market.rs:87](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/networking/rpc/eth/fee_market.rs#L87) (`handle`, 97 lines, 11 branches)
 - Async/concurrency signals (`rg -o` manual counts; analyzer under-counts multi-line matches):
   - `async fn`: 166
   - `.await`: 347

@@ -14,7 +14,7 @@ Target crate: `crates/vm/levm`
 
 - Files analyzed: 36 Rust sources (excluding the standalone bench and runner crates)
 - Functions: 413 total with 49 flagged as complex (line/branch heuristics)
-- Longest routine(s): `src/opcodes.rs::from` (160 lines, 1 branch); `src/opcodes.rs::build_opcode_table_pre_shanghai` (153 lines, 0 branches); `src/opcode_handlers/system.rs::generic_create` (117 lines, 11 branches)
+- Longest routine(s): [crates/vm/levm/src/opcodes.rs:183](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/vm/levm/src/opcodes.rs#L183) (`from`, 160 lines, 1 branch); [crates/vm/levm/src/opcodes.rs:389](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/vm/levm/src/opcodes.rs#L389) (`build_opcode_table_pre_shanghai`, 153 lines, 0 branches); [crates/vm/levm/src/opcode_handlers/system.rs:585](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/vm/levm/src/opcode_handlers/system.rs#L585) (`generic_create`, 117 lines, 11 branches)
 - Async/concurrency signals (crate-wide):
   - `async fn`: 0
   - `.await`: 0

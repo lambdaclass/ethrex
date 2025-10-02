@@ -14,7 +14,7 @@ Target crate: `crates/common/trie`
 
 - Files analyzed: 15 Rust sources (bench code under `benches/` included; README/Makefile ignored)
 - Functions: 257 total with 14 flagged as complex (≥60 lines or heavy branching)
-- Longest routine(s): `crates/common/trie/verify_range.rs::verify_range` (112 lines), `crates/common/trie/trie_iter.rs::advance` (101 lines), `crates/common/trie/node/branch.rs::remove` (88 lines)
+- Longest routine(s): [crates/common/trie/verify_range.rs:15](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/trie/verify_range.rs#L15) (`verify_range`, 112 lines), [crates/common/trie/trie_iter.rs:30](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/trie/trie_iter.rs#L30) (`advance`, 101 lines), [crates/common/trie/node/branch.rs:111](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/trie/node/branch.rs#L111) (`remove`, 88 lines)
 - Async/concurrency signals (crate-wide):
   - `async fn`: 0
   - `.await`: 0

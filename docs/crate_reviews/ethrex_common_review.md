@@ -14,7 +14,7 @@ Target crate: `crates/common` (excludes nested crates: `config/`, `crypto/`, `rl
 
 - Files analyzed: 24 Rust sources (sibling crates under `crates/common/*` excluded)
 - Functions: 395 total with 28 flagged as complex (heuristic: ≥60 lines or heavy branching)
-- Longest routine(s): `crates/common/types/fork_id.rs::sepolia_test_cases` (151 lines), `crates/common/types/fork_id.rs::holesky_test_cases` (138 lines), `crates/common/types/transaction.rs::sender` (116 lines)
+- Longest routine(s): [crates/common/types/fork_id.rs:504](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/types/fork_id.rs#L504) (`sepolia_test_cases`, 151 lines), [crates/common/types/fork_id.rs:251](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/types/fork_id.rs#L251) (`holesky_test_cases`, 138 lines), [crates/common/types/transaction.rs:937](https://github.com/lambdaclass/ethrex/blob/a25ab5cb61dba3c70210e0fca40353c91c88d0f1/crates/common/types/transaction.rs#L937) (`sender`, 116 lines)
 - Async/concurrency signals (crate-wide):
   - `async fn`: 0
   - `.await`: 0

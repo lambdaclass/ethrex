@@ -14,7 +14,7 @@ Target crate: `crates/vm` (excludes nested crate `crates/vm/levm`)
 
 - Files analyzed: 11 Rust sources (excludes the standalone `ethrex-levm` crate)
 - Functions: 70 total with 3 flagged as complex (line/branch heuristics)
-- Longest routine(s): `backends/levm/tracing.rs::rerun_block` (27 lines, 6 branches); `backends/levm/mod.rs::prepare_block` (20 lines, 7 branches); `backends/mod.rs::apply_system_calls` (14 lines, 6 branches)
+- Longest routine(s): [crates/vm/backends/levm/tracing.rs:11](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/vm/backends/levm/tracing.rs#L11) (`rerun_block`, 27 lines, 6 branches); [crates/vm/backends/levm/mod.rs:325](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/vm/backends/levm/mod.rs#L325) (`prepare_block`, 20 lines, 7 branches); [crates/vm/backends/mod.rs:104](https://github.com/lambdaclass/ethrex/blob/25ee6a95a6ccf329be87aecf903483fbc34796d0/crates/vm/backends/mod.rs#L104) (`apply_system_calls`, 14 lines, 6 branches)
 - Async/concurrency signals (crate-wide):
   - `async fn`: 0
   - `.await`: 0
