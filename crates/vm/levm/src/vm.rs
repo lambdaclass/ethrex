@@ -580,9 +580,9 @@ impl Substate {
         // Add access lists contents to accessed accounts and accessed storage slots.
         for (address, keys) in tx.access_list().clone() {
             initial_accessed_addresses.insert(address);
-            let set = initial_accessed_storage_slots.entry(address).or_default();
+            let warm_slots = initial_accessed_storage_slots.entry(address).or_default();
             for slot in keys {
-                set.insert(slot);
+                warm_slots.insert(slot);
             }
         }
 
