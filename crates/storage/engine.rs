@@ -81,7 +81,6 @@ impl StoreEngine {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
 
-                // Guardamos transacciones antes de mover block
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let mut composite_key = Vec::with_capacity(64);
                     composite_key.extend_from_slice(transaction.hash().as_bytes());
@@ -90,7 +89,6 @@ impl StoreEngine {
                     batch_items.push((TRANSACTION_LOCATIONS, composite_key, location_value));
                 }
 
-                // Ahora movemos block sin clone
                 let header_value = BlockHeaderRLP::from(block.header).into_vec();
                 batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
 
@@ -124,7 +122,6 @@ impl StoreEngine {
                 let block_number = block.header.number;
                 let block_hash = block.hash();
 
-                // Guardamos transacciones antes de mover block
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     let mut composite_key = Vec::with_capacity(64);
                     composite_key.extend_from_slice(transaction.hash().as_bytes());
@@ -133,7 +130,6 @@ impl StoreEngine {
                     batch_items.push((TRANSACTION_LOCATIONS, composite_key, location_value));
                 }
 
-                // Ahora movemos block sin clone
                 let header_value = BlockHeaderRLP::from(block.header).into_vec();
                 batch_items.push((HEADERS, block_hash.as_bytes().to_vec(), header_value));
 
@@ -342,12 +338,8 @@ impl StoreEngine {
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let block_hash = block.hash();
         let block_value = BlockRLP::from(block).into_vec();
-        self.write_async(
-            PENDING_BLOCKS,
-            block_hash.as_bytes().to_vec(),
-            block_value,
-        )
-        .await
+        self.write_async(PENDING_BLOCKS, block_hash.as_bytes().to_vec(), block_value)
+            .await
     }
     pub async fn get_pending_block(
         &self,
