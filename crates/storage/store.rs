@@ -29,6 +29,13 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
 
+#[derive(Debug, Clone)]
+pub struct Store {
+    pub engine: Arc<StoreEngine>,
+    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<RwLock<BlockHeader>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
@@ -49,36 +56,13 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
+pub type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
-    pub storage_updates: StorageTrieNodes,
+    pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Bytes)>,
-}
-
-pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
-
-// Hash utility functions
-pub fn hash_address(address: &ethereum_types::Address) -> Vec<u8> {
-    use sha3::{Digest as _, Keccak256};
-    Keccak256::new_with_prefix(address.to_fixed_bytes())
-        .finalize()
-        .to_vec()
-}
-
-pub fn hash_key(key: &H256) -> Vec<u8> {
-    use sha3::{Digest as _, Keccak256};
-    Keccak256::new_with_prefix(key.to_fixed_bytes())
-        .finalize()
-        .to_vec()
-}
-
-// Store wrapper with business logic
-#[derive(Debug, Clone)]
-pub struct Store {
-    pub engine: Arc<StoreEngine>,
-    pub chain_config: Arc<RwLock<ChainConfig>>,
-    pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 impl Store {
@@ -93,12 +77,12 @@ impl Store {
             EngineType::RocksDB => Self {
                 engine: Arc::new(StoreEngine::new(Arc::new(RocksDBBackend::open(path)?))?),
                 chain_config: Default::default(),
-                latest_block_header: Arc::new(std::sync::RwLock::new(BlockHeader::default())),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(StoreEngine::new(Arc::new(InMemoryBackend::open(path)?))?),
                 chain_config: Default::default(),
-                latest_block_header: Arc::new(std::sync::RwLock::new(BlockHeader::default())),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
         };
 
@@ -1292,7 +1276,7 @@ impl Store {
 
     pub async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: StorageTrieNodes,
+        storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
         self.engine
             .write_storage_trie_nodes_batch(storage_trie_nodes)
@@ -1329,12 +1313,27 @@ impl Iterator for AncestorIterator {
     }
 }
 
+// Hash utility functions
+pub fn hash_address(address: &ethereum_types::Address) -> Vec<u8> {
+    use sha3::{Digest as _, Keccak256};
+    Keccak256::new_with_prefix(address.to_fixed_bytes())
+        .finalize()
+        .to_vec()
+}
+
 fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
             .finalize()
             .into(),
     )
+}
+
+pub fn hash_key(key: &H256) -> Vec<u8> {
+    use sha3::{Digest as _, Keccak256};
+    Keccak256::new_with_prefix(key.to_fixed_bytes())
+        .finalize()
+        .to_vec()
 }
 
 #[cfg(test)]
