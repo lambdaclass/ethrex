@@ -179,7 +179,7 @@ pub struct Options {
         long = "p2p.tx-broadcasting-interval",
         default_value = "1000",
         value_name = "INTERVAL_MS",
-        help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them",
+        help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
         help_heading = "P2P options"
     )]
     pub tx_broadcasting_time_interval: u64,
