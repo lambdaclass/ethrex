@@ -76,7 +76,7 @@ pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
 #[cfg(feature = "secp256k1")]
 pub static SECP256K1_ORDER: LazyLock<U256> =
     LazyLock::new(|| U256::from_big_endian(&secp256k1::constants::CURVE_ORDER));
-#[cfg(feature = "secp256k1")]crates/vm/levm/src/constants.rs
+#[cfg(feature = "secp256k1")]
 pub static SECP256K1_ORDER_OVER2: LazyLock<U256> =
     LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;
