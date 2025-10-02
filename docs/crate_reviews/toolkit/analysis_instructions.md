@@ -10,7 +10,7 @@ Use these steps when preparing a complexity-focused review for an `ethrex` crate
   git rev-parse HEAD
   ```
 - Note the current date/time and any relevant feature flags or build settings supplied by the requester.
-- Deliverable: commit your findings to a new or updated report under `docs/crate_reviews/reports/`, using `_report_template.md` as the structure.
+- Deliverable: commit your findings to a new or updated report under `docs/crate_reviews/`, using `toolkit/_report_template.md` as the structure.
 
 
 ## 1. Scope the Target Crate
@@ -34,7 +34,7 @@ Use these steps when preparing a complexity-focused review for an `ethrex` crate
   - Length ≥ 40 lines **and** ≥ 3 branches.
 - Prefer the reusable helper script to gather stats:
   ```bash
-  docs/crate_reviews/analyze_crate.py "$CRATE_ROOT"
+  docs/crate_reviews/toolkit/analyze_crate.py "$CRATE_ROOT"
   ```
   Pass `--exclude <dir>` only when the crate directory contains sibling crates you need to drop (e.g., `--exclude dev`). Use `--exclude-prefix <path>` when you need to skip a nested crate subtree (for example `--exclude-prefix levm` while keeping `backends/levm`). The script emits file totals, complex function candidates, and concurrency keyword counts. Extend the search surface with `--keyword LABEL=REGEX` if you need crate-specific signals.
 - If you need raw data for spreadsheets, add `--json > crate_analysis.json` and import the output into your tooling of choice.
@@ -67,7 +67,7 @@ Use these steps when preparing a complexity-focused review for an `ethrex` crate
 - Capture quantitative metrics: file count, LOC, function totals, complex function tally, concurrency/blocking keyword counts.
 - Highlight top risky areas with file + line references (long functions, mixed locking patterns, async hotspots).
 - Assign a 1–5 engineering risk/complexity score based on size, branching density, concurrency surface, and critical-path functions.
-- Include the commit hash and date captured earlier near the top of the write-up so future reviews know exactly what was analyzed. Start from the template in `docs/crate_reviews/_report_template.md` so reports stay consistent.
+- Include the commit hash and date captured earlier near the top of the write-up so future reviews know exactly what was analyzed. Start from the template in `docs/crate_reviews/toolkit/_report_template.md` so reports stay consistent.
 - Suggest actionable next steps (e.g., refactoring targets, instrumentation ideas, lock/actor strategy adjustments, migrations away from mutexes toward actors where appropriate). Log results in the shared tracker if one exists for cross-crate comparisons.
 
 ## 8. Optional Enhancements

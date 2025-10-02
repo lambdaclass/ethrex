@@ -40,4 +40,4 @@ Target crate: `crates/networking/rpc`
 ## 6. Follow-Ups / Tooling Ideas
 - Enable `cargo clippy -W clippy::await_holding_lock` and audit the `TokioMutex` + `await` patterns surfaced (gas tip estimator is the first hit).
 - Add targeted load tests or tracing spans around storage-heavy RPCs to catch blocking behaviour before production (tokio-console or tracing-based histograms would help).
-- Extend `docs/crate_reviews/analyze_crate.py` to use multiline regex so async keyword counts stay accurate for this crate and future reviews.
+- Extend `docs/crate_reviews/toolkit/analyze_crate.py` to use multiline regex so async keyword counts stay accurate for this crate and future reviews.
