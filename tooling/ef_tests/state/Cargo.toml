@@ -24,13 +24,6 @@ hex = "0.4.3"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 itertools = "0.13.0"
-revm = { version = "19.0.0", features = [
-    "serde",
-    "std",
-    "serde-json",
-    "optional_no_base_fee",
-    "optional_block_gas_limit",
-], default-features = false }
 alloy-rlp = "0.3.12"
 tokio = { version = "1.41.1", features = ["full"] }
 rayon = "1.10.0"
