@@ -317,19 +317,39 @@ impl Blockchain {
     /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
     /// Fails if there is no payload or active payload build task for the given id.
     pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
-        let mut payloads = self.payloads.lock().await;
-        // Find the given payload and finish the active build process if needed
-        let idx = payloads
-            .iter()
-            .position(|(id, _)| id == &payload_id)
-            .ok_or(ChainError::UnknownPayload)?;
-        let finished_payload = (payload_id, payloads.remove(idx).1.to_payload().await?);
-        payloads.insert(idx, finished_payload);
-        // Return the held payload
-        match &payloads[idx].1 {
-            PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
-            _ => unreachable!("we already converted the payload into a finished version"),
+        // Take the target entry out while holding the lock, then release the lock
+        // and await finishing the payload build outside the critical section.
+        let (idx, item) = {
+            let mut payloads = self.payloads.lock().await;
+            let idx = payloads
+                .iter()
+                .position(|(id, _)| id == &payload_id)
+                .ok_or(ChainError::UnknownPayload)?;
+            let (_, item) = payloads.remove(idx);
+            (idx, item)
+        };
+
+        // Finish the current build task outside of the mutex lock if needed
+        let finished: PayloadBuildResult = match item {
+            PayloadOrTask::Payload(p) => *p,
+            PayloadOrTask::Task(task) => task.finish().await?,
+        };
+
+        // Reinsert the finished payload; if intervening modifications changed the length,
+        // clamp the insert position to the current bounds
+        {
+            let mut payloads = self.payloads.lock().await;
+            let insert_idx = idx.min(payloads.len());
+            payloads.insert(
+                insert_idx,
+                (
+                    payload_id,
+                    PayloadOrTask::Payload(Box::new(finished.clone())),
+                ),
+            );
         }
+
+        Ok(finished)
     }
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
