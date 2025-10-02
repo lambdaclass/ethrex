@@ -71,7 +71,7 @@ if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
 
 ### Membatch
 
-Currently, our algorithm has an invariant, which is that if we have a node in storage we have it’s and all of it’s children are present. Therefore, when we download for a node if some of it’s children are missing we can’t immediately store it on disk. Our implementation currently stores the nodes in temporary structure called membatch, which stores the node and how many of it’s children are missing. When a child gets stored, we reduce the counter of missing children of the parent. If that numbers reaches 0, we write the parent to the database.
+Currently, our algorithm has an invariant, which is that if we have a node in storage we have its and all of its children are present. Therefore, when we download for a node if some of it’s children are missing we can’t immediately store it on disk. Our implementation currently stores the nodes in temporary structure called membatch, which stores the node and how many of it’s children are missing. When a child gets stored, we reduce the counter of missing children of the parent. If that numbers reaches 0, we write the parent to the database.
 
 In code, the membatch is current `HashMap<Nibbles, MembatchEntryValue>` with the value being the following struct 
 
