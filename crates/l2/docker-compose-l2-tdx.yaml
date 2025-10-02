@@ -3,10 +3,10 @@ services:
   ethrex_l2:
     volumes:
       - ./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool:/automata-dcap-qpl-tool:ro,exec
+      - ../../cmd/.env:/env/.env
     environment:
       - ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY=${ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY:-0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d}
     command: >
-      l2
       --network /genesis/l2.json
       --http.addr 0.0.0.0
       --http.port 1729
@@ -17,3 +17,6 @@ services:
       --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
       --proof-coordinator.qpl-tool-path /automata-dcap-qpl-tool
       --no-monitor
+
+volumes:
+  env: null

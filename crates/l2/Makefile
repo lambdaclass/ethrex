@@ -177,27 +177,26 @@ init-prover: ../../target/release/ethrex ## 🚀 Initializes the Prover
 
 build-prover:
 	rm -f ../../target/release/ethrex
-	$(MAKE) ../../target/release/ethrex
+	$(MAKE) PROVER="$(PROVER)" G="$(G)" ../../target/release/ethrex
 
 ../../target/release/ethrex: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
 		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> <G=true>"; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> G=<true>"; \
 		echo "The prover can also be run with GPU (G)"; \
 	fi; \
-
-	@if [ -z "$$G" ]; then \
+	if [ -z "$$G" ]; then \
 		GPU=""; \
 	else \
 		GPU=",gpu"; \
 	fi; \
-
 	RUSTFLAGS='-C target-cpu=native' \
 	cargo build --release \
 		--manifest-path ../../Cargo.toml \
 		--bin ethrex \
 		--features "$$PROVER$$GPU"
+
 
 # ==============================================================================
 # TEE

@@ -2,7 +2,7 @@ pub mod db;
 mod tracing;
 
 use super::BlockExecutionResult;
-use crate::constants::{
+use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
@@ -151,7 +151,7 @@ impl LEVM {
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
-        env.block_gas_limit = u64::MAX; // disable block gas limit
+        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
         adjust_disabled_base_fee(&mut env);
 
@@ -207,8 +207,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             db,
-            *BEACON_ROOTS_ADDRESS,
-            *SYSTEM_ADDRESS,
+            BEACON_ROOTS_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -229,8 +229,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             db,
-            *HISTORY_STORAGE_ADDRESS,
-            *SYSTEM_ADDRESS,
+            HISTORY_STORAGE_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -250,8 +250,8 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
 
@@ -279,8 +279,8 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
 
@@ -376,7 +376,7 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: u64::MAX, // System calls, have no constraint on the block's gas limit.
+        block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
     };

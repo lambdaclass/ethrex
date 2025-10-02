@@ -51,7 +51,7 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          make build-prover
+          PROVER=sp1 G=true make build-prover
 
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -82,11 +82,16 @@ jobs:
           ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           docker compose up --build --detach --no-deps ethrex_l2
 
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
+
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
+          RUST_LOG=info,ethrex_prover_lib=debug PROVER=sp1 G=true make init-prover &
           docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
