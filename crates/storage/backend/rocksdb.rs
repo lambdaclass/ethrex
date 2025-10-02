@@ -160,20 +160,6 @@ impl StorageRoTx for RocksDBRoTx {
     }
 }
 
-/// Prefix iterator for RocksDB
-pub struct RocksDBPrefixIter {
-    /// Vector of prefix results
-    results: std::vec::IntoIter<PrefixResult>,
-}
-
-impl Iterator for RocksDBPrefixIter {
-    type Item = PrefixResult;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.results.next()
-    }
-}
-
 /// Read-write transaction for RocksDB
 pub struct RocksDBRwTx {
     /// Database reference for writing
@@ -204,15 +190,10 @@ impl StorageRoTx for RocksDBRwTx {
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
-        let iter = self.db.prefix_iterator_cf(&cf, prefix);
-        let results: Vec<PrefixResult> = iter
-            .map(|result| result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}"))))
-            .collect();
-
-        let rocks_iter = RocksDBPrefixIter {
-            results: results.into_iter(),
-        };
-        Ok(Box::new(rocks_iter))
+        let iter = self.db.prefix_iterator_cf(&cf, prefix).map(|result| {
+            result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+        });
+        Ok(Box::new(iter))
     }
 }
 
@@ -243,15 +224,15 @@ impl StorageRwTx for RocksDBRwTx {
         }
 
         // Load the column families for the tables in the batch
-        let unique_tables: HashSet<&str> = batch.iter().map(|(t, _, _)| *t).collect();
-        let mut cfs = HashMap::with_capacity(unique_tables.len());
-
-        for &table in unique_tables.iter() {
-            let cf = self
-                .db
-                .cf_handle(table)
-                .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
-            cfs.insert(table, cf);
+        let mut cfs = HashMap::new();
+        for (table, _, _) in &batch {
+            if !cfs.contains_key(table) {
+                let cf = self
+                    .db
+                    .cf_handle(table)
+                    .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+                cfs.insert(*table, cf);
+            }
         }
 
         for (table, key, value) in batch {
