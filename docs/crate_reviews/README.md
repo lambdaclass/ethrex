@@ -4,12 +4,18 @@ This directory stores the working materials for per-crate complexity and concurr
 
 ## Tracker
 
-Update the table after each crate audit so we retain a cross-crate snapshot. Link to the rendered report in `docs/crate_reviews/reports/` and capture the high-signal metrics straight from `analyze_crate.py`.
+Update the table after each crate audit so we retain a cross-crate snapshot. For every entry, record the effective LOC (non-empty, non-comment) and the engineering complexity score from the report, and link to the rendered artifact in `docs/crate_reviews/reports/`.
 
-| Crate | Commit | Date | Files / Complex Fns | Key Concurrency Signals | Report |
-| --- | --- | --- | --- | --- | --- |
-| `crates/networking/p2p` | `31e1950` | 2025-10-01 | 45 files / 56 functions | `.await`: 505 · `Arc<…>`: 75 · `spawn_blocking`: 11 | [ethrex_p2p_review.md](reports/ethrex_p2p_review.md) |
-| `crates/blockchain` | `31e1950` | 2025-10-01 | 9 files / 15 complex | `.await`: 45 · `Arc<…>`: 3 · `spawn_blocking`: 1 | [ethrex_blockchain_review.md](reports/ethrex_blockchain_review.md) |
+| Crate | LOC | Complexity Score | Report |
+| --- | --- | --- | --- |
+| `crates/blockchain` | 3,033 | 4 / 5 | [ethrex_blockchain_review.md](reports/ethrex_blockchain_review.md) |
+| `crates/common` | 8,223 | 2 / 5 | [ethrex_common_review.md](reports/ethrex_common_review.md) |
+| `crates/common/trie` | 3,904 | 3 / 5 | [ethrex_trie_review.md](reports/ethrex_trie_review.md) |
+| `crates/networking/p2p` | 13,344 | 5 / 5 | [ethrex_p2p_review.md](reports/ethrex_p2p_review.md) |
+| `crates/networking/rpc` | 8,157 | 3 / 5 | [ethrex_rpc_review.md](reports/ethrex_rpc_review.md) |
+| `crates/storage` | 5,565 | 4 / 5 | [ethrex_storage_review.md](reports/ethrex_storage_review.md) |
+| `crates/vm` | 1,121 | 2 / 5 | [ethrex_vm_review.md](reports/ethrex_vm_review.md) |
+| `crates/vm/levm` | 8,712 | 4 / 5 | [ethrex_levm_review.md](reports/ethrex_levm_review.md) |
 
 ## Tooling
 
