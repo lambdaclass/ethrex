@@ -123,7 +123,9 @@ impl Hook for L2Hook {
             pay_fee_vault(vm, ctx_result.gas_used, self.fee_config.fee_vault)?;
 
             // Operator fee is paid to the chain operator
-            return pay_operator_fee(vm, self.fee_config.operator_fee_config);
+            pay_operator_fee(vm, self.fee_config.operator_fee_config)?;
+
+            return Ok(());
         }
 
         if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
