@@ -11,10 +11,7 @@ use ethrex_common::types::{
     block_execution_witness::GuestProgramState, block_execution_witness::GuestProgramStateError,
 };
 use ethrex_common::{Address, U256};
-use ethrex_common::{
-    H256,
-    types::{Block, BlockHeader},
-};
+use ethrex_common::{H256, types::Block};
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
@@ -235,11 +232,14 @@ pub fn stateless_validation_l2(
 }
 
 struct StatelessResult {
+    #[cfg(feature = "l2")]
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,
     final_state_hash: H256,
+    #[cfg(feature = "l2")]
     account_updates: HashMap<Address, AccountUpdate>,
-    last_block_header: BlockHeader,
+    #[cfg(feature = "l2")]
+    last_block_header: ethrex_common::types::BlockHeader,
     last_block_hash: H256,
     non_privileged_count: U256,
 
@@ -251,7 +251,7 @@ struct StatelessResult {
     #[cfg(feature = "l2")]
     pub codes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
-    pub parent_block_header: BlockHeader,
+    pub parent_block_header: ethrex_common::types::BlockHeader,
 }
 
 fn execute_stateless(
@@ -382,10 +382,13 @@ fn execute_stateless(
     }
 
     Ok(StatelessResult {
+        #[cfg(feature = "l2")]
         receipts: acc_receipts,
         initial_state_hash,
         final_state_hash,
+        #[cfg(feature = "l2")]
         account_updates: acc_account_updates,
+        #[cfg(feature = "l2")]
         last_block_header: last_block.header.clone(),
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
