@@ -1,3 +1,6 @@
+//! Engine for storing and retrieving data from the database
+//! NOTE: Breaking changes will be made in the way that we encode/decode data to/from the database
+//!
 use bytes::Bytes;
 use ethrex_common::{
     H256,
