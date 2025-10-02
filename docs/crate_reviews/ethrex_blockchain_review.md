@@ -5,7 +5,6 @@ Commit: 31e19504485904c70bd5294aa65becf91358d0e3
 Target crate: `crates/blockchain`
 
 ## 1. Quantitative Snapshot
-- File count: 9
 
 | Type | Code | Blank | Doc comments | Comments | Total |
 | --- | --- | --- | --- | --- | --- |

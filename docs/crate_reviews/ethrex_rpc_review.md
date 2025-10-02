@@ -5,7 +5,6 @@ Commit: 25ee6a95a6ccf329be87aecf903483fbc34796d0
 Target crate: `crates/networking/rpc`
 
 ## 1. Quantitative Snapshot
-- File count: 43
 
 | Type | Code | Blank | Doc comments | Comments | Total |
 | --- | --- | --- | --- | --- | --- |

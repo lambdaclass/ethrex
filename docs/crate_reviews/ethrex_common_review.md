@@ -5,7 +5,6 @@ Commit: a25ab5cb61dba3c70210e0fca40353c91c88d0f1
 Target crate: `crates/common` (excludes nested crates: `config/`, `crypto/`, `rlp/`, `trie/`)
 
 ## 1. Quantitative Snapshot
-- File count: 24
 
 | Type | Code | Blank | Doc comments | Comments | Total |
 | --- | --- | --- | --- | --- | --- |

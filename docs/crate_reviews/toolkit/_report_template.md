@@ -5,7 +5,6 @@ Commit: {{commit_hash}}
 Target crate: `{{crate_path}}`
 
 ## 1. Quantitative Snapshot
-- File count: {{file_count}}
 
 | Type | Code | Blank | Doc comments | Comments | Total |
 | --- | --- | --- | --- | --- | --- |

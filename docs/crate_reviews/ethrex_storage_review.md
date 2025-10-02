@@ -5,7 +5,6 @@ Commit: 25ee6a95a6ccf329be87aecf903483fbc34796d0
 Target crate: `crates/storage`
 
 ## 1. Quantitative Snapshot
-- File count: 19
 
 | Type | Code | Blank | Doc comments | Comments | Total |
 | --- | --- | --- | --- | --- | --- |

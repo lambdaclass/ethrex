@@ -5,7 +5,6 @@ Commit: a25ab5cb61dba3c70210e0fca40353c91c88d0f1
 Target crate: `crates/common/trie`
 
 ## 1. Quantitative Snapshot
-- File count: 15
 
 | Type | Code | Blank | Doc comments | Comments | Total |
 | --- | --- | --- | --- | --- | --- |
