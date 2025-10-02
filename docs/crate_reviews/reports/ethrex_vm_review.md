@@ -38,6 +38,5 @@ Target crate: `crates/vm` (excludes nested crate `crates/vm/levm`)
 3. Preserve underlying mutex error information (e.g., include `error` details) when mapping failures to `EvmError`/`DatabaseError`, improving observability for witness generation and tracing pipelines (`crates/vm/witness_db.rs:64`, `crates/vm/backends/levm/db.rs:36`).
 
 ## 6. Follow-Ups / Tooling Ideas
-- Extend `docs/crate_reviews/analyze_crate.py` to accept path-prefix exclusions so nested crates like `crates/vm/levm` can be skipped without dropping `backends/levm` modules from the analysis.
 - Consider lightweight tracing spans or counters around `GuestProgramStateWrapper` operations to spot long-held locks or poisoning events in witness workflows.
 - If async consumption is planned, prototype replacing synchronous mutexes with actor messages or async-aware guards to avoid blocking upstream runtimes.
