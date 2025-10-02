@@ -735,7 +735,11 @@ async fn perform_needed_deletions(
     // Delete all the parents of this node.
     // Nodes should be in the DB only if their children are also in the DB.
     for i in 0..node_path.len() {
-        to_delete.insert(apply_prefix(Some(hashed_account), node_path.slice(0, i)));
+        to_delete.insert(node_path.slice(0, i));
+    }
+    if let Some(Node::Leaf(leaf)) = previous {
+        to_delete.insert(node_path.concat(leaf.partial));
+        return Ok(());
     }
     match node {
         Node::Branch(node) => {
@@ -758,9 +762,6 @@ async fn perform_needed_deletions(
             ranges_to_delete.append(&mut store.get_ranges_to_delete_in_subtree(full_path, children)?);
         }
         Node::Extension(node) => {
-            if let Some(Node::Leaf(_)) = previous {
-                return Ok(());
-            }
             // An extension node is equivalent to a series of branch nodes with only
             // one valid child each, so we remove all the empty siblings on the path.
             let full_path = apply_prefix(Some(hashed_account), node_path.clone());
@@ -774,9 +775,6 @@ async fn perform_needed_deletions(
             }
         }
         Node::Leaf(node) => {
-            if let Some(Node::Leaf(_)) = previous {
-                return Ok(());
-            }
             // An extension node is equivalent to a series of branch nodes with only
             // one valid child each, so we remove all the empty siblings on the path.
             let full_path = apply_prefix(Some(hashed_account), node_path.clone());

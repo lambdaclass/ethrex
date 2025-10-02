@@ -288,7 +288,7 @@ async fn heal_state_trie(
                             previous,
                             &path,
                             &mut encoded_to_write,
-                            &mut ranges_to_delete
+                            &mut ranges_to_delete,
                         )
                         .await
                         .unwrap();
@@ -304,8 +304,14 @@ async fn heal_state_trie(
                     let db = trie_db.db();
                     db.put_batch(encoded_to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
-                    info!("Deliting ranges State healing: {:?}", ranges_to_delete.len());
-                    store.delete_range_batch(ranges_to_delete).await.expect("The range deletions on the store failed");
+                    info!(
+                        "Deliting ranges State healing: {:?}",
+                        ranges_to_delete.len()
+                    );
+                    store
+                        .delete_range_batch(ranges_to_delete)
+                        .await
+                        .expect("The range deletions on the store failed");
                     info!("Deleted ranges State healing");
                 })
             });
@@ -390,6 +396,10 @@ async fn perform_needed_deletions(
     for i in 0..node_path.len() {
         nodes_to_write.insert(node_path.slice(0, i), vec![]);
     }
+    if let Some(Node::Leaf(leaf)) = previous {
+        nodes_to_write.insert(node_path.concat(leaf.partial), vec![]);
+        return Ok(());
+    }
     match node {
         Node::Branch(node) => {
             let children = node
@@ -407,12 +417,10 @@ async fn perform_needed_deletions(
                 })
                 .map(|(choice, _)| choice as u8)
                 .collect();
-            ranges_to_delete.append(&mut store.get_ranges_to_delete_in_subtree(node_path.clone(), children)?);
+            ranges_to_delete
+                .append(&mut store.get_ranges_to_delete_in_subtree(node_path.clone(), children)?);
         }
         Node::Extension(node) => {
-            if let Some(Node::Leaf(_)) = previous {
-                return Ok(());
-            }
             // An extension node is equivalent to a series of branch nodes with only
             // one valid child each, so we remove all the empty siblings on the path.
             let (first, second) = compute_subtree_ranges(&node_path, &node.prefix);
@@ -425,9 +433,6 @@ async fn perform_needed_deletions(
             }
         }
         Node::Leaf(node) => {
-            if let Some(Node::Leaf(_)) = previous {
-                return Ok(());
-            }
             // An extension node is equivalent to a series of branch nodes with only
             // one valid child each, so we remove all the empty siblings on the path.
             let (first, second) = compute_subtree_ranges(&node_path, &node.partial);
