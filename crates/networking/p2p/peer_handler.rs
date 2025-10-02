@@ -1483,7 +1483,10 @@ impl PeerHandler {
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&acc_hash)
-                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(PeerHandlerError::UnrecoverableError(
+                                    "Tried to get the old download intervals for an account but did not find them"
+                                        .to_owned(),
+                                ))?;
                             for (old_start, end) in old_intervals {
                                 if end == &hash_end {
                                     *old_start = hash_start;
@@ -1513,12 +1516,18 @@ impl PeerHandler {
                             let (_, old_intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&acc_hash)
-                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(PeerHandlerError::UnrecoverableError(
+                                    "Tried to get the old download intervals for an account but did not find them"
+                                        .to_owned(),
+                                ))?;
                             old_intervals.remove(
                                 old_intervals
                                     .iter()
                                     .position(|(_old_start, end)| end == &hash_end)
-                                    .ok_or(PeerHandlerError::UnrecoverableError("Could not find an old interval that we were tracking".to_owned()))?,
+                                    .ok_or(PeerHandlerError::UnrecoverableError(
+                                        "Could not find an old interval that we were tracking"
+                                            .to_owned(),
+                                    ))?,
                             );
                             if old_intervals.is_empty() {
                                 for account in accounts_by_root_hash[remaining_start].1.iter() {
@@ -1582,7 +1591,10 @@ impl PeerHandler {
                                 let (_, intervals) = account_storage_roots
                                     .accounts_with_storage_root
                                     .get_mut(&accounts_by_root_hash[remaining_start].1[0])
-                                    .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                                    .ok_or(PeerHandlerError::UnrecoverableError(
+                                        "Tried to get the old download intervals for an account but did not find them"
+                                            .to_owned(),
+                                    ))?;
 
                                 for i in 0..chunk_count {
                                     let start_hash_u256 = start_hash_u256 + chunk_size * i;
@@ -1618,7 +1630,10 @@ impl PeerHandler {
                             let (_, intervals) = account_storage_roots
                                 .accounts_with_storage_root
                                 .get_mut(&accounts_by_root_hash[remaining_start].1[0])
-                                .ok_or(PeerHandlerError::UnrecoverableError("Trie to get the old download intervals for an account but did not find them".to_owned()))?;
+                                .ok_or(PeerHandlerError::UnrecoverableError(
+                                    "Trie to get the old download intervals for an account but did not find them"
+                                        .to_owned(),
+                                ))?;
 
                             for i in 0..chunk_count {
                                 let start_hash_u256 = start_hash_u256 + chunk_size * i;
