@@ -617,8 +617,8 @@ dependencies = [
 
 [[package]]
 name = "c-kzg"
-version = "1.0.3"
-source = "git+https://github.com/risc0/c-kzg-4844?tag=c-kzg%2Fv1.0.3-risczero.1#69ecb82af521baba5b57f9ba77348f8200a64dc7"
+version = "2.1.1"
+source = "git+https://github.com/risc0/c-kzg-4844?tag=c-kzg%2Fv2.1.1-risczero.0#1a8fa5497c80eb7f1fecbd7026f9bf86cc63fee2"
 dependencies = [
  "blst",
  "bytemuck",
@@ -1155,7 +1155,6 @@ name = "ethrex-blockchain"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "cfg-if",
  "ethrex-common",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -1323,7 +1322,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
- "cfg-if",
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types",
