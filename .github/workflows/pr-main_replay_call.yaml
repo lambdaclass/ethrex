@@ -3,8 +3,6 @@ permissions:
   contents: read
   actions: read
   checks: read
-  pull-requests: read
-  issues: read
 
 on:
   push:
@@ -20,9 +18,7 @@ jobs:
       contents: read
       actions: read
       checks: read
-      pull-requests: read
-      issues: read
-    uses: lambdaclass/ethrex-replay/.github/workflows/test.yaml@workflow_call
+    uses: lambdaclass/ethrex-replay/.github/workflows/pr-main-lint.yaml@move_replay
     with:
       a_repo: lambdaclass/ethrex
       a_ref: ${{ github.sha }}
