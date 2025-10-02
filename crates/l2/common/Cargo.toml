@@ -6,12 +6,14 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethereum-types.workspace = true
-ethrex-common.workspace = true
+ethrex-common = {workspace = true, default-features = false}
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-vm = {workspace = true, default-features = false}
+
+ethereum-types.workspace = true
+
 bytes.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -32,3 +34,5 @@ panic = "deny"
 default = ["secp256k1"]
 k256 = ["dep:k256", "ethrex-common/kzg-rs", "ethrex-vm/kzg-rs"]
 secp256k1 = ["dep:secp256k1", "ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
+
+sp1 = ["k256"]

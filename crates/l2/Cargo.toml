@@ -21,7 +21,7 @@ ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true
-ethrex-storage-rollup.workspace = true
+ethrex-storage-rollup = { workspace = true, default-features = false }
 ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm = { workspace = true, default-features = false }
@@ -82,5 +82,5 @@ panic = "deny"
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics"]
 l2 = ["guest_program/l2", "ethrex-common/c-kzg"]
-sp1 = ["ethrex-common/kzg-rs", "guest_program/sp1"]
+sp1 = ["ethrex-common/sp1", "guest_program/sp1", "ethrex-storage-rollup/sp1", "ethrex-levm/sp1"]
 risc0 = ["ethrex-common/c-kzg", "guest_program/risc0"]

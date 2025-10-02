@@ -36,5 +36,7 @@ kzg-rs = ["ethrex-levm/kzg-rs", "ethrex-common/kzg-rs"]
 openvm-kzg = ["ethrex-levm/openvm-kzg", "ethrex-common/openvm-kzg"]
 debug = ["ethrex-levm/debug"]
 
+sp1 = ["kzg-rs"]
+
 [lints.clippy]
 unwrap_used = "deny"
