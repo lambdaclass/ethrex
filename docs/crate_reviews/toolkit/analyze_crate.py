@@ -11,7 +11,7 @@ import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Optional, TypedDict, cast
+from typing import TypedDict, cast
 
 
 DEFAULT_BRANCH_MARKERS = [
@@ -48,6 +48,8 @@ FN_REGEX = re.compile(r"^\s*(pub\s+)?(async\s+)?(const\s+)?fn\s+(?P<name>\w+)")
 COMMENT_REGEX = re.compile(r"^\s*//")
 BLOCK_COMMENT_START = re.compile(r"/\*")
 BLOCK_COMMENT_END = re.compile(r"\*/")
+
+
 class Totals(TypedDict):
     files: int
     total_lines: int
@@ -85,9 +87,43 @@ class CLIArgs:
     json: bool
 
 
+def _ensure_str(value: object, name: str) -> str:
+    if isinstance(value, str):
+        return value
+    raise TypeError(f"{name} must be a string")
+
+
+def _ensure_str_list(value: object, name: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        value_list = cast(list[object], value)
+        result: list[str] = []
+        for item in value_list:
+            if not isinstance(item, str):
+                raise TypeError(f"{name} must contain only strings")
+            result.append(item)
+        return result
+    raise TypeError(f"{name} must be a list of strings or None")
+
+
+def _ensure_int(value: object, name: str) -> int:
+    if isinstance(value, int):
+        return value
+    raise TypeError(f"{name} must be an integer")
+
+
+def _ensure_bool(value: object, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise TypeError(f"{name} must be a boolean")
+
+
 def parse_args(argv: Sequence[str] | None = None) -> CLIArgs:
     parser = argparse.ArgumentParser(description=__doc__)
-    _ = parser.add_argument("crate_path", help="Path to the crate root (e.g. crates/networking/p2p)")
+    _ = parser.add_argument(
+        "crate_path", help="Path to the crate root (e.g. crates/networking/p2p)"
+    )
     _ = parser.add_argument(
         "--exclude",
         action="append",
@@ -147,19 +183,26 @@ def parse_args(argv: Sequence[str] | None = None) -> CLIArgs:
         help="Emit JSON instead of the default human-readable summary",
     )
     parsed = parser.parse_args(argv)
-    crate_path = cast(str, parsed.crate_path)
-    raw_exclude = cast(Optional[list[str]], parsed.exclude)
-    raw_exclude_prefix = cast(Optional[list[str]], parsed.exclude_prefix)
-    raw_keyword = cast(Optional[list[str]], parsed.keyword)
-    exclude = list(raw_exclude or [])
-    exclude_prefix = list(raw_exclude_prefix or [])
-    keyword = list(raw_keyword or [])
-    complex_line_threshold = cast(int, parsed.complex_line_threshold)
-    branch_threshold = cast(int, parsed.branch_threshold)
-    combined_line_threshold = cast(int, parsed.combined_line_threshold)
-    combined_branch_threshold = cast(int, parsed.combined_branch_threshold)
-    top_complex = cast(int, parsed.top_complex)
-    json_output = cast(bool, parsed.json)
+    crate_path = _ensure_str(cast(object, parsed.crate_path), "crate_path")
+    exclude = _ensure_str_list(cast(object, parsed.exclude), "exclude")
+    exclude_prefix = _ensure_str_list(
+        cast(object, parsed.exclude_prefix), "exclude_prefix"
+    )
+    keyword = _ensure_str_list(cast(object, parsed.keyword), "keyword")
+    complex_line_threshold = _ensure_int(
+        cast(object, parsed.complex_line_threshold), "complex_line_threshold"
+    )
+    branch_threshold = _ensure_int(
+        cast(object, parsed.branch_threshold), "branch_threshold"
+    )
+    combined_line_threshold = _ensure_int(
+        cast(object, parsed.combined_line_threshold), "combined_line_threshold"
+    )
+    combined_branch_threshold = _ensure_int(
+        cast(object, parsed.combined_branch_threshold), "combined_branch_threshold"
+    )
+    top_complex = _ensure_int(cast(object, parsed.top_complex), "top_complex")
+    json_output = _ensure_bool(cast(object, parsed.json), "json")
 
     return CLIArgs(
         crate_path=crate_path,
@@ -193,7 +236,9 @@ def normalize_prefixes(raw_prefixes: Iterable[str]) -> list[tuple[str, ...]]:
             raise ValueError(f"Prefix '{raw}' must be relative to the crate root")
         parts = tuple(part for part in prefix.parts if part not in ("", "."))
         if not parts:
-            raise ValueError("Empty prefix provided; remove redundant '/' or '.' entries")
+            raise ValueError(
+                "Empty prefix provided; remove redundant '/' or '.' entries"
+            )
         prefixes.append(parts)
     return prefixes
 
@@ -220,7 +265,11 @@ def should_exclude(
                 return True
 
     return False
-def count_keyword_occurrences(text: str, compiled_patterns: Mapping[str, re.Pattern[str]]) -> dict[str, int]:
+
+
+def count_keyword_occurrences(
+    text: str, compiled_patterns: Mapping[str, re.Pattern[str]]
+) -> dict[str, int]:
     totals: dict[str, int] = {}
     for label, pattern in compiled_patterns.items():
         totals[label] = len(pattern.findall(text))
@@ -313,7 +362,9 @@ def analyze(
                 line = lines[j]
                 depth += line.count("{") - line.count("}")
                 body_lines += 1
-                branches += sum(1 for marker in DEFAULT_BRANCH_MARKERS if marker in line)
+                branches += sum(
+                    1 for marker in DEFAULT_BRANCH_MARKERS if marker in line
+                )
                 j += 1
 
             totals["function_count"] += 1
@@ -337,7 +388,9 @@ def analyze(
                 )
             i = j
 
-    complex_fns.sort(key=lambda entry: (entry["lines"], entry["branches"]), reverse=True)
+    complex_fns.sort(
+        key=lambda entry: (entry["lines"], entry["branches"]), reverse=True
+    )
 
     # Compute keyword hotspots per file
     keyword_hotspots: dict[str, list[tuple[str, int]]] = {}
@@ -378,7 +431,9 @@ def emit_human(summary: Summary) -> None:
     )
     print(totals_line)
     print("\nKeyword counts:")
-    keyword_items = sorted(summary["keyword_totals"].items(), key=lambda item: (-item[1], item[0]))
+    keyword_items = sorted(
+        summary["keyword_totals"].items(), key=lambda item: (-item[1], item[0])
+    )
     for label, count in keyword_items:
         print(f"  - {label}: {count}")
 
