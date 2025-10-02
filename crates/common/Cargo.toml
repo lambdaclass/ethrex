@@ -39,6 +39,8 @@ c-kzg = ["ethrex-crypto/c-kzg"]
 kzg-rs = ["ethrex-crypto/kzg-rs"]
 openvm-kzg = ["ethrex-crypto/kzg-rs"]
 
+sp1 = ["kzg-rs"]
+
 [lib]
 path = "./common.rs"
 
