@@ -59,6 +59,8 @@ c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 kzg-rs = ["ethrex-common/kzg-rs", "ethrex-crypto/kzg-rs"]
 openvm-kzg = ["ethrex-common/openvm-kzg", "ethrex-crypto/openvm-kzg"]
 
+sp1 = [ "kzg-rs", "k256" ]
+
 ethereum_foundation_tests = []
 debug = []
 

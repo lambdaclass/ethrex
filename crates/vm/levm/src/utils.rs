@@ -333,7 +333,7 @@ pub fn eip7702_recover_address_secp256k1(
 
 #[cfg(feature = "k256")]
 pub fn eip7702_recover_address_k256(
-    auth_tuple: &AuthorizationTuple,
+    _auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
     unimplemented!()
 }

@@ -419,6 +419,7 @@ pub fn ecrecover_k256(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
+    use sha3::Keccak256;
     increase_precompile_consumed_gas(gas_cost::ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;
