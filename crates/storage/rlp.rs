@@ -13,7 +13,6 @@ use libmdbx::orm::{Decodable, Encodable};
 // Account types
 pub type AccountCodeHashRLP = Rlp<H256>;
 pub type AccountCodeRLP = Rlp<Bytes>;
-pub type AccountHashRLP = Rlp<H256>;
 
 // Block types
 pub type BlockHashRLP = Rlp<BlockHash>;
@@ -24,12 +23,6 @@ pub type BlockRLP = Rlp<Block>;
 // Receipt types
 #[allow(unused)]
 pub type ReceiptRLP = Rlp<Receipt>;
-
-// Transaction types
-pub type TransactionHashRLP = Rlp<H256>;
-
-// Wrapper for tuples. Used mostly for indexed keys.
-pub type TupleRLP<A, B> = Rlp<(A, B)>;
 
 #[derive(Clone, Debug)]
 pub struct Rlp<T>(Vec<u8>, PhantomData<T>);

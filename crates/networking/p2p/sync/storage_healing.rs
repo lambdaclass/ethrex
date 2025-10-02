@@ -174,12 +174,6 @@ pub async fn heal_storage_trie(
                 .healing_empty_try_recv
                 .store(state.empty_count as u64, Ordering::Relaxed);
             state.last_update = Instant::now();
-            peers
-                .peer_scores
-                .lock()
-                .await
-                .update_peers(&peers.peer_table)
-                .await;
             debug!(
                 "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
                 peers
@@ -292,15 +286,10 @@ pub async fn heal_storage_trie(
                     .download_queue
                     .extend(inflight_request.requests.clone());
                 peers
-                    .peer_scores
-                    .lock()
-                    .await
-                    .record_failure(inflight_request.peer_id);
-                peers
-                    .peer_scores
-                    .lock()
-                    .await
-                    .free_peer(inflight_request.peer_id);
+                    .peer_table
+                    .record_failure(inflight_request.peer_id)
+                    .await;
+                peers.peer_table.free_peer(inflight_request.peer_id).await;
             }
         }
     }
@@ -313,19 +302,14 @@ async fn ask_peers_for_nodes(
     requests_task_joinset: &mut JoinSet<
         Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
     >,
-    peers: &PeerHandler,
+    peers: &mut PeerHandler,
     state_root: H256,
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, mut peer_channel)) = peers
-            .peer_scores
-            .lock()
-            .await
-            .get_peer_channel_with_highest_score_and_mark_as_used(
-                &peers.peer_table,
-                &SUPPORTED_SNAP_CAPABILITIES,
-            )
+            .peer_table
+            .get_peer_channel_with_highest_score_and_mark_as_used(&SUPPORTED_SNAP_CAPABILITIES)
             .await
         else {
             // warn!("We have no free peers for storage healing!"); way too spammy, moving to trace
@@ -415,20 +399,15 @@ async fn zip_requeue_node_responses_score_peer(
         info!("We received a response where we had a missing requests {trie_nodes:?}");
         return None;
     };
-    peer_handler
-        .peer_scores
-        .lock()
-        .await
-        .free_peer(request.peer_id);
+    peer_handler.peer_table.free_peer(request.peer_id).await;
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
         *failed_downloads += 1;
         peer_handler
-            .peer_scores
-            .lock()
-            .await
-            .record_failure(request.peer_id);
+            .peer_table
+            .record_failure(request.peer_id)
+            .await;
         download_queue.extend(request.requests);
         return None;
     }
@@ -462,11 +441,11 @@ async fn zip_requeue_node_responses_score_peer(
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
         *succesful_downloads += 1;
-        peer_handler.peer_scores.lock().await.record_success(request.peer_id);
+        peer_handler.peer_table.record_success(request.peer_id).await;
         Some(nodes)
     } else {
         *failed_downloads += 1;
-        peer_handler.peer_scores.lock().await.record_failure(request.peer_id);
+        peer_handler.peer_table.record_failure(request.peer_id).await;
         download_queue.extend(request.requests);
         None
     }
@@ -539,10 +518,12 @@ fn get_initial_downloads(
             .healed_accounts
             .par_iter()
             .filter_map(|acc_path| {
+                // Accounts can be deleted from the trie after the healing process happens
+                // This is an edge case where an account with value got deleted by
+                // a self destruct contract creation step
                 let rlp = trie
                     .get(&acc_path.to_fixed_bytes().to_vec())
-                    .expect("We should be able to open the store")
-                    .expect("This account should exist in the trie");
+                    .expect("We should be able to open the store")?;
                 let account = AccountState::decode(&rlp).expect("We should have a valid account");
                 if account.storage_root == *EMPTY_TRIE_HASH {
                     return None;

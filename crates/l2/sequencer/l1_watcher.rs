@@ -6,6 +6,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{PrivilegedL2Transaction, TxType};
+use ethrex_common::utils::keccak;
 use ethrex_common::{H160, types::Transaction};
 use ethrex_l2_sdk::{
     build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
@@ -17,24 +18,29 @@ use ethrex_rpc::{
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
-use keccak_hash::keccak;
-use spawned_concurrency::messages::Unused;
+use serde::Serialize;
 use spawned_concurrency::tasks::{
-    CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+    CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
 };
+use std::collections::BTreeMap;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
+
+#[derive(Clone)]
+pub enum CallMessage {
+    Health,
+}
 
 #[derive(Clone)]
 pub enum InMessage {
     Watch,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum OutMessage {
     Done,
     Error,
+    Health(L1WatcherHealth),
 }
 
 pub struct L1Watcher {
@@ -48,6 +54,18 @@ pub struct L1Watcher {
     pub check_interval: u64,
     pub l1_block_delay: u64,
     pub sequencer_state: SequencerState,
+}
+
+#[derive(Clone, Serialize)]
+pub struct L1WatcherHealth {
+    pub l1_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub l2_rpc_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub max_block_step: String,
+    pub last_block_fetched: String,
+    pub check_interval: u64,
+    pub l1_block_delay: u64,
+    pub sequencer_state: String,
+    pub bridge_address: Address,
 }
 
 impl L1Watcher {
@@ -80,7 +98,7 @@ impl L1Watcher {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
-    ) -> Result<(), L1WatcherError> {
+    ) -> Result<GenServerHandle<Self>, L1WatcherError> {
         let state = Self::new(
             store,
             blockchain,
@@ -88,8 +106,7 @@ impl L1Watcher {
             &cfg.l1_watcher,
             sequencer_state,
         )?;
-        state.start();
-        Ok(())
+        Ok(state.start())
     }
 
     async fn watch(&mut self) {
@@ -262,10 +279,26 @@ impl L1Watcher {
             get_pending_privileged_transactions(&self.eth_client, self.address).await?;
         Ok(!pending_privileged_transactions.contains(&tx_hash))
     }
+
+    async fn health(&mut self) -> CallResponse<Self> {
+        let l1_rpc_healthcheck = self.eth_client.test_urls().await;
+        let l2_rpc_healthcheck = self.l2_client.test_urls().await;
+
+        CallResponse::Reply(OutMessage::Health(L1WatcherHealth {
+            l1_rpc_healthcheck,
+            l2_rpc_healthcheck,
+            max_block_step: self.max_block_step.to_string(),
+            last_block_fetched: self.last_block_fetched.to_string(),
+            check_interval: self.check_interval,
+            l1_block_delay: self.l1_block_delay,
+            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            bridge_address: self.address,
+        }))
+    }
 }
 
 impl GenServer for L1Watcher {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = L1WatcherError;
@@ -294,6 +327,16 @@ impl GenServer for L1Watcher {
                 send_after(check_interval, handle.clone(), Self::CastMsg::Watch);
                 CastResponse::NoReply
             }
+        }
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> spawned_concurrency::tasks::CallResponse<Self> {
+        match message {
+            CallMessage::Health => self.health().await,
         }
     }
 }

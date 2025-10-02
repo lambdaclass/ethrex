@@ -2,6 +2,8 @@
 name = "ethrex-prover"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 serde_json.workspace = true
@@ -16,7 +18,6 @@ hex.workspace = true
 thiserror.workspace = true
 clap.workspace = true
 kzg-rs.workspace = true
-cfg-if.workspace = true
 rkyv.workspace = true
 bincode = "1.3.3"
 anyhow = "1.0.86"
@@ -36,10 +37,11 @@ ethrex-sdk.workspace = true
 
 guest_program = { path = "./src/guest_program", default-features = false }
 
-risc0-zkvm = { version = "=2.3.1", optional = true }
-risc0-zkp = { version = "=2.0.2", optional = true }
+risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
+risc0-zkp = { version = "=3.0.2", optional = true }
 
 sp1-sdk = { version = "=5.0.8", optional = true }
+sp1-prover = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 
 [dev-dependencies]
@@ -54,7 +56,7 @@ path = "src/lib.rs"
 default = ["l2"]
 # prover backends
 risc0 = ["guest_program/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
-sp1 = ["guest_program/sp1", "dep:sp1-sdk"]
+sp1 = ["guest_program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
 profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]

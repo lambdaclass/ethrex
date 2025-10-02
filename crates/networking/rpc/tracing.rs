@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use ethrex_common::H256;
 use ethrex_common::{serde_utils, tracing::CallTrace, types::BlockNumber};
-use keccak_hash::H256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

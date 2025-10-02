@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Range, sync::Arc, time::Duration};
+use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{RollupStoreError, api::StoreEngineRollup};
@@ -30,14 +30,13 @@ impl Debug for SQLStore {
 
 // Change version if the DB_SCHEMA changes
 const MIGRATION_VERSION: u64 = 1;
-const DB_SCHEMA: [&str; 11] = [
+const DB_SCHEMA: [&str; 10] = [
     "CREATE TABLE batches (number INT PRIMARY KEY, first_block INT NOT NULL, last_block INT NOT NULL, privileged_transactions_hash BLOB, state_root BLOB NOT NULL, commit_tx BLOB, verify_tx BLOB, signature BLOB)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE account_updates (block_number INT PRIMARY KEY, updates BLOB)",
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
-    "CREATE TABLE precommit_privileged (start INT, end INT)",
     "CREATE TABLE operation_count (transactions INT, privileged_transactions INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0)",
     "CREATE TABLE migrations (version INT PRIMARY KEY)",
@@ -45,7 +44,7 @@ const DB_SCHEMA: [&str; 11] = [
 ];
 
 impl SQLStore {
-    pub fn new(path: &str) -> Result<Self, RollupStoreError> {
+    pub fn new(path: impl AsRef<Path>) -> Result<Self, RollupStoreError> {
         futures::executor::block_on(async {
             let db = Builder::new_local(path).build().await?;
             let write_conn = db.connect()?;
@@ -682,30 +681,6 @@ impl StoreEngineRollup for SQLStore {
         .await
     }
 
-    async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
-        let mut rows = self.query("SELECT * from precommit_privileged", ()).await?;
-        if let Some(row) = rows.next().await? {
-            let start = read_from_row_int(&row, 0)?;
-            let end = read_from_row_int(&row, 1)?;
-            return Ok(Some(start..end));
-        }
-        Ok(None)
-    }
-
-    async fn update_precommit_privileged(
-        &self,
-        range: Option<Range<u64>>,
-    ) -> Result<(), RollupStoreError> {
-        let mut queries = vec![("DELETE FROM precommit_privileged", ().into_params()?)];
-        if let Some(range) = range {
-            queries.push((
-                "INSERT INTO precommit_privileged VALUES (?1, ?2)",
-                (range.start, range.end).into_params()?,
-            ));
-        }
-        self.execute_in_tx(queries, None).await
-    }
-
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
         let mut rows = self.query("SELECT MAX(number) FROM batches", ()).await?;
         rows.next()
@@ -730,7 +705,6 @@ mod tests {
             "operation_count",
             "batch_proofs",
             "block_signatures",
-            "precommit_privileged",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -772,8 +746,6 @@ mod tests {
                 ("batch_proofs", "proof") => "BLOB",
                 ("block_signatures", "block_hash") => "BLOB",
                 ("block_signatures", "signature") => "BLOB",
-                ("precommit_privileged", "start") => "INT",
-                ("precommit_privileged", "end") => "INT",
                 ("migrations", "version") => "INT",
                 _ => {
                     return Err(anyhow::Error::msg(

@@ -41,7 +41,7 @@ use tokio::sync::Mutex;
 #[derive(Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub db: ExecutionWitness,
+    pub execution_witness: ExecutionWitness,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
@@ -183,6 +183,7 @@ pub struct ProofCoordinator {
     commit_hash: String,
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
+    qpl_tool_path: Option<String>,
 }
 
 impl ProofCoordinator {
@@ -232,6 +233,7 @@ impl ProofCoordinator {
             commit_hash: get_commit_hash(),
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
+            qpl_tool_path: config.qpl_tool_path.clone(),
         })
     }
 
@@ -418,11 +420,17 @@ impl ProofCoordinator {
                 let Some(key) = self.tdx_private_key.as_ref() else {
                     return Err(ProofCoordinatorError::MissingTDXPrivateKey);
                 };
+                let Some(qpl_tool_path) = self.qpl_tool_path.as_ref() else {
+                    return Err(ProofCoordinatorError::Custom(
+                        "Missing QPL tool path".to_string(),
+                    ));
+                };
                 prepare_quote_prerequisites(
                     &self.eth_client,
                     &self.rpc_url,
                     &hex::encode(key.secret_bytes()),
                     &hex::encode(&payload),
+                    qpl_tool_path,
                 )
                 .await
                 .map_err(|e| {
@@ -494,7 +502,7 @@ impl ProofCoordinator {
         debug!("Created prover input for batch {batch_number}");
 
         Ok(ProverInputData {
-            db: witness,
+            execution_witness: witness,
             blocks,
             elasticity_multiplier: self.elasticity_multiplier,
             #[cfg(feature = "l2")]

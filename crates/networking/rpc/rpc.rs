@@ -11,6 +11,7 @@ use crate::engine::{
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
 };
+use crate::eth::client::Config;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -49,6 +50,7 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -68,6 +70,80 @@ use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+use axum::response::IntoResponse;
+// only works on linux
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
+    let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "jemalloc profiling is not available".into(),
+        ));
+    };
+    let mut prof_ctl = mutex.lock().await;
+    require_profiling_activated(&prof_ctl)?;
+    let pprof = prof_ctl
+        .dump_pprof()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(pprof)
+}
+
+/// Checks whether jemalloc profiling is activated an returns an error response if not.
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+fn require_profiling_activated(
+    prof_ctl: &jemalloc_pprof::JemallocProfCtl,
+) -> Result<(), (StatusCode, String)> {
+    if prof_ctl.activated() {
+        Ok(())
+    } else {
+        Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "heap profiling not activated".into(),
+        ))
+    }
+}
+
+#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
+pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCode, String)> {
+    use axum::body::Body;
+    use axum::http::header::CONTENT_TYPE;
+    use axum::response::Response;
+
+    let Some(mutex) = jemalloc_pprof::PROF_CTL.as_ref() else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "jemalloc profiling is not available".into(),
+        ));
+    };
+    let mut prof_ctl = mutex.lock().await;
+    require_profiling_activated(&prof_ctl)?;
+    let svg = prof_ctl
+        .dump_flamegraph()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Response::builder()
+        .header(CONTENT_TYPE, "image/svg+xml")
+        .body(Body::from(svg))
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+// Feature-disabled stubs (no dependency on jemalloc_pprof)
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
+pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
+    ))
+}
+
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
+pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
+    ))
+}
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestWrapper {
@@ -85,6 +161,7 @@ pub struct RpcApiContext {
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    pub gas_ceil: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +170,7 @@ pub struct NodeData {
     pub local_p2p_node: Node,
     pub local_node_record: NodeRecord,
     pub client_version: String,
+    pub extra_data: Bytes,
 }
 
 #[allow(async_fn_in_trait)]
@@ -128,6 +206,8 @@ pub async fn start_api(
     peer_handler: PeerHandler,
     client_version: String,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: Option<u64>,
+    extra_data: String,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -143,9 +223,11 @@ pub async fn start_api(
             local_p2p_node,
             local_node_record,
             client_version,
+            extra_data: extra_data.into(),
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
+        gas_ceil: gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -167,6 +249,11 @@ pub async fn start_api(
     let cors = CorsLayer::permissive();
 
     let http_router = Router::new()
+        .route("/debug/pprof/allocs", axum::routing::get(handle_get_heap))
+        .route(
+            "/debug/pprof/allocs/flamegraph",
+            axum::routing::get(handle_get_heap_flamegraph),
+        )
         .route("/", post(handle_http_request))
         .layer(cors)
         .with_state(service_context.clone());
@@ -338,6 +425,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_maxPriorityFeePerGas" => {
             eth::max_priority_fee::MaxPriorityFee::call(req, context).await
         }
+        "eth_config" => Config::call(req, context).await,
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
@@ -450,9 +538,9 @@ mod tests {
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
-    use std::fs::File;
     use std::io::BufReader;
     use std::str::FromStr;
+    use std::{fs::File, path::Path};
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -477,9 +565,11 @@ mod tests {
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
-            "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
-            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
-            "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "cancun": { "baseFeeUpdateFraction": 3338477, "max": 6, "target": 3,  },
+            "prague": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
+            "osaka": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
+            "bpo1": { "baseFeeUpdateFraction": 8346193, "max": 15, "target": 10,  },
+            "bpo2": { "baseFeeUpdateFraction": 11684671, "max": 21, "target": 14,  },
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",
@@ -617,5 +707,127 @@ mod tests {
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
         assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    #[tokio::test]
+    async fn eth_config_request_cancun_with_prague_scheduled() {
+        let body = r#"{"jsonrpc":"2.0", "method":"eth_config", "params":[], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let storage = Store::new_from_genesis(
+            Path::new("temp.db"),
+            EngineType::InMemory,
+            "../../../cmd/ethrex/networks/hoodi/genesis.json",
+        )
+        .await
+        .expect("Failed to create test DB");
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context).await;
+        let rpc_response = rpc_response(request.id, result).unwrap();
+        let json = serde_json::json!({
+            "id": 1,
+            "jsonrpc": "2.0",
+            "result": {
+                "current": {
+                    "activationTime": 0,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 3338477,
+                        "max": 6,
+                        "target": 3
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0xbef71d30",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02"
+                    }
+                },
+                "next": {
+                    "activationTime": 1742999832,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 5007716,
+                        "max": 9,
+                        "target": 6
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0x0929e24e",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
+                        "BLS12_G1MSM": "0x000000000000000000000000000000000000000c",
+                        "BLS12_G2ADD": "0x000000000000000000000000000000000000000d",
+                        "BLS12_G2MSM": "0x000000000000000000000000000000000000000e",
+                        "BLS12_MAP_FP2_TO_G2": "0x0000000000000000000000000000000000000011",
+                        "BLS12_MAP_FP_TO_G1": "0x0000000000000000000000000000000000000010",
+                        "BLS12_PAIRING_CHECK": "0x000000000000000000000000000000000000000f",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+                        "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                        "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                        "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS": "0x00000961ef480eb55e80d19ad83579a64c007002"
+                    }
+                },
+                "last": {
+                    "activationTime": 1762955544,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 11684671,
+                        "max": 21,
+                        "target": 14,
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0x23aa1351",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
+                        "BLS12_G1MSM": "0x000000000000000000000000000000000000000c",
+                        "BLS12_G2ADD": "0x000000000000000000000000000000000000000d",
+                        "BLS12_G2MSM": "0x000000000000000000000000000000000000000e",
+                        "BLS12_MAP_FP2_TO_G2": "0x0000000000000000000000000000000000000011",
+                        "BLS12_MAP_FP_TO_G1": "0x0000000000000000000000000000000000000010",
+                        "BLS12_PAIRING_CHECK": "0x000000000000000000000000000000000000000f",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "P256_VERIFICATION":"0x0000000000000000000000000000000000000100",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+                        "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                        "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                        "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS": "0x00000961ef480eb55e80d19ad83579a64c007002"
+                    }
+                },
+            }
+        });
+        let expected_response = to_rpc_response_success_value(&json.to_string());
+        assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 }

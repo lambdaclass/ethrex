@@ -1,4 +1,5 @@
 use crate::l2::batch::RpcBatch;
+use ethrex_common::H256;
 use ethrex_l2_common::l1_messages::L1MessageProof;
 use ethrex_rpc::{
     EthClient,
@@ -11,7 +12,6 @@ use ethrex_rpc::{
     },
     utils::RpcRequest,
 };
-use keccak_hash::H256;
 use serde_json::json;
 
 pub async fn get_message_proof(

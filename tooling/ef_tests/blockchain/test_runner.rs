@@ -1,12 +1,11 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    deserialize::{PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX, SENDER_NOT_EOA_REGEX},
     network::Network,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainOptions,
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
@@ -34,7 +33,8 @@ pub fn parse_and_execute(
     //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
     //EIPs should be added as strings in the format 'eip-XXXX'
     let fusaka_eips_to_test: Vec<&str> = vec![
-        "eip-7594", "eip-7883", "eip-7918", "eip-7892", "eip-7939", "eip-7951", "eip-7594",
+        "eip-7594", "eip-7883", "eip-7918", "eip-7934", "eip-7892", "eip-7939", "eip-7951",
+        "eip-7594", "eip-7825",
     ];
 
     //Hashes of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
@@ -104,7 +104,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(store.clone(), BlockchainType::L1, false);
+    let blockchain = Blockchain::new(store.clone(), BlockchainOptions::default());
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
@@ -183,11 +183,11 @@ fn exception_is_expected(
     expected_exceptions.iter().any(|exception| {
         if let (
             BlockChainExpectedException::TxtException(expected_error_msg),
-            ChainError::EvmError(EvmError::Transaction(error_msg)),
+            ChainError::EvmError(EvmError::Transaction(error_msg))
+            | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(error_msg)),
         ) = (exception, returned_error)
         {
-            return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
-                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase())
+            return (expected_error_msg.to_lowercase() == error_msg.to_lowercase())
                 || match_expected_regex(expected_error_msg, error_msg);
         }
         matches!(
@@ -230,38 +230,6 @@ fn exception_is_expected(
             ),
         )
     })
-}
-
-fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> bool {
-    matches!(
-        (msg, expected_msg.as_str()),
-        (
-            "reject transactions from senders with deployed code",
-            SENDER_NOT_EOA_REGEX
-        ) | (
-            "call gas cost exceeds the gas limit",
-            "Intrinsic gas too low"
-        ) | ("gas floor exceeds the gas limit", "Intrinsic gas too low")
-            | ("empty blobs", "Type 3 transaction without blobs")
-            | (
-                "blob versioned hashes not supported",
-                "Type 3 transactions are not supported before the Cancun fork"
-            )
-            | ("blob version not supported", "Invalid blob versioned hash")
-            | (
-                "gas price is less than basefee",
-                "Insufficient max fee per gas"
-            )
-            | (
-                "blob gas price is greater than max fee per blob gas",
-                "Insufficient max fee per blob gas"
-            )
-            | (
-                "priority fee is greater than max fee",
-                PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX
-            )
-            | ("create initcode size limit", "Initcode size exceeded")
-    ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
 }
 
 fn match_expected_regex(expected_error_regex: &str, error_msg: &str) -> bool {
@@ -459,11 +427,11 @@ async fn re_run_stateless(
         return Err("Failed to create witness for a test that should not fail".into());
     }
     // At this point witness is guaranteed to be Ok
-    let witness = witness.unwrap();
+    let execution_witness = witness.unwrap();
 
     let program_input = ProgramInput {
         blocks,
-        db: witness,
+        execution_witness,
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()
     };

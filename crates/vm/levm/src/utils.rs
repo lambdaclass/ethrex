@@ -19,12 +19,11 @@ use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
     types::{Account, Fork, Transaction, tx_fields::*},
-    utils::u256_to_big_endian,
+    utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
-use keccak_hash::keccak;
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -289,11 +288,8 @@ pub fn eip7702_recover_address(
     ]
     .concat();
 
-    let Ok(recovery_id) = RecoveryId::from_i32(
-        auth_tuple
-            .y_parity
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?,
+    let Ok(recovery_id) = RecoveryId::try_from(
+        TryInto::<i32>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
     ) else {
         return Ok(None);
     };

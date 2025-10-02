@@ -1,5 +1,6 @@
 use crate::input::ProgramInput;
 use crate::output::ProgramOutput;
+
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
@@ -20,12 +21,9 @@ use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
 use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
-use ethrex_common::{
-    kzg::KzgError,
-    types::{
-        BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
-        kzg_commitment_to_versioned_hash,
-    },
+use ethrex_common::types::{
+    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
+    kzg_commitment_to_versioned_hash,
 };
 use ethrex_l2_common::{
     l1_messages::get_block_l1_messages,
@@ -59,7 +57,7 @@ pub enum StatelessExecutionError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[cfg(feature = "l2")]
     #[error("KZG error (proof couldn't be verified): {0}")]
-    KzgError(#[from] KzgError),
+    KzgError(#[from] ethrex_crypto::kzg::KzgError),
     #[cfg(feature = "l2")]
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
@@ -68,6 +66,8 @@ pub enum StatelessExecutionError {
     InvalidStateDiff,
     #[error("Batch has no blocks")]
     EmptyBatchError,
+    #[error("Invalid database")]
+    InvalidDatabase,
     #[error("Execution witness error: {0}")]
     GuestProgramState(#[from] GuestProgramStateError),
     #[error("Invalid initial state trie")]
@@ -95,7 +95,7 @@ pub enum StatelessExecutionError {
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
-        db,
+        execution_witness,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,
@@ -103,13 +103,13 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blob_proof,
     } = input;
 
-    let chain_id = db.chain_config.chain_id;
+    let chain_id = execution_witness.chain_config.chain_id;
 
     if cfg!(feature = "l2") {
         #[cfg(feature = "l2")]
         return stateless_validation_l2(
             &blocks,
-            db,
+            execution_witness,
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
@@ -117,12 +117,12 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         );
     }
 
-    stateless_validation_l1(&blocks, db, elasticity_multiplier, chain_id)
+    stateless_validation_l1(&blocks, execution_witness, elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
-    db: ExecutionWitness,
+    execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -132,7 +132,8 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
+
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -151,13 +152,13 @@ pub fn stateless_validation_l1(
 #[cfg(feature = "l2")]
 pub fn stateless_validation_l2(
     blocks: &[Block],
-    db: ExecutionWitness,
+    execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    let initial_db = db.clone();
+    let initial_db = execution_witness.clone();
 
     let StatelessResult {
         receipts,
@@ -170,7 +171,7 @@ pub fn stateless_validation_l2(
         nodes_hashed,
         codes_hashed,
         parent_block_header,
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, execution_witness, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -243,19 +244,19 @@ struct StatelessResult {
     // We return them to avoid recomputing when comparing the initial state
     // with the final state after block execution.
     #[cfg(feature = "l2")]
-    nodes_hashed: BTreeMap<H256, Vec<u8>>,
+    pub nodes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
-    codes_hashed: BTreeMap<H256, Vec<u8>>,
+    pub codes_hashed: BTreeMap<H256, Vec<u8>>,
     #[cfg(feature = "l2")]
-    parent_block_header: BlockHeader,
+    pub parent_block_header: BlockHeader,
 }
 
 fn execute_stateless(
     blocks: &[Block],
-    db: ExecutionWitness,
+    execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    let guest_program_state: GuestProgramState = db
+    let guest_program_state: GuestProgramState = execution_witness
         .try_into()
         .map_err(StatelessExecutionError::GuestProgramState)?;
 
@@ -436,7 +437,7 @@ fn verify_blob(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
-    use ethrex_common::kzg::verify_blob_kzg_proof;
+    use ethrex_crypto::kzg::verify_blob_kzg_proof;
 
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
