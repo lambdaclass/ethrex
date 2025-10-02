@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759432140214,
+  "lastUpdate": 1759442323923,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36364,6 +36364,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.0045913073435216,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a93136210f5e7a2abc88c662f58e793831b9de80",
+          "message": "fix(levm): fix access list bug (#4741)\n\n**Motivation**\n\nFix bug when syncing mainnet block 23491026\n\n**Description**\n\nAccess list can specify the same address in 2 different entries, this is\nnot common and we weren't contemplating that, so when processing the\nsecond entry we were clearing the values inserted during the processing\nof the first entry\nExample\n```\n\"accessList\": [\n{\n\t\"address\": \"0x1ac7a0ebf13a996d5915e212900be2d074f94988\",\n\t\"storageKeys\": [\n\t\t\"0xb63224678cdc3f930718c5fedb0de566186ebaf61e262a132d8caa6cea32d73b\",\n\t]\n},\n{\n\t\"address\": \"0x1ac7a0ebf13a996d5915e212900be2d074f94988\",\n\t\"storageKeys\": [\n\t\t\"0x74287e7e7b7a047cfa15f782074b1a8386fb281195cd62d2589ea50ebf2a8331\",\n\t]\n},\n```\n\nCreated issue #4742\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-10-02T19:11:42Z",
+          "tree_id": "2f81d5c24ff1b7a8f51d12f72b9bc1a0b0026d58",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a93136210f5e7a2abc88c662f58e793831b9de80"
+        },
+        "date": 1759442293236,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004601396714699097,
             "unit": "Mgas/s"
           }
         ]
