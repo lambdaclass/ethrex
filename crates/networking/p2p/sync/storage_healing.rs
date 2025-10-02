@@ -287,11 +287,7 @@ pub async fn heal_storage_trie(
                     .extend(inflight_request.requests.clone());
                 peers
                     .peer_table
-                    .record_failure(&inflight_request.peer_id)
-                    .await?;
-                peers
-                    .peer_table
-                    .free_peer(&inflight_request.peer_id)
+                    .free_with_failure(&inflight_request.peer_id)
                     .await?;
             }
         }
@@ -403,7 +399,7 @@ async fn zip_requeue_node_responses_score_peer(
         trie_nodes.nodes.len()
     );
     let Some(request) = requests.remove(&trie_nodes.id) else {
-        info!("We received a response where we had a missing requests {trie_nodes:?}");
+        info!("No matching request found for received response {trie_nodes:?}");
         return Ok(None);
     };
     peer_handler.peer_table.free_peer(&request.peer_id).await?;

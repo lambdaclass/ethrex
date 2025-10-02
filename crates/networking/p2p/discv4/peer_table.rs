@@ -217,6 +217,14 @@ impl PeerTableHandle {
         Ok(())
     }
 
+    /// Remove "in use" mark for peer, and record a failed connection.
+    pub async fn free_with_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
+        self.0
+            .cast(CastMessage::FreeWithFailure { node_id: *node_id })
+            .await?;
+        Ok(())
+    }
+
     /// Record a critical failure for connection, used to score peers
     pub async fn record_critical_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.0
@@ -431,9 +439,10 @@ impl PeerTableHandle {
 
     /// Get list of connected peers
     pub async fn get_connected_nodes(&mut self) -> Result<Vec<Node>, PeerTableError> {
-        match self.0.call(CallMessage::GetConnectedNodes).await? {
-            OutMessage::Nodes(nodes) => Ok(nodes),
-            _ => unreachable!(),
+        if let OutMessage::Nodes(nodes) = self.0.call(CallMessage::GetConnectedNodes).await? {
+            Ok(nodes)
+        } else {
+            unreachable!()
         }
     }
 
@@ -735,7 +744,7 @@ impl PeerTable {
     }
 
     fn get_random_peer(&mut self, capabilities: Vec<Capability>) -> Option<(H256, PeerChannels)> {
-        let mut peers: Vec<(H256, PeerChannels)> = self
+        let peers: Vec<(H256, PeerChannels)> = self
             .peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
@@ -752,8 +761,7 @@ impl PeerTable {
                     .map(|peer_channels| (*node_id, peer_channels))
             })
             .collect();
-        peers.shuffle(&mut rand::rngs::OsRng);
-        peers.first().cloned()
+        peers.choose(&mut rand::rngs::OsRng).cloned()
     }
 
     fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
@@ -807,6 +815,9 @@ pub enum CastMessage {
         node_id: H256,
     },
     RecordFailure {
+        node_id: H256,
+    },
+    FreeWithFailure {
         node_id: H256,
     },
     RecordCriticalFailure {
@@ -1081,6 +1092,12 @@ impl GenServer for PeerTable {
                 self.peers
                     .entry(node_id)
                     .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
+            }
+            CastMessage::FreeWithFailure { node_id } => {
+                self.peers.entry(node_id).and_modify(|peer_data| {
+                    peer_data.in_use = false;
+                    peer_data.score = (peer_data.score - 1).max(MIN_SCORE);
+                });
             }
             CastMessage::RecordCriticalFailure { node_id } => {
                 self.peers
