@@ -1456,6 +1456,7 @@ impl PeerHandler {
                             if old_intervals.is_empty() {
                                 for account in accounts_by_root_hash[remaining_start].1.iter() {
                                     accounts_done.insert(*account, vec![]);
+                                    account_storage_roots.healed_accounts.insert(*account);
                                 }
                             }
                         }
