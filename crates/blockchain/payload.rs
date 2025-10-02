@@ -84,6 +84,7 @@ pub struct BuildPayloadArgs {
     pub beacon_root: Option<H256>,
     pub version: u8,
     pub elasticity_multiplier: u64,
+    pub gas_ceil: u64,
 }
 
 #[derive(Debug, Error)]
@@ -116,13 +117,17 @@ impl BuildPayloadArgs {
 
 /// Creates a new payload based on the payload arguments
 // Basic payload block building, can and should be improved
-pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block, ChainError> {
+pub fn create_payload(
+    args: &BuildPayloadArgs,
+    storage: &Store,
+    extra_data: Bytes,
+) -> Result<Block, ChainError> {
     let parent_block = storage
         .get_block_header_by_hash(args.parent)?
         .ok_or_else(|| ChainError::ParentNotFound)?;
     let chain_config = storage.get_chain_config()?;
     let fork = chain_config.fork(args.timestamp);
-    let gas_limit = calc_gas_limit(parent_block.gas_limit);
+    let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
     let excess_blob_gas = chain_config
         .get_fork_blob_schedule(args.timestamp)
         .map(|schedule| calc_excess_blob_gas(&parent_block, schedule, fork));
@@ -140,8 +145,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         gas_limit,
         gas_used: 0,
         timestamp: args.timestamp,
-        // TODO: should use builder config's extra_data
-        extra_data: Bytes::new(),
+        extra_data,
         prev_randao: args.random,
         nonce: 0,
         base_fee_per_gas: calculate_base_fee_per_gas(
@@ -177,12 +181,11 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
     Ok(Block::new(header, body))
 }
 
-pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
+pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
     // TODO: check where we should get builder values from
-    const DEFAULT_BUILDER_GAS_CEIL: u64 = 30_000_000;
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
-    let desired_limit = max(DEFAULT_BUILDER_GAS_CEIL, MIN_GAS_LIMIT);
+    let desired_limit = max(builder_gas_ceil, MIN_GAS_LIMIT);
     if limit < desired_limit {
         limit = parent_gas_limit + delta;
         if limit > desired_limit {
@@ -250,6 +253,10 @@ impl PayloadBuildContext {
             vm,
             account_updates: Vec::new(),
         })
+    }
+
+    pub fn gas_used(&self) -> u64 {
+        self.payload.header.gas_limit - self.remaining_gas
     }
 }
 
@@ -382,9 +389,10 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context = PayloadBuildContext::new(payload, &self.storage, self.r#type.clone())?;
+        let mut context =
+            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
 
-        if let BlockchainType::L1 = self.r#type {
+        if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
         self.apply_withdrawals(&mut context)?;

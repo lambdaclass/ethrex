@@ -2,6 +2,34 @@
 
 ## Perf
 
+### 2025-10-01
+
+- Change remaining_gas to i64, improving performance in gas cost calculations [#4684](https://github.com/lambdaclass/ethrex/pull/4684)
+
+### 2025-09-29
+
+- Remove `OpcodeResult` to improve tight loops of lightweight opcodes [#4650](https://github.com/lambdaclass/ethrex/pull/4650)
+
+### 2025-09-24
+
+- Avoid dumping empty storage accounts to disk [#4590](https://github.com/lambdaclass/ethrex/pull/4590)
+
+### 2025-09-22
+
+- Improve instruction fetching, dynamic opcode table based on configured fork, specialized push_zero in stack #[4579](https://github.com/lambdaclass/ethrex/pull/4579)
+
+### 2025-09-17
+
+- Refactor `bls12_g1add` to use `lambdaworks` [#4500](https://github.com/lambdaclass/ethrex/pull/4500)
+- Refactor `bls12_g2add` to use `lambdaworks` [#4538](https://github.com/lambdaclass/ethrex/pull/4538)
+
+### 2025-09-15
+
+- Fix caching mechanism of the latest block's hash [#4479](https://github.com/lambdaclass/ethrex/pull/4479)
+- Add `jemalloc` as an optional global allocator used by default [#4301](https://github.com/lambdaclass/ethrex/pull/4301)
+
+- Improve time when downloading bytecodes from peers [#4487](https://github.com/lambdaclass/ethrex/pull/4487)
+
 ### 2025-09-11
 
 - Add `RocksDB` as an optional storage engine [#4272](https://github.com/lambdaclass/ethrex/pull/4272)

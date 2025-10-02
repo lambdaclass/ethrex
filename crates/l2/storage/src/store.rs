@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use crate::api::StoreEngineRollup;
 use crate::error::RollupStoreError;
@@ -25,7 +25,6 @@ impl Default for Store {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
@@ -34,7 +33,7 @@ pub enum EngineType {
 }
 
 impl Store {
-    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, RollupStoreError> {
+    pub fn new(_path: &Path, engine_type: EngineType) -> Result<Self, RollupStoreError> {
         info!("Starting l2 storage engine ({engine_type:?})");
         let store = match engine_type {
             EngineType::InMemory => Self {
@@ -355,17 +354,5 @@ impl Store {
         self.engine
             .delete_proof_by_batch_and_type(batch_number, proof_type)
             .await
-    }
-    /// Returns privileged transactions about to be included in the next batch
-    pub async fn precommit_privileged(&self) -> Result<Option<Range<u64>>, RollupStoreError> {
-        self.engine.precommit_privileged().await
-    }
-
-    /// Updates privileged transaction
-    pub async fn update_precommit_privileged(
-        &self,
-        range: Option<Range<u64>>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine.update_precommit_privileged(range).await
     }
 }

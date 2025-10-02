@@ -11,12 +11,15 @@ use criterion::{
     measurement::{Measurement, ValueFormatter},
 };
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainOptions, BlockchainType,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
     Address, H160,
-    types::{Block, EIP1559Transaction, Genesis, GenesisAccount, Transaction, TxKind},
+    types::{
+        Block, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, Genesis, GenesisAccount, Transaction,
+        TxKind,
+    },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
@@ -121,11 +124,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     }
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
-    let store = Store::new(
-        &storage_path.path().display().to_string(),
-        EngineType::Libmdbx,
-    )
-    .unwrap();
+    let store = Store::new(storage_path, EngineType::RocksDB).unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
@@ -149,9 +148,10 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
         beacon_root: genesis_block.header.parent_beacon_block_root,
         version: 3,
         elasticity_multiplier: 1,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
     let id = payload_args.id();
-    let block = create_payload(&payload_args, store).unwrap();
+    let block = create_payload(&payload_args, store, Bytes::new()).unwrap();
     (block, id.unwrap())
 }
 
@@ -236,8 +236,11 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let block_chain = Blockchain::new(
                         store_with_genesis.clone(),
-                        BlockchainType::L1, // TODO: Should we support L2?
-                        false,
+                        BlockchainOptions {
+                            r#type: BlockchainType::L1, // TODO: Should we support L2?
+                            perf_logs_enabled: false,
+                            ..Default::default()
+                        },
                     );
                     fill_mempool(&block_chain, accounts).await;
 

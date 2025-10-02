@@ -273,7 +273,7 @@ impl From<EvmError> for RpcErr {
 
 pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError> {
     if data == "0x" {
-        Ok("unknown error".to_owned())
+        Ok("Execution reverted without a reason string.".to_owned())
     // 4 byte function signature 0xXXXXXXXX
     } else if data.len() == 10 {
         Ok(data.to_owned())
@@ -328,8 +328,9 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
+    use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
-    use ethrex_common::H512;
+    use ethrex_common::{H512, types::DEFAULT_BUILDER_GAS_CEIL};
     use ethrex_p2p::{
         peer_handler::PeerHandler,
         sync_manager::SyncManager,
@@ -394,6 +395,8 @@ pub mod test_utils {
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
             None,
+            None,
+            String::new(),
         )
         .await
         .unwrap();
@@ -413,9 +416,11 @@ pub mod test_utils {
                 local_p2p_node: example_p2p_node(),
                 local_node_record,
                 client_version: "ethrex/test".to_string(),
+                extra_data: Bytes::new(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler: None,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }

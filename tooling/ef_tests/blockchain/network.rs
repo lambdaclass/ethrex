@@ -86,6 +86,23 @@ pub static BPO2_TO_BPO3_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| 
     ..*OSAKA_CONFIG
 });
 
+pub static BPO3_TO_BPO4_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+    bpo1_time: Some(0),
+    bpo2_time: Some(0),
+    bpo3_time: Some(0),
+    bpo4_time: Some(0x3a98),
+    ..*OSAKA_CONFIG
+});
+
+pub static BPO4_TO_BPO5_AT_15K_CONFIG: LazyLock<ChainConfig> = LazyLock::new(|| ChainConfig {
+    bpo1_time: Some(0),
+    bpo2_time: Some(0),
+    bpo3_time: Some(0),
+    bpo4_time: Some(0),
+    bpo5_time: Some(0x3a98),
+    ..*OSAKA_CONFIG
+});
+
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Network {
     Frontier = 0,          // For parsing tests
@@ -109,6 +126,8 @@ pub enum Network {
     OsakaToBPO1AtTime15k = 16,
     BPO1ToBPO2AtTime15k = 17,
     BPO2ToBPO3AtTime15k = 18,
+    BPO3ToBPO4AtTime15k = 19,
+    BPO4ToBPO5AtTime15k = 20,
 }
 
 impl Network {
@@ -126,6 +145,8 @@ impl Network {
             Network::OsakaToBPO1AtTime15k => &OSAKA_TO_BPO1_AT_15K_CONFIG,
             Network::BPO1ToBPO2AtTime15k => &BPO1_TO_BPO2_AT_15K_CONFIG,
             Network::BPO2ToBPO3AtTime15k => &BPO2_TO_BPO3_AT_15K_CONFIG,
+            Network::BPO3ToBPO4AtTime15k => &BPO3_TO_BPO4_AT_15K_CONFIG,
+            Network::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
             Network::Frontier
             | Network::Homestead
             | Network::ConstantinopleFix

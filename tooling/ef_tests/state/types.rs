@@ -156,6 +156,7 @@ pub enum TransactionExpectedException {
     Type3TxInvalidBlobVersionedHash,
     Type4TxContractCreation,
     IntrinsicGasTooLow,
+    IntrinsicGasBelowFloorGasCost,
     InsufficientAccountFunds,
     SenderNotEoa,
     PriorityGreaterThanMaxFeePerGas,
@@ -165,6 +166,7 @@ pub enum TransactionExpectedException {
     GasLimitPriceProductOverflow,
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
+    TxMaxGasLimitExceeded,
     Other, //TODO: Implement exceptions
 }
 

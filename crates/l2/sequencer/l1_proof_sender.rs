@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
-use ethrex_l2_rpc::signer::Signer;
+use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
@@ -15,9 +15,9 @@ use ethrex_rpc::{
     clients::{EthClientError, eth::errors::EstimateGasError},
 };
 use ethrex_storage_rollup::StoreRollup;
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+use serde::Serialize;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
 use tracing::{debug, error, info, warn};
 
@@ -48,9 +48,15 @@ pub enum InMessage {
     Send,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum OutMessage {
     Done,
+    Health(Box<L1ProofSenderHealth>),
+}
+
+#[derive(Clone)]
+pub enum CallMessage {
+    Health,
 }
 
 pub struct L1ProofSender {
@@ -67,6 +73,22 @@ pub struct L1ProofSender {
     aligned_sp1_elf_path: String,
 }
 
+#[derive(Clone, Serialize)]
+pub struct L1ProofSenderHealth {
+    rpc_healthcheck: BTreeMap<String, serde_json::Value>,
+    signer_status: SignerHealth,
+    on_chain_proposer_address: Address,
+    needed_proof_types: Vec<String>,
+    proof_send_interval_ms: u64,
+    sequencer_state: String,
+    l1_chain_id: u64,
+    network: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fee_estimate: Option<FeeEstimationType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aligned_sp1_elf_path: Option<String>,
+}
+
 impl L1ProofSender {
     async fn new(
         cfg: &ProofCoordinatorConfig,
@@ -77,7 +99,15 @@ impl L1ProofSender {
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
-        let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+        let eth_client = EthClient::new_with_config(
+            eth_cfg.rpc_url.iter().map(AsRef::as_ref).collect(),
+            eth_cfg.max_number_of_retries,
+            eth_cfg.backoff_factor,
+            eth_cfg.min_retry_delay,
+            eth_cfg.max_retry_delay,
+            Some(eth_cfg.maximum_allowed_max_fee_per_gas),
+            Some(eth_cfg.maximum_allowed_max_fee_per_blob_gas),
+        )?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::UnexpectedError("Failed to convert chain ID to U256".to_owned())
         })?;
@@ -104,7 +134,7 @@ impl L1ProofSender {
         sequencer_state: SequencerState,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<(), ProofSenderError> {
+    ) -> Result<GenServerHandle<L1ProofSender>, ProofSenderError> {
         let state = Self::new(
             &cfg.proof_coordinator,
             &cfg.l1_committer,
@@ -119,7 +149,8 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::InternalError)
+            .map_err(ProofSenderError::InternalError)?;
+        Ok(l1_proof_sender)
     }
 
     async fn verify_and_send_proof(&mut self) -> Result<(), ProofSenderError> {
@@ -175,6 +206,7 @@ impl L1ProofSender {
                 .map(|proof_type| format!("{proof_type:?}"))
                 .collect();
             info!(
+                ?batch_to_send,
                 "Missing {} batch proof(s), will not send",
                 missing_proof_types.join(", ")
             );
@@ -346,10 +378,41 @@ impl L1ProofSender {
 
         Ok(())
     }
+
+    async fn health(&self) -> CallResponse<Self> {
+        let rpc_healthcheck = self.eth_client.test_urls().await;
+        let signer_status = self.signer.health().await;
+
+        let (fee_estimate, aligned_sp1_elf_path) =
+            if self.needed_proof_types.contains(&ProverType::Aligned) {
+                (
+                    Some(self.fee_estimate.clone()),
+                    Some(self.aligned_sp1_elf_path.clone()),
+                )
+            } else {
+                (None, None)
+            };
+        CallResponse::Reply(OutMessage::Health(Box::new(L1ProofSenderHealth {
+            rpc_healthcheck,
+            signer_status,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            needed_proof_types: self
+                .needed_proof_types
+                .iter()
+                .map(|proof_type| format!("{:?}", proof_type))
+                .collect(),
+            proof_send_interval_ms: self.proof_send_interval_ms,
+            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            l1_chain_id: self.l1_chain_id,
+            network: format!("{:?}", self.network),
+            fee_estimate,
+            aligned_sp1_elf_path,
+        })))
+    }
 }
 
 impl GenServer for L1ProofSender {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
 
@@ -370,6 +433,16 @@ impl GenServer for L1ProofSender {
         let check_interval = random_duration(self.proof_send_interval_ms);
         send_after(check_interval, handle.clone(), Self::CastMsg::Send);
         CastResponse::NoReply
+    }
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            CallMessage::Health => self.health().await,
+        }
     }
 }
 

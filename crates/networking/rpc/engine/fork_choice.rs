@@ -374,11 +374,12 @@ async fn build_payload(
         beacon_root: attributes.parent_beacon_block_root,
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: context.gas_ceil,
     };
     let payload_id = args
         .id()
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let payload = match create_payload(&args, &context.storage) {
+    let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         // Parent block is guaranteed to be present at this point,
