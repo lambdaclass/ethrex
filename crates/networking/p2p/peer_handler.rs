@@ -1758,6 +1758,7 @@ impl PeerHandler {
                     .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
             }
             if snapshot.is_empty() {
+                // TODO: This happened while testing on pivot changes, we need to understand why
                 warn!(chunk = *chunk_index, "Skipping empty storage snapshot");
             } else {
                 let path = get_account_storages_snapshot_file(
