@@ -58,7 +58,7 @@ tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 axum.workspace = true
 
-guest_program = { path = "./prover/src/guest_program/" }
+guest_program = { path = "./prover/src/guest_program/", default-features = false }
 
 
 [build-dependencies]
@@ -82,5 +82,5 @@ panic = "deny"
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics"]
 l2 = ["guest_program/l2", "ethrex-common/c-kzg"]
-sp1 = ["ethrex-common/kzg-rs"]
-risc0 = ["ethrex-common/c-kzg"]
+sp1 = ["ethrex-common/kzg-rs", "guest_program/sp1"]
+risc0 = ["ethrex-common/c-kzg", "guest_program/risc0"]
