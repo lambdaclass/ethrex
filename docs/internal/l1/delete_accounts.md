@@ -10,7 +10,7 @@ Creating EOA is done through sending ETH into a new address, at which point the 
 
 Creating a contract can be done through the CREATE and [CREATE2](https://eips.ethereum.org/EIPS/eip-1014) opcode. Notably, those opcodes check that the account is created at an address where the code is empty and the nonce is zero, but **it doesn't check balance**. As such, a contract can be created through taking over an existing account.
 
-During the creating of a contract, the `init_code` is run which can include the [self destruct opcode](https://eips.ethereum.org/EIPS/eip-6780) that deletes the contract in the same transaction it was created. Normally, this deletes an account that was created in the same transaction (because contracts are usually created over empty accounts) but in this case the account already existed because it  already had some balance. This is the only edge case in which an account can go from existing to non-existing from one block to another after the Cancun fork.
+During the creating of a contract, the `init_code` is run which can include the [self destruct opcode](https://eips.ethereum.org/EIPS/eip-6780) that deletes the contract in the same transaction it was created. Normally, this deletes an account that was created in the same transaction (because contracts are usually created over empty accounts) but in this case the account already existed because it already had some balance. This is the only edge case in which an account can go from existing to non-existing from one block to another after the Cancun fork.
 
 ### How we found it
 
