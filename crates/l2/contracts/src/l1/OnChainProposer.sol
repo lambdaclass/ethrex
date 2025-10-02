@@ -535,6 +535,12 @@ contract OnChainProposer is
             return
                 "exceeded privileged transaction inclusion deadline, can't include non-privileged transactions";
         }
+
+        uint256 operatorFee = uint256(bytes32(publicData[256:288]));
+        if (OPERATOR_FEE != operatorFee) {
+            return
+                "operator fee public input does not match with the configured operator fee";
+        }
         return "";
     }
 

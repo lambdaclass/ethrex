@@ -140,6 +140,7 @@ pub fn stateless_validation_l1(
         final_state_hash,
         last_block_hash,
         non_privileged_count,
+        operator_fee,
         ..
     } = execute_stateless(blocks, execution_witness, elasticity_multiplier, None)?;
 
@@ -155,6 +156,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         chain_id: chain_id.into(),
         non_privileged_count,
+        operator_fee,
     })
 }
 
@@ -178,6 +180,7 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
+        operator_fee,
         nodes_hashed,
         codes_hashed,
         parent_block_header,
@@ -238,6 +241,7 @@ pub fn stateless_validation_l2(
         last_block_hash,
         chain_id: chain_id.into(),
         non_privileged_count,
+        operator_fee,
     })
 }
 
@@ -249,6 +253,7 @@ struct StatelessResult {
     last_block_header: BlockHeader,
     last_block_hash: H256,
     non_privileged_count: U256,
+    operator_fee: U256,
 
     // These fields are only used in L2 to validate state diff blobs.
     // We return them to avoid recomputing when comparing the initial state
@@ -375,6 +380,10 @@ fn execute_stateless(
         parent_block_header = &block.header;
     }
 
+    let operator_fee = fee_config
+        .and_then(|fc| fc.operator_fee_config.map(|oc| oc.operator_fee))
+        .unwrap_or_else(U256::zero);
+
     // Calculate final state root hash and check
     let last_block = blocks
         .last()
@@ -397,6 +406,8 @@ fn execute_stateless(
         last_block_header: last_block.header.clone(),
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
+        operator_fee,
+
         #[cfg(feature = "l2")]
         nodes_hashed,
         #[cfg(feature = "l2")]
