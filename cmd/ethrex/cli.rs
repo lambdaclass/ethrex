@@ -176,6 +176,14 @@ pub struct Options {
     )]
     pub discovery_port: String,
     #[arg(
+        long = "p2p.tx-broadcasting-interval",
+        default_value = "1000",
+        value_name = "INTERVAL_MS",
+        help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them",
+        help_heading = "P2P options"
+    )]
+    pub tx_broadcasting_time_interval: u64,
+    #[arg(
         long = "block-producer.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
@@ -246,6 +254,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            tx_broadcasting_time_interval: Default::default(),
             extra_data: get_minimal_client_version(),
         }
     }

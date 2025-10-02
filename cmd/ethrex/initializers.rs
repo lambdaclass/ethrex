@@ -202,6 +202,7 @@ pub async fn init_network(
         blockchain.clone(),
         get_client_version(),
         based_context,
+        opts.tx_broadcasting_time_interval,
     )
     .await
     .expect("P2P context could not be created");
