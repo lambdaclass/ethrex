@@ -56,7 +56,7 @@ impl LEVM {
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
-                matches!(report.result.clone(), TxResult::Success),
+                matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
                 report.logs.clone(),
             );
@@ -303,13 +303,14 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
+        // ok-clone: env is needed twice and the value is moved into the VM instance, so the clone here is inevitable
         let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env, db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 

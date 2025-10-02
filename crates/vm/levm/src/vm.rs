@@ -465,7 +465,7 @@ impl<'a> VM<'a> {
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = self.opcode_table[opcode as usize].call(self);
 
-            let result = match op_result {
+            let mut result = match op_result {
                 Ok(OpcodeResult::Continue) => continue,
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
@@ -478,7 +478,7 @@ impl<'a> VM<'a> {
             }
 
             // Handle interaction between child and parent callframe.
-            self.handle_return(&result)?;
+            self.handle_return(&mut result)?;
         }
     }
 
