@@ -718,19 +718,18 @@ impl FullBlockSyncState {
                 .current_blocks
                 .last()
                 .is_some_and(|block| block.hash() == block_parent)
-                || sync_head_found
+                && !self.current_blocks.contains(&block)
             {
+                pending_block_to_sync.push(block);
                 sync_head_found = true;
+                pending_block_to_sync.reverse();
+                self.current_blocks.extend(pending_block_to_sync);
                 break;
             }
             pending_block_to_sync.push(block);
             last_header_to_sync = block_parent;
         }
 
-        if sync_head_found {
-            pending_block_to_sync.reverse();
-            self.current_blocks.extend(pending_block_to_sync);
-        }
         // Execute full blocks
         // while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
         //     || (!self.current_blocks.is_empty() && sync_head_found)
