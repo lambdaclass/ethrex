@@ -16,7 +16,7 @@ use ethrex_p2p::{
     rlpx::{
         connection::server::{CastMessage, RLPxConnection},
         message::Message,
-        snap::GetTrieNodes,
+        snap::{GetStorageRanges, StorageRanges},
     },
 };
 use ethrex_p2p::{network::P2PContext, peer_handler::MAX_RESPONSE_BYTES};
@@ -94,7 +94,7 @@ async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
 }
 
 const SAI_TEST_TOKEN: &'static str =
-    "fff2bef58e73f6f4be26bef5ede84778aa946b1e2253e1943d4acdf1d7c384e7";
+    "e16550feb95232113739d716ce0942ff9970657b35894bb43028336cc25ae796";
 
 const UNISWAP_TEST_TOKEN: &'static str =
     "22002fe30a172d0a479f6add89c63b29dce29b6071b3c7e486b0fb4bc431f885";
@@ -160,7 +160,7 @@ fn parse_bytes(nibbles: String) -> Vec<Bytes> {
         .collect()
 }
 
-fn print_trie_nodes(nodes: TrieNodes) {
+fn print_trie_nodes(nodes: TrieNodes) -> H256 {
     info!(
         "Printing trie nodes. We got {} nodes from the peers.",
         nodes.nodes.len()
@@ -188,6 +188,18 @@ fn print_trie_nodes(nodes: TrieNodes) {
             }
         }
     }
+    return H256::zero();
+}
+
+fn print_storage_ranges(storage_ranges: StorageRanges) -> H256 {
+    println!("{:?}", storage_ranges.proof.len());
+    println!("{:?}", storage_ranges.slots.iter().flatten().count());
+    println!(
+        "{:?}",
+        storage_ranges.slots.last().unwrap().last().unwrap().hash
+    );
+    //println!("{storage_ranges:x?}")
+    return storage_ranges.slots.last().unwrap().last().unwrap().hash;
 }
 
 #[tokio::main]
@@ -202,45 +214,55 @@ async fn main() -> Result<(), ConsoleError> {
     let p2p_context = get_p2p_context(network).await?;
 
     let _ = RLPxConnection::spawn_as_initiator(p2p_context.clone(), &node).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let mut peer_channel = p2p_context
         .table
         .get_peer_channel(node.node_id())
         .await
         .expect("We should have the node we have spawned");
 
-    let sai_account = H256::from_str(SAI_TEST_TOKEN)?.0;
-    let account_path = sai_account.to_vec();
-    let uniswap_account = H256::from_str(UNISWAP_TEST_TOKEN)?.0;
-    let uniswap_path = sai_account.to_vec();
+    let sai_account = H256::from_str(SAI_TEST_TOKEN)?;
+    let account_path = sai_account.0.to_vec();
 
     let mut paths = vec![vec![Bytes::from(account_path)]];
 
     paths[0].extend(trienodes.clone());
 
-    let gtn = GetAccountRange {
-        id: 0,
-        root_hash: opts.state_root,
-        starting_hash: H256::from_str(SAI_TEST_TOKEN)?,
-        limit_hash: H256::from_str(SAI_TEST_TOKEN)?,
-        response_bytes: MAX_RESPONSE_BYTES,
-    };
+    let mut starting_hash = H256::zero();
+    let mut limit_hash = H256::repeat_byte(0xff);
 
-    info!("Sending the gtn {gtn:?}");
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let gtn = GetStorageRanges {
+            id: 0,
+            root_hash: opts.state_root,
+            account_hashes: vec![sai_account],
+            starting_hash,
+            limit_hash,
+            response_bytes: MAX_RESPONSE_BYTES,
+        };
 
-    peer_channel
-        .connection
-        .cast(CastMessage::BackendMessage(Message::GetAccountRange(gtn)))
-        .await?;
+        info!("Sending the gtn {gtn:x?}");
 
-    let mut receiver = peer_channel.receiver.lock().await;
+        peer_channel
+            .connection
+            .cast(CastMessage::BackendMessage(Message::GetStorageRanges(gtn)))
+            .await?;
 
-    match receiver.recv().await {
-        Some(Message::TrieNodes(nodes)) => {
-            print_trie_nodes(nodes);
+        let mut receiver = peer_channel.receiver.lock().await;
+
+        starting_hash = match receiver.recv().await {
+            Some(Message::TrieNodes(nodes)) => print_trie_nodes(nodes),
+            Some(Message::StorageRanges(ranges)) => print_storage_ranges(ranges),
+            _ => {
+                error!("We received a random message");
+                break;
+            }
+            None => {
+                error!("Connection closed unexpectedly");
+                break;
+            }
         }
-        _ => error!("We received a random message"),
-        None => error!("Connection closed unexpectedly"),
     }
 
     Ok(())
