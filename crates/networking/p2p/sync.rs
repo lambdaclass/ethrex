@@ -56,6 +56,12 @@ const BYTECODE_CHUNK_SIZE: usize = 50_000;
 /// that are unlikely to be re-orged.
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
+/// Searching for pending blocks to include during syncing can potentially slow down block processing if we have a large chain of pending blocks.
+/// For example, if we are syncing from genesis, it might take a while until this chain connects, but the searching for pending blocks loop will
+/// happen each time we process a batch of blocks, and can potentially take long, that's why we just limit this check to 32 blocks.
+/// Eventually we will implement some in-memory structure to make this check easy.
+const PENDING_BLOCKS_RETRIEVAL_LIMIT: usize = 32;
+
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
@@ -368,28 +374,14 @@ impl Syncer {
 
                 debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
-                let (first_block_hash, first_block_number, first_block_parent_hash) =
-                    match block_headers.first() {
-                        Some(header) => (header.hash(), header.number, header.parent_hash),
-                        None => continue,
-                    };
+                let first_block_number = match block_headers.first() {
+                    Some(header) => header.number,
+                    None => continue,
+                };
                 let (last_block_hash, last_block_number) = match block_headers.last() {
                     Some(header) => (header.hash(), header.number),
                     None => continue,
                 };
-                // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
-                // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
-                if first_block_hash == last_block_hash
-                    && first_block_hash == current_head
-                    && current_head != sync_head
-                {
-                    // There is no path to the sync head this goes back until it find a common ancerstor
-                    warn!(
-                        "Sync failed to find target block header, going back to the previous parent"
-                    );
-                    current_head = first_block_parent_hash;
-                    continue;
-                }
 
                 debug!(
                     "Received {} block headers| First Number: {} Last Number: {}",
@@ -431,7 +423,7 @@ impl Syncer {
                 }
 
                 if sync_head_found {
-                    break;
+                    return Ok(());
                 };
             }
         }
@@ -712,13 +704,13 @@ impl FullBlockSyncState {
         // Then we add it in current_blocks for execution.
         let mut pending_block_to_sync = vec![];
         let mut last_header_to_sync = sync_head;
+        let mut pending_blocks_retieved = 0;
         while let Some(block) = self.store.get_pending_block(last_header_to_sync).await? {
             let block_parent = block.header.parent_hash;
             if self
                 .current_blocks
                 .last()
                 .is_some_and(|block| block.hash() == block_parent)
-                && !self.current_blocks.contains(&block)
             {
                 pending_block_to_sync.push(block);
                 sync_head_found = true;
@@ -728,6 +720,10 @@ impl FullBlockSyncState {
             }
             pending_block_to_sync.push(block);
             last_header_to_sync = block_parent;
+            if pending_blocks_retieved > PENDING_BLOCKS_RETRIEVAL_LIMIT {
+                break;
+            }
+            pending_blocks_retieved += 1;
         }
 
         // Execute full blocks
