@@ -124,7 +124,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut set = JoinSet::new();
 
-    // set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
+    set.spawn(test_upgrade(l1_client.clone(), l2_client.clone()));
 
     set.spawn(test_transfer(
         l2_client.clone(),
