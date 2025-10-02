@@ -175,10 +175,10 @@ impl StoreEngine {
             let hash_key = block_hash.as_bytes().to_vec();
             let header_value = BlockHeaderRLP::from(header.clone()).bytes().clone();
 
-            batch_ops.push((HEADERS.to_string(), hash_key.clone(), header_value));
+            batch_ops.push((HEADERS, hash_key.clone(), header_value));
 
             let number_key = header.number.to_le_bytes().to_vec();
-            batch_ops.push((BLOCK_NUMBERS.to_string(), hash_key, number_key));
+            batch_ops.push((BLOCK_NUMBERS, hash_key, number_key));
         }
 
         self.write_batch_async(batch_ops).await
@@ -407,18 +407,14 @@ impl StoreEngine {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<(String, Vec<u8>, Vec<u8>)> = locations
+        let batch_items: Vec<(&'static str, Vec<u8>, Vec<u8>)> = locations
             .iter()
             .map(|(tx_hash, block_number, block_hash, index)| {
                 let mut composite_key = Vec::with_capacity(64);
                 composite_key.extend_from_slice(tx_hash.as_bytes());
                 composite_key.extend_from_slice(block_hash.as_bytes());
                 let location_value = (*block_number, *block_hash, *index).encode_to_vec();
-                (
-                    TRANSACTION_LOCATIONS.to_string(),
-                    composite_key,
-                    location_value,
-                )
+                (TRANSACTION_LOCATIONS, composite_key, location_value)
             })
             .collect();
 
@@ -492,13 +488,13 @@ impl StoreEngine {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<(String, Vec<u8>, Vec<u8>)> = receipts
+        let batch_items: Vec<(&'static str, Vec<u8>, Vec<u8>)> = receipts
             .into_iter()
             .enumerate()
             .map(|(index, receipt)| {
                 let key = (block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
-                (RECEIPTS.to_string(), key, value)
+                (RECEIPTS, key, value)
             })
             .collect();
         self.write_batch_async(batch_items).await
@@ -1071,7 +1067,7 @@ impl StoreEngine {
                 let mut key = Vec::with_capacity(64);
                 key.extend_from_slice(address_hash.as_bytes());
                 key.extend_from_slice(node_hash.as_ref());
-                batch_items.push((STORAGE_TRIE_NODES.to_string(), key, node_data));
+                batch_items.push((STORAGE_TRIE_NODES, key, node_data));
             }
         }
 
@@ -1085,11 +1081,7 @@ impl StoreEngine {
         let mut batch_items = Vec::new();
         for (code_hash, code) in account_codes {
             let value = AccountCodeRLP::from(code).bytes().clone();
-            batch_items.push((
-                ACCOUNT_CODES.to_string(),
-                code_hash.as_bytes().to_vec(),
-                value,
-            ));
+            batch_items.push((ACCOUNT_CODES, code_hash.as_bytes().to_vec(), value));
         }
 
         self.write_batch_async(batch_items).await
@@ -1102,16 +1094,15 @@ impl StoreEngine {
     /// Spawns blocking task to avoid blocking tokio runtime
     async fn write_async(
         &self,
-        table: &str,
+        table: &'static str,
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
-        let table = table.to_string();
 
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
-            txn.put(&table, &key, &value)?;
+            txn.put(table, &key, &value)?;
             txn.commit()
         })
         .await
@@ -1122,15 +1113,14 @@ impl StoreEngine {
     /// Spawns blocking task to avoid blocking tokio runtime
     pub async fn read_async(
         &self,
-        table: &str,
+        table: &'static str,
         key: Vec<u8>,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         let backend = self.backend.clone();
-        let table = table.to_string();
 
         tokio::task::spawn_blocking(move || {
             let txn = backend.begin_read()?;
-            txn.get(&table, &key)
+            txn.get(table, &key)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1141,19 +1131,13 @@ impl StoreEngine {
     /// This is the most important optimization for healing performance
     pub async fn write_batch_async(
         &self,
-        batch_ops: Vec<(String, Vec<u8>, Vec<u8>)>,
+        batch_ops: Vec<(&'static str, Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
 
         tokio::task::spawn_blocking(move || {
-            // Convert String to &str for put_batch
-            let batch_refs: Vec<(&str, Vec<u8>, Vec<u8>)> = batch_ops
-                .iter()
-                .map(|(table, key, value)| (table.as_str(), key.clone(), value.clone()))
-                .collect();
-
             let mut txn = backend.begin_write()?;
-            txn.put_batch(batch_refs)?;
+            txn.put_batch(batch_ops)?;
             txn.commit()
         })
         .await
