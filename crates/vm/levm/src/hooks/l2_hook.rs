@@ -23,6 +23,8 @@ impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
             DefaultHook.prepare_execution(vm)?;
+            // Different from L1:
+            // Operator fee is deducted from the sender before execution
             deduct_operator_fee(vm, &self.fee_config.operator_fee_config)?;
             return Ok(());
         }
@@ -115,9 +117,13 @@ impl Hook for L2Hook {
     ) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
             DefaultHook.finalize_execution(vm, ctx_result)?;
-            // Different from L1, the base fee is not burned
+            // Different from L1:
+
+            // Base fee is not burned
             pay_fee_vault(vm, ctx_result.gas_used, self.fee_config.fee_vault)?;
-            pay_operator_fee(vm, self.fee_config.operator_fee_config)?;
+
+            // Operator fee is paid to the chain operator
+            return pay_operator_fee(vm, self.fee_config.operator_fee_config);
         }
 
         if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
