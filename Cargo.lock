@@ -3639,7 +3639,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
- "cfg-if 1.0.3",
  "clap 4.5.47",
  "clap_complete",
  "criterion",
@@ -3688,7 +3687,6 @@ name = "ethrex-blockchain"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "cfg-if 1.0.3",
  "ethrex-common",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -3781,7 +3779,6 @@ dependencies = [
  "axum 0.8.4",
  "bincode",
  "bytes",
- "cfg-if 1.0.3",
  "chrono",
  "clap 4.5.47",
  "color-eyre",
@@ -3972,7 +3969,6 @@ dependencies = [
  "anyhow",
  "bincode",
  "bytes",
- "cfg-if 1.0.3",
  "clap 4.5.47",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
@@ -4064,7 +4060,6 @@ dependencies = [
  "axum 0.8.4",
  "axum-extra",
  "bytes",
- "cfg-if 1.0.3",
  "envy",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
@@ -4208,7 +4203,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
- "cfg-if 1.0.3",
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types 0.15.1",

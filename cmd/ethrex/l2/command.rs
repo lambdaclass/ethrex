@@ -33,6 +33,15 @@ use std::{
 };
 use tracing::{debug, info};
 
+// Compile-time check to ensure that at least one of the database features is enabled.
+#[cfg(any(
+    not(any(feature = "rocksdb", feature = "libmdbx")),
+    all(feature = "rocksdb", feature = "libmdbx")
+))]
+const _: () = {
+    compile_error!("Either the `rocksdb` or `libmdbx` feature must be enabled.");
+};
+
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 
@@ -375,25 +384,14 @@ impl Command {
                 store_path,
                 coinbase,
             } => {
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "libmdbx")] {
-                        let store_type = EngineType::Libmdbx;
-                    }
-                };
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "rocksdb")] {
-                        let store_type = EngineType::RocksDB;
-                    } else {
-                        eyre::bail!("Expected rocksdb or libmdbx store engine");
-                    }
-                };
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "rollup_storage_sql")] {
-                        let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
-                    } else {
-                        eyre::bail!("Expected sql rollup store engine");
-                    }
-                };
+                #[cfg(feature = "libmdbx")]
+                let store_type = EngineType::Libmdbx;
+
+                #[cfg(feature = "rocksdb")]
+                let store_type = EngineType::RocksDB;
+
+                #[cfg(feature = "rollup_storage_sql")]
+                let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
 
                 // Init stores
                 let store = Store::new_from_genesis(
