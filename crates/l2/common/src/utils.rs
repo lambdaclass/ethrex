@@ -2,7 +2,7 @@
 #[cfg(all(feature = "secp256k1", feature = "k256"))]
 const _: () = {
     compile_error!(
-        "Either the `secp256k1` or `k256` feature must be enabled to use KZG functionality."
+        "Either the `secp256k1` or `k256` feature must be enabled to use get_address_from_secret_key."
     );
 };
 

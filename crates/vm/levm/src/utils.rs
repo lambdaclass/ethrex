@@ -18,17 +18,10 @@ use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
-    types::{Account, Fork, Transaction, tx_fields::*},
+    types::{Account, AuthorizationTuple, Fork, Transaction},
     utils::{keccak, u256_to_big_endian},
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
-use ethrex_rlp;
-use ethrex_rlp::encode::RLPEncode;
-use secp256k1::{
-    Message,
-    ecdsa::{RecoverableSignature, RecoveryId},
-};
-use sha3::{Digest, Keccak256};
 use std::{collections::HashMap, iter::Enumerate};
 pub type Storage = HashMap<U256, H256>;
 
@@ -258,9 +251,29 @@ pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError
     }
 }
 
+#[allow(unreachable_code)]
 pub fn eip7702_recover_address(
-    auth_tuple: &AuthorizationTuple,
+    _auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
+    #[cfg(feature = "secp256k1")]
+    {
+        return eip7702_recover_address_secp256k1(_auth_tuple);
+    }
+    #[cfg(feature = "k256")]
+    {
+        return eip7702_recover_address_k256(_auth_tuple);
+    }
+    unreachable!()
+}
+
+#[cfg(feature = "secp256k1")]
+pub fn eip7702_recover_address_secp256k1(
+    auth_tuple: &ethrex_common::types::AuthorizationTuple,
+) -> Result<Option<Address>, VMError> {
+    use ethrex_rlp::encode::RLPEncode;
+    use sha2::Digest;
+    use sha3::Keccak256;
+
     if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
         return Ok(None);
     }
@@ -278,7 +291,7 @@ pub fn eip7702_recover_address(
     hasher.update(rlp_buf);
     let bytes = &mut hasher.finalize();
 
-    let Ok(message) = Message::from_digest_slice(bytes) else {
+    let Ok(message) = secp256k1::Message::from_digest_slice(bytes) else {
         return Ok(None);
     };
 
@@ -288,13 +301,14 @@ pub fn eip7702_recover_address(
     ]
     .concat();
 
-    let Ok(recovery_id) = RecoveryId::try_from(
+    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(
         TryInto::<i32>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
     ) else {
         return Ok(None);
     };
 
-    let Ok(signature) = RecoverableSignature::from_compact(&bytes, recovery_id) else {
+    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(&bytes, recovery_id)
+    else {
         return Ok(None);
     };
 
@@ -315,6 +329,13 @@ pub fn eip7702_recover_address(
         .try_into()
         .map_err(|_| InternalError::TypeConversion)?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))
+}
+
+#[cfg(feature = "k256")]
+pub fn eip7702_recover_address_k256(
+    auth_tuple: &AuthorizationTuple,
+) -> Result<Option<Address>, VMError> {
+    unimplemented!()
 }
 
 /// Gets code of an account, returning early if it's not a delegated account, otherwise
