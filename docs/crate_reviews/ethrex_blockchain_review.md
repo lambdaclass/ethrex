@@ -5,8 +5,15 @@ Commit: 31e19504485904c70bd5294aa65becf91358d0e3
 Target crate: `crates/blockchain`
 
 ## 1. Quantitative Snapshot
+- File count: 9
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | 2419 | 361 | 103 | 209 | 3092 |
+| Tests | 598 | 108 | 0 | 41 | 747 |
+| Total | 3017 | 469 | 103 | 250 | 3839 |
+
 - Files analyzed: 9 Rust sources (excludes `dev/` and `metrics/`)
-- Lines: 3,839 total / 3,033 effective (non-empty, non-comment)
 - Functions: 134 total with 15 flagged as complex (line/branch heuristics)
 - Longest routine(s): `blockchain.rs::generate_witness_for_blocks` (212 lines, 22 branches); `blockchain.rs::add_blocks_in_batch` (140 lines, 11 branches); `blockchain.rs::validate_transaction` (91 lines, 22 branches)
 - Async/concurrency signals (crate-wide):

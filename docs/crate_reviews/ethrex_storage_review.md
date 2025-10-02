@@ -5,8 +5,15 @@ Commit: 25ee6a95a6ccf329be87aecf903483fbc34796d0
 Target crate: `crates/storage`
 
 ## 1. Quantitative Snapshot
+- File count: 19
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | 4619 | 729 | 236 | 151 | 5735 |
+| Tests | 912 | 169 | 10 | 56 | 1147 |
+| Total | 5531 | 898 | 246 | 207 | 6882 |
+
 - Files analyzed: 19 Rust sources (no exclusions)
-- Lines: 6,882 total / 5,565 effective (non-empty, non-comment)
 - Functions: 391 total with 15 flagged as complex (see heuristics)
 - Longest routine(s): `store_db::rocksdb::Store::new` (crates/storage/store_db/rocksdb.rs:109, 194 lines/12 branches); `store_db::rocksdb::Store::apply_updates` (crates/storage/store_db/rocksdb.rs:439, 91 lines/9 branches); `store_db::libmdbx::Store::apply_updates` (crates/storage/store_db/libmdbx.rs:129, 83 lines/10 branches)
 - Async/concurrency signals (crate-wide):

@@ -5,8 +5,15 @@ Commit: {{commit_hash}}
 Target crate: `{{crate_path}}`
 
 ## 1. Quantitative Snapshot
+- File count: {{file_count}}
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | {{main_code}} | {{main_blank}} | {{main_doc_comments}} | {{main_comments}} | {{main_total}} |
+| Tests | {{test_code}} | {{test_blank}} | {{test_doc_comments}} | {{test_comments}} | {{test_total}} |
+| Total | {{overall_code}} | {{overall_blank}} | {{overall_doc_comments}} | {{overall_comments}} | {{overall_total}} |
+
 - Files analyzed: {{file_count}} Rust sources (note any exclusions)
-- Lines: {{total_lines}} total / {{code_lines}} effective (non-empty, non-comment)
 - Functions: {{function_total}} total with {{complex_function_total}} flagged as complex (see heuristics)
 - Longest routine(s): {{notable_long_functions}}
 - Async/concurrency signals (crate-wide):

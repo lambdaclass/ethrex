@@ -24,7 +24,10 @@ Use these steps when preparing a complexity-focused review for an `ethrex` crate
   rg --files -g'*.rs' -g'!other-crate/**' "$CRATE_ROOT"
   ```
 - For crates without nested subcrates simply omit the exclusion patterns.
-- Capture counts: number of files, total lines, code lines (non-empty, non-comment) per file. `tokei --files "$CRATE_ROOT"` is a quick cross-check when you need a second source for LOC numbers.
+- Capture line counts with `cargo warloc` so you can separate production and test code:
+  - Run the tool from the crate root (for example `cargo warloc --by-file`) to dump per-file totals.
+  - Identify subdirectories that are standalone crates (any directory with its own `Cargo.toml`) and discard their rows before you add things up; `cargo warloc` includes the entire folder tree.
+  - Aggregate the filtered numbers into the table printed by the tool (skip the `Examples` row) and stash it for the write-up.
 - Flag inline test modules (`#[cfg(test)]`) or dedicated test files; you may keep their metrics separate when they skew results (e.g., large fixtures) and explicitly note when production totals exclude files such as `*_test.rs`.
 
 ## 3. Function-Level Metrics
@@ -64,7 +67,7 @@ Use these steps when preparing a complexity-focused review for an `ethrex` crate
 - Use `cargo metadata --no-deps` to gauge dependency fan-in/out if needed.
 
 ## 7. Synthesize Findings
-- Capture quantitative metrics: file count, LOC, function totals, complex function tally, concurrency/blocking keyword counts.
+- Capture quantitative metrics: file count, LOC (include the `cargo warloc` table), function totals, complex function tally, concurrency/blocking keyword counts.
 - Highlight top risky areas with file + line references (long functions, mixed locking patterns, async hotspots).
 - Assign a 1–5 engineering risk/complexity score based on size, branching density, concurrency surface, and critical-path functions.
 - Include the commit hash and date captured earlier near the top of the write-up so future reviews know exactly what was analyzed. Start from the template in `docs/crate_reviews/toolkit/_report_template.md` so reports stay consistent.

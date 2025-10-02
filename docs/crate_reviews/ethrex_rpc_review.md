@@ -5,8 +5,15 @@ Commit: 25ee6a95a6ccf329be87aecf903483fbc34796d0
 Target crate: `crates/networking/rpc`
 
 ## 1. Quantitative Snapshot
-- Files analyzed: 43 Rust sources (tests included; no subtrees excluded, counts cross-checked with `tokei 12.1.2`)
-- Lines: 9,224 total / 8,157 code (tokei) — analyzer script reports a similar 9,290 / 8,142 because it under-counts doc comments
+- File count: 43
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | 6827 | 716 | 66 | 253 | 7862 |
+| Tests | 1284 | 111 | 0 | 33 | 1428 |
+| Total | 8111 | 827 | 66 | 286 | 9290 |
+
+- Files analyzed: 43 Rust sources (tests included; no nested crates)
 - Functions: 331 total with 21 flagged as complex (≥60 lines or branch-heavy)
 - Longest routine(s): `engine::fork_choice::handle_forkchoice` (134 lines, 20 branches), `eth::transaction::handle` (110 lines, 11 branches), `eth::fee_market::handle` (97 lines, 11 branches)
 - Async/concurrency signals (`rg -o` manual counts; analyzer under-counts multi-line matches):

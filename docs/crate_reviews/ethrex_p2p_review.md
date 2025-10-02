@@ -5,8 +5,15 @@ Commit: 31e19504485904c70bd5294aa65becf91358d0e3
 Target crate: `crates/networking/p2p`
 
 ## 1. Quantitative Snapshot
+- File count: 45
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | 11644 | 1517 | 309 | 599 | 14069 |
+| Tests | 1613 | 169 | 0 | 59 | 1841 |
+| Total | 13257 | 1686 | 309 | 658 | 15910 |
+
 - Files analyzed: 45 Rust sources (tests inline, no sibling crates)
-- Lines: 15,910 total / 13,344 effective (non-empty, non-comment)
 - Functions: 501 total with 56 flagged as complex (heuristic: ≥60 lines or high branch count)
 - Longest production routine: `sync.rs:817` (`snap_sync`, 409 lines, 30 branches)
 - Async/concurrency signals (crate-wide):

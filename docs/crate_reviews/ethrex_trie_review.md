@@ -5,8 +5,15 @@ Commit: a25ab5cb61dba3c70210e0fca40353c91c88d0f1
 Target crate: `crates/common/trie`
 
 ## 1. Quantitative Snapshot
+- File count: 15
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | 2082 | 290 | 162 | 203 | 2737 |
+| Tests | 1837 | 222 | 0 | 147 | 2206 |
+| Total | 3919 | 512 | 162 | 350 | 4943 |
+
 - Files analyzed: 15 Rust sources (bench code under `benches/` included; README/Makefile ignored)
-- Lines: 4943 total / 3904 effective (non-empty, non-comment)
 - Functions: 257 total with 14 flagged as complex (≥60 lines or heavy branching)
 - Longest routine(s): `crates/common/trie/verify_range.rs::verify_range` (112 lines), `crates/common/trie/trie_iter.rs::advance` (101 lines), `crates/common/trie/node/branch.rs::remove` (88 lines)
 - Async/concurrency signals (crate-wide):

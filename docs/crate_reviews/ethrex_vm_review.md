@@ -5,8 +5,15 @@ Commit: 25ee6a95a6ccf329be87aecf903483fbc34796d0
 Target crate: `crates/vm` (excludes nested crate `crates/vm/levm`)
 
 ## 1. Quantitative Snapshot
+- File count: 11
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | 1118 | 154 | 33 | 26 | 1331 |
+| Tests | 0 | 0 | 0 | 0 | 0 |
+| Total | 1118 | 154 | 33 | 26 | 1331 |
+
 - Files analyzed: 11 Rust sources (excludes the standalone `ethrex-levm` crate)
-- Lines: 1,331 total / 1,121 effective (non-empty, non-comment)
 - Functions: 70 total with 3 flagged as complex (line/branch heuristics)
 - Longest routine(s): `backends/levm/tracing.rs::rerun_block` (27 lines, 6 branches); `backends/levm/mod.rs::prepare_block` (20 lines, 7 branches); `backends/mod.rs::apply_system_calls` (14 lines, 6 branches)
 - Async/concurrency signals (crate-wide):

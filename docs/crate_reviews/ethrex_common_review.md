@@ -5,8 +5,15 @@ Commit: a25ab5cb61dba3c70210e0fca40353c91c88d0f1
 Target crate: `crates/common` (excludes nested crates: `config/`, `crypto/`, `rlp/`, `trie/`)
 
 ## 1. Quantitative Snapshot
+- File count: 24
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | 6161 | 761 | 204 | 200 | 7326 |
+| Tests | 1985 | 109 | 0 | 31 | 2125 |
+| Total | 8146 | 870 | 204 | 231 | 9451 |
+
 - Files analyzed: 24 Rust sources (sibling crates under `crates/common/*` excluded)
-- Lines: 9449 total / 8223 effective (non-empty, non-comment)
 - Functions: 395 total with 28 flagged as complex (heuristic: ≥60 lines or heavy branching)
 - Longest routine(s): `crates/common/types/fork_id.rs::sepolia_test_cases` (151 lines), `crates/common/types/fork_id.rs::holesky_test_cases` (138 lines), `crates/common/types/transaction.rs::sender` (116 lines)
 - Async/concurrency signals (crate-wide):

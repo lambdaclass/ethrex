@@ -4,18 +4,16 @@ This directory hosts the finished per-crate reviews and the tracker that summari
 
 ## Tracker
 
-Update the table after each crate audit so we retain a cross-crate snapshot. For every entry, record the effective LOC (non-empty, non-comment) and the engineering complexity score from the report, then link directly to the rendered review in this directory.
-
-| Crate | LOC | Complexity Score | Report |
-| --- | --- | --- | --- |
-| `crates/networking/p2p` | 13,344 | 5 / 5 | [ethrex_p2p_review.md](ethrex_p2p_review.md) |
-| `crates/vm/levm` | 8,712 | 4 / 5 | [ethrex_levm_review.md](ethrex_levm_review.md) |
-| `crates/storage` | 5,565 | 4 / 5 | [ethrex_storage_review.md](ethrex_storage_review.md) |
-| `crates/blockchain` | 3,033 | 4 / 5 | [ethrex_blockchain_review.md](ethrex_blockchain_review.md) |
-| `crates/networking/rpc` | 8,157 | 3 / 5 | [ethrex_rpc_review.md](ethrex_rpc_review.md) |
-| `crates/common/trie` | 3,904 | 3 / 5 | [ethrex_trie_review.md](ethrex_trie_review.md) |
-| `crates/common` | 8,223 | 2 / 5 | [ethrex_common_review.md](ethrex_common_review.md) |
-| `crates/vm` | 1,121 | 2 / 5 | [ethrex_vm_review.md](ethrex_vm_review.md) |
+| Crate | Main LOC | Test LOC | Complexity Score | Report |
+| --- | --- | --- | --- | --- |
+| `crates/networking/p2p` | 11,644 | 1,613 | 5 / 5 | [ethrex_p2p_review.md](ethrex_p2p_review.md) |
+| `crates/vm/levm` | 7,884 | 201 | 4 / 5 | [ethrex_levm_review.md](ethrex_levm_review.md) |
+| `crates/storage` | 4,619 | 912 | 4 / 5 | [ethrex_storage_review.md](ethrex_storage_review.md) |
+| `crates/blockchain` | 2,419 | 598 | 4 / 5 | [ethrex_blockchain_review.md](ethrex_blockchain_review.md) |
+| `crates/networking/rpc` | 6,827 | 1,284 | 3 / 5 | [ethrex_rpc_review.md](ethrex_rpc_review.md) |
+| `crates/common/trie` | 2,082 | 1,837 | 3 / 5 | [ethrex_trie_review.md](ethrex_trie_review.md) |
+| `crates/common` | 6,161 | 1,985 | 2 / 5 | [ethrex_common_review.md](ethrex_common_review.md) |
+| `crates/vm` | 1,118 | 0 | 2 / 5 | [ethrex_vm_review.md](ethrex_vm_review.md) |
 
 ## Toolkit
 

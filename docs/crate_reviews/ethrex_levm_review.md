@@ -5,8 +5,15 @@ Commit: 25ee6a95a6ccf329be87aecf903483fbc34796d0
 Target crate: `crates/vm/levm`
 
 ## 1. Quantitative Snapshot
-- Files analyzed: 44 Rust sources (full crate)
-- Lines: 11,406 total / 8,712 effective (non-empty, non-comment)
+- File count: 36
+
+| Type | Code | Blank | Doc comments | Comments | Total |
+| --- | --- | --- | --- | --- | --- |
+| Main | 7884 | 1515 | 341 | 669 | 10409 |
+| Tests | 201 | 49 | 0 | 8 | 258 |
+| Total | 8085 | 1564 | 341 | 677 | 10667 |
+
+- Files analyzed: 36 Rust sources (excluding the standalone bench and runner crates)
 - Functions: 413 total with 49 flagged as complex (line/branch heuristics)
 - Longest routine(s): `src/opcodes.rs::from` (160 lines, 1 branch); `src/opcodes.rs::build_opcode_table_pre_shanghai` (153 lines, 0 branches); `src/opcode_handlers/system.rs::generic_create` (117 lines, 11 branches)
 - Async/concurrency signals (crate-wide):
