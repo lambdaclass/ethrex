@@ -66,6 +66,8 @@ pub const SNAP_LIMIT: usize = 128;
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
 const STORAGE_ROOTS_PER_CHUNK: usize = 10_000;
+// How many storage roots we include in a single task sent to a peer.
+const STORAGE_ROOTS_PER_TASK: usize = 300;
 
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
@@ -1347,16 +1349,18 @@ impl PeerHandler {
 
         // Maintain previous prioritization of busy roots
         accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
-    let chunk_count = (accounts_by_root_hash.len() / STORAGE_ROOTS_PER_CHUNK) + 1;
+        let total_roots = accounts_by_root_hash.len();
+        let task_span = STORAGE_ROOTS_PER_TASK.min(STORAGE_ROOTS_PER_CHUNK);
+        let task_partition_count = (total_roots + task_span - 1) / task_span;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
 
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
-        for i in 0..chunk_count {
-            let chunk_start = STORAGE_ROOTS_PER_CHUNK * i;
-            let chunk_end = (chunk_start + STORAGE_ROOTS_PER_CHUNK).min(accounts_by_root_hash.len());
+        for i in 0..task_partition_count {
+            let chunk_start = task_span * i;
+            let chunk_end = ((i + 1) * task_span).min(total_roots);
             tasks_queue_not_started.push_back(StorageTask {
                 start_index: chunk_start,
                 end_index: chunk_end,
