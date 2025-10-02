@@ -41,6 +41,9 @@ where
                     "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
                         TransactionExpectedException::IntrinsicGasTooLow
                     }
+                    "TransactionException.INTRINSIC_BELOW_FLOOR_GAS_COST" => {
+                        TransactionExpectedException::IntrinsicGasBelowFloorGasCost
+                    }
                     "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                         TransactionExpectedException::InsufficientAccountFunds
                     }
@@ -56,6 +59,9 @@ where
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerGas
                     }
+                    "TransactionException.RLP_INVALID_VALUE" => {
+                        TransactionExpectedException::RlpInvalidValue
+                    }
                     "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
                         TransactionExpectedException::GasLimitPriceProductOverflow
                     }
@@ -67,6 +73,9 @@ where
                     }
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerBlobGas
+                    }
+                    "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM" => {
+                        TransactionExpectedException::TxMaxGasLimitExceeded
                     }
                     _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }

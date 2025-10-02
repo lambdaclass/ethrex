@@ -1,15 +1,11 @@
-use std::collections::HashMap;
-
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, serde_utils,
+    serde_utils,
     types::{
-        BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
+        ChainConfig,
+        block_execution_witness::{ExecutionWitness, GuestProgramStateError},
     },
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
@@ -40,33 +36,16 @@ pub struct RpcExecutionWitness {
     pub headers: Vec<Bytes>,
 }
 
-impl From<ExecutionWitnessResult> for RpcExecutionWitness {
-    fn from(value: ExecutionWitnessResult) -> Self {
-        let mut keys = Vec::new();
-
-        let touched_account_storage_slots = value.touched_account_storage_slots;
-
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(Bytes::copy_from_slice(address.as_bytes()));
-            for slot in touched_storage_slots.iter() {
-                keys.push(Bytes::copy_from_slice(slot.as_bytes()));
-            }
-        }
-
+impl From<ExecutionWitness> for RpcExecutionWitness {
+    fn from(value: ExecutionWitness) -> Self {
         Self {
-            state: value
-                .state_nodes
-                .values()
-                .cloned()
-                .map(Into::into)
-                .collect(),
-            keys,
-            codes: value.codes.values().cloned().collect(),
+            state: value.nodes.into_iter().map(Bytes::from).collect(),
+            keys: value.keys.into_iter().map(Bytes::from).collect(),
+            codes: value.codes.into_iter().map(Bytes::from).collect(),
             headers: value
-                .block_headers
-                .values()
-                .map(BlockHeader::encode_to_vec)
-                .map(Into::into)
+                .block_headers_bytes
+                .into_iter()
+                .map(Bytes::from)
                 .collect(),
         }
     }
@@ -77,66 +56,19 @@ pub fn execution_witness_from_rpc_chain_config(
     rpc_witness: RpcExecutionWitness,
     chain_config: ChainConfig,
     first_block_number: u64,
-) -> Result<ExecutionWitnessResult, ExecutionWitnessError> {
-    let codes = rpc_witness
-        .codes
-        .iter()
-        .map(|code| (keccak_hash::keccak(code), code.clone()))
-        .collect::<HashMap<_, _>>();
-
-    let block_headers = rpc_witness
-        .headers
-        .iter()
-        .map(Bytes::as_ref)
-        .map(BlockHeader::decode)
-        .collect::<Result<Vec<_>, _>>()
-        .expect("Failed to decode block headers from RpcExecutionWitness")
-        .iter()
-        .map(|header| (header.number, header.clone()))
-        .collect::<HashMap<_, _>>();
-
-    let parent_number = first_block_number
-        .checked_sub(1)
-        .ok_or(ExecutionWitnessError::Custom(
-            "First block number cannot be zero".to_string(),
-        ))?;
-
-    let parent_header = block_headers.get(&parent_number).cloned().ok_or(
-        ExecutionWitnessError::MissingParentHeaderOf(first_block_number),
-    )?;
-
-    let mut state_nodes = HashMap::new();
-    for node in rpc_witness.state.iter() {
-        state_nodes.insert(keccak(node), node.to_vec());
-    }
-
-    let mut touched_account_storage_slots = HashMap::new();
-    let mut address = Address::default();
-    for bytes in rpc_witness.keys {
-        if bytes.len() == Address::len_bytes() {
-            address = Address::from_slice(&bytes);
-        } else {
-            let slot = H256::from_slice(&bytes);
-            // Insert in the vec of the address value
-            touched_account_storage_slots
-                .entry(address)
-                .or_insert_with(Vec::new)
-                .push(slot);
-        }
-    }
-
-    let mut witness = ExecutionWitnessResult {
-        codes,
-        state_trie: None, // `None` because we'll rebuild the tries afterwards
-        storage_tries: HashMap::new(), // empty map because we'll rebuild the tries afterwards
-        block_headers,
+) -> Result<ExecutionWitness, GuestProgramStateError> {
+    let witness = ExecutionWitness {
+        codes: rpc_witness.codes.into_iter().map(|b| b.to_vec()).collect(),
         chain_config,
-        parent_block_header: parent_header,
-        state_nodes,
-        touched_account_storage_slots,
+        first_block_number,
+        block_headers_bytes: rpc_witness
+            .headers
+            .into_iter()
+            .map(|b| b.to_vec())
+            .collect(),
+        nodes: rpc_witness.state.into_iter().map(|b| b.to_vec()).collect(),
+        keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
-
-    witness.rebuild_state_trie()?;
 
     Ok(witness)
 }

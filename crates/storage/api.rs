@@ -1,14 +1,13 @@
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
+use ethereum_types::H256;
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction, payload::PayloadBundle,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
@@ -129,15 +128,18 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError>;
 
-    /// Obtain receipt for a canonical block represented by the block number.
+    /// Obtain receipt by block hash and index
     async fn get_receipt(
         &self,
-        block_number: BlockNumber,
+        block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError>;
 
     /// Add account code
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError>;
+
+    /// Clears all checkpoint data created during the last snap sync
+    async fn clear_snap_state(&self) -> Result<(), StoreError>;
 
     /// Obtain account code via code hash
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError>;
@@ -240,6 +242,24 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Used for internal store operations
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
 
+    /// Obtain a state trie locked for reads from the given state root
+    /// Doesn't check if the state root is valid
+    /// Used for internal store operations
+    fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        self.open_state_trie(state_root)
+    }
+
+    /// Obtain a read-locked storage trie from the given address and storage_root
+    /// Doesn't check if the account is stored
+    /// Used for internal store operations
+    fn open_locked_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        self.open_storage_trie(hashed_address, storage_root)
+    }
+
     async fn forkchoice_update(
         &self,
         new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
@@ -247,16 +267,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
-    ) -> Result<(), StoreError>;
-
-    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
-
-    async fn update_payload(
-        &self,
-        payload_id: u64,
-        payload: PayloadBundle,
     ) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
@@ -281,52 +291,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
 
-    /// Sets storage trie paths in need of healing, grouped by hashed address
-    /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
-    async fn set_storage_heal_paths(
-        &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
-    ) -> Result<(), StoreError>;
-
-    /// Gets the storage trie paths in need of healing, grouped by hashed address
-    /// Gets paths from at most `limit` storage tries and removes them from the store
-    #[allow(clippy::type_complexity)]
-    async fn take_storage_heal_paths(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError>;
-
     /// Sets the state trie paths in need of healing
-    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
+    async fn set_state_heal_paths(&self, paths: Vec<(Nibbles, H256)>) -> Result<(), StoreError>;
 
     /// Gets the state trie paths in need of healing
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
-
-    /// Clears all checkpoint data created during the last snap sync
-    async fn clear_snap_state(&self) -> Result<(), StoreError>;
-
-    /// Write an account batch into the current state snapshot
-    async fn write_snapshot_account_batch(
-        &self,
-        account_hashes: Vec<H256>,
-        account_states: Vec<AccountState>,
-    ) -> Result<(), StoreError>;
-
-    /// Write a storage batch into the current storage snapshot
-    async fn write_snapshot_storage_batch(
-        &self,
-        account_hash: H256,
-        storage_keys: Vec<H256>,
-        storage_values: Vec<U256>,
-    ) -> Result<(), StoreError>;
-
-    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
-    async fn write_snapshot_storage_batches(
-        &self,
-        account_hashes: Vec<H256>,
-        storage_keys: Vec<Vec<H256>>,
-        storage_values: Vec<Vec<U256>>,
-    ) -> Result<(), StoreError>;
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError>;
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     async fn set_state_trie_rebuild_checkpoint(
@@ -349,19 +318,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
-
-    /// Clears the state and storage snapshots
-    async fn clear_snapshot(&self) -> Result<(), StoreError>;
-
-    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
-
-    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
-    async fn read_storage_snapshot(
-        &self,
-        start: H256,
-        account_hash: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError>;
 
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
@@ -392,4 +348,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
+
+    async fn write_storage_trie_nodes_batch(
+        &self,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+    ) -> Result<(), StoreError>;
+
+    async fn write_account_code_batch(
+        &self,
+        account_codes: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError>;
 }

@@ -6,12 +6,12 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainType, error::ChainError};
+use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::{sync::SyncMode, types::Node};
+use ethrex_p2p::sync::SyncMode;
+use ethrex_p2p::types::Node;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
-use ethrex_vm::EvmEngine;
 use tracing::{Level, info, warn};
 
 use crate::{
@@ -20,7 +20,7 @@ use crate::{
         self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
     },
-    utils::{self, default_datadir, get_client_version, init_datadir},
+    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
 use ethrex_config::networks::Network;
 
@@ -34,7 +34,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser, Debug)]
+#[derive(ClapParser, Debug, Clone)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -52,13 +52,13 @@ pub struct Options {
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
         help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        default_value_t = default_datadir(),
+        default_value = default_datadir().into_os_string(),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: PathBuf,
     #[arg(
         long = "force",
         help = "Force remove the database",
@@ -100,15 +100,6 @@ pub struct Options {
     )]
     pub dev: bool,
     #[arg(
-        long = "evm",
-        default_value_t = EvmEngine::default(),
-        value_name = "EVM_BACKEND",
-        help = "Has to be `levm` or `revm`",
-        value_parser = utils::parse_evm_engine,
-        help_heading = "Node options",
-        env = "ETHREX_EVM")]
-    pub evm: EvmEngine,
-    #[arg(
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
@@ -117,8 +108,16 @@ pub struct Options {
         help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
+        help = "Maximum size of the mempool in number of transactions",
+        long = "mempool.maxsize",
+        default_value_t = 10_000,
+        value_name = "MEMPOOL_MAX_SIZE",
+        help_heading = "Node options"
+    )]
+    pub mempool_max_size: usize,
+    #[arg(
         long = "http.addr",
-        default_value = "localhost",
+        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
         help_heading = "RPC options",
@@ -136,7 +135,7 @@ pub struct Options {
     pub http_port: String,
     #[arg(
         long = "authrpc.addr",
-        default_value = "localhost",
+        default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the authenticated rpc server.",
         help_heading = "RPC options"
@@ -161,27 +160,13 @@ pub struct Options {
     #[arg(long = "p2p.enabled", default_value = "true", value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_enabled: bool,
     #[arg(
-        long = "p2p.addr",
-        default_value = "0.0.0.0",
-        value_name = "ADDRESS",
-        help_heading = "P2P options"
-    )]
-    pub p2p_addr: String,
-    #[arg(
         long = "p2p.port",
         default_value = "30303",
         value_name = "PORT",
+        help = "TCP port for P2P protocol.",
         help_heading = "P2P options"
     )]
     pub p2p_port: String,
-    #[arg(
-        long = "discovery.addr",
-        default_value = "0.0.0.0",
-        value_name = "ADDRESS",
-        help = "UDP address for P2P discovery.",
-        help_heading = "P2P options"
-    )]
-    pub discovery_addr: String,
     #[arg(
         long = "discovery.port",
         default_value = "30303",
@@ -190,13 +175,21 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
+    #[arg(
+        long = "block-producer.extra-data",
+        default_value = get_minimal_client_version(),
+        value_name = "EXTRA_DATA",
+        help = "Block extra data message.",
+        help_heading = "Block producer options"
+    )]
+    pub extra_data: String,
 }
 
 impl Options {
     pub fn default_l1() -> Self {
         Self {
             network: Some(Network::LocalDevnet),
-            datadir: DB_ETHREX_DEV_L1.to_string(),
+            datadir: DB_ETHREX_DEV_L1.into(),
             dev: true,
             http_addr: "0.0.0.0".to_string(),
             http_port: "8545".to_string(),
@@ -205,10 +198,8 @@ impl Options {
             authrpc_addr: "localhost".to_string(),
             authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_enabled: true,
-            p2p_addr: "0.0.0.0".to_string(),
-            p2p_port: "30303".to_string(),
-            discovery_addr: "0.0.0.0".to_string(),
-            discovery_port: "30303".to_string(),
+            p2p_port: "30303".into(),
+            discovery_port: "30303".into(),
             ..Default::default()
         }
     }
@@ -216,7 +207,7 @@ impl Options {
     pub fn default_l2() -> Self {
         Self {
             network: Some(Network::LocalDevnetL2),
-            datadir: DB_ETHREX_DEV_L2.to_string(),
+            datadir: DB_ETHREX_DEV_L2.into(),
             metrics_port: "3702".into(),
             metrics_enabled: true,
             dev: true,
@@ -226,9 +217,7 @@ impl Options {
             authrpc_port: "8551".into(),
             authrpc_jwtsecret: "jwt.hex".into(),
             p2p_enabled: true,
-            p2p_addr: "0.0.0.0".into(),
             p2p_port: "30303".into(),
-            discovery_addr: "0.0.0.0".into(),
             discovery_port: "30303".into(),
             ..Default::default()
         }
@@ -245,9 +234,7 @@ impl Default for Options {
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
             p2p_enabled: Default::default(),
-            p2p_addr: Default::default(),
             p2p_port: Default::default(),
-            discovery_addr: Default::default(),
             discovery_port: Default::default(),
             network: Default::default(),
             bootnodes: Default::default(),
@@ -257,8 +244,9 @@ impl Default for Options {
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
             dev: Default::default(),
-            evm: Default::default(),
             force: false,
+            mempool_max_size: Default::default(),
+            extra_data: get_minimal_client_version(),
         }
     }
 }
@@ -268,8 +256,8 @@ impl Default for Options {
 pub enum Subcommand {
     #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value_t = default_datadir(), required = false)]
-        datadir: String,
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = default_datadir().into_os_string(), required = false)]
+        datadir: PathBuf,
         #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,
     },
@@ -332,7 +320,9 @@ impl Subcommand {
         // L2 has its own init_tracing because of the ethrex monitor
         match self {
             Self::L2(_) => {}
-            _ => init_tracing(opts),
+            _ => {
+                init_tracing(opts);
+            }
         }
         match self {
             Subcommand::RemoveDB { datadir, force } => {
@@ -350,7 +340,17 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    BlockchainOptions {
+                        max_mempool_size: opts.mempool_max_size,
+                        r#type: blockchain_type,
+                        ..Default::default()
+                    },
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -367,13 +367,12 @@ impl Subcommand {
     }
 }
 
-pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = init_datadir(datadir);
-    let path = Path::new(&data_dir);
+pub fn remove_db(datadir: &Path, force: bool) {
+    init_datadir(datadir);
 
-    if path.exists() {
+    if datadir.exists() {
         if force {
-            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+            std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
             info!("Database removed successfully.");
         } else {
             print!("Are you sure you want to remove the database? (y/n): ");
@@ -383,28 +382,27 @@ pub fn remove_db(datadir: &str, force: bool) {
             io::stdin().read_line(&mut input).unwrap();
 
             if input.trim().eq_ignore_ascii_case("y") {
-                std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+                std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
                 println!("Database removed successfully.");
             } else {
                 println!("Operation canceled.");
             }
         }
     } else {
-        warn!("Data directory does not exist: {}", data_dir);
+        warn!("Data directory does not exist: {datadir:?}");
     }
 }
 
 pub async fn import_blocks(
     path: &str,
-    data_dir: &str,
+    datadir: &Path,
     genesis: Genesis,
-    evm: EvmEngine,
-    blockchain_type: BlockchainType,
+    blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
-    let data_dir = init_datadir(data_dir);
-    let store = init_store(&data_dir, genesis).await;
-    let blockchain = init_blockchain(evm, store.clone(), blockchain_type, false);
+    init_datadir(datadir);
+    let store = init_store(datadir, genesis).await;
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -501,12 +499,12 @@ pub async fn import_blocks(
 
 pub async fn export_blocks(
     path: &str,
-    data_dir: &str,
+    datadir: &Path,
     first_number: Option<u64>,
     last_number: Option<u64>,
 ) {
-    let data_dir = init_datadir(data_dir);
-    let store = load_store(&data_dir).await;
+    init_datadir(datadir);
+    let store = load_store(datadir).await;
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {

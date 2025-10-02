@@ -6,6 +6,7 @@ use crossterm::{
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
+use futures::StreamExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -123,8 +124,8 @@ impl GenServer for EthrexMonitor {
         // Event handling
         spawn_listener(
             handle.clone(),
-            |event: Event| Self::CastMsg::Event(event),
-            EventStream::new(),
+            EventStream::new()
+                .filter_map(|result| async move { result.ok().map(Self::CastMsg::Event) }),
         );
         Ok(Success(self))
     }

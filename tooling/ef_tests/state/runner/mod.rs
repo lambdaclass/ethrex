@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::report::EFTestsReport;
+use crate::runner::revm_runner::SpecId;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
     report::{self, EFTestReport, TestReRunReport, format_duration_as_mm_ss},
@@ -11,11 +12,11 @@ use colored::Colorize;
 use ethrex_common::Address;
 use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, VMError};
-use ethrex_vm::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 
 pub mod levm_runner;
+pub mod revm_db;
 pub mod revm_runner;
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]

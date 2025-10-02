@@ -2,6 +2,8 @@
 name = "ef_tests-statev2"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-blockchain.workspace = true
@@ -10,12 +12,13 @@ ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
+ethrex-l2-rpc.workspace = true
 
+secp256k1.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
 hex.workspace = true
-keccak-hash.workspace = true
 thiserror.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
@@ -27,6 +30,6 @@ alloy-rlp = "0.3.12"
 hex = "0.4.3"
 
 [features]
-default = ["c-kzg", "blst"]
+default = ["c-kzg"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
-blst = ["ethrex-vm/blst"]
+block = []

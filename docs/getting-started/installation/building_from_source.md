@@ -1,56 +1,87 @@
-# Building from source
+# Building ethrex from source
+
+Build ethrex yourself for maximum flexibility and experimental features.
 
 ## Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install)
+- [Rust toolchain](https://www.rust-lang.org/tools/install) (use `rustup` for easiest setup)
 - [Git](https://git-scm.com/downloads)
+- [solc](https://docs.soliditylang.org/en/v0.8.30/installing-solidity.html) (for L2 development)
 
-## Installing using `cargo install`
+### L2 contracts
 
-To install the client simply run 
+If you want to install ethrex for L2 development, you may set the `COMPILE_CONTRACTS` env var, so the binary have the necessary contract code.
+
+```sh
+export COMPILE_CONTRACTS=true
+```
+
+## Install via `cargo install`
+
+The fastest way to install ethrex from source:
 
 ```sh
 cargo install --locked ethrex --git https://github.com/lambdaclass/ethrex.git
 ```
 
-> [!TIP]
-> You can add `sp1` and `risc0` features to the installation script to build with support for SP1
-> and/or RISC0 provers. `gpu` feature is also available for CUDA support.
+**Optional features:**
 
-To install a specifc version you can add the `--tag <tag>` flag.
-Existing tags are available in the [GitHub repo](https://github.com/lambdaclass/ethrex/tags)
+- Add `--features sp1,risc0` to enable SP1 and/or RISC0 provers
+- Add `--features gpu` for CUDA GPU support
 
+**Install a specific version:**
 
-After that, you can verify the program is working by running:
+```sh
+cargo install --locked ethrex --git https://github.com/lambdaclass/ethrex.git --tag <version-tag>
+```
+
+Find available tags in the <a href="https://github.com/lambdaclass/ethrex/tags" target="_blank">GitHub repo</a>.
+
+**Verify installation:**
 
 ```sh
 ethrex --version
 ```
 
-## Building the binary with `cargo build`
+---
 
-You can download the source code of a release from the [GitHub releases page](https://github.com/lambdaclass/ethrex/releases), or by cloning the repository at that version:
+## Build manually with `cargo build`
+
+Clone the repository (replace `<version-tag>` with the desired version):
 
 ```sh
-git clone --branch <LATEST_VERSION_HERE> --depth 1 https://github.com/lambdaclass/ethrex.git
+git clone --branch <version-tag> --depth 1 https://github.com/lambdaclass/ethrex.git
+cd ethrex
 ```
 
-After that, you can run the following command inside the cloned repo to build the client:
+Build the binary:
 
 ```sh
 cargo build --bin ethrex --release
 ```
 
-> [!TIP]
-> You can add `sp1` and `risc0` features to the installation script to build with support for SP1
-> and/or RISC0 provers. `gpu` feature is also available for CUDA support.
+**Optional features:**
 
-You can find the built binary inside `target/release` directory.
-After that, you can verify the program is working by running:
+- Add `--features sp1,risc0` to enable SP1 and/or RISC0 provers
+- Add `--features gpu` for CUDA GPU support
+
+The built binary will be in `target/release/ethrex`.
+
+**Verify the build:**
 
 ```sh
 ./target/release/ethrex --version
 ```
 
-> [!TIP]
-> For convenience, you can move the `ethrex` binary to a directory in your `$PATH`, so you can run it from anywhere.
+**(Optional) Move the binary to your `$PATH`:**
+
+```sh
+sudo mv ./target/release/ethrex /usr/local/bin/
+```
+
+---
+
+**Next steps:**
+
+- [L1 Quickstart](../quickstart-l1.md)
+- [L2 Quickstart](../quickstart-l2.md)

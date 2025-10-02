@@ -139,6 +139,30 @@ pub mod u256 {
     }
 }
 
+pub mod u32 {
+    use super::*;
+
+    pub mod hex_str {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<u32, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = String::deserialize(d)?;
+            u32::from_str_radix(value.trim_start_matches("0x"), 16)
+                .map_err(|_| D::Error::custom("Failed to deserialize u32 value"))
+        }
+
+        pub fn serialize<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(&format!("{value:#x}"))
+        }
+    }
+}
+
 pub mod u64 {
     use serde::de::IntoDeserializer;
 

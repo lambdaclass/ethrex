@@ -1,5 +1,5 @@
 use crate::utils::RpcRequest;
-use ethrex_common::types::transaction::GenericTransactionError;
+use ethrex_common::{FromStrRadixErr, types::transaction::GenericTransactionError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EthClientError {
@@ -63,10 +63,12 @@ pub enum EthClientError {
     FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
-    #[error("All RPC calls failed. Last RPC response: {0}")]
-    FailedAllRPC(String),
+    #[error("All RPC calls failed")]
+    FailedAllRPC,
     #[error("Generic transaction error: {0}")]
     GenericTransactionError(#[from] GenericTransactionError),
+    #[error("Failed to parse hex string: {0}")]
+    FromStrRadixError(#[from] FromStrRadixErr),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -251,6 +253,7 @@ pub enum CalldataEncodeError {
     InternalError,
 }
 
+// TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetMessageProofError {
     #[error("{0}")]
@@ -291,6 +294,7 @@ pub enum TxPoolContentError {
     RPCError(String),
 }
 
+// TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
     #[error("{0}")]

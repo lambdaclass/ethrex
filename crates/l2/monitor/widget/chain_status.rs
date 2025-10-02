@@ -1,5 +1,5 @@
 use ethrex_common::{Address, H256};
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -82,13 +82,11 @@ impl GlobalChainStatusTable {
             Address::default()
         };
 
-        let last_committed_batch = eth_client
-            .get_last_committed_batch(on_chain_proposer_address)
+        let last_committed_batch = get_last_committed_batch(eth_client, on_chain_proposer_address)
             .await
             .map_err(|_| MonitorError::GetLatestCommittedBatch)?;
 
-        let last_verified_batch = eth_client
-            .get_last_verified_batch(on_chain_proposer_address)
+        let last_verified_batch = get_last_verified_batch(eth_client, on_chain_proposer_address)
             .await
             .map_err(|_| MonitorError::GetLatestVerifiedBatch)?;
 

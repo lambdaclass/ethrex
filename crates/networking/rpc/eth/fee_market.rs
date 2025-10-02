@@ -2,8 +2,8 @@ use ethrex_blockchain::payload::calc_gas_limit;
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        Block, BlockHeader, ELASTICITY_MULTIPLIER, Transaction, calc_excess_blob_gas,
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        Block, BlockHeader, ELASTICITY_MULTIPLIER, Fork, ForkBlobSchedule, Transaction,
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
     },
 };
 use serde::Serialize;
@@ -131,14 +131,15 @@ impl RpcHandler for FeeHistoryRequest {
                 _ => 0.0,
             };
 
-            let base_fee_update_fraction = config
+            let blob_schedule = config
                 .get_fork_blob_schedule(header.timestamp)
-                .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default();
+
+            let fork = config.get_fork(header.timestamp);
 
             let blob_base_fee = calculate_base_fee_per_blob_gas(
                 header.excess_blob_gas.unwrap_or_default(),
-                base_fee_update_fraction,
+                blob_schedule.base_fee_update_fraction,
             );
 
             base_fee_per_gas[idx] = header.base_fee_per_gas.unwrap_or_default();
@@ -147,16 +148,12 @@ impl RpcHandler for FeeHistoryRequest {
             blob_gas_used_ratio[idx] = blob_gas_used_r;
 
             if block_number == end_block {
-                let blob_target = config
-                    .get_fork_blob_schedule(header.timestamp)
-                    .map(|schedule| schedule.target)
-                    .unwrap_or_default();
-
                 (base_fee_per_gas[idx + 1], base_fee_per_blob_gas[idx + 1]) =
                     project_next_block_base_fee_values(
                         &header,
-                        base_fee_update_fraction,
-                        blob_target,
+                        blob_schedule,
+                        fork,
+                        context.gas_ceil,
                     );
             }
             if !self.reward_percentiles.is_empty() {
@@ -189,14 +186,15 @@ impl RpcHandler for FeeHistoryRequest {
 // Project base_fee_per_gas and base_fee_per_blob_gas of next block, from provided block
 fn project_next_block_base_fee_values(
     header: &BlockHeader,
-    base_fee_update_fraction: u64,
-    blob_target: u32,
+    schedule: ForkBlobSchedule,
+    fork: Fork,
+    gas_ceil: u64,
 ) -> (u64, u64) {
     // NOTE: Given that this client supports the Paris fork and later versions, we are sure that the next block
     // will have the London update active, so the base fee calculation makes sense
     // Geth performs a validation for this case:
     // -> https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go#L93
-    let next_gas_limit = calc_gas_limit(header.gas_limit);
+    let next_gas_limit = calc_gas_limit(header.gas_limit, gas_ceil);
     let base_fee_per_gas = calculate_base_fee_per_gas(
         next_gas_limit,
         header.gas_limit,
@@ -205,13 +203,9 @@ fn project_next_block_base_fee_values(
         ELASTICITY_MULTIPLIER,
     )
     .unwrap_or_default();
-    let next_excess_blob_gas = calc_excess_blob_gas(
-        header.excess_blob_gas.unwrap_or_default(),
-        header.blob_gas_used.unwrap_or_default(),
-        blob_target,
-    );
+    let next_excess_blob_gas = calc_excess_blob_gas(header, schedule, fork);
     let base_fee_per_blob =
-        calculate_base_fee_per_blob_gas(next_excess_blob_gas, base_fee_update_fraction);
+        calculate_base_fee_per_blob_gas(next_excess_blob_gas, schedule.base_fee_update_fraction);
     (base_fee_per_gas, base_fee_per_blob)
 }
 

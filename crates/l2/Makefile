@@ -127,7 +127,6 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
-	--evm levm \
 	--datadir ${ethrex_L2_DEV_DB} \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
@@ -153,7 +152,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
 
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
-	pkill -x ethrex || exit 0
+	pgrep -a -f "ethrex l2" | awk '!/prover/ {print $1}' | xargs -r kill -s SIGINT
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
@@ -176,27 +175,26 @@ init-prover: ../../target/release/ethrex ## 🚀 Initializes the Prover
 
 build-prover:
 	rm -f ../../target/release/ethrex
-	$(MAKE) ../../target/release/ethrex
+	$(MAKE) PROVER="$(PROVER)" G="$(G)" ../../target/release/ethrex
 
 ../../target/release/ethrex: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
 		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> <G=true>"; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> G=<true>"; \
 		echo "The prover can also be run with GPU (G)"; \
 	fi; \
-
-	@if [ -z "$$G" ]; then \
+	if [ -z "$$G" ]; then \
 		GPU=""; \
 	else \
 		GPU=",gpu"; \
 	fi; \
-
 	RUSTFLAGS='-C target-cpu=native' \
 	cargo build --release \
 		--manifest-path ../../Cargo.toml \
 		--bin ethrex \
 		--features "$$PROVER$$GPU"
+
 
 # ==============================================================================
 # TEE

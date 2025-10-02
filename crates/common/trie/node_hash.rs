@@ -8,7 +8,7 @@ use sha3::{Digest, Keccak256};
 /// If the encoded node is less than 32 bits, contains the encoded node itself
 // TODO: Check if we can omit the Inline variant, as nodes will always be bigger than 32 bits in our use case
 // TODO: Check if making this `Copy` can make the code less verbose at a reasonable performance cost
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NodeHash {
     Hashed(H256),
     // Inline is always len < 32. We need to store the length of the data, a u8 is enough.

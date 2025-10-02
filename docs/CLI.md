@@ -52,16 +52,15 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
           [default: INFO]
+
+      --mempool.maxsize <MEMPOOL_MAX_SIZE>
+          Maximum size of the mempool in number of transactions
+        
+          [default: 10000]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -75,16 +74,10 @@ P2P options:
       --p2p.enabled
 
 
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P protocol.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -96,7 +89,7 @@ RPC options:
           Listening address for the http rpc server.
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: localhost]
+          [default: 0.0.0.0]
 
       --http.port <PORT>
           Listening port for the http rpc server.
@@ -107,7 +100,7 @@ RPC options:
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
 
-          [default: localhost]
+          [default: 127.0.0.1]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
@@ -118,6 +111,12 @@ RPC options:
           Receives the jwt secret used for authenticated rpc requests.
 
           [default: jwt.hex]
+
+Block producer options:
+      --block-producer.extra-data <EXTRA_DATA>
+          Block extra data message.
+
+          [default: "ethrex 0.1.0"]
 ```
 
 <!-- END_CLI_HELP -->
@@ -177,12 +176,6 @@ Node options:
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [env: ETHREX_EVM=]
-          [default: levm]
-
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
 
@@ -199,17 +192,10 @@ P2P options:
 
       --p2p.enabled
 
-
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
       --p2p.port <PORT>
+          TCP port for P2P.
+
           [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -452,7 +438,7 @@ Monitor options:
 ```
 Initialize an ethrex prover
 
-Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>
+Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>...
 
 Options:
   -h, --help
@@ -462,10 +448,10 @@ Prover client options:
       --backend <BACKEND>
           [env: PROVER_CLIENT_BACKEND=]
           [default: exec]
-          [possible values: exec]
+          [possible values: exec, sp1, risc0]
 
-      --proof-coordinators <URL>
-          URL of the sequencer's proof coordinator
+      --proof-coordinators <URL>...
+          URLs of all the sequencers' proof coordinator
 
           [env: PROVER_CLIENT_PROOF_COORDINATOR_URL=]
 
@@ -484,4 +470,9 @@ Prover client options:
           Activate aligned proving system
 
           [env: PROVER_CLIENT_ALIGNED=]
+
+      --sp1-server <URL>
+          Url to the moongate server to use when using sp1 backend
+
+          [env: ETHREX_SP1_SERVER=]
 ```

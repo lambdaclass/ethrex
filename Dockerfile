@@ -22,6 +22,7 @@ COPY tooling ./tooling
 COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .
+COPY .cargo/ ./.cargo
 
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -47,6 +48,7 @@ COPY .git ./.git
 COPY Cargo.* ./
 COPY fixtures ./fixtures
 COPY .git ./.git
+COPY .cargo/ ./.cargo
 
 # Optional build flags
 ARG BUILD_FLAGS=""
@@ -56,8 +58,10 @@ RUN cargo build --release $BUILD_FLAGS
 # --- Final Image ---
 # Copy the ethrex binary into a minimalist image to reduce bloat size.
 # This image must have glibc and libssl
-FROM gcr.io/distroless/cc-debian12
+FROM debian:12-slim
 WORKDIR /usr/local/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder /ethrex/target/release/ethrex .

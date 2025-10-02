@@ -1,6 +1,7 @@
-use crate::{backends::Backend, config::ProverConfig, prove, to_batch_proof};
+use crate::{backend::Backend, config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
 use ethrex_l2_common::prover::BatchProof;
+use guest_program::input::ProgramInput;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -9,7 +10,6 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 use url::Url;
-use zkvm_interface::io::ProgramInput;
 
 pub async fn start_prover(config: ProverConfig) {
     let prover_worker = Prover::new(config);
@@ -27,6 +27,8 @@ struct Prover {
     proving_time_ms: u64,
     aligned_mode: bool,
     commit_hash: String,
+    #[cfg(all(feature = "sp1", feature = "gpu"))]
+    sp1_server: Option<Url>,
 }
 
 impl Prover {
@@ -37,10 +39,18 @@ impl Prover {
             proving_time_ms: cfg.proving_time_ms,
             aligned_mode: cfg.aligned_mode,
             commit_hash: get_commit_hash(),
+            #[cfg(all(feature = "sp1", feature = "gpu"))]
+            sp1_server: cfg.sp1_server,
         }
     }
 
     pub async fn start(&self) {
+        #[cfg(all(feature = "sp1", feature = "gpu"))]
+        {
+            use crate::backend::sp1::{PROVER_SETUP, init_prover_setup};
+            PROVER_SETUP.get_or_init(|| init_prover_setup(self.sp1_server.clone()));
+        }
+
         info!(
             "Prover started for {:?}",
             self.proof_coordinator_endpoints
@@ -114,7 +124,7 @@ impl Prover {
             batch_number,
             input: ProgramInput {
                 blocks: input.blocks,
-                db: input.db,
+                execution_witness: input.execution_witness,
                 elasticity_multiplier: input.elasticity_multiplier,
                 #[cfg(feature = "l2")]
                 blob_commitment: input.blob_commitment,
