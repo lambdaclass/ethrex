@@ -40,12 +40,9 @@ use tracing_subscriber::{
 };
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(any(
-    not(any(feature = "rocksdb", feature = "libmdbx")),
-    all(feature = "rocksdb", feature = "libmdbx")
-))]
+#[cfg(not(feature = "rocksdb"))]
 const _: () = {
-    compile_error!("Either the `rocksdb` or `libmdbx` feature must be enabled.");
+    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
@@ -111,8 +108,6 @@ pub fn open_store(datadir: &Path) -> Store {
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
-        #[cfg(feature = "libmdbx")]
-        let engine_type = EngineType::Libmdbx;
         #[cfg(feature = "metrics")]
         ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")
