@@ -505,6 +505,9 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,a
 // deposit(uint256 _amount, address _token, address _l2Recipient)
 const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address,address)";
 
+// approve(address spender, uint256 amount)
+const APPROVE_SIGNATURE: &str = "approve(address,uint256)";
+
 #[derive(Clone, Copy, Default)]
 pub struct ContractAddresses {
     pub on_chain_proposer_address: Address,
@@ -1026,7 +1029,7 @@ async fn make_deposits(
             }
 
             let calldata = encode_calldata(
-                "approve(address,uint256)",
+                APPROVE_SIGNATURE,
                 &[Value::Address(bridge), Value::Uint(value_to_deposit * 2)],
             )?;
             let approve_tx = build_generic_tx(
