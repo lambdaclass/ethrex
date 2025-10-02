@@ -87,6 +87,9 @@ contract CommonBridge is
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
+    /// @notice The L1 token address that is treated as the one to be bridged to the L2.
+    /// @dev If set to address(0), ETH is considered the native token.
+    /// Otherwise, this address is used for native token deposits and withdrawals.
     address public NATIVE_TOKEN_L1_ADDRESS;
 
     modifier onlyOnChainProposer() {
@@ -102,6 +105,8 @@ contract CommonBridge is
     /// @dev It sets the OnChainProposer address.
     /// @param owner the address of the owner who can perform upgrades.
     /// @param onChainProposer the address of the OnChainProposer contract.
+    /// @param inclusionMaxWait the maximum time the sequencer is allowed to take without processing a privileged transaction.
+    /// @param _nativeTokenL1Address the address of the native token on L1, or address(0) if ETH is the native token.
     function initialize(
         address owner,
         address onChainProposer,
@@ -214,11 +219,14 @@ contract CommonBridge is
         address l2Recipient
     ) public payable override whenNotPaused {
         uint256 value;
+        // As we only want to allow deposits of the native token, we check that the token address matches
+        // the configured native token address.
         require(
             _token == NATIVE_TOKEN_L1_ADDRESS,
             "CommonBridge: token address is not the native token address"
         );
 
+        // Here we define value depending on whether the native token is ETH or an ERC20
         if (_token == address(0)) {
             require(
                 msg.value > 0,
@@ -244,6 +252,7 @@ contract CommonBridge is
 
             value = _amount;
 
+            // We lock the tokens in the bridge contract
             IERC20(_token).transferFrom(msg.sender, address(this), value);
         }
 
@@ -264,6 +273,8 @@ contract CommonBridge is
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
+    /// @notice Deposits are not allowed via the fallback function. Use deposit() instead.
+    /// @dev This is to prevent accidental deposits of ETH to the contract. The token address must be specified.
     receive() external payable whenNotPaused {
         revert("CommonBridge: use deposit() for native token deposits");
     }
