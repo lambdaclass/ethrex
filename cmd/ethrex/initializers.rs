@@ -40,11 +40,11 @@ use tracing_subscriber::{
 };
 
 // Compile-time check to ensure that at least one of the database features is enabled.
+#[cfg(any(
+    not(any(feature = "rocksdb", feature = "libmdbx")),
+    all(feature = "rocksdb", feature = "libmdbx")
+))]
 const _: () = {
-    #[cfg(any(
-        not(any(feature = "rocksdb", feature = "libmdbx")),
-        all(feature = "rocksdb", feature = "libmdbx")
-    ))]
     compile_error!("Either the `rocksdb` or `libmdbx` feature must be enabled.");
 };
 
