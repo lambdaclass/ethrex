@@ -177,9 +177,9 @@ jobs:
           touch cmd/.env
           cd crates/l2
           if [ "${{ matrix.use_native_token }}" = true ]; then
-            export NATIVE_TOKEN_L1_ADDRESS=0xb4b46bdaa835f8e4b4d8e208b6559cd267851051
+            export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0xb4b46bdaa835f8e4b4d8e208b6559cd267851051
           else
-            export NATIVE_TOKEN_L1_ADDRESS=0x0000000000000000000000000000000000000000
+            export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0x0000000000000000000000000000000000000000
           fi
 
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
@@ -188,7 +188,7 @@ jobs:
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
-          ETHREX_NATIVE_TOKEN_L1_ADDRESS=$NATIVE_TOKEN_L1_ADDRESS \
+          ETHREX_NATIVE_TOKEN_L1_ADDRESS=${{ ETHREX_NATIVE_TOKEN_L1_ADDRESS }} \
           docker compose up contract_deployer
 
       - name: Copy env to host
