@@ -15,7 +15,7 @@ The base fee follows the same rules as the Ethereum L1 base fee. It adjusts dyna
 By default, base fees are burned. However a sequencer can configure a `base fee vault` address to receive the collected base fees instead of burning them.
 
 ```sh
-ethrex l2 --block-producer.fee-vault-address <l2-fee-vault-address>
+ethrex l2 --block-producer.base-fee-vault-address <l2-fee-vault-address>
 ```
 
 > [!CAUTION]  
