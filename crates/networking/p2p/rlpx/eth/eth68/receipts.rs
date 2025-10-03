@@ -26,8 +26,8 @@ impl Receipts68 {
             };
         }
         let transformed_receipts = receipts
-            .iter()
-            .map(|receipts| receipts.iter().map(ReceiptWithBloom::from).collect())
+            .into_iter()
+            .map(|receipts| receipts.into_iter().map(ReceiptWithBloom::from).collect())
             .collect();
         Self {
             id,
@@ -35,13 +35,13 @@ impl Receipts68 {
         }
     }
 
-    pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
+    pub fn get_receipts(&mut self) -> Vec<Vec<Receipt>> {
         if self.receipts.is_empty() {
             return vec![];
         }
-        self.receipts
-            .iter()
-            .map(|receipts| receipts.iter().map(Receipt::from).collect())
+        std::mem::take(&mut self.receipts)
+            .into_iter()
+            .map(|receipts| receipts.into_iter().map(Receipt::from).collect())
             .collect()
     }
 

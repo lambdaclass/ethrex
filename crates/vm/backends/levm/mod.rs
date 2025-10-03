@@ -519,7 +519,7 @@ fn vm_from_generic<'a>(
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
-                TxKind::Call(to) => to,
+                TxKind::Call(to) => TxKind::Call(to),
                 TxKind::Create => {
                     return Err(InternalError::msg("Generic Tx cannot be create type").into());
                 }

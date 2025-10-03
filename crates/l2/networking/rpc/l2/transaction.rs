@@ -168,7 +168,7 @@ impl RpcHandler for SponsoredTx {
         let mut tx = if let Some(auth_list) = &self.authorization_list {
             SendRawTransactionRequest::EIP7702(EIP7702Transaction {
                 chain_id,
-                to: self.to,
+                to: ethrex_common::types::TxKind::Call(self.to),
                 value: U256::zero(),
                 data: self.data.clone(),
                 access_list: Vec::new(),
