@@ -106,7 +106,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup Hive
         run: |
-          git clone --single-branch --branch add_tx_broadcasting_time_interval_flag https://github.com/lambdaclass/hive
+          git clone --single-branch --branch master https://github.com/lambdaclass/hive
           cd hive
           git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
           go build .
