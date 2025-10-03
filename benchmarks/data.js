@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759448147274,
+  "lastUpdate": 1759466659995,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36422,6 +36422,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.0045952506694552225,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f357708e1948bf8eef9d2388095a85e83ba63bf0",
+          "message": "chore(l1): add validation status to snap sync slack notification (#4750)\n\n**Motivation**\n\nIt's useful to know for bench-marking process if the snap sync was done\nwith validation turned on. This pr aims to add that to the slack\nmessage.\n\n**Description**\n\n- Add line to slack message with Validation: true/false",
+          "timestamp": "2025-10-02T21:40:15Z",
+          "tree_id": "83891bed246ec9b7445a05e854570a88267c5237",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f357708e1948bf8eef9d2388095a85e83ba63bf0"
+        },
+        "date": 1759466658722,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004616440210326206,
             "unit": "Mgas/s"
           }
         ]
