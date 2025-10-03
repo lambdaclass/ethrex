@@ -604,9 +604,13 @@ async fn test_erc20_roundtrip(
     assert!(res.receipt.status);
 
     println!("test_erc20_roundtrip: Waiting for deposit transaction receipt on L2");
-    wait_for_l2_deposit_receipt(&res, &l1_client, &l2_client)
+
+    let l2_receipt = wait_for_l2_deposit_receipt(&res, &l1_client, &l2_client)
         .await
         .unwrap();
+
+    assert!(l2_receipt.receipt.status);
+
     let remaining_l1_balance = test_balance_of(&l1_client, token_l1, rich_address).await;
     let l2_balance = test_balance_of(&l2_client, token_l2, rich_address).await;
     assert_eq!(initial_balance - remaining_l1_balance, token_amount);

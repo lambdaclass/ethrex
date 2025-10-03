@@ -45,6 +45,7 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
+ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE?=0x3B9ACA00 \
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -95,7 +96,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
 	--genesis-l2-path ../../fixtures/genesis/l2.json \
-	--operator-fee 10000000000000 \
+	--operator-fee ${ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE}
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
@@ -183,7 +184,7 @@ build-prover:
 ../../target/release/ethrex: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
 		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
-		echo "Please provide it as an argument:"; \
+		echo "You can provide it as an argument:"; \
 		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> G=<true>"; \
 		echo "The prover can also be run with GPU (G)"; \
 	fi; \

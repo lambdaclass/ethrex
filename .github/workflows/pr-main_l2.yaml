@@ -154,6 +154,7 @@ jobs:
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
+          ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE=0x3B9ACA00 \
           docker compose up contract_deployer
 
       - name: Copy env to host
@@ -347,6 +348,7 @@ jobs:
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
           ETHREX_TDX_DEV_MODE=true \
+          ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE=0x3B9ACA00 \
           make deploy-l1
 
       - name: Start Sequencer

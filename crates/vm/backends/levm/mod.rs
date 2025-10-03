@@ -147,13 +147,13 @@ impl LEVM {
         // The block header for the current block.
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-        vm_type: VMType,
+        mut vm_type: VMType,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
         env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
-        adjust_disabled_base_fee(&mut env);
+        adjust_disabled_base_fee(&mut env, &mut vm_type);
 
         let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
@@ -297,11 +297,11 @@ impl LEVM {
         mut tx: GenericTransaction,
         header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-        vm_type: VMType,
+        mut vm_type: VMType,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, db)?;
 
-        adjust_disabled_base_fee(&mut env);
+        adjust_disabled_base_fee(&mut env, &mut vm_type);
 
         let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
@@ -466,9 +466,13 @@ pub fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> U256 {
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
 /// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
 /// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
-fn adjust_disabled_base_fee(env: &mut Environment) {
+fn adjust_disabled_base_fee(env: &mut Environment, vm_type: &mut VMType) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
+        if let VMType::L2(fee_config) = vm_type {
+            // Don't deduct operator fee if no gas price is set
+            fee_config.operator_fee_config = None;
+        }
     }
     if env
         .tx_max_fee_per_blob_gas
