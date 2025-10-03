@@ -14,7 +14,7 @@ ethrex-trie.workspace = true
 clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
 eyre.workspace = true
-hex.workspace = true
 rocksdb.workspace = true
 tracing.workspace = true
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+tracing-subscriber.workspace = true
+snap.workspace = true

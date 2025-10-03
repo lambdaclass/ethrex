@@ -72,6 +72,8 @@
 // Bodies: either ancient/chain/bodies.{meta,cidx,cdat} or 'b'-prefixed
 // values in statedb. We shall use the same mechanism as for headers,
 // actually reusing the computed hash.
+// Trie Nodes: only in statedb, with only the hash as key.
+// Bytecodes: in statedb, ['c' || code_hash ].
 //
 // Due to the age of the blocks this is expected to be used with, we
 // always try the ancients first, and only go thorugh the statedb when
@@ -88,22 +90,19 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_trie::{NodeHash, Trie, TrieDB, TrieError};
+use eyre::OptionExt;
 use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::{debug, info};
 use tracing_subscriber::FmtSubscriber;
 
-/// Max account dumps to ask for in a single request. The current value matches geth's maximum output.
-const MAX_ACCOUNTS: usize = 256;
-/// Amount of blocks before the target block to request hashes for. These may be needed to execute the next block after the target block.
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
-/// Amount of state dumps to process before updating checkpoint
-const DUMPS_BEFORE_CHECKPOINT: usize = 10;
 
 struct GethDB {
     ancient_db_path: PathBuf,
@@ -112,6 +111,9 @@ struct GethDB {
 impl GethDB {
     pub fn open(gethdb_dir: impl AsRef<Path>) -> eyre::Result<Self> {
         let ancient_db_path = gethdb_dir.as_ref().join("ancient/chain");
+        // let mut opts = Options::default();
+        // opts.create_if_missing(true); // FIXME: just for local testing
+        // let state_db = DBWithThreadMode::open(&opts, gethdb_dir)?;
         let state_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), gethdb_dir, false)?;
         Ok(Self {
@@ -120,9 +122,104 @@ impl GethDB {
         })
     }
 
+    // NOTES:
+    // - Metadata seems to only be useful in write-mode or for recovery.
+    //   We'll probably fail quickly with or without recovery, so at least
+    //   for now we'll skip it.
+    fn read_from_freezer_table(
+        &self,
+        name: &str,
+        compressed: bool,
+        first: u64,
+        last: u64,
+    ) -> eyre::Result<Vec<Vec<u8>>> {
+        let idx_path = self.ancient_db_path.join(format!(
+            "{name}.{}",
+            if compressed { "cidx" } else { "ridx" }
+        ));
+        let meta_path = self.ancient_db_path.join(format!("{name}.meta"));
+
+        let mut meta_file = File::open(meta_path)?;
+        let mut meta_encoded = Vec::with_capacity(20);
+        meta_file.read_to_end(&mut meta_encoded)?;
+        let (version, tail, offset): (u16, u64, u64) = match RLPDecode::decode(&meta_encoded) {
+            Ok((version, tail, offset)) if version == 2 => (version, tail, offset),
+            Ok((_, _, _)) => eyre::bail!("bad version"),
+            Err(_) => {
+                let (version, tail) = RLPDecode::decode(&meta_encoded)?;
+                if version != 1 {
+                    eyre::bail!("bad version")
+                }
+                (version, tail, 0)
+            }
+        };
+        println!("{version} {tail} {offset}");
+        println!("opening {}", idx_path.to_string_lossy());
+        let index_file = File::open(idx_path)?;
+        println!("opened");
+        let size = index_file.metadata()?.size();
+        let last = last.min(size / 6);
+        // We need one index back to find the start of the entries.
+        let first = first.saturating_sub(1);
+        let to_read = ((last - first + 1) * 6) as usize;
+        let mut index_buf = vec![0; to_read];
+        index_file.read_exact_at(&mut index_buf, 6 * first)?;
+        let index_entries: Vec<_> = index_buf
+            .chunks(6)
+            .map(|entry_bytes| {
+                let fnum_bytes = entry_bytes[..2].try_into().unwrap();
+                let offs_bytes = entry_bytes[2..].try_into().unwrap();
+                (
+                    u16::from_be_bytes(fnum_bytes),
+                    u32::from_be_bytes(offs_bytes),
+                )
+            })
+            .collect();
+        if !index_entries.is_sorted() {
+            eyre::bail!("broken index")
+        }
+        let (Some((first_file, _)), Some((last_file, _))) = (
+            index_entries.first().copied(),
+            index_entries.last().copied(),
+        ) else {
+            return Ok(Vec::new());
+        };
+        println!("file range: {first_file}..={last_file}");
+        let data_files: Vec<_> = (first_file..=last_file)
+            .map(|f| {
+                File::open(self.ancient_db_path.join(format!(
+                    "{name}.{f:04}.{}",
+                    if compressed { "cdat" } else { "rdat" }
+                )))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let mut data = Vec::with_capacity((last - first + 1) as usize);
+        let (mut pnum, mut poff) = index_entries[0];
+        for (fnum, offset) in index_entries.into_iter().skip(1) {
+            if pnum != fnum {
+                poff = 0;
+            }
+            let file = &data_files[(fnum - first_file) as usize];
+            let mut entry_data = vec![0; (offset - poff) as usize];
+            file.read_exact_at(&mut entry_data, poff as u64)?;
+            if compressed {
+                entry_data = snap::raw::Decoder::new().decompress_vec(&entry_data)?;
+            }
+            (pnum, poff) = (fnum, offset);
+            data.push(entry_data);
+        }
+        Ok(data)
+    }
+
     fn try_read_hashes_from_freezer(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
         // TODO
-        Ok(Vec::new())
+        let hashes_vecs = self.read_from_freezer_table("hashes", false, first, last)?;
+        let mut hashes = Vec::with_capacity((last - first + 1) as usize);
+        for hash in hashes_vecs {
+            let hash = hash.try_into().map_err(|_| eyre::eyre!("bad hash"))?;
+            hashes.push(hash);
+        }
+        Ok(hashes)
     }
     fn try_read_hashes_from_statedb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
         // ['h' || block_num || 'n']
@@ -139,19 +236,32 @@ impl GethDB {
     }
 
     // It is valid for the block to not be in the freezer, but if it's not in the statedb either it's an error
-    fn try_read_block_from_freezer(
-        &self,
-        block_num: u64,
-        block_hash: [u8; 32],
-    ) -> eyre::Result<Option<Block>> {
-        eyre::bail!("not implemented yet")
+    fn try_read_block_from_freezer(&self, block_num: u64) -> eyre::Result<[Option<Vec<u8>>; 2]> {
+        let mut header = self.read_from_freezer_table("headers", true, block_num, block_num)?;
+        let mut body = self.read_from_freezer_table("bodies", true, block_num, block_num)?;
+        Ok([header.drain(..).next(), body.drain(..).next()])
     }
     fn try_read_block_from_statedb(
         &self,
         block_num: u64,
         block_hash: [u8; 32],
-    ) -> eyre::Result<Block> {
-        todo!()
+        key_prefixes: &[u8],
+    ) -> eyre::Result<[Option<Vec<u8>>; 2]> {
+        // ['h' || block_num || header_hash]
+        let keys = key_prefixes.iter().map(|p| {
+            let mut key = [0u8; 41];
+            key[0] = *p;
+            key[1..9].copy_from_slice(&block_num.to_be_bytes());
+            key[9..].copy_from_slice(&block_hash);
+            key
+        });
+        let mut values = self.state_db.multi_get(keys);
+        debug_assert_eq!(values.len(), 2);
+        if values.len() != 2 {
+            eyre::bail!("rocksdb returned an unexpected number of results");
+        }
+        let mut values = values.drain(..);
+        Ok([values.next().unwrap()?, values.next().unwrap()?])
     }
 
     pub fn read_hashes_from_gethdb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
@@ -164,14 +274,34 @@ impl GethDB {
         &self,
         block_num: u64,
         block_hash: [u8; 32],
-    ) -> eyre::Result<Block> {
-        let Some(block) = self.try_read_block_from_freezer(block_num, block_hash)? else {
-            return self.try_read_block_from_statedb(block_num, block_hash);
-        };
-        Ok(block)
-    }
-    pub fn open_trie(&self, root_hash: [u8; 32]) -> eyre::Result<Trie> {
-        todo!()
+    ) -> eyre::Result<[Vec<u8>; 2]> {
+        match self.try_read_block_from_freezer(block_num)? {
+            [None, None] => {
+                let [Some(header), Some(body)] =
+                    self.try_read_block_from_statedb(block_num, block_hash, b"hb")?
+                else {
+                    eyre::bail!("missing body and/or header")
+                };
+                Ok([header, body])
+            }
+            [Some(header), None] => {
+                let [None, Some(body)] =
+                    self.try_read_block_from_statedb(block_num, block_hash, b"b")?
+                else {
+                    eyre::bail!("missing body")
+                };
+                Ok([header, body])
+            }
+            [None, Some(body)] => {
+                let [Some(header), None] =
+                    self.try_read_block_from_statedb(block_num, block_hash, b"h")?
+                else {
+                    eyre::bail!("missing header")
+                };
+                Ok([header, body])
+            }
+            [Some(header), Some(body)] => Ok([header, body]),
+        }
     }
 }
 
@@ -202,6 +332,9 @@ impl GethDB {
 //    The buckets need to be reused by thread to simplify and accelerate work.
 //    Really big accounts probably need to be bucketed internally as well, taking the node
 //    hash instead of the address.
+//    Another plausible way to classify the tries by size is to always iterate to the first
+//    leaf and extraplote from its depths: given keys get randomized by keccak, the cardinality
+//    of a trie is approximately 16 ^ H, where H is height measured in branch nodes.
 //
 //    If absolutely necessary, we might implement our own lightweight iterator.
 struct GethTrieIterator {}
@@ -228,8 +361,8 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         let mut buffer = [0u8; 34];
         buffer[..32].copy_from_slice(&hash);
         buffer[32..].copy_from_slice(&(value.len() as u16).to_le_bytes());
-        let _ = bucket.write_all(&buffer).unwrap();
-        let _ = bucket.write_all(&value).unwrap();
+        bucket.write_all(&buffer).unwrap();
+        bucket.write_all(&value).unwrap();
         Ok(Some(value))
     }
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
@@ -250,14 +383,16 @@ pub fn geth2ethrex(
         block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
         block_number,
     )?;
+    let block_hash = *hashes.last().ok_or_eyre("missing block hash")?;
+    // TODO: save hashes to ethrex DB and mark canonical
+    let [header, body] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
+    println!("{} {}", header.len(), body.len());
+    // TODO: save header and body to ethrex DB
+    // TODO: extract root hash from header
 
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time}");
     Ok(())
-}
-
-fn hash_next(hash: H256) -> H256 {
-    H256::from_uint(&(hash.into_uint() + 1))
 }
 
 // store.add_block(block).await?;
@@ -266,7 +401,6 @@ fn hash_next(hash: H256) -> H256 {
 //     .await?;
 
 #[derive(Parser)]
-#[clap(group = ArgGroup::new("input").required(true).args(&["ipc_path", "input_dir"]).multiple(false))]
 struct Args {
     #[arg(
         required = true,
@@ -275,12 +409,14 @@ struct Args {
     )]
     block_number: BlockNumber,
     #[arg(
+        required = true,
         long = "input_dir",
         value_name = "INPUT_DIRECTORY",
         help = "Receives the name of the directory where the State Dump will be read from."
     )]
     pub input_dir: String,
     #[arg(
+        required = true,
         long = "output_dir",
         value_name = "OUTPUT_DIRECTORY",
         help = "Receives the name of the directory where the State Dump will be written to."
