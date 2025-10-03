@@ -18,7 +18,7 @@ jobs:
       contents: read
       actions: read
       checks: read
-    uses: lambdaclass/ethrex-replay/.github/workflows/pr-main-lint.yaml@move_replay
+    uses: lambdaclass/ethrex-replay/.github/workflows/workflow-call.yaml@move_replay
     with:
       caller_repo: lambdaclass/ethrex
       caller_ref: ${{ github.sha }}
