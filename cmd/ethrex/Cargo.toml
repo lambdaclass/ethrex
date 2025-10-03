@@ -9,20 +9,27 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-blockchain = { workspace = true, default-features = false }
+ethrex-common = { workspace = true, default-features = false }
+ethrex-storage = { workspace = true, default-features = false }
+ethrex-p2p = { workspace = true, default-features = false }
+ethrex-vm = { workspace = true, default-features = false }
+ethrex-l2 = { workspace = true, default-features = false }
+ethrex-l2-rpc = { workspace = true, default-features = false }
+ethrex-l2-common = { workspace = true, default-features = false }
+ethrex-sdk = { workspace = true, default-features = false }
+ethrex-storage-rollup = { workspace = true, default-features = false }
 ethrex-config.workspace = true
-ethrex-blockchain.workspace = true
-ethrex-rpc.workspace = true
-ethrex-common.workspace = true
-ethrex-p2p.workspace = true
-ethrex-storage.workspace = true
-ethrex-vm.workspace = true
+ethrex-rpc = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
-ethrex-storage-rollup.workspace = true
-ethrex-l2.workspace = true
-ethrex-l2-common.workspace = true
-ethrex-sdk.workspace = true
-ethrex-l2-rpc.workspace = true
-tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms"] }
+ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
+ethrex-metrics = { path = "../../crates/blockchain/metrics" }
+ethrex-prover = { workspace = true, default-features = false }
+
+tikv-jemallocator = { version = "0.6.0", optional = true, features = [
+  "stats",
+  "unprefixed_malloc_on_supported_platforms",
+] }
 bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
@@ -39,19 +46,20 @@ rand = "0.8.5"
 local-ip-address = "0.6"
 tokio-util.workspace = true
 lazy_static.workspace = true
-secp256k1.workspace = true
+secp256k1.workspace = true # FIXME
 reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
 tui-logger.workspace = true
 
-ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
-ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
-ethrex-prover = { workspace = true, features = ["l2"] }
 
 [target.'cfg(linux)'.dependencies]
-tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms", "background_threads"] }
+tikv-jemallocator = { version = "0.6.0", optional = true, features = [
+  "stats",
+  "unprefixed_malloc_on_supported_platforms",
+  "background_threads",
+] }
 
 [[bin]]
 name = "ethrex"
@@ -63,14 +71,104 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "rollup_storage_sql", "dev", "metrics", "jemalloc"]
+default = ["rocksdb", "l1", "rollup_storage_sql", "dev", "metrics", "jemalloc"]
+
 dev = ["dep:ethrex-dev"]
-c-kzg = [
-  "ethrex-vm/c-kzg",
-  "ethrex-common/c-kzg",
-  "ethrex-blockchain/c-kzg",
-  "ethrex-p2p/c-kzg",
+
+secp256k1 = [
+  "ethrex-l2-common/secp256k1",
+  "ethrex-l2-rpc/secp256k1",
+  "ethrex-l2/secp256k1",
+  "ethrex-sdk/secp256k1",
+  "ethrex-storage-rollup/secp256k1",
+  "ethrex-vm/secp256k1",
+  "ethrex-p2p/secp256k1",
+  "ethrex-rpc/secp256k1",
+  "ethrex-prover/secp256k1",
 ]
+k256 = [
+  "ethrex-l2-common/k256",
+  "ethrex-l2-rpc/k256",
+  "ethrex-l2/k256",
+  "ethrex-sdk/k256",
+  "ethrex-storage-rollup/k256",
+  "ethrex-vm/k256",
+  "ethrex-p2p/k256",
+  "ethrex-rpc/k256",
+  "ethrex-prover/k256",
+]
+
+c-kzg = [
+  "ethrex-l2-common/c-kzg",
+  "ethrex-l2-rpc/c-kzg",
+  "ethrex-l2/c-kzg",
+  "ethrex-sdk/c-kzg",
+  "ethrex-storage-rollup/c-kzg",
+  "ethrex-vm/c-kzg",
+  "ethrex-blockchain/c-kzg",
+  "ethrex-common/c-kzg",
+  "ethrex-storage/c-kzg",
+  "ethrex-p2p/c-kzg",
+  "ethrex-rpc/c-kzg",
+  "ethrex-prover/c-kzg",
+]
+kzg-rs = [
+  "ethrex-l2-common/kzg-rs",
+  "ethrex-l2-rpc/kzg-rs",
+  "ethrex-l2/kzg-rs",
+  "ethrex-sdk/kzg-rs",
+  "ethrex-storage-rollup/kzg-rs",
+  "ethrex-vm/kzg-rs",
+  "ethrex-blockchain/kzg-rs",
+  "ethrex-common/kzg-rs",
+  "ethrex-storage/kzg-rs",
+  "ethrex-p2p/kzg-rs",
+  "ethrex-prover/kzg-rs",
+]
+
+l1 = [
+  "ethrex-l2-common/l1",
+  "ethrex-l2-rpc/l1",
+  "ethrex-l2/l1",
+  "ethrex-sdk/l1",
+  "ethrex-storage-rollup/l1",
+  "ethrex-vm/l1",
+  "ethrex-blockchain/l1",
+  "ethrex-common/l1",
+  "ethrex-storage/l1",
+  "ethrex-p2p/l1",
+  "ethrex-rpc/l1",
+  "ethrex-prover/l2",
+]
+sp1 = [
+  "ethrex-l2-common/sp1",
+  "ethrex-l2-rpc/sp1",
+  "ethrex-l2/sp1",
+  "ethrex-sdk/sp1",
+  "ethrex-storage-rollup/sp1",
+  "ethrex-vm/sp1",
+  "ethrex-blockchain/sp1",
+  "ethrex-common/sp1",
+  "ethrex-storage/sp1",
+  "ethrex-p2p/sp1",
+  "ethrex-rpc/sp1",
+  "ethrex-prover/sp1",
+]
+risc0 = [
+  "ethrex-l2-common/risc0",
+  "ethrex-l2-rpc/risc0",
+  "ethrex-l2/risc0",
+  "ethrex-sdk/risc0",
+  "ethrex-storage-rollup/risc0",
+  "ethrex-vm/risc0",
+  "ethrex-blockchain/risc0",
+  "ethrex-common/risc0",
+  "ethrex-storage/risc0",
+  "ethrex-p2p/risc0",
+  "ethrex-rpc/risc0",
+  "ethrex-prover/risc0",
+]
+
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
 rocksdb = ["ethrex-storage/rocksdb"]
@@ -83,9 +181,7 @@ jemalloc_profiling = [
 ]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]
-sp1 = ["ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
-risc0 = ["ethrex-prover/risc0"]
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = [

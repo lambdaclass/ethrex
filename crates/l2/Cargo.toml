@@ -8,6 +8,23 @@ documentation.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-common = { workspace = true, default-features = false }
+ethrex-blockchain = { workspace = true, default-features = false }
+ethrex-storage = { workspace = true, default-features = false }
+ethrex-storage-rollup = { workspace = true, default-features = false }
+ethrex-vm = { workspace = true, default-features = false }
+ethrex-levm = { workspace = true, default-features = false }
+ethrex-l2-common = { workspace = true, default-features = false }
+ethrex-l2-rpc = { workspace = true, default-features = false }
+ethrex-sdk = { path = "./sdk", default-features = false }
+ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
+ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
+ethrex-config.workspace = true
+ethrex-rlp.workspace = true
+ethrex-rpc.workspace = true
+ethrex-trie.workspace = true
+ethrex-p2p.workspace = true
+
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -15,26 +32,9 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
-ethrex-common = { workspace = true, default-features = false }
-ethrex-config.workspace = true
-ethrex-rlp.workspace = true
-ethrex-rpc.workspace = true
-ethrex-blockchain.workspace = true
-ethrex-storage.workspace = true
-ethrex-storage-rollup = { workspace = true, default-features = false }
-ethrex-trie.workspace = true
-ethrex-vm.workspace = true
-ethrex-levm = { workspace = true, default-features = false }
-ethrex-l2-common.workspace = true
-ethrex-l2-rpc.workspace = true
-ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
-ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
-ethrex-sdk = { path = "./sdk" }
-ethrex-p2p.workspace = true
 hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
-secp256k1.workspace = true
 envy = "0.4.2"
 rand.workspace = true
 thiserror.workspace = true
@@ -60,6 +60,7 @@ axum.workspace = true
 
 guest_program = { path = "./prover/src/guest_program/", default-features = false }
 
+secp256k1.workspace = true # FIXME
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
@@ -80,7 +81,89 @@ panic = "deny"
 
 [features]
 default = ["l2"]
+
 metrics = ["ethrex-blockchain/metrics"]
-l2 = ["guest_program/l2", "ethrex-common/c-kzg"]
-sp1 = ["ethrex-common/sp1", "guest_program/sp1", "ethrex-storage-rollup/sp1", "ethrex-levm/sp1"]
-risc0 = ["ethrex-common/c-kzg", "guest_program/risc0"]
+
+l2 = ["guest_program/l2", "l1"]
+
+secp256k1 = [
+    "ethrex-l2-common/secp256k1",
+    "ethrex-l2-rpc/secp256k1",
+    "ethrex-sdk/secp256k1",
+    "ethrex-storage-rollup/secp256k1",
+    "ethrex-levm/secp256k1",
+    "ethrex-vm/secp256k1",
+]
+k256 = [
+    "ethrex-l2-common/k256",
+    "ethrex-l2-rpc/k256",
+    "ethrex-sdk/k256",
+    "ethrex-storage-rollup/k256",
+    "ethrex-levm/k256",
+    "ethrex-vm/k256",
+]
+
+c-kzg = [
+    "ethrex-l2-common/c-kzg",
+    "ethrex-l2-rpc/c-kzg",
+    "ethrex-sdk/c-kzg",
+    "ethrex-storage-rollup/c-kzg",
+    "ethrex-common/c-kzg",
+    "ethrex-blockchain/c-kzg",
+    "ethrex-storage/c-kzg",
+    "ethrex-levm/c-kzg",
+    "ethrex-vm/c-kzg",
+]
+kzg-rs = [
+    "ethrex-l2-common/c-kzg",
+    "ethrex-l2-rpc/c-kzg",
+    "ethrex-sdk/c-kzg",
+    "ethrex-storage-rollup/c-kzg",
+    "ethrex-common/c-kzg",
+    "ethrex-blockchain/c-kzg",
+    "ethrex-storage/c-kzg",
+    "ethrex-levm/c-kzg",
+    "ethrex-vm/c-kzg",
+]
+
+l1 = [
+    "ethrex-l2-common/l1",
+    "ethrex-l2-rpc/l1",
+    "ethrex-sdk/l1",
+    "ethrex-storage-rollup/l1",
+    "ethrex-common/l1",
+    "ethrex-blockchain/l1",
+    "ethrex-storage/l1",
+    "ethrex-levm/l1",
+    "ethrex-vm/l1",
+]
+sp1 = [
+    "ethrex-l2-common/sp1",
+    "ethrex-l2-rpc/sp1",
+    "ethrex-sdk/sp1",
+    "ethrex-storage-rollup/sp1",
+    "ethrex-common/sp1",
+    "ethrex-blockchain/sp1",
+    "ethrex-storage/sp1",
+    "ethrex-levm/sp1",
+    "ethrex-vm/sp1",
+]
+risc0 = [
+    "ethrex-l2-common/risc0",
+    "ethrex-l2-rpc/risc0",
+    "ethrex-sdk/risc0",
+    "ethrex-storage-rollup/risc0",
+    "ethrex-common/risc0",
+    "ethrex-blockchain/risc0",
+    "ethrex-storage/risc0",
+    "ethrex-levm/risc0",
+    "ethrex-vm/risc0",
+]
+
+# sp1 = [
+#     "ethrex-common/sp1",
+#     "guest_program/sp1",
+#     "ethrex-storage-rollup/sp1",
+#     "ethrex-levm/sp1",
+# ]
+# risc0 = ["ethrex-common/c-kzg", "guest_program/risc0"]

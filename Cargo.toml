@@ -60,20 +60,20 @@ ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
 ethrex-common = { path = "./crates/common", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
 ethrex-crypto = { path = "./crates/common/crypto", default-features = false }
-ethrex-p2p = { path = "./crates/networking/p2p" }
-ethrex-rpc = { path = "./crates/networking/rpc" }
+ethrex-p2p = { path = "./crates/networking/p2p", default-features = false }
+ethrex-rpc = { path = "./crates/networking/rpc", default-features = false }
 ethrex-storage = { path = "./crates/storage", default-features = false }
 ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm", default-features = false }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
-ethrex-l2 = { path = "./crates/l2" }
+ethrex-l2 = { path = "./crates/l2", default-features = false }
 ethrex-l2-common = { path = "./crates/l2/common", default-features = false }
-ethrex-sdk = { path = "./crates/l2/sdk" }
-ethrex-prover = { path = "./crates/l2/prover" }
+ethrex-sdk = { path = "./crates/l2/sdk", default-features = false }
+ethrex-prover = { path = "./crates/l2/prover", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage", default-features = false }
 ethrex = { path = "./cmd/ethrex" }
-ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
+ethrex-l2-rpc = { path = "./crates/l2/networking/rpc", default-features = false }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }

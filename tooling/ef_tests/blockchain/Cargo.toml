@@ -6,13 +6,13 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-blockchain.workspace = true
-ethrex-common.workspace = true
-ethrex-storage.workspace = true
-ethrex-rlp.workspace = true
-ethrex-vm.workspace = true
+ethrex-blockchain = { workspace = true, default-features = false }
+ethrex-common = { workspace = true, default-features = false }
+ethrex-storage = { workspace = true, default-features = false }
+ethrex-vm = { workspace = true, default-features = false }
 ethrex-prover = { path = "../../../crates/l2/prover", default-features = false }
 guest_program = { path = "../../../crates/l2/prover/src/guest_program", default-features = false }
+ethrex-rlp.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
@@ -27,9 +27,57 @@ regex = "1.11.1"
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg"]
-c-kzg = ["ethrex-blockchain/c-kzg"]
-sp1 = ["guest_program/sp1", "ethrex-prover/sp1"]
+default = ["l1"]
+
+secp256k1 = [
+    "ethrex-vm/secp256k1",
+    "guest_program/secp256k1",
+    "ethrex-prover/secp256k1",
+]
+k256 = ["ethrex-vm/k256", "guest_program/k256", "ethrex-prover/k256"]
+
+c-kzg = [
+    "ethrex-vm/c-kzg",
+    "guest_program/c-kzg",
+    "ethrex-prover/c-kzg",
+    "ethrex-blockchain/c-kzg",
+    "ethrex-common/c-kzg",
+    "ethrex-storage/c-kzg",
+]
+kzg-rs = [
+    "ethrex-vm/kzg-rs",
+    "guest_program/kzg-rs",
+    "ethrex-prover/kzg-rs",
+    "ethrex-blockchain/kzg-rs",
+    "ethrex-common/kzg-rs",
+    "ethrex-storage/kzg-rs",
+]
+
+l1 = [
+    "ethrex-vm/l1",
+    "guest_program/l1",
+    "ethrex-prover/l1",
+    "ethrex-blockchain/l1",
+    "ethrex-common/l1",
+    "ethrex-storage/l1",
+]
+sp1 = [
+    "ethrex-vm/sp1",
+    "guest_program/sp1",
+    "ethrex-prover/sp1",
+    "ethrex-blockchain/sp1",
+    "ethrex-common/sp1",
+    "ethrex-storage/sp1",
+]
+risc0 = [
+    "ethrex-vm/risc0",
+    "guest_program/risc0",
+    "ethrex-prover/risc0",
+    "ethrex-blockchain/risc0",
+    "ethrex-common/risc0",
+    "ethrex-storage/risc0",
+]
+
 stateless = []
 
 [[test]]

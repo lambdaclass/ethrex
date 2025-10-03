@@ -13,9 +13,9 @@ risc0-zkvm = { version = "=3.0.3", default-features = false, features = [
 risc0-zkvm-platform = { version = "=2.2.1", default-features = false, features = [
     "sys-getenv",
 ] }
-# TODO: Enable k256 feature.
 guest_program = { path = "../../", default-features = false, features = [
     "c-kzg",
+    "k256",
 ] }
 rkyv = { version = "0.8.10", features = ["unaligned"] }
 

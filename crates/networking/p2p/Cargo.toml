@@ -8,12 +8,12 @@ documentation.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-common.workspace = true
-ethrex-blockchain.workspace = true
+ethrex-common = { workspace = true, default-features = false }
+ethrex-blockchain = { workspace = true, default-features = false }
+ethrex-storage = { workspace = true, default-features = false }
+ethrex-storage-rollup = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
-ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-ethrex-storage-rollup.workspace = true
 ethereum-types.workspace = true
 
 async-trait.workspace = true
@@ -26,7 +26,7 @@ thiserror.workspace = true
 lazy_static.workspace = true
 snap.workspace = true
 serde.workspace = true
-secp256k1.workspace = true
+secp256k1.workspace = true                                     # FIXME
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
@@ -54,8 +54,41 @@ hex-literal = "0.4.1"
 path = "./p2p.rs"
 
 [features]
-default = ["c-kzg"]
-c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
+default = ["l1"]
+
+secp256k1 = ["ethrex-storage-rollup/secp256k1"]
+k256 = ["ethrex-storage-rollup/k256"]
+
+c-kzg = [
+    "ethrex-blockchain/c-kzg",
+    "ethrex-common/c-kzg",
+    "ethrex-storage/c-kzg",
+]
+kzg-rs = [
+    "ethrex-blockchain/kzg-rs",
+    "ethrex-common/kzg-rs",
+    "ethrex-storage/kzg-rs",
+]
+
+l1 = [
+    "ethrex-storage-rollup/l1",
+    "ethrex-blockchain/l1",
+    "ethrex-common/l1",
+    "ethrex-storage/l1",
+]
+sp1 = [
+    "ethrex-storage-rollup/sp1",
+    "ethrex-blockchain/sp1",
+    "ethrex-common/sp1",
+    "ethrex-storage/sp1",
+]
+risc0 = [
+    "ethrex-storage-rollup/risc0",
+    "ethrex-blockchain/risc0",
+    "ethrex-common/risc0",
+    "ethrex-storage/risc0",
+]
+
 sync-test = []
 
 [lints.clippy]

@@ -20,10 +20,14 @@ thiserror.workspace = true
 [features]
 # The default feature is `c-kzg` because the default compilation should be
 # the one that is fastest for the L1.
-default = ["c-kzg"]
+default = ["l1"]
 # This feature should be used by the L1 and the RISC0 guest program.
 c-kzg = ["dep:c-kzg"]
 # This feature should be used by the SP1 guest program.
 kzg-rs = ["dep:kzg-rs"]
 # This feature should be used by the OpenVM guest program.
 openvm-kzg = ["dep:openvm-kzg"]
+
+l1 = ["c-kzg"]
+sp1 = ["kzg-rs"]
+risc0 = ["c-kzg"]

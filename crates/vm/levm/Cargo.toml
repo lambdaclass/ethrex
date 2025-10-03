@@ -50,7 +50,7 @@ colored = "2.1.0"
 spinoff = "0.8.0"
 
 [features]
-default = ["c-kzg", "secp256k1"]
+default = ["l1"]
 
 secp256k1 = ["dep:secp256k1"]
 k256 = ["dep:k256"]
@@ -59,7 +59,9 @@ c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 kzg-rs = ["ethrex-common/kzg-rs", "ethrex-crypto/kzg-rs"]
 openvm-kzg = ["ethrex-common/openvm-kzg", "ethrex-crypto/openvm-kzg"]
 
-sp1 = [ "kzg-rs", "k256" ]
+l1 = ["secp256k1", "ethrex-common/l1", "ethrex-crypto/l1"]
+sp1 = ["k256", "ethrex-common/sp1", "ethrex-crypto/sp1"]
+risc0 = ["k256", "ethrex-common/risc0", "ethrex-crypto/risc0"]
 
 ethereum_foundation_tests = []
 debug = []

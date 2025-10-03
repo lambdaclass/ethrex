@@ -6,11 +6,11 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-common = {workspace = true, default-features = false}
+ethrex-common = { workspace = true, default-features = false }
+ethrex-storage = { workspace = true, default-features = false }
+ethrex-vm = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
-ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-ethrex-vm = {workspace = true, default-features = false}
 
 ethereum-types.workspace = true
 
@@ -31,8 +31,14 @@ unnecessary_cast = "warn"
 panic = "deny"
 
 [features]
-default = ["secp256k1"]
-k256 = ["dep:k256", "ethrex-common/kzg-rs", "ethrex-vm/kzg-rs"]
-secp256k1 = ["dep:secp256k1", "ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
+default = ["l1"]
 
-sp1 = ["k256"]
+k256 = ["dep:k256"]
+secp256k1 = ["dep:secp256k1"]
+
+c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg", "ethrex-storage/c-kzg"]
+kzg-rs = ["ethrex-common/kzg-rs", "ethrex-vm/kzg-rs", "ethrex-storage/kzg-rs"]
+
+l1 = ["secp256k1", "ethrex-common/l1", "ethrex-vm/l1", "ethrex-storage/l1"]
+sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1", "ethrex-storage/sp1", "k256"]
+risc0 = ["ethrex-common/sp1", "ethrex-vm/sp1", "ethrex-storage/sp1", "k256"]

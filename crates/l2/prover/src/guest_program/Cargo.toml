@@ -33,16 +33,36 @@ sp1-sdk = { version = "=5.0.8", optional = true }
 methods = ["src/risc0"]
 
 [features]
-default = ["c-kzg"]
-risc0 = ["dep:risc0-build", "dep:risc0-zkvm", "c-kzg"]
-sp1 = ["dep:sp1-build", "dep:sp1-sdk", "kzg-rs"]
-l2 = []
+# Features for guest programs #
+# =========================== #
+# * secp256k1
+# * k256
+# * c-kzg
+# * kzg-rs
+#
+# Mutually exclusive features #
+# =========================== #
+# * secp256k1 & k256
+# * c-kzg & kzg-rs
+#
+# Caution #
+# ======= #
+# The features sp1 and risc0 are not meant to be enabled within by guest programs.
+# Enabling this features within the guests will cause them to not compile.
+# These are only to lower the dev's compilation overhead.
+
+default = ["l1"]
+
+secp256k1 = ["ethrex-vm/secp256k1", "ethrex-l2-common/secp256k1"]
+k256 = ["ethrex-vm/k256", "ethrex-l2-common/k256"]
+
 c-kzg = [
     "ethrex-vm/c-kzg",
     "ethrex-common/c-kzg",
     "ethrex-blockchain/c-kzg",
     "ethrex-storage/c-kzg",
     "ethrex-crypto/c-kzg",
+    "ethrex-l2-common/c-kzg",
 ]
 kzg-rs = [
     "ethrex-vm/kzg-rs",
@@ -50,7 +70,40 @@ kzg-rs = [
     "ethrex-blockchain/kzg-rs",
     "ethrex-storage/kzg-rs",
     "ethrex-crypto/kzg-rs",
+    "ethrex-l2-common/kzg-rs",
 ]
+
+l1 = [
+    "ethrex-vm/l1",
+    "ethrex-common/l1",
+    "ethrex-blockchain/l1",
+    "ethrex-storage/l1",
+    "ethrex-crypto/l1",
+    "ethrex-l2-common/l1",
+]
+
+sp1 = [
+    "ethrex-vm/sp1",
+    "ethrex-common/sp1",
+    "ethrex-blockchain/sp1",
+    "ethrex-storage/sp1",
+    "ethrex-crypto/sp1",
+    "ethrex-l2-common/sp1",
+    "dep:sp1-build",
+    "dep:sp1-sdk",
+]
+risc0 = [
+    "ethrex-vm/risc0",
+    "ethrex-common/risc0",
+    "ethrex-blockchain/risc0",
+    "ethrex-storage/risc0",
+    "ethrex-crypto/risc0",
+    "ethrex-l2-common/risc0",
+    "dep:risc0-build",
+    "dep:risc0-zkvm",
+]
+
+l2 = []
 
 [lib]
 path = "./src/lib.rs"

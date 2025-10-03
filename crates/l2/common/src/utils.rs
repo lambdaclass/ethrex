@@ -31,7 +31,6 @@ pub fn get_address_from_secret_key(
             .map_err(|e| format!("Failed to parse secret key from slice: {e}"))?;
         return get_address_from_secret_key_k256(secret_key);
     }
-    Ok(ethrex_common::Address::default()) // FIXME
 }
 
 #[cfg(feature = "secp256k1")]

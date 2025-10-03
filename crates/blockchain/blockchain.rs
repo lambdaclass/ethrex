@@ -675,6 +675,16 @@ impl Blockchain {
         Ok(hash)
     }
 
+    // FIXME
+    #[cfg(feature = "kzg-rs")]
+    pub async fn add_blob_transaction_to_pool(
+        &self,
+        _transaction: EIP4844Transaction,
+        _blobs_bundle: ethrex_common::types::BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        unimplemented!()
+    }
+
     /// Add a transaction to the mempool checking that the transaction is valid
     pub async fn add_transaction_to_pool(
         &self,
