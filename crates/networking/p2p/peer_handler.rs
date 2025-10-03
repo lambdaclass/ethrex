@@ -689,7 +689,7 @@ impl PeerHandler {
                     if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                         loop {
                             match receiver.recv().await {
-                                Some(RLPxMessage::Receipts68(res)) => {
+                                Some(RLPxMessage::Receipts68(mut res)) => {
                                     if res.get_id() == request_id {
                                         return Some(res.get_receipts());
                                     }

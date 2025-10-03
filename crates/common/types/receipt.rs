@@ -266,25 +266,25 @@ impl RLPDecode for ReceiptWithBloom {
     }
 }
 
-impl From<&Receipt> for ReceiptWithBloom {
-    fn from(receipt: &Receipt) -> Self {
+impl From<Receipt> for ReceiptWithBloom {
+    fn from(receipt: Receipt) -> Self {
         Self {
             tx_type: receipt.tx_type,
             succeeded: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
             bloom: bloom_from_logs(&receipt.logs),
-            logs: receipt.logs.clone(),
+            logs: receipt.logs,
         }
     }
 }
 
-impl From<&ReceiptWithBloom> for Receipt {
-    fn from(receipt: &ReceiptWithBloom) -> Self {
+impl From<ReceiptWithBloom> for Receipt {
+    fn from(receipt: ReceiptWithBloom) -> Self {
         Self {
             tx_type: receipt.tx_type,
             succeeded: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
-            logs: receipt.logs.clone(),
+            logs: receipt.logs,
         }
     }
 }

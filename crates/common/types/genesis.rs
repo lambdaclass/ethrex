@@ -671,7 +671,7 @@ impl Genesis {
             gas_limit: self.gas_limit,
             gas_used: 0,
             timestamp: self.timestamp,
-            extra_data: self.extra_data.clone(),
+            extra_data: self.extra_data.clone(), // ok-clone: extra data in blocks is rarely large
             prev_randao: self.mix_hash,
             nonce: self.nonce,
             base_fee_per_gas,

@@ -1462,26 +1462,10 @@ mod canonic_encoding {
         }
 
         pub fn compute_hash(&self) -> H256 {
-            match self {
-                P2PTransaction::LegacyTransaction(t) => {
-                    Transaction::LegacyTransaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::EIP2930Transaction(t) => {
-                    Transaction::EIP2930Transaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::EIP1559Transaction(t) => {
-                    Transaction::EIP1559Transaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::EIP4844TransactionWithBlobs(t) => {
-                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash()
-                }
-                P2PTransaction::EIP7702Transaction(t) => {
-                    Transaction::EIP7702Transaction(t.clone()).compute_hash()
-                }
-                P2PTransaction::PrivilegedL2Transaction(t) => {
-                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
-                }
+            if let P2PTransaction::PrivilegedL2Transaction(tx) = self {
+                return tx.get_privileged_hash().unwrap_or_default();
             }
+            crate::utils::keccak(self.encode_canonical_to_vec())
         }
     }
 }
@@ -2226,7 +2210,7 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data.clone(),
+                input: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
