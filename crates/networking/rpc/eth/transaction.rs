@@ -27,6 +27,8 @@ use tracing::debug;
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
 pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
 pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
+pub const DEFAULT_ETH_CALL_GAS_LIMIT: u64 = 50_000_000;
+pub const MAX_ETH_CALL_GAS_LIMIT: u64 = 100_000_000;
 
 pub struct CallRequest {
     transaction: GenericTransaction,
@@ -106,13 +108,18 @@ impl RpcHandler for CallRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
+        // Prepare transaction with gas limit
+        let mut transaction = self.transaction.clone();
+        let gas_limit = match transaction.gas {
+            Some(gas) => {
+                let gas_u64 = u64::try_from(gas).unwrap_or(u64::MAX);
+                std::cmp::min(gas_u64, MAX_ETH_CALL_GAS_LIMIT)
+            }
+            None => DEFAULT_ETH_CALL_GAS_LIMIT,
+        };
+        transaction.gas = Some(gas_limit.into());
         // Run transaction
-        let result = simulate_tx(
-            &self.transaction,
-            &header,
-            context.storage,
-            context.blockchain,
-        )?;
+        let result = simulate_tx(&transaction, &header, context.storage, context.blockchain)?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
