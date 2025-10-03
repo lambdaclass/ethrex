@@ -920,7 +920,6 @@ name = "ethrex-blockchain"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "cfg-if",
  "ethrex-common",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -1086,7 +1085,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
- "cfg-if",
  "derive_more",
  "dyn-clone",
  "ethereum-types",
