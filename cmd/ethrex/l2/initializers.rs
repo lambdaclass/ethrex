@@ -1,30 +1,3 @@
-use std::fs::read_to_string;
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
-
-use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::Address;
-use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
-use ethrex_l2::SequencerConfig;
-use ethrex_p2p::kademlia::Kademlia;
-use ethrex_p2p::network::peer_table;
-use ethrex_p2p::peer_handler::PeerHandler;
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
-use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::{Node, NodeRecord};
-use ethrex_storage::Store;
-use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use secp256k1::SecretKey;
-use tokio::sync::Mutex;
-use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
-use tracing::{error, info, warn};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{EnvFilter, Registry, reload};
-use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
-
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
@@ -34,12 +7,31 @@ use crate::l2::L2Options;
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
+use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_l2::SequencerConfig;
+use ethrex_p2p::{
+    discv4::peer_table::{PeerTable, PeerTableHandle},
+    peer_handler::PeerHandler,
+    rlpx::l2::l2_connection::P2PBasedContext,
+    sync_manager::SyncManager,
+    types::{Node, NodeRecord},
+};
+use ethrex_storage::Store;
+use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use secp256k1::SecretKey;
+use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use tokio::{sync::Mutex, task::JoinSet};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::{error, info, warn};
+use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
+use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Kademlia,
+    peer_table: PeerTableHandle,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -105,14 +97,10 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 }
 
 pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_sql")] {
-            let engine_type = EngineTypeRollup::SQL;
-        }
-        else {
-            let engine_type = EngineTypeRollup::InMemory;
-        }
-    }
+    #[cfg(feature = "rollup_storage_sql")]
+    let engine_type = EngineTypeRollup::SQL;
+    #[cfg(not(feature = "rollup_storage_sql"))]
+    let engine_type = EngineTypeRollup::InMemory;
     let rollup_store =
         StoreRollup::new(datadir, engine_type).expect("Failed to create StoreRollup");
     rollup_store
@@ -157,9 +145,6 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
-    #[cfg(feature = "revm")]
-    panic!("L2 doesn't support REVM");
-
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
     let rollup_store_dir = datadir.join("rollup_store");
@@ -170,7 +155,13 @@ pub async fn init_l2(
     let store = init_store(&datadir, genesis).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L2, true);
+    let blockchain_opts = ethrex_blockchain::BlockchainOptions {
+        max_mempool_size: opts.node_opts.mempool_max_size,
+        r#type: BlockchainType::L2,
+        perf_logs_enabled: true,
+    };
+
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
 
     let signer = get_signer(&datadir);
 
@@ -182,7 +173,7 @@ pub async fn init_l2(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_handler = PeerHandler::new(PeerTable::spawn());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();

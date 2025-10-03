@@ -5,14 +5,14 @@ use crate::{
         read_jwtsecret_file, read_node_config_file,
     },
 };
-use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    kademlia::Kademlia,
-    network::{P2PContext, peer_table},
+    discv4::peer_table::{PeerTable, PeerTableHandle},
+    network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
@@ -37,6 +37,12 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
+};
+
+// Compile-time check to ensure that at least one of the database features is enabled.
+#[cfg(not(feature = "rocksdb"))]
+const _: () = {
+    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
@@ -100,30 +106,17 @@ pub fn open_store(datadir: &Path) -> Store {
     if datadir.ends_with("memory") {
         Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
     } else {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "rocksdb")] {
-                let engine_type = EngineType::RocksDB;
-            } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
-            } else {
-                error!("No database specified. The feature flag `rocksdb` or `libmdbx` should've been set while building.");
-                panic!("Specify the desired database engine.");
-            }
-        };
+        #[cfg(feature = "rocksdb")]
+        let engine_type = EngineType::RocksDB;
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")
     }
 }
 
-pub fn init_blockchain(
-    store: Store,
-    blockchain_type: BlockchainType,
-    perf_logs_enabled: bool,
-) -> Arc<Blockchain> {
-    #[cfg(feature = "revm")]
-    info!("Initiating blockchain with revm");
-    #[cfg(not(feature = "revm"))]
+pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_type, perf_logs_enabled).into()
+    Blockchain::new(store, blockchain_opts).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -138,6 +131,7 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
+    extra_data: String,
 ) {
     init_datadir(&opts.datadir);
     // Create SyncManager
@@ -164,6 +158,7 @@ pub async fn init_rpc_api(
         get_client_version(),
         log_filter_handler,
         gas_ceil,
+        extra_data,
     );
 
     tracker.spawn(rpc_api);
@@ -212,7 +207,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_handler.peer_table.peers.clone(),
+        peer_handler.peer_table,
     ));
 }
 
@@ -375,7 +370,12 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTableHandle,
+    Arc<Mutex<NodeRecord>>,
+)> {
     let datadir = &opts.datadir;
     init_datadir(datadir);
 
@@ -388,7 +388,14 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(store.clone(), BlockchainType::L1, true);
+    let blockchain = init_blockchain(
+        store.clone(),
+        BlockchainOptions {
+            max_mempool_size: opts.mempool_max_size,
+            perf_logs_enabled: true,
+            r#type: BlockchainType::L1,
+        },
+    );
 
     let signer = get_signer(datadir);
 
@@ -400,7 +407,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_handler = PeerHandler::new(PeerTable::spawn());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -419,6 +426,7 @@ pub async fn init_l1(
         log_filter_handler,
         // TODO (#4482): Make this configurable.
         None,
+        opts.extra_data.clone(),
     )
     .await;
 
