@@ -77,95 +77,56 @@ dev = ["dep:ethrex-dev"]
 
 secp256k1 = [
   "ethrex-l2-common/secp256k1",
-  "ethrex-l2-rpc/secp256k1",
   "ethrex-l2/secp256k1",
-  "ethrex-sdk/secp256k1",
-  "ethrex-storage-rollup/secp256k1",
   "ethrex-vm/secp256k1",
-  "ethrex-p2p/secp256k1",
-  "ethrex-rpc/secp256k1",
   "ethrex-prover/secp256k1",
 ]
 k256 = [
   "ethrex-l2-common/k256",
-  "ethrex-l2-rpc/k256",
   "ethrex-l2/k256",
-  "ethrex-sdk/k256",
-  "ethrex-storage-rollup/k256",
   "ethrex-vm/k256",
-  "ethrex-p2p/k256",
-  "ethrex-rpc/k256",
   "ethrex-prover/k256",
 ]
 
 c-kzg = [
   "ethrex-l2-common/c-kzg",
-  "ethrex-l2-rpc/c-kzg",
   "ethrex-l2/c-kzg",
-  "ethrex-sdk/c-kzg",
-  "ethrex-storage-rollup/c-kzg",
   "ethrex-vm/c-kzg",
   "ethrex-blockchain/c-kzg",
   "ethrex-common/c-kzg",
-  "ethrex-storage/c-kzg",
-  "ethrex-p2p/c-kzg",
-  "ethrex-rpc/c-kzg",
   "ethrex-prover/c-kzg",
 ]
 kzg-rs = [
   "ethrex-l2-common/kzg-rs",
-  "ethrex-l2-rpc/kzg-rs",
   "ethrex-l2/kzg-rs",
-  "ethrex-sdk/kzg-rs",
-  "ethrex-storage-rollup/kzg-rs",
   "ethrex-vm/kzg-rs",
   "ethrex-blockchain/kzg-rs",
   "ethrex-common/kzg-rs",
-  "ethrex-storage/kzg-rs",
-  "ethrex-p2p/kzg-rs",
   "ethrex-prover/kzg-rs",
 ]
 
 l1 = [
   "ethrex-l2-common/l1",
-  "ethrex-l2-rpc/l1",
   "ethrex-l2/l1",
-  "ethrex-sdk/l1",
-  "ethrex-storage-rollup/l1",
   "ethrex-vm/l1",
   "ethrex-blockchain/l1",
   "ethrex-common/l1",
-  "ethrex-storage/l1",
-  "ethrex-p2p/l1",
-  "ethrex-rpc/l1",
   "ethrex-prover/l2",
 ]
 sp1 = [
   "ethrex-l2-common/sp1",
-  "ethrex-l2-rpc/sp1",
   "ethrex-l2/sp1",
-  "ethrex-sdk/sp1",
-  "ethrex-storage-rollup/sp1",
   "ethrex-vm/sp1",
   "ethrex-blockchain/sp1",
   "ethrex-common/sp1",
-  "ethrex-storage/sp1",
-  "ethrex-p2p/sp1",
-  "ethrex-rpc/sp1",
   "ethrex-prover/sp1",
 ]
 risc0 = [
   "ethrex-l2-common/risc0",
-  "ethrex-l2-rpc/risc0",
   "ethrex-l2/risc0",
-  "ethrex-sdk/risc0",
-  "ethrex-storage-rollup/risc0",
   "ethrex-vm/risc0",
   "ethrex-blockchain/risc0",
   "ethrex-common/risc0",
-  "ethrex-storage/risc0",
-  "ethrex-p2p/risc0",
-  "ethrex-rpc/risc0",
   "ethrex-prover/risc0",
 ]
 

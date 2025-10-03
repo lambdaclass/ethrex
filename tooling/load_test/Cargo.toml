@@ -6,11 +6,17 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-rpc = { workspace = true, default-features = false }
 ethrex-sdk = { workspace = true, default-features = false }
-ethrex-blockchain = { workspace = true, default-features = false }
-ethrex-common = { workspace = true, default-features = false }
-ethrex-l2-common = { workspace = true, default-features = false }
+ethrex-blockchain = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-l2-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-rpc = { workspace = true, default-features = false }
 ethrex-l2-rpc = { workspace = true, default-features = false }
 
 clap.workspace = true
@@ -20,61 +26,3 @@ ethereum-types.workspace = true
 eyre.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures = "0.3"
-
-[features]
-default = ["l1"]
-
-secp256k1 = [
-    "ethrex-l2-rpc/secp256k1",
-    "ethrex-l2-common/secp256k1",
-    "ethrex-sdk/secp256k1",
-    "ethrex-rpc/secp256k1",
-]
-k256 = [
-    "ethrex-l2-rpc/k256",
-    "ethrex-l2-common/k256",
-    "ethrex-sdk/k256",
-    "ethrex-rpc/k256",
-]
-
-c-kzg = [
-    "ethrex-l2-rpc/c-kzg",
-    "ethrex-l2-common/c-kzg",
-    "ethrex-sdk/c-kzg",
-    "ethrex-rpc/c-kzg",
-    "ethrex-common/c-kzg",
-    "ethrex-blockchain/c-kzg",
-]
-kzg-rs = [
-    "ethrex-l2-rpc/kzg-rs",
-    "ethrex-l2-common/kzg-rs",
-    "ethrex-sdk/kzg-rs",
-    "ethrex-rpc/kzg-rs",
-    "ethrex-common/kzg-rs",
-    "ethrex-blockchain/kzg-rs",
-]
-
-l1 = [
-    "ethrex-l2-rpc/l1",
-    "ethrex-l2-common/l1",
-    "ethrex-sdk/l1",
-    "ethrex-rpc/l1",
-    "ethrex-common/l1",
-    "ethrex-blockchain/l1",
-]
-sp1 = [
-    "ethrex-l2-rpc/sp1",
-    "ethrex-l2-common/sp1",
-    "ethrex-sdk/sp1",
-    "ethrex-rpc/sp1",
-    "ethrex-common/sp1",
-    "ethrex-blockchain/sp1",
-]
-risc0 = [
-    "ethrex-l2-rpc/risc0",
-    "ethrex-l2-common/risc0",
-    "ethrex-sdk/risc0",
-    "ethrex-rpc/risc0",
-    "ethrex-common/risc0",
-    "ethrex-blockchain/risc0",
-]

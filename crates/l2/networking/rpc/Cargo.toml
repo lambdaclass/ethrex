@@ -5,15 +5,22 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-common = { workspace = true, default-features = false }
-ethrex-storage = { workspace = true, default-features = false }
-ethrex-blockchain = { workspace = true, default-features = false }
+# This crate is not a dependency of guest_program, therefore, we can re-enable
+# the ethrex pacakges default features (i.e. the l1 feature).
+ethrex-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-blockchain = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-l2-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
 ethrex-p2p.workspace = true
+ethrex-storage = { workspace = true, default-features = false }
 ethrex-storage-rollup = { workspace = true, default-features = false }
-ethrex-l2-common = { workspace = true, default-features = false }
 ethrex-rpc.workspace = true
 ethrex-rlp.workspace = true
 
@@ -35,44 +42,6 @@ url.workspace = true
 
 [lib]
 path = "./lib.rs"
-
-[features]
-default = ["l1"]
-
-k256 = ["ethrex-l2-common/k256", "ethrex-storage-rollup/k256"]
-secp256k1 = ["ethrex-l2-common/secp256k1", "ethrex-storage-rollup/secp256k1"]
-
-c-kzg = [
-    "ethrex-common/c-kzg",
-    "ethrex-blockchain/c-kzg",
-    "ethrex-l2-common/c-kzg",
-    "ethrex-storage-rollup/c-kzg",
-]
-kzg-rs = [
-    "ethrex-common/kzg-rs",
-    "ethrex-blockchain/kzg-rs",
-    "ethrex-l2-common/kzg-rs",
-    "ethrex-storage-rollup/kzg-rs",
-]
-
-l1 = [
-    "ethrex-common/l1",
-    "ethrex-blockchain/l1",
-    "ethrex-l2-common/l1",
-    "ethrex-storage-rollup/l1",
-]
-sp1 = [
-    "ethrex-common/sp1",
-    "ethrex-blockchain/sp1",
-    "ethrex-l2-common/sp1",
-    "ethrex-storage-rollup/sp1",
-]
-risc0 = [
-    "ethrex-common/risc0",
-    "ethrex-blockchain/risc0",
-    "ethrex-l2-common/risc0",
-    "ethrex-storage-rollup/risc0",
-]
 
 [lints.clippy]
 unwrap_used = "deny"

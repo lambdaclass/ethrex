@@ -6,9 +6,13 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-common = { workspace = true, default-features = false }
-ethrex-rpc.workspace = true
-ethrex-l2-common = { workspace = true, default-features = false }
+ethrex-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-l2-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-rpc = { workspace = true, default-features = false }
 ethrex-l2-rpc = { workspace = true, default-features = false }
 ethrex-sdk-contract-utils = { path = "contract_utils" }
 
@@ -42,20 +46,3 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
-
-[features]
-default = ["l1"]
-
-secp256k1 = ["ethrex-l2-common/secp256k1", "ethrex-l2-rpc/secp256k1"]
-k256 = ["ethrex-l2-common/k256", "ethrex-l2-rpc/k256"]
-
-c-kzg = ["ethrex-l2-common/c-kzg", "ethrex-l2-rpc/c-kzg", "ethrex-common/c-kzg"]
-kzg-rs = [
-    "ethrex-l2-common/kzg-rs",
-    "ethrex-l2-rpc/kzg-rs",
-    "ethrex-common/kzg-rs",
-]
-
-l1 = ["ethrex-l2-common/l1", "ethrex-l2-rpc/l1", "ethrex-common/l1"]
-sp1 = ["ethrex-l2-common/sp1", "ethrex-l2-rpc/sp1", "ethrex-common/sp1"]
-risc0 = ["ethrex-l2-common/risc0", "ethrex-l2-rpc/risc0", "ethrex-common/risc0"]

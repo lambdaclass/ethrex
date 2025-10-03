@@ -6,11 +6,17 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-blockchain = { workspace = true, default-features = false }
-ethrex-common = { workspace = true, default-features = false }
+# This crate is not a dependency of guest_program and vice versa, therefore, we
+# can re-enable the ethrex pacakges default feature (i.e. the l1 feature).
+ethrex-blockchain = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-common = { workspace = true, default-features = false, features = [
+    "l1",
+] }
+ethrex-vm = { workspace = true, default-features = false, features = ["l1"] }
+ethrex-levm = { workspace = true, default-features = false, features = ["l1"] }
 ethrex-storage = { workspace = true, default-features = false }
-ethrex-vm = { workspace = true, default-features = false }
-ethrex-levm = { workspace = true, default-features = false }
 ethrex-l2-rpc = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
 
@@ -30,61 +36,4 @@ alloy-rlp = "0.3.12"
 hex = "0.4.3"
 
 [features]
-default = ["l1"]
-
-secp256k1 = [
-    "ethrex-vm/secp256k1",
-    "ethrex-levm/secp256k1",
-    "ethrex-l2-rpc/secp256k1",
-]
-k256 = ["ethrex-vm/k256", "ethrex-levm/k256", "ethrex-l2-rpc/k256"]
-
-c-kzg = [
-    "ethrex-vm/c-kzg",
-    "ethrex-levm/c-kzg",
-    "ethrex-l2-rpc/c-kzg",
-    "ethrex-blockchain/c-kzg",
-    "ethrex-common/c-kzg",
-    "ethrex-storage/c-kzg",
-]
-kzg-rs = [
-    "ethrex-vm/kzg-rs",
-    "ethrex-levm/kzg-rs",
-    "ethrex-l2-rpc/kzg-rs",
-    "ethrex-blockchain/kzg-rs",
-    "ethrex-common/kzg-rs",
-    "ethrex-storage/kzg-rs",
-]
-
-l1 = [
-    "ethrex-vm/l1",
-    "ethrex-levm/l1",
-    "ethrex-l2-rpc/l1",
-    "ethrex-blockchain/l1",
-    "ethrex-common/l1",
-    "ethrex-storage/l1",
-]
-sp1 = [
-    "ethrex-vm/sp1",
-    "ethrex-levm/sp1",
-    "ethrex-l2-rpc/sp1",
-    "ethrex-blockchain/sp1",
-    "ethrex-common/sp1",
-    "ethrex-storage/sp1",
-]
-risc0 = [
-    "ethrex-vm/risc0",
-    "ethrex-levm/risc0",
-    "ethrex-l2-rpc/risc0",
-    "ethrex-blockchain/risc0",
-    "ethrex-common/risc0",
-    "ethrex-storage/risc0",
-]
-
-openvm-kzg = [
-    "ethrex-vm/openvm-kzg",
-    "ethrex-levm/openvm-kzg",
-    "ethrex-common/openvm-kzg",
-]
-
 block = []

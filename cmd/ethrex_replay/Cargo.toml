@@ -53,7 +53,6 @@ l2 = [
     "guest_program/l2",
     "ethrex-prover/l2",
     "ethrex-l2/l2",
-    "ethrex-storage-rollup/l2",
 ]
 profiling = ["ethrex-prover/profiling"]
 jemalloc = ["dep:tikv-jemallocator"]

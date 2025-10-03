@@ -38,14 +38,9 @@ default = ["l1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 kzg-rs = ["ethrex-common/kzg-rs", "ethrex-vm/kzg-rs"]
 
-l1 = ["ethrex-common/l1", "ethrex-vm/l1", "ethrex-storage/l1", "c-kzg"]
-sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1", "ethrex-storage/sp1", "kzg-rs"]
-risc0 = [
-    "ethrex-common/risc0",
-    "ethrex-vm/risc0",
-    "ethrex-storage/risc0",
-    "c-kzg",
-]
+l1 = ["ethrex-common/l1", "ethrex-vm/l1", "c-kzg"]
+sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1", "kzg-rs"]
+risc0 = ["ethrex-common/risc0", "ethrex-vm/risc0", "c-kzg"]
 
 metrics = ["ethrex-metrics/transactions"]
 

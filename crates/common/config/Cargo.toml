@@ -9,8 +9,8 @@ documentation.workspace = true
 # This crate doesn't care about ethrex-common & ethrex-p2p non-default features
 # because it only needs ChainConfig, Genesis, GenesisError which don't differ
 # based on them.
-ethrex-p2p = { workspace = true, default-features = false, features = ["l1"] }
 ethrex-common = { workspace = true, default-features = true, features = ["l1"] }
+ethrex-p2p = { workspace = true, default-features = false }
 serde_json.workspace = true
 serde.workspace = true
 hex.workspace = true

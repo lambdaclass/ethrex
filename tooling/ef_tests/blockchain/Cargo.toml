@@ -42,7 +42,6 @@ c-kzg = [
     "ethrex-prover/c-kzg",
     "ethrex-blockchain/c-kzg",
     "ethrex-common/c-kzg",
-    "ethrex-storage/c-kzg",
 ]
 kzg-rs = [
     "ethrex-vm/kzg-rs",
@@ -50,7 +49,6 @@ kzg-rs = [
     "ethrex-prover/kzg-rs",
     "ethrex-blockchain/kzg-rs",
     "ethrex-common/kzg-rs",
-    "ethrex-storage/kzg-rs",
 ]
 
 l1 = [
@@ -59,7 +57,6 @@ l1 = [
     "ethrex-prover/l1",
     "ethrex-blockchain/l1",
     "ethrex-common/l1",
-    "ethrex-storage/l1",
 ]
 sp1 = [
     "ethrex-vm/sp1",
@@ -67,7 +64,6 @@ sp1 = [
     "ethrex-prover/sp1",
     "ethrex-blockchain/sp1",
     "ethrex-common/sp1",
-    "ethrex-storage/sp1",
 ]
 risc0 = [
     "ethrex-vm/risc0",
@@ -75,7 +71,6 @@ risc0 = [
     "ethrex-prover/risc0",
     "ethrex-blockchain/risc0",
     "ethrex-common/risc0",
-    "ethrex-storage/risc0",
 ]
 
 stateless = []
