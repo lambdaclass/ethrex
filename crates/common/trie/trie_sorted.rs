@@ -8,6 +8,9 @@ use ethrex_threadpool::ThreadPool;
 use std::{sync::Arc, thread::scope};
 use tracing::debug;
 
+/// The elements of the stack represent the branch node that is the parent of the current
+/// parent element. When the current parent is no longer valid (is not the parent of
+/// the current elements). The stack gets popped and this element becomes the parent
 #[derive(Debug, Default, Clone)]
 struct StackElement {
     path: Nibbles,
@@ -17,18 +20,27 @@ struct StackElement {
 // The large size isn't a performance problem because we use a single instance of this
 // struct
 #[allow(clippy::large_enum_variant)]
+/// This struct handles the current element that the algorithm is processing. The
+/// current parent is the parent of this element and the next one in the queue.
+/// If that isn't true, we pop the stack and the old parent becomes the new current element
+/// This is an enum because the current element can be a leaf or a branch
 #[derive(Debug, Clone)]
 enum CenterSideElement {
     Branch { node: BranchNode },
     Leaf { value: Vec<u8> },
 }
 
+/// The current element and its full path.
 #[derive(Debug, Clone)]
 struct CenterSide {
+    // Full path to the element
     path: Nibbles,
+    // Element, can be branch or leaf
     element: CenterSideElement,
 }
 
+/// These errors should never happen on a correctly ordered list, but they can happen if
+/// the iterator used as input has repeated or out of order values
 #[derive(Debug, thiserror::Error)]
 pub enum TrieGenerationError {
     #[error("When creating a child node, the nibbles diff was empty. Child Node {0:x?}")]
@@ -41,7 +53,10 @@ pub enum TrieGenerationError {
     ThreadJoinError(),
 }
 
+/// How many nodes we group before sending to write
 pub const SIZE_TO_WRITE_DB: u64 = 20_000;
+/// How many write buffers we can use at the same time.
+/// This number and SIZE_TO_WRITE_DB limits how much memory we use
 pub const BUFFER_COUNT: u64 = 32;
 
 impl CenterSide {
@@ -61,10 +76,13 @@ impl CenterSide {
     }
 }
 
+/// Checks if the stack element is a child node of the element at path `this`
 fn is_child(this: &Nibbles, other: &StackElement) -> bool {
     this.count_prefix(&other.path) == other.path.len()
 }
 
+/// Creates a parent element that can have as children both the parent and the closest nibbles
+/// That parent is created with no children
 fn create_parent(center_side: &CenterSide, closest_nibbles: &Nibbles) -> StackElement {
     let new_parent_nibbles = center_side
         .path
@@ -78,7 +96,10 @@ fn create_parent(center_side: &CenterSide, closest_nibbles: &Nibbles) -> StackEl
     }
 }
 
-fn add_center_to_parent_and_write_queue(
+/// This function modifies a parent element to include the `center_side` element, and
+/// then adds the `center_side` to the write queue.
+/// When adding the center_side to the write queue we use create an extension if needed
+fn add_current_to_parent_and_write_queue(
     nodes_to_write: &mut Vec<(NodeHash, Node)>,
     center_side: &CenterSide,
     parent_element: &mut StackElement,
@@ -125,6 +146,8 @@ fn add_center_to_parent_and_write_queue(
     Ok(())
 }
 
+/// flush_nodes_to_write writes the nodes into the database, and when it's done it
+/// done returns the vector used to write nodes into the channel for future use
 fn flush_nodes_to_write(
     mut nodes_to_write: Vec<(NodeHash, Node)>,
     db: &dyn TrieDB,
@@ -137,6 +160,12 @@ fn flush_nodes_to_write(
     Ok(())
 }
 
+/// trie_from_sorted_accounts computes and stores into a db a trie from a sorted
+/// iterator of H256 paths and values. Thie functions takes a Theadpool Arc to send
+/// the writing task to be done concurrently.
+/// To limit the amount of memory this function can use, we use a crossbeam multiproducer
+/// multiconsumer queue, which gives the function a buffer to write nodes into before
+/// flushing to the db.
 #[inline(never)]
 pub fn trie_from_sorted_accounts<'scope, T>(
     db: &'scope dyn TrieDB,
@@ -151,78 +180,108 @@ where
     let mut nodes_to_write: Vec<(NodeHash, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
+
+    // We have a stack of the parents of the current parent
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
 
-    let mut left_side = StackElement::default();
+    // This is the current parent of the first element. We assume that the root node
+    // is always a parent, and we fix it afterwards if it's not true
+    // The root is a parent of all nodes
+    let mut current_parent = StackElement::default();
+
+    // If the iterator is empty, there is nothing to write, we return an empty trie hash
     let Some(initial_value) = data_iter.next() else {
         return Ok(*EMPTY_TRIE_HASH);
     };
-    let mut center_side: CenterSide = CenterSide::from_value(initial_value.clone());
-    let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
 
-    while let Some(right_side) = right_side_opt {
+    // The current node that is being used as computing. We compare it with the current
+    // parent and the next value to see where it should be written
+    let mut current_node: CenterSide = CenterSide::from_value(initial_value.clone());
+    let mut next_value_opt: Option<(H256, Vec<u8>)> = data_iter.next();
+
+    // When the iterator returns none, we have finished computing the tree
+    while let Some(next_value) = next_value_opt {
+        // If we have enought to write, we send this to the threadpool to write concurrently
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
             let buffer_sender = buffer_sender.clone();
             scope.execute_priority(Box::new(move || {
                 let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
             }));
+            // We wait to get a new buffer to not write too much
             nodes_to_write = buffer_receiver
                 .recv()
                 .expect("This channel shouldn't close");
         }
 
-        let right_side_path = Nibbles::from_bytes(right_side.0.as_bytes());
-        while !is_child(&right_side_path, &left_side) {
-            add_center_to_parent_and_write_queue(
+        let next_path = Nibbles::from_bytes(next_value.0.as_bytes());
+        // If the current parent isn't a parent of the next value, that means
+        // that the current value doesn't have a brother to the right
+        // As such we write this node and change the current node to the current parent
+        while !is_child(&next_path, &current_parent) {
+            add_current_to_parent_and_write_queue(
                 &mut nodes_to_write,
-                &center_side,
-                &mut left_side,
+                &current_node,
+                &mut current_parent,
             )?;
-            let temp = CenterSide::from_stack_element(left_side);
-            left_side = trie_stack.pop().ok_or(TrieGenerationError::TrieStackEmpty(
-                center_side.path.clone(),
+            let temp = CenterSide::from_stack_element(current_parent);
+            current_parent = trie_stack.pop().ok_or(TrieGenerationError::TrieStackEmpty(
+                current_node.path.clone(),
             ))?;
-            center_side = temp;
+            current_node = temp;
         }
 
-        if center_side.path.count_prefix(&left_side.path)
-            >= center_side.path.count_prefix(&right_side_path)
+        // If the "distance" between the current and next value is equal to the
+        // parent node, that means that they're both "brothers" on the current path
+        // Ex: parent=[05] current=[0567] next=[0589]
+        // there is not a branch between the parent and current, so we just write the
+        // current element and change the current with the next value while
+        // advancing the iterator for our next value
+        if current_node.path.count_prefix(&current_parent.path)
+            == current_node.path.count_prefix(&next_path)
         {
-            add_center_to_parent_and_write_queue(
+            add_current_to_parent_and_write_queue(
                 &mut nodes_to_write,
-                &center_side,
-                &mut left_side,
+                &current_node,
+                &mut current_parent,
             )?;
+
+        // If the "distance" between the current and next value is larger than that to
+        // the parent node, that means that there is a closer parent for both of them
+        // Ex: parent=[05] current=[0567] next=[0569]
+        // This means that there is a branch in [056] and current is a children
+        // of that parent
+        // So we create a parent, mark it as current, write the current node to that parent.
+        // The old parent goes into the stack
+        // Then we advance the iterator for our next value
         } else {
-            let mut element = create_parent(&center_side, &right_side_path);
-            add_center_to_parent_and_write_queue(&mut nodes_to_write, &center_side, &mut element)?;
-            trie_stack.push(left_side);
-            left_side = element;
+            let mut element = create_parent(&current_node, &next_path);
+            add_current_to_parent_and_write_queue(
+                &mut nodes_to_write,
+                &current_node,
+                &mut element,
+            )?;
+            trie_stack.push(current_parent);
+            current_parent = element;
         }
-        center_side = CenterSide::from_value(right_side);
-        right_side_opt = data_iter.next();
+        current_node = CenterSide::from_value(next_value);
+        next_value_opt = data_iter.next();
     }
 
-    while !is_child(&center_side.path, &left_side) {
-        let temp = CenterSide::from_stack_element(left_side);
-        left_side = trie_stack.pop().ok_or(TrieGenerationError::TrieStackEmpty(
-            center_side.path.clone(),
-        ))?;
-        add_center_to_parent_and_write_queue(&mut nodes_to_write, &temp, &mut left_side)?;
-    }
-
-    add_center_to_parent_and_write_queue(&mut nodes_to_write, &center_side, &mut left_side)?;
-
+    // We empty the stack, where each node is a child of the one in the stack, so we just keep
+    // popping and adding to parent
+    add_current_to_parent_and_write_queue(&mut nodes_to_write, &current_node, &mut current_parent)?;
     while let Some(mut parent_node) = trie_stack.pop() {
-        add_center_to_parent_and_write_queue(
+        add_current_to_parent_and_write_queue(
             &mut nodes_to_write,
-            &CenterSide::from_stack_element(left_side),
+            &CenterSide::from_stack_element(current_parent),
             &mut parent_node,
         )?;
-        left_side = parent_node;
+        current_parent = parent_node;
     }
 
-    let hash = if left_side
+    // Edge case, if the parent is a branch with a single children that means we need to
+    // change it to an extension, extend the current extension or extend the current leaf
+    let hash = if current_parent
         .element
         .choices
         .iter()
@@ -230,7 +289,7 @@ where
         .count()
         == 1
     {
-        let (index, child) = left_side
+        let (index, child) = current_parent
             .element
             .choices
             .into_iter()
@@ -266,7 +325,9 @@ where
             }
         }
     } else {
-        let node: Node = left_side.element.into();
+        // If there are multiple children this means this is just
+        // a regular branch that we can write into the db
+        let node: Node = current_parent.element.into();
         nodes_to_write.push((node.compute_hash(), node));
         nodes_to_write
             .last()
@@ -279,6 +340,8 @@ where
     Ok(hash)
 }
 
+/// Wrapper function for `trie_from_sorted_accounts` that handles concurrency
+/// and memory limits
 pub fn trie_from_sorted_accounts_wrap<T>(
     db: &dyn TrieDB,
     accounts_iter: &mut T,
