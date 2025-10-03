@@ -32,7 +32,6 @@ async fn main() {
     info!("");
 
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
-
     run_test(&cmd_path, test_many_blocks_reorg).await;
 }
 
