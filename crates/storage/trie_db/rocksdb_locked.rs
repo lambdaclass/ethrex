@@ -1,6 +1,7 @@
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, NodeHash, TrieDB, error::TrieError};
+use ethrex_trie::{error::TrieError, Nibbles, NodeHash, NodeKey, TrieDB};
 use rocksdb::{DBWithThreadMode, MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
+use core::hash;
 use std::sync::Arc;
 
 use crate::trie_db::layering::apply_prefix;
@@ -42,10 +43,8 @@ impl RocksDBLockedTrieDB {
         })
     }
 
-    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, node_hash)
-            .as_ref()
-            .to_vec()
+    fn make_key(&self, node_hash: NodeKey) -> Vec<u8> {
+        NodeKey{nibble: apply_prefix(self.address_prefix, node_hash.nibble), hash : node_hash.hash}.to_fixed_size().to_vec()
     }
 }
 
@@ -62,7 +61,7 @@ impl Drop for RocksDBLockedTrieDB {
 }
 
 impl TrieDB for RocksDBLockedTrieDB {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NodeKey) -> Result<Option<Vec<u8>>, TrieError> {
         let db_key = self.make_key(key);
 
         self.snapshot
@@ -70,7 +69,7 @@ impl TrieDB for RocksDBLockedTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e)))
     }
 
-    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, _key_values: Vec<(NodeKey, Vec<u8>)>) -> Result<(), TrieError> {
         Err(TrieError::DbError(anyhow::anyhow!(
             "LockedTrie is read-only"
         )))

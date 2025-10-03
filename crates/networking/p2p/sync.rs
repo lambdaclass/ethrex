@@ -23,7 +23,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Trie, TrieError};
+use ethrex_trie::{Nibbles, NodeKey, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -1234,7 +1234,7 @@ impl Syncer {
     }
 }
 
-type StorageRoots = (H256, Vec<(Nibbles, Vec<u8>)>);
+type StorageRoots = (H256, Vec<(NodeKey, Vec<u8>)>);
 
 fn compute_storage_roots(
     maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,

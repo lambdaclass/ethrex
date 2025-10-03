@@ -4,13 +4,13 @@ use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::nibbles_to_fixed_size};
+use ethrex_trie::{db::nibbles_to_fixed_size, InMemoryTrieDB, Nibbles, NodeKey, Trie};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-pub type NodeMap = Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<BTreeMap<[u8; 65], Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -90,7 +90,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in update_batch.account_updates {
-                state_trie_store.insert(nibbles_to_fixed_size(node_hash), node_data);
+                state_trie_store.insert(node_hash.to_fixed_size(), node_data);
             }
         }
 
@@ -107,7 +107,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in nodes {
-                addr_store.insert(nibbles_to_fixed_size(node_hash), node_data);
+                addr_store.insert(node_hash.to_fixed_size(), node_data);
             }
         }
 
@@ -625,7 +625,7 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeKey, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
@@ -637,7 +637,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in nodes {
-                addr_store.insert(nibbles_to_fixed_size(node_hash), node_data);
+                addr_store.insert(node_hash.to_fixed_size(), node_data);
             }
         }
 

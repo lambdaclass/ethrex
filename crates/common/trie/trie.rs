@@ -5,6 +5,7 @@ mod nibbles;
 pub mod node;
 mod node_hash;
 mod rlp;
+mod node_key;
 #[cfg(test)]
 mod test_utils;
 mod trie_iter;
@@ -18,6 +19,7 @@ use std::sync::{Arc, Mutex};
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
+pub use self::node_key::NodeKey;
 pub use self::verify_range::verify_range;
 pub use self::{
     node::{Node, NodeRef},
@@ -47,13 +49,13 @@ pub type ValueRLP = Vec<u8>;
 /// RLP-encoded trie node
 pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
-pub type TrieNode = (Nibbles, NodeRLP);
+pub type TrieNode = (NodeKey, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
-    pending_removal: HashSet<Nibbles>,
+    pending_removal: HashSet<NodeKey>,
 }
 
 impl Default for Trie {
@@ -97,21 +99,21 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32 && !self.pending_removal.contains(&path) {
-            let Some(value_rlp) = self.db.get(path)? else {
+        /*if pathrlp.len() == 32 && !self.pending_removal.contains(&NodeKey{nibble: path.clone(), hash}) {
+            let Some(value_rlp) = self.db.get(NodeKey{nibble: path, hash})? else {
                 return Ok(None);
             };
             if value_rlp.is_empty() {
                 return Ok(None);
             }
             return Ok(Some(value_rlp));
-        }
+        }*/
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
-            NodeRef::Hash(hash) if hash.is_valid() => Node::decode(
+            NodeRef::Hash(NodeHash::Hashed(hash)) => Node::decode(
                 &self
                     .db
-                    .get(Nibbles::default())?
+                    .get(NodeKey{nibble: Nibbles::default(), hash})?
                     .ok_or(TrieError::InconsistentTree)?,
             )
             .map_err(TrieError::RLPDecode)?
@@ -123,7 +125,7 @@ impl Trie {
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
-        self.pending_removal.remove(&path);
+        //self.pending_removal.remove(&NodeKey{nibble: path.clone(), hash});
 
         self.root = if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -146,9 +148,9 @@ impl Trie {
         if !self.root.is_valid() {
             return Ok(None);
         }
-        if path.len() == 32 {
-            self.pending_removal.insert(Nibbles::from_bytes(path));
-        }
+        /*if path.len() == 32 {
+            self.pending_removal.insert(NodeKey{nibble: Nibbles::from_bytes(path), hash});
+        }*/
 
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
@@ -209,7 +211,7 @@ impl Trie {
             self.root.commit(Nibbles::default(), &mut acc);
         }
         if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
-            acc.push((Nibbles::default(), vec![RLP_NULL]))
+            acc.push((NodeKey{nibble: Nibbles::default(), hash: *EMPTY_TRIE_HASH}, vec![RLP_NULL]))
         }
         acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
 
@@ -367,7 +369,7 @@ impl Trie {
         struct NullTrieDB;
 
         impl TrieDB for NullTrieDB {
-            fn get(&self, _key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+            fn get(&self, _key: NodeKey) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
             }
 
@@ -462,7 +464,7 @@ impl Trie {
         use std::sync::Arc;
         use std::sync::Mutex;
 
-        let hmap: BTreeMap<[u8; 33], Vec<u8>> = BTreeMap::new();
+        let hmap: BTreeMap<[u8; 65], Vec<u8>> = BTreeMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))

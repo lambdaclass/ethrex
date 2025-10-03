@@ -1,6 +1,7 @@
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
+use ethrex_trie::{error::TrieError, Nibbles, NodeKey, TrieDB};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB};
+use core::hash;
 use std::sync::Arc;
 
 use crate::trie_db::layering::apply_prefix;
@@ -42,15 +43,13 @@ impl RocksDBTrieDB {
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
-    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, node_hash)
-            .as_ref()
-            .to_vec()
+    fn make_key(&self, node_hash: NodeKey) -> Vec<u8> {
+        NodeKey{nibble: apply_prefix(self.address_prefix, node_hash.nibble), hash : node_hash.hash}.to_fixed_size().to_vec()
     }
 }
 
 impl TrieDB for RocksDBTrieDB {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NodeKey) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle()?;
         let db_key = self.make_key(key);
 
@@ -62,7 +61,7 @@ impl TrieDB for RocksDBTrieDB {
         Ok(res)
     }
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeKey, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
 

@@ -1,7 +1,5 @@
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, trie_db::layering::apply_prefix};
@@ -18,7 +16,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_trie::{Nibbles, NodeKey, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::sync::Arc;
 use std::{
@@ -40,13 +38,11 @@ pub struct Store {
     pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
-pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+pub type StorageTrieNodes = Vec<(H256, Vec<(NodeKey, Vec<u8>)>)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
@@ -64,11 +60,11 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+type StorageUpdates = Vec<(H256, Vec<(NodeKey, Vec<u8>)>)>;
 
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
-    pub state_updates: Vec<(Nibbles, Vec<u8>)>,
+    pub state_updates: Vec<(NodeKey, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Bytes)>,
 }
@@ -85,12 +81,6 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -579,7 +569,7 @@ impl Store {
                 .flat_map(|(account_hash, nodes)| {
                     nodes
                         .into_iter()
-                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                        .map(move |(key, node)| (NodeKey{nibble: apply_prefix(Some(account_hash), key.nibble), hash: key.hash}, node))
                 })
                 .chain(state_nodes)
                 .collect(),

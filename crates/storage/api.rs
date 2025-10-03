@@ -7,7 +7,7 @@ use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeKey, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
@@ -367,7 +367,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeKey, Vec<u8>)>)>,
     ) -> Result<(), StoreError>;
 
     async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError>;

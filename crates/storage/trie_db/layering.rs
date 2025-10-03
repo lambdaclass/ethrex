@@ -2,7 +2,7 @@ use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
 use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Node, NodeKey, TrieDB, TrieError, EMPTY_TRIE_HASH};
 
 #[derive(Debug)]
 struct TrieLayer {
@@ -42,7 +42,7 @@ impl TrieWrapperInner {
         &mut self,
         parent: H256,
         state_root: H256,
-        key_values: Vec<(Nibbles, Vec<u8>)>,
+        key_values: Vec<(NodeKey, Vec<u8>)>,
     ) {
         self.layers
             .entry(state_root)
@@ -58,7 +58,7 @@ impl TrieWrapperInner {
             .extend(
                 key_values
                     .into_iter()
-                    .map(|(path, node)| (path.as_ref().to_vec(), node)),
+                    .map(|(path, node)| (path.to_fixed_size().to_vec(), node)),
             );
     }
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -94,19 +94,23 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 }
 
 impl TrieDB for TrieWrapper {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = apply_prefix(self.prefix, key);
+    fn get(&self, key: NodeKey) -> Result<Option<Vec<u8>>, TrieError> {
+        let nibbles = apply_prefix(self.prefix, key.nibble.clone());
+        let node_key = NodeKey {
+            nibble: nibbles.clone(),
+            hash: key.hash,
+        };
         if let Some(value) = self
             .inner
             .read()
             .map_err(|_| TrieError::LockError)?
-            .get(self.state_root, key.clone())
+            .get(self.state_root, nibbles.clone())
         {
             return Ok(Some(value));
         }
-        self.db.get(key)
+        self.db.get(node_key)
     }
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeKey, Vec<u8>)>) -> Result<(), TrieError> {
         let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
         let new_state_root = match last_pair {
             Some((_, noderlp)) => {
@@ -121,7 +125,7 @@ impl TrieDB for TrieWrapper {
             new_state_root,
             key_values
                 .into_iter()
-                .map(move |(path, node)| (apply_prefix(self.prefix, path), node))
+                .map(move |(key, node)| (NodeKey{nibble: apply_prefix(self.prefix, key.nibble), hash: key.hash}, node))
                 .collect(),
         );
         Ok(())

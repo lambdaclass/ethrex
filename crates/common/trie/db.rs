@@ -1,15 +1,15 @@
 use ethereum_types::H256;
 
-use crate::{Nibbles, NodeRLP, Trie, error::TrieError};
+use crate::{error::TrieError, Nibbles, NodeKey, NodeRLP, Trie};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
 
 pub trait TrieDB: Send + Sync {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
-    fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
+    fn get(&self, key: NodeKey) -> Result<Option<Vec<u8>>, TrieError>;
+    fn put_batch(&self, key_values: Vec<(NodeKey, Vec<u8>)>) -> Result<(), TrieError>;
+    fn put(&self, key: NodeKey, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
 }
@@ -17,11 +17,11 @@ pub trait TrieDB: Send + Sync {
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 #[derive(Default)]
 pub struct InMemoryTrieDB {
-    pub inner: Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>,
+    pub inner: Arc<Mutex<BTreeMap<[u8; 65], Vec<u8>>>>,
 }
 
 impl InMemoryTrieDB {
-    pub const fn new(map: Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>) -> Self {
+    pub const fn new(map: Arc<Mutex<BTreeMap<[u8; 65], Vec<u8>>>>) -> Self {
         Self { inner: map }
     }
     pub fn new_empty() -> Self {
@@ -40,7 +40,7 @@ impl InMemoryTrieDB {
 
         let hashed_nodes = hashed_nodes
             .into_iter()
-            .map(|(k, v)| (nibbles_to_fixed_size(k), v))
+            .map(|(k, v)| (k.to_fixed_size(), v))
             .collect();
 
         let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
@@ -49,20 +49,20 @@ impl InMemoryTrieDB {
 }
 
 impl TrieDB for InMemoryTrieDB {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NodeKey) -> Result<Option<Vec<u8>>, TrieError> {
         Ok(self
             .inner
             .lock()
             .map_err(|_| TrieError::LockError)?
-            .get(&nibbles_to_fixed_size(key))
+            .get(&key.to_fixed_size())
             .cloned())
     }
 
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeKey, Vec<u8>)>) -> Result<(), TrieError> {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
         for (key, value) in key_values {
-            db.insert(nibbles_to_fixed_size(key), value);
+            db.insert(key.to_fixed_size(), value);
         }
 
         Ok(())

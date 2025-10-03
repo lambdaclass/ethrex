@@ -13,7 +13,7 @@ use ethrex_common::{
         Transaction,
     },
 };
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeKey, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
     OptimisticTransactionDB, Options, WriteBatchWithTransaction,
@@ -506,7 +506,7 @@ impl StoreEngine for Store {
                     .flat_map(|(account_hash, nodes)| {
                         nodes
                             .into_iter()
-                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                            .map(move |(key, node)| (NodeKey{nibble: apply_prefix(Some(account_hash), key.nibble), hash: key.hash} , node))
                     })
                     .chain(update_batch.account_updates)
                     .collect(),
@@ -1473,7 +1473,7 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(NodeKey, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
@@ -1483,12 +1483,12 @@ impl StoreEngine for Store {
             })?;
 
             for (address_hash, nodes) in storage_trie_nodes {
-                for (node_hash, node_data) in nodes {
-                    let key = apply_prefix(Some(address_hash), node_hash);
+                for (node_key, node_data) in nodes {
+                    let path = apply_prefix(Some(address_hash), node_key.nibble);
                     if node_data.is_empty() {
-                        batch.delete_cf(&cf, key.as_ref());
+                        batch.delete_cf(&cf, NodeKey{nibble: path, hash: node_key.hash}.to_fixed_size());
                     } else {
-                        batch.put_cf(&cf, key.as_ref(), node_data);
+                        batch.put_cf(&cf, NodeKey{nibble: path, hash: node_key.hash}.to_fixed_size(), node_data);
                     }
                 }
             }
