@@ -79,6 +79,7 @@ impl BranchNode {
                         .get_node_mut(db)?
                         .ok_or(TrieError::InconsistentTree)?
                         .insert(db, path, value)?;
+                    choice_ref.clear_hash();
                 }
                 // Insert external node hash if there are no overrides.
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
@@ -93,6 +94,7 @@ impl BranchNode {
                             .get_node_mut(db)?
                             .ok_or(TrieError::InconsistentTree)?
                             .insert(db, path, value)?;
+                        choice_ref.clear_hash();
                     }
                 }
             }

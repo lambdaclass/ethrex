@@ -139,7 +139,10 @@ impl Iterator for TrieIterator {
         };
         // Fetch the last node in the stack
         let (mut path, mut next_node_ref) = self.stack.pop()?;
-        let next_node = next_node_ref.get_node_mut(self.db.as_ref()).ok().flatten()?;
+        let next_node = next_node_ref
+            .get_node_mut(self.db.as_ref())
+            .ok()
+            .flatten()?;
         match &next_node {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)

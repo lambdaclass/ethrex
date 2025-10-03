@@ -65,6 +65,7 @@ impl ExtensionNode {
                 .get_node_mut(db)?
                 .ok_or(TrieError::InconsistentTree)?
                 .insert(db, path.offset(match_index), value)?;
+            self.child.clear_hash();
             Ok(None)
         } else if match_index == 0 {
             let mut new_node = if self.prefix.len() == 1 {
@@ -127,7 +128,8 @@ impl ExtensionNode {
             let node = if empty_trie {
                 return Ok((None, old_value));
             } else {
-                match child_node.clone() { // TODO: remove clone
+                match child_node.clone() {
+                    // TODO: remove clone
                     // If it is a branch node set it as self's child
                     branch_node @ Node::Branch(_) => {
                         self.child = branch_node.into();

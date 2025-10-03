@@ -110,6 +110,12 @@ impl NodeRef {
             NodeRef::Hash(hash) => *hash,
         }
     }
+
+    pub fn clear_hash(&mut self) {
+        if let NodeRef::Node(_, hash) = self {
+            hash.take();
+        }
+    }
 }
 
 impl Default for NodeRef {
@@ -195,8 +201,7 @@ impl Node {
         }
     }
 
-    /// Inserts a value into the subtrie originating from this node. If the new root of the subtrie is
-    /// (potentially mutated) `self`, returns None. Otherwise returns Some(root).
+    /// Inserts a value into the subtrie originating from this node.
     pub fn insert(
         &mut self,
         db: &dyn TrieDB,
@@ -209,7 +214,7 @@ impl Node {
                 Ok(None)
             }
             Node::Extension(n) => n.insert(db, path, value.into()),
-            Node::Leaf(n) => n.clone().insert(path, value.into()).map(Option::Some),
+            Node::Leaf(n) => n.clone().insert(path, value.into()).map(Option::Some), // TODO: remove clone
         };
         if let Some(new_node) = new_node? {
             *self = new_node;

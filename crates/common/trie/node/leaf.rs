@@ -104,7 +104,10 @@ impl LeafNode {
     }
 
     /// Removes own value if the path matches own path and returns self and the value if it was removed
-    pub fn remove(&mut self, path: Nibbles) -> Result<(Option<Option<Node>>, Option<ValueRLP>), TrieError> {
+    pub fn remove(
+        &mut self,
+        path: Nibbles,
+    ) -> Result<(Option<Option<Node>>, Option<ValueRLP>), TrieError> {
         Ok(if self.partial == path {
             (None, Some(self.value.clone()))
         } else {

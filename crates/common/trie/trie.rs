@@ -118,6 +118,7 @@ impl Trie {
             // If the trie is empty, just add a leaf.
             self.root = Node::from(LeafNode::new(path, value)).into()
         };
+        self.root.clear_hash();
 
         Ok(())
     }
@@ -137,6 +138,8 @@ impl Trie {
             .remove(self.db.as_ref(), Nibbles::from_bytes(path))?;
         if empty_trie {
             self.root = NodeRef::default();
+        } else {
+            self.root.clear_hash();
         }
 
         Ok(value)
@@ -471,7 +474,8 @@ impl ProofTrie {
                 .root
                 .get_node_mut(self.0.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.0.db.as_ref(), partial_path, external_ref)?
+                .insert(self.0.db.as_ref(), partial_path, external_ref)?;
+            self.0.root.clear_hash();
         } else {
             self.0.root = external_ref.into();
         };
