@@ -11,7 +11,6 @@ Execution fees are divided into two components: **base fee** and **priority fee*
 
 ### Base Fee
 
-
 The base fee follows the same rules as the Ethereum L1 base fee. It adjusts dynamically depending on network congestion to ensure stable transaction pricing.  
 By default, base fees are burned. However a sequencer can configure a `fee vault` address to receive the collected base fees instead of burning them.
 
