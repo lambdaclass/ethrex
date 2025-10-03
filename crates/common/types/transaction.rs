@@ -2260,7 +2260,7 @@ mod serde_impl {
                 to: value.to,
                 gas_limit: value.gas.unwrap_or_default(),
                 value: value.value,
-                data: value.input.clone(),
+                data: value.input,
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
                 max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
                 access_list: value
@@ -2282,7 +2282,7 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas),
                 value: value.value,
-                input: value.data.clone(),
+                input: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2340,7 +2340,7 @@ mod serde_impl {
                 },
                 gas: value.gas.unwrap_or_default(),
                 value: value.value,
-                data: value.input.clone(),
+                data: value.input,
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
                 max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
                 max_fee_per_blob_gas: value.max_fee_per_blob_gas.unwrap_or_default(),
@@ -2364,7 +2364,7 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data.clone(),
+                input: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2397,7 +2397,7 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data.clone(),
+                input: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2428,7 +2428,7 @@ mod serde_impl {
                 to: value.to,
                 gas_limit: value.gas.unwrap_or_default(),
                 value: value.value,
-                data: value.input.clone(),
+                data: value.input,
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
                 max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
                 access_list: value
@@ -2983,7 +2983,7 @@ mod tests {
             signature_s: U256::zero(),
             ..Default::default()
         };
-        let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
+        let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone()); // ok-clone: value is needed later, clone is in test
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
 
         let deserialized_tx: Transaction =
@@ -3021,7 +3021,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());
+        let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone()); // ok-clone: value is needed later, clone is in test
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
 
         let deserialized_tx: Transaction =
@@ -3111,7 +3111,7 @@ mod tests {
             ),
             value: U256::from(1_000_000_000_000_000_000u64),
             data: Bytes::default(),
-            access_list: access_list.clone(),
+            access_list: access_list.clone(), // ok-clone: value is needed later, clone is in test
             signature_y_parity: false,
             signature_r: U256::from(1),
             signature_s: U256::from(1),

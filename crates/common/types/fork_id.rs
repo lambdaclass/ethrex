@@ -126,7 +126,7 @@ fn get_all_fork_id_combinations(forks: Vec<u64>, genesis_hash: BlockHash) -> Vec
             continue;
         }
         combinations.push((
-            H32::from_slice(&hasher.clone().finalize().to_be_bytes()),
+            H32::from_slice(&hasher.clone().finalize().to_be_bytes()), // ok-clone: a new hasher would need to bbe initialized for each combination anyways
             activation,
         ));
         hasher.update(&activation.to_be_bytes());
@@ -230,7 +230,7 @@ mod tests {
         for test_case in test_cases {
             let fork_id = ForkId::new(
                 chain_config,
-                genesis_header.clone(),
+                genesis_header.clone(), // ok-clone: value is needed later, clone is in test
                 test_case.time,
                 test_case.head,
             );
@@ -240,7 +240,7 @@ mod tests {
                     test_case.head,
                     test_case.time,
                     chain_config,
-                    genesis_header.clone()
+                    genesis_header.clone() // ok-clone: value is needed later, clone is in test
                 ),
                 test_case.is_valid
             )
@@ -650,7 +650,7 @@ mod tests {
                 is_valid: true,
             },
         ];
-        assert_test_cases(test_cases, genesis.config, genesis_hash.clone());
+        assert_test_cases(test_cases, genesis.config, genesis_hash);
     }
 
     #[test]
@@ -669,7 +669,7 @@ mod tests {
             fork_next: 100,
         };
         let result_a = local_a.is_valid(
-            remote.clone(),
+            remote.clone(), // ok-clone: value is needed later, clone is in test
             local_head_block_number,
             0,
             ChainConfig::default(),
