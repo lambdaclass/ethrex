@@ -201,8 +201,8 @@ pub fn get_max_blob_gas_price(
 
     Ok(max_blob_gas_cost)
 }
-/// Gets the actual blob gas cost.
-pub fn get_blob_gas_price(
+/// Caltulate the actual blob gas cost.
+pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
     block_excess_blob_gas: Option<U256>,
     evm_config: &EVMConfig,
@@ -212,14 +212,14 @@ pub fn get_blob_gas_price(
         .try_into()
         .map_err(|_| InternalError::TypeConversion)?;
 
-    let blob_gas_price: u64 = blobhash_amount
+    let blob_gas_used: u64 = blobhash_amount
         .checked_mul(BLOB_GAS_PER_BLOB)
         .unwrap_or_default();
 
     let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
 
-    let blob_gas_price: U256 = blob_gas_price.into();
-    let blob_fee: U256 = blob_gas_price
+    let blob_gas_used: U256 = blob_gas_used.into();
+    let blob_fee: U256 = blob_gas_used
         .checked_mul(base_fee_per_blob_gas)
         .ok_or(InternalError::Overflow)?;
 
