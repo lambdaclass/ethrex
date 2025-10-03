@@ -199,7 +199,7 @@ impl RpcReceiptTxInfo {
             transaction_hash,
             transaction_index,
             from,
-            to,
+            to: to.copied(),
             contract_address,
             gas_used,
             effective_gas_price,

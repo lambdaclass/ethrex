@@ -266,6 +266,29 @@ impl RLPDecode for ReceiptWithBloom {
     }
 }
 
+impl From<&Receipt> for ReceiptWithBloom {
+    fn from(receipt: &Receipt) -> Self {
+        Self {
+            tx_type: receipt.tx_type,
+            succeeded: receipt.succeeded,
+            cumulative_gas_used: receipt.cumulative_gas_used,
+            bloom: bloom_from_logs(&receipt.logs),
+            logs: receipt.logs.clone(),
+        }
+    }
+}
+
+impl From<&ReceiptWithBloom> for Receipt {
+    fn from(receipt: &ReceiptWithBloom) -> Self {
+        Self {
+            tx_type: receipt.tx_type,
+            succeeded: receipt.succeeded,
+            cumulative_gas_used: receipt.cumulative_gas_used,
+            logs: receipt.logs.clone(),
+        }
+    }
+}
+
 /// Data record produced during the execution of a transaction.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Log {
