@@ -1,5 +1,4 @@
 pub mod discv4;
-pub mod kademlia;
 pub(crate) mod metrics;
 pub mod network;
 pub mod peer_handler;
