@@ -916,6 +916,7 @@ impl Syncer {
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
             let mut state_leafs_healed = 0_u64;
+            let mut storage_range_request_attempts = 0;
             loop {
                 while block_is_stale(&pivot_header) {
                     pivot_header = update_pivot(
@@ -947,17 +948,37 @@ impl Syncer {
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
                     storage_accounts.accounts_with_storage_root.len()
                 );
-                chunk_index = self
-                    .peers
-                    .request_storage_ranges(
-                        &mut storage_accounts,
-                        account_storages_snapshots_dir.as_ref(),
-                        chunk_index,
-                        &mut pivot_header,
-                        store.clone(),
-                    )
-                    .await
-                    .map_err(SyncError::PeerHandler)?;
+                // This variable is a temporary solution until we figure out why we are
+                // sometimes trying infinitely on request_storage_ranges. It's not a big deal
+                // since the next healing step will fix it, but it's a bug and it should be fixed.
+                storage_range_request_attempts += 1;
+                if storage_range_request_attempts < 3 {
+                    chunk_index = self
+                        .peers
+                        .request_storage_ranges(
+                            &mut storage_accounts,
+                            account_storages_snapshots_dir.as_ref(),
+                            chunk_index,
+                            &mut pivot_header,
+                            store.clone(),
+                        )
+                        .await
+                        .map_err(SyncError::PeerHandler)?;
+                } else {
+                    for (acc_hash, (maybe_root, old_intervals)) in
+                        storage_accounts.accounts_with_storage_root.iter()
+                    {
+                        storage_accounts.healed_accounts.insert(*acc_hash);
+                        error!(
+                            "We couldn't download these accounts on request_storage_ranges. Account hash: {:x?}, {:x?}. Number of intervals {}",
+                            acc_hash,
+                            maybe_root,
+                            old_intervals.len()
+                        );
+                    }
+
+                    storage_accounts.accounts_with_storage_root.clear();
+                }
                 free_peers_and_log_if_not_empty(&self.peers).await;
 
                 info!(
