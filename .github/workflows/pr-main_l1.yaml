@@ -5,8 +5,6 @@ on:
   merge_group:
   pull_request:
     branches: ["**"]
-    paths-ignore:
-      - "crates/l2/**" # Behind a feature flag not used in this workflow
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
