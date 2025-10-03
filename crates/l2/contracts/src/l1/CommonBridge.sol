@@ -215,19 +215,12 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function deposit(
         uint256 _amount,
-        address _token,
         address l2Recipient
     ) public payable override whenNotPaused {
         uint256 value;
-        // As we only want to allow deposits of the native token, we check that the token address matches
-        // the configured native token address.
-        require(
-            _token == NATIVE_TOKEN_L1_ADDRESS,
-            "CommonBridge: token address is not the native token address"
-        );
 
         // Here we define value depending on whether the native token is ETH or an ERC20
-        if (_token == address(0)) {
+        if (NATIVE_TOKEN_L1_ADDRESS == address(0)) {
             require(
                 msg.value > 0,
                 "CommonBridge: the native token is ETH, msg.value must be greater than zero"
@@ -253,7 +246,11 @@ contract CommonBridge is
             value = _amount;
 
             // We lock the tokens in the bridge contract
-            IERC20(_token).transferFrom(msg.sender, address(this), value);
+            IERC20(NATIVE_TOKEN_L1_ADDRESS).transferFrom(
+                msg.sender,
+                address(this),
+                value
+            );
         }
 
         deposits[ETH_TOKEN][ETH_TOKEN] += value;
@@ -274,7 +271,7 @@ contract CommonBridge is
     }
 
     /// @notice Deposits are not allowed via the fallback function. Use deposit() instead.
-    /// @dev This is to prevent accidental deposits of ETH to the contract. The token address must be specified.
+    /// @dev This is to prevent accidental deposits of ETH to the contract.
     receive() external payable whenNotPaused {
         revert("CommonBridge: use deposit() for native token deposits");
     }

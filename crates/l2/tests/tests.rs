@@ -1063,12 +1063,11 @@ async fn test_deposit(
         } else {
             Value::Uint(deposit_value)
         },
-        Value::Address(native_token_l1_address),
         Value::Address(rich_wallet_address),
     ];
 
     let native_token_deposit_calldata =
-        encode_calldata("deposit(uint256,address,address)", &calldata_values)?;
+        encode_calldata("deposit(uint256,address)", &calldata_values)?;
 
     let overrides = Overrides {
         value: if native_token_is_eth {

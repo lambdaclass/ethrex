@@ -66,13 +66,8 @@ interface ICommonBridge {
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
     /// @param _amount the amount of tokens to be deposited.
-    /// @param _token the address of the token being deposited. This address must match with NATIVE_TOKEN_L1_ADDRESS.
     /// @param l2Recipient the address on L2 that will receive the deposit.
-    function deposit(
-        uint256 _amount,
-        address _token,
-        address l2Recipient
-    ) external payable;
+    function deposit(uint256 _amount, address l2Recipient) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number`
     /// pending privileged transactions.

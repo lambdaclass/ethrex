@@ -502,8 +502,8 @@ const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address)";
 
-// deposit(uint256 _amount, address _token, address _l2Recipient)
-const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address,address)";
+// deposit(uint256 _amount, address _l2Recipient)
+const NATIVE_TOKEN_DEPOSIT_SIGNATURE: &str = "deposit(uint256,address)";
 
 // approve(address spender, uint256 amount)
 const APPROVE_SIGNATURE: &str = "approve(address,uint256)";
@@ -1057,8 +1057,6 @@ async fn make_deposits(
             } else {
                 value_to_deposit
             }),
-            // address _token: the L1 address of the ERC20 token
-            Value::Address(opts.native_token_l1_address),
             // address l2Recipient: the address on L2 to receive the funds
             Value::Address(signer.address()),
         ];
