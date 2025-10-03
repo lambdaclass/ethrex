@@ -4205,6 +4205,7 @@ dependencies = [
 name = "zkvm-risc0-program"
 version = "0.1.0"
 dependencies = [
+ "c-kzg",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
