@@ -363,29 +363,31 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
             next_block_to_add += 1;
             continue;
         }
+        let block_hash = block.hash();
+        let block_number = block.header.number;
+        let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
+            RLPxError::InternalError("Failed to take ownership of block".to_string())
+        })?;
         established
             .blockchain
-            .add_block(&block)
+            .add_block(block)
             .await
             .inspect_err(|e| {
                 log_peer_error(
                     &established.node,
                     &format!(
                         "Error adding new block {} with hash {:?}, error: {e}",
-                        block.header.number,
-                        block.hash()
+                        block_number, block_hash
                     ),
                 );
             })?;
-        let block_hash = block.hash();
 
         apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
             .await
             .map_err(|e| {
                 RLPxError::BlockchainError(ChainError::Custom(format!(
                     "Error adding new block {} with hash {:?}, error: {e}",
-                    block.header.number,
-                    block.hash()
+                    block_number, block_hash
                 )))
             })?;
         info!(
