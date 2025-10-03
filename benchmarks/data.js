@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759523621743,
+  "lastUpdate": 1759525200325,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36567,6 +36567,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004619108870697309,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "70fc63890b490b8eed6429f98ac32a431b118648",
+          "message": "fix(l1): bump revm version on tooling/ef-tests/state crate (#4749)\n\n**Motivation**\nAfter #4707 was merged tooling/ef-tests/state crate broke as the current\nrevm version relied on an earlier c-kzg version. This PR updates revm\nfixing the issue\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Bump revm version on tooling/ef-tests/state crate \n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-10-03T15:06:24Z",
+          "tree_id": "9f950b0f1df7f9a05feb68acafdd13cbe5d2747b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/70fc63890b490b8eed6429f98ac32a431b118648"
+        },
+        "date": 1759525199253,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004603406470398641,
             "unit": "Mgas/s"
           }
         ]
