@@ -48,7 +48,6 @@ impl RocksDBTrieDB {
             nibble: apply_prefix(self.address_prefix, node_hash.nibble),
             hash: node_hash.hash,
         }
-        .to_fixed_size()
         .to_vec()
     }
 }

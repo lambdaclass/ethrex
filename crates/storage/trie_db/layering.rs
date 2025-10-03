@@ -58,7 +58,7 @@ impl TrieWrapperInner {
             .extend(
                 key_values
                     .into_iter()
-                    .map(|(path, node)| (path.to_fixed_size().to_vec(), node)),
+                    .map(|(key, node)| (key.to_vec(), node)),
             );
     }
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {

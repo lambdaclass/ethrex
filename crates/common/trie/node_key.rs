@@ -18,6 +18,15 @@ impl NodeKey {
         fixed_size[33..65].copy_from_slice(&hash);
         fixed_size
     }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.nibble
+            .as_ref()
+            .to_vec()
+            .into_iter()
+            .chain(self.hash.0.to_vec())
+            .collect()
+    }
 }
 
 impl PartialEq for NodeKey {

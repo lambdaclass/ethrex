@@ -1498,7 +1498,7 @@ impl StoreEngine for Store {
                                 nibble: path,
                                 hash: node_key.hash,
                             }
-                            .to_fixed_size(),
+                            .to_vec(),
                         );
                     } else {
                         batch.put_cf(
@@ -1507,7 +1507,7 @@ impl StoreEngine for Store {
                                 nibble: path,
                                 hash: node_key.hash,
                             }
-                            .to_fixed_size(),
+                            .to_vec(),
                             node_data,
                         );
                     }
