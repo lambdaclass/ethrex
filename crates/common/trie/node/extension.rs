@@ -125,7 +125,7 @@ impl ExtensionNode {
             let (empty_trie, old_value) = child_node.remove(db, path)?;
             // Restructure node based on removal
             let node = if empty_trie {
-                None
+                return Ok((None, old_value));
             } else {
                 match child_node.clone() { // TODO: remove clone
                     // If it is a branch node set it as self's child
@@ -384,7 +384,7 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x02]))
             .unwrap();
 
-        assert!(matches!(node, Some(Some(Node::Extension(_)))));
+        assert!(matches!(node, Some(None)));
         assert_eq!(value, None);
     }
 

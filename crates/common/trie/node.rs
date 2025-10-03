@@ -234,8 +234,8 @@ impl Node {
                 *self = new_root;
                 Ok((false, value))
             }
-            Some(None) => Ok((true, value)),
-            None => Ok((false, value)),
+            Some(None) => Ok((false, value)),
+            None => Ok((true, value)),
         }
     }
 
