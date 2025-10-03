@@ -4722,6 +4722,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "geth2ethrex"
+version = "0.1.0"
+dependencies = [
+ "clap 4.5.47",
+ "clap_complete",
+ "ethrex",
+ "ethrex-common",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-storage",
+ "ethrex-trie",
+ "eyre",
+ "hex",
+ "rocksdb",
+ "tracing",
+ "tracing-subscriber 0.3.20",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
