@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759468393747,
+  "lastUpdate": 1759509332768,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36480,6 +36480,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004577445595063817,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a835e1d4f07363194a78a57f2e94934c883ef705",
+          "message": "ci(l1): add free space step before on L1 main job (#4757)\n\n**Motivation**\n\nL1 workflows are failing due to `no space left`\n\n**Description**",
+          "timestamp": "2025-10-03T14:12:17Z",
+          "tree_id": "d5726c628c3034ad219ecc5a6390b69c5d33f650",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a835e1d4f07363194a78a57f2e94934c883ef705"
+        },
+        "date": 1759509331545,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.00461637287918185,
             "unit": "Mgas/s"
           }
         ]
