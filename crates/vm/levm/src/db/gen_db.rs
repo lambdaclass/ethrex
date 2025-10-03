@@ -62,6 +62,7 @@ impl GeneralizedDatabase {
             .collect();
         Self {
             store,
+            // ok-clone: need two separate copies of levm_accounts
             current_accounts_state: levm_accounts.clone(),
             initial_accounts_state: levm_accounts,
             tx_backup: None,
@@ -79,6 +80,7 @@ impl GeneralizedDatabase {
             Entry::Vacant(entry) => {
                 let info = self.store.get_account_info(address)?;
                 let account = LevmAccount::from(info);
+                // ok-clone: we need two copies of the account to insert in each struct
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
             }

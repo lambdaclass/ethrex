@@ -288,8 +288,10 @@ impl CallFrameBackup {
         self.original_accounts_info
             .entry(address)
             .or_insert_with(|| LevmAccount {
+                // ok-clone: account info is being backed up, the original copy still needs to be in the account struct
                 info: account.info.clone(),
                 storage: BTreeMap::new(),
+                // ok-clone: account info is being backed up, the original copy still needs to be in the account struct
                 status: account.status.clone(),
             });
 
@@ -425,7 +427,7 @@ impl<'a> VM<'a> {
 
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame.call_frame_backup.clone();
+        let callframe_backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
         restore_cache_state(self.db, callframe_backup)
     }
 

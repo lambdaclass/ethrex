@@ -51,14 +51,14 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let mut report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
-                matches!(report.result.clone(), TxResult::Success),
+                matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                report.logs.clone(),
+                std::mem::take(&mut report.logs),
             );
 
             receipts.push(receipt);
@@ -107,7 +107,6 @@ impl LEVM {
             gas_price,
             block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
             block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-            tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
@@ -303,13 +302,14 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
+        // ok-clone: env is needed twice and the value is moved into the VM instance, so the clone here is inevitable
         let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env, db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 
@@ -499,7 +499,6 @@ fn env_from_generic(
         gas_price,
         block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: header.blob_gas_used.map(U256::from),
-        tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
         tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,

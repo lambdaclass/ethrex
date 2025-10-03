@@ -445,7 +445,7 @@ impl<'a> VM<'a> {
             let mut gas_remaining = call_frame.gas_remaining as u64;
             let result = Self::execute_precompile(
                 call_frame.code_address,
-                &call_frame.calldata,
+                &mut call_frame.calldata,
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
@@ -465,7 +465,7 @@ impl<'a> VM<'a> {
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = self.opcode_table[opcode as usize].call(self);
 
-            let result = match op_result {
+            let mut result = match op_result {
                 Ok(OpcodeResult::Continue) => continue,
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
@@ -478,14 +478,14 @@ impl<'a> VM<'a> {
             }
 
             // Handle interaction between child and parent callframe.
-            self.handle_return(&result)?;
+            self.handle_return(&mut result)?;
         }
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
     pub fn execute_precompile(
         code_address: H160,
-        calldata: &Bytes,
+        calldata: &mut Bytes,
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,

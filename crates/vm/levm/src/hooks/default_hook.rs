@@ -26,6 +26,7 @@ impl Hook for DefaultHook {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
+        // ok-clone: borrowing account info requires a borrow of the entire vm struct
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
         if vm.env.config.fork >= Fork::Prague {
@@ -243,7 +244,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
 pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
-    let calldata = vm.current_call_frame.calldata.clone();
+    let calldata = &vm.current_call_frame.calldata;
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
     if vm.current_call_frame.gas_limit < intrinsic_gas {
@@ -251,7 +252,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     }
 
     // calldata_cost = tokens_in_calldata * 4
-    let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
+    let calldata_cost: u64 = gas_cost::tx_calldata(calldata)?;
 
     // same as calculated in gas_used()
     let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;
@@ -312,7 +313,11 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
         return Err(TxValidationError::Type3TxPreFork.into());
     }
 
-    let blob_hashes = &vm.env.tx_blob_hashes;
+    let blob_hashes = if let Some(blob_hashes) = vm.tx.blob_versioned_hashes() {
+        blob_hashes
+    } else {
+        return Err(TxValidationError::Type3TxZeroBlobs.into());
+    };
 
     // (12) TYPE_3_TX_ZERO_BLOBS
     if blob_hashes.is_empty() {
@@ -422,8 +427,11 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<
 
     // blob gas cost = max fee per blob gas * blob gas used
     // https://eips.ethereum.org/EIPS/eip-4844
-    let max_blob_gas_cost =
-        get_max_blob_gas_price(&vm.env.tx_blob_hashes, vm.env.tx_max_fee_per_blob_gas)?;
+    let max_blob_gas_cost = if let Some(blob_hashes) = vm.tx.blob_versioned_hashes() {
+        get_max_blob_gas_price(blob_hashes, vm.env.tx_max_fee_per_blob_gas)?
+    } else {
+        U256::zero()
+    };
 
     // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
     // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
@@ -455,11 +463,11 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = get_blob_gas_price(
-        &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
-        &vm.env.config,
-    )?;
+    let blob_gas_cost = if let Some(blob_hashes) = vm.tx.blob_versioned_hashes() {
+        get_blob_gas_price(blob_hashes, vm.env.block_excess_blob_gas, &vm.env.config)?
+    } else {
+        U256::zero()
+    };
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product
