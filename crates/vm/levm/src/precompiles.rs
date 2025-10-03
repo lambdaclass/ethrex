@@ -310,11 +310,11 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     fork: Fork,
 ) -> Result<Bytes, VMError> {
-    type PrecompileFn = fn(&Bytes, &mut u64, Fork) -> Result<Bytes, VMError>;
+    type PrecompileFn = fn(&mut Bytes, &mut u64, Fork) -> Result<Bytes, VMError>;
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
@@ -374,14 +374,12 @@ pub(crate) fn increase_precompile_consumed_gas(
 /// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
 /// more than `target_len`, the excess bytes are kept.
 #[inline(always)]
-pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
+pub(crate) fn fill_with_zeros(calldata: &mut Bytes, target_len: usize) {
     if calldata.len() >= target_len {
-        // this clone is cheap (Arc)
-        return calldata.clone();
+        return;
     }
     let mut padded_calldata = calldata.to_vec();
     padded_calldata.resize(target_len, 0);
-    padded_calldata.into()
 }
 
 /// ## ECRECOVER precompile.
@@ -393,15 +391,19 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecrecover(
+    calldata: &mut Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
 
     const INPUT_LEN: usize = 128;
     const WORD: usize = 32;
 
-    let input = fill_with_zeros(calldata, INPUT_LEN);
+    fill_with_zeros(calldata, INPUT_LEN);
 
-    let (raw_hash, tail) = input.split_at(WORD);
+    let (raw_hash, tail) = calldata.split_at(WORD);
     let (raw_v, raw_sig) = tail.split_at(WORD);
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
@@ -451,7 +453,11 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 }
 
 /// Returns the calldata received
-pub fn identity(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn identity(
+    calldata: &mut Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
     let gas_cost = gas_cost::identity(calldata.len())?;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
@@ -460,7 +466,11 @@ pub fn identity(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resul
 }
 
 /// Returns the calldata hashed by sha2-256 algorithm
-pub fn sha2_256(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn sha2_256(
+    calldata: &mut Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
     let gas_cost = gas_cost::sha2_256(calldata.len())?;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
@@ -473,7 +483,7 @@ pub fn sha2_256(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resul
 
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left
 pub fn ripemd_160(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -493,9 +503,9 @@ pub fn ripemd_160(
 
 /// Returns the result of the module-exponentiation operation
 #[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
-pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<Bytes, VMError> {
+pub fn modexp(calldata: &mut Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 96);
+    fill_with_zeros(calldata, 96);
 
     // Defer converting to a U256 after the zero check.
     if fork < Fork::Osaka {
@@ -641,9 +651,9 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Bytes {
 }
 
 /// Makes a point addition on the elliptic curve 'alt_bn128'
-pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecadd(calldata: &mut Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 128);
+    fill_with_zeros(calldata, 128);
 
     increase_precompile_consumed_gas(ECADD_COST, gas_remaining)?;
 
@@ -714,9 +724,9 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 }
 
 /// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
-pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecmul(calldata: &mut Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 96);
+    fill_with_zeros(calldata, 96);
 
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
@@ -906,7 +916,11 @@ fn validate_pairing(
 }
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
-pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecpairing(
+    calldata: &mut Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
         return Err(PrecompileError::ParsingInputError.into());
@@ -955,7 +969,11 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
-pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn blake2f(
+    calldata: &mut Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
     if calldata.len() != 213 {
         return Err(PrecompileError::ParsingInputError.into());
     }
@@ -1014,7 +1032,7 @@ const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
 
 /// Makes verifications on the received point, proof and commitment, if true returns a constant value
 fn point_evaluation(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1081,7 +1099,7 @@ fn point_evaluation(
 /// If the verification fails, returns an empty `Bytes` object.
 /// Implemented following https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7951.md
 pub fn p_256_verify(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1166,7 +1184,7 @@ pub fn p_256_verify(
 }
 
 pub fn bls12_g1add(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1258,7 +1276,7 @@ pub fn bls12_g1add(
 }
 
 pub fn bls12_g1msm(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1312,7 +1330,7 @@ pub fn bls12_g1msm(
 }
 
 pub fn bls12_g2add(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1432,7 +1450,7 @@ pub fn bls12_g2add(
 }
 
 pub fn bls12_g2msm(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1487,7 +1505,7 @@ pub fn bls12_g2msm(
 }
 
 pub fn bls12_pairing_check(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1539,7 +1557,7 @@ pub fn bls12_pairing_check(
 }
 
 pub fn bls12_map_fp_to_g1(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1578,7 +1596,7 @@ pub fn bls12_map_fp_to_g1(
 }
 
 pub fn bls12_map_fp2_tp_g2(
-    calldata: &Bytes,
+    calldata: &mut Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
@@ -1831,9 +1849,9 @@ mod tests {
     use super::*;
 
     fn test_ec_pairing(calldata: &str, expected_output: &str, mut gas: u64) {
-        let calldata = Bytes::from(hex::decode(calldata).unwrap());
+        let mut calldata = Bytes::from(hex::decode(calldata).unwrap());
         let expected_output = Bytes::from(hex::decode(expected_output).unwrap());
-        let output = ecpairing(&calldata, &mut gas, Fork::Cancun).unwrap();
+        let output = ecpairing(&mut calldata, &mut gas, Fork::Cancun).unwrap();
         assert_eq!(output, expected_output);
         assert!(gas.is_zero());
     }
@@ -1968,10 +1986,10 @@ mod tests {
     #[test]
     // Calldata taken from failed transaction https://sepolia.etherscan.io/tx/0x4355d49be46e61a53c71f45a128ebefb52cb38df08ed55833c2c162d26396819
     fn test_ec_pairing_coordinate_out_of_bounds() {
-        let calldata = Bytes::from(hex::decode("30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd4830644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd49198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa").unwrap());
+        let mut calldata = Bytes::from(hex::decode("30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd4830644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd49198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa").unwrap());
         let mut gas_remaining = u64::MAX;
         assert_eq!(
-            ecpairing(&calldata, &mut gas_remaining, Fork::Cancun),
+            ecpairing(&mut calldata, &mut gas_remaining, Fork::Cancun),
             Err(PrecompileError::CoordinateExceedsFieldModulus.into())
         );
     }

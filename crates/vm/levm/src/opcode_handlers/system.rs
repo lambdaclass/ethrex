@@ -723,7 +723,7 @@ impl<'a> VM<'a> {
         code_address: Address,
         should_transfer_value: bool,
         is_static: bool,
-        calldata: Bytes,
+        mut calldata: Bytes,
         ret_offset: usize,
         ret_size: usize,
         bytecode: Bytes,
@@ -758,7 +758,7 @@ impl<'a> VM<'a> {
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
                 code_address,
-                &calldata,
+                &mut calldata,
                 gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
