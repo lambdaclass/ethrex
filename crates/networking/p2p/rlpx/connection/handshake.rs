@@ -39,7 +39,6 @@ use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
-    sync::Mutex,
 };
 use tokio_util::codec::Framed;
 
@@ -123,7 +122,7 @@ pub(crate) async fn perform(
     Ok((
         Established {
             signer: context.signer,
-            sink: Arc::new(Mutex::new(sink)),
+            sink,
             node: node.clone(),
             storage: context.storage.clone(),
             blockchain: context.blockchain.clone(),
@@ -134,7 +133,7 @@ pub(crate) async fn perform(
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
-            table: context.table.clone(),
+            peer_table: context.table.clone(),
             backend_channel: None,
             _inbound: inbound,
             l2_state: context
