@@ -1,24 +1,7 @@
 name: Workflow Call Replay
-permissions:
-  contents: read
-  actions: read
-  checks: read
 
-on:
-  push:
-    branches: ["**"] #Just for testing
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches: ["**"]
-  workflow_dispatch:
+on: [push, pull_request, workflow_dispatch]
 
 jobs:
-  build-b:
-    permissions:
-      contents: read
-      actions: read
-      checks: read
+  quick-run:
     uses: lambdaclass/ethrex-replay/.github/workflows/workflow-call.yaml@move_replay
-    with:
-      caller_repo: lambdaclass/ethrex
-      caller_ref: ${{ github.sha }}
