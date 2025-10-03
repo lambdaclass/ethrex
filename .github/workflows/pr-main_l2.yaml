@@ -178,8 +178,10 @@ jobs:
           cd crates/l2
           if [ "${{ matrix.use_native_token }}" = true ]; then
             export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0xb4b46bdaa835f8e4b4d8e208b6559cd267851051
+            ETHREX_NATIVE_TOKEN_L1_ADDRESS=0xb4b46bdaa835f8e4b4d8e208b6559cd267851051
           else
             export ETHREX_NATIVE_TOKEN_L1_ADDRESS=0x0000000000000000000000000000000000000000
+            ETHREX_NATIVE_TOKEN_L1_ADDRESS=0x0000000000000000000000000000000000000000
           fi
 
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
