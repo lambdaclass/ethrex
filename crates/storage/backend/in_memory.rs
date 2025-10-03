@@ -117,8 +117,7 @@ impl<'a> StorageRoTx for InMemoryRoTx<'a> {
         &self,
         table: &str,
         prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>
-    {
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         let db = self
             .backend
             .read()
@@ -161,8 +160,7 @@ impl StorageRoTx for InMemoryRwTx {
         &self,
         table: &str,
         prefix: &[u8],
-    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>
-    {
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         let db = self
             .backend
             .read()
