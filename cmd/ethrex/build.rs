@@ -2,6 +2,7 @@
 use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
+use std::process::Command;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -43,6 +44,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         .add_instructions(&rustc)?
         .add_instructions(&git2)?
         .emit()?;
+
+    // Try to get git describe (tag info) and export as custom env var
+    // This will be available as env!("ETHREX_GIT_DESCRIBE") in the code
+    if let Ok(output) = Command::new("git")
+        .args(["describe", "--tags", "--abbrev=0"])
+        .output()
+    {
+        if output.status.success() {
+            let tag = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !tag.is_empty() {
+                println!("cargo:rustc-env=ETHREX_GIT_DESCRIBE={}", tag);
+            }
+        }
+    }
 
     download_script();
 

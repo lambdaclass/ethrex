@@ -167,11 +167,17 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
 }
 
 /// Returns a detailed client version string with git info.
+/// Priority: ETHREX_GIT_DESCRIBE (from git tag) > CARGO_PKG_VERSION
 pub fn get_client_version() -> String {
+    // Try to use git describe first (contains tag info like v0.0.1-rc.1)
+    // If not available (not a tagged commit), fall back to CARGO_PKG_VERSION
+    let version = option_env!("ETHREX_GIT_DESCRIBE")
+        .map(|v| v.trim_start_matches('v').to_string())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+
     format!(
-        "{}/v{}-{}-{}/{}/rustc-v{}",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
+        "v{}-{}-{}/{}/rustc-v{}",
+        version,
         env!("VERGEN_GIT_BRANCH"),
         env!("VERGEN_GIT_SHA"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
