@@ -121,7 +121,8 @@ impl GethDB {
     }
 
     fn try_read_hashes_from_freezer(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
-        eyre::bail!("not implemented yet")
+        // TODO
+        Ok(Vec::new())
     }
     fn try_read_hashes_from_statedb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
         // ['h' || block_num || 'n']
