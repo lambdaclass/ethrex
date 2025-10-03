@@ -12,3 +12,5 @@ on:
 jobs:
   workflow-call:
     uses: lambdaclass/ethrex-replay/.github/workflows/workflow-call.yaml@add_remote_workflow
+    with:
+      ethrex_branch: ${{ github.ref_name }}
