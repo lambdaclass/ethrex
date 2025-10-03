@@ -160,17 +160,6 @@ where
     let mut center_side: CenterSide = CenterSide::from_value(initial_value.clone());
     let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
 
-    // Edge Case
-    if right_side_opt.is_none() {
-        let node = LeafNode {
-            partial: center_side.path,
-            value: initial_value.1,
-        };
-        let hash = node.compute_hash();
-        flush_nodes_to_write(vec![(hash, node.into())], db, buffer_sender)?;
-        return Ok(hash.finalize());
-    }
-
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
             let buffer_sender = buffer_sender.clone();
@@ -250,7 +239,7 @@ where
             .unwrap();
 
         debug_assert!(nodes_to_write.last().unwrap().0 == child.compute_hash());
-        let (_, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
+        let (node_hash, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
         match node_hash_ref {
             Node::Branch(_) => {
                 let node: Node = ExtensionNode {
@@ -267,9 +256,14 @@ where
             }
             Node::Extension(extension_node) => {
                 extension_node.prefix.data.insert(0, index as u8);
-                extension_node.compute_hash().finalize()
+                *node_hash = extension_node.compute_hash();
+                node_hash.finalize()
             }
-            Node::Leaf(leaf_node) => leaf_node.compute_hash().finalize(),
+            Node::Leaf(leaf_node) => {
+                leaf_node.partial.data.insert(0, index as u8);
+                *node_hash = leaf_node.compute_hash();
+                node_hash.finalize()
+            }
         }
     } else {
         let node: Node = left_side.element.into();
