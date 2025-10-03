@@ -271,7 +271,7 @@ contract CommonBridge is
     }
 
     receive() external payable whenNotPaused {
-        _deposit(0, msg.sender);
+        deposit(0, msg.sender);
     }
 
     function depositERC20(
