@@ -1961,10 +1961,8 @@ async fn get_fees_details_l2(
         .base_fee_per_gas
         .unwrap();
 
-    // Base = base_fee * gas_used
     let base_fees: U256 = (base_fee_per_gas * gas_used).into();
 
-    // Priority = (effective - base_fee) * gas_used
     let priority_fees: U256 = total_execution_fees - base_fees;
 
     FeesDetails {
