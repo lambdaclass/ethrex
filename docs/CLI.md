@@ -57,7 +57,15 @@ Node options:
 
           [default: INFO]
 
-      --mempool.maxsize <MEMPOOL_MAX_SIZE>
+    --log.filename <LOG_FILENAME>
+          Filename for log file (will be created in log.dir)
+
+    --log.dir <LOG_DIRECTORY>
+          Directory where log files will be written
+
+          [default: logs]
+
+    --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
         
           [default: 10000]

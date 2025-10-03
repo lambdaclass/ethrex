@@ -26,7 +26,7 @@ use secp256k1::SecretKey;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
-    fs,
+    fs::{self, File},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -50,19 +50,64 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
 
+    let writer = open_logs_file(&opts.log_filename, &opts.log_dir);
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let fmt_layer = fmt::layer().with_filter(filter);
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
-        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
+        if let Some(writer) = writer {
+            let fmt_layer = fmt::layer().with_writer(writer).with_filter(filter);
+            Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
+        } else {
+            let fmt_layer = fmt::layer().with_filter(filter);
+            Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
+        }
+    } else if let Some(writer) = writer {
+        let fmt_layer = fmt::layer().with_writer(writer).with_filter(filter);
+        Box::new(Registry::default().with(fmt_layer))
     } else {
+        let fmt_layer = fmt::layer().with_filter(filter);
         Box::new(Registry::default().with(fmt_layer))
     };
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     filter_handle
+}
+
+fn open_logs_file(log_filename: &Option<String>, log_dir: &String) -> Option<File> {
+    log_filename.as_ref().map(|log_filename| {
+        // Create the log directory if it doesn't exist
+        let log_dir_path = Path::new(&log_dir);
+        if let Err(e) = std::fs::create_dir_all(log_dir_path) {
+            eprintln!(
+                "Failed to create log directory '{}': {}",
+                log_dir_path.display(),
+                e
+            );
+            std::process::exit(1);
+        }
+
+        // Construct the full log file path
+        let log_file_path = log_dir_path.join(log_filename);
+
+        // Open file for writing
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file_path)
+        {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!(
+                    "Failed to open log file '{}': {}",
+                    log_file_path.display(),
+                    e
+                );
+                std::process::exit(1);
+            }
+        }
+    })
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
