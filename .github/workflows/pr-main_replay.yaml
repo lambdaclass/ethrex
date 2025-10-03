@@ -12,6 +12,3 @@ on:
 jobs:
   workflow-call:
     uses: lambdaclass/ethrex-replay/.github/workflows/workflow-call.yaml@move_replay
-    with:
-      caller_repo: lambdaclass/ethrex
-      caller_ref: ${{ github.sha }}
