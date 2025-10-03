@@ -127,10 +127,10 @@ impl GethDB {
     fn try_read_hashes_from_statedb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
         // ['h' || block_num || 'n']
         let keys = (first..=last).map(|i| {
-            let mut key = [0u8; 34];
+            let mut key = [0u8; 10];
             key[0] = b'h';
-            key[33] = b'n';
-            key[1..33].copy_from_slice(&i.to_be_bytes());
+            key[9] = b'n';
+            key[1..9].copy_from_slice(&i.to_be_bytes());
             key
         });
         let values = self.state_db.multi_get(keys);
