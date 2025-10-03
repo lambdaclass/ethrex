@@ -104,11 +104,11 @@ impl LeafNode {
     }
 
     /// Removes own value if the path matches own path and returns self and the value if it was removed
-    pub fn remove(self, path: Nibbles) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
+    pub fn remove(&mut self, path: Nibbles) -> Result<(Option<Option<Node>>, Option<ValueRLP>), TrieError> {
         Ok(if self.partial == path {
-            (None, Some(self.value))
+            (None, Some(self.value.clone()))
         } else {
-            (Some(self.into()), None)
+            (Some(None), None)
         })
     }
 
@@ -260,7 +260,7 @@ mod test {
 
     #[test]
     fn remove_self() {
-        let node = LeafNode::new(
+        let mut node = LeafNode::new(
             Nibbles::from_bytes(&[0x12, 0x34]),
             vec![0x12, 0x34, 0x56, 0x78],
         );
@@ -272,7 +272,7 @@ mod test {
 
     #[test]
     fn remove_none() {
-        let node = LeafNode::new(
+        let mut node = LeafNode::new(
             Nibbles::from_bytes(&[0x12, 0x34]),
             vec![0x12, 0x34, 0x56, 0x78],
         );

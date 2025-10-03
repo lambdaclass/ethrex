@@ -31,16 +31,42 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
-        match *self {
-            NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some(Node::decode_raw(&data[..len as usize])?))
+    pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Arc<Node>>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(node.clone())),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                Ok(Some(Arc::new(Node::decode_raw(hash.as_ref())?)))
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(hash)?
-                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                .get(*hash)?
+                .map(|rlp| {
+                    Node::decode(&rlp)
+                        .map_err(TrieError::RLPDecode)
+                        .map(Arc::new)
+                })
                 .transpose(),
+        }
+    }
+
+    pub fn get_node_mut(&mut self, db: &dyn TrieDB) -> Result<Option<&mut Node>, TrieError> {
+        match self {
+            NodeRef::Node(node, _) => Ok(Some(Arc::make_mut(node))),
+            NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
+                let node = Node::decode_raw(hash.as_ref())?;
+                *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
+                self.get_node_mut(db)
+            }
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                let Some(node) = db
+                    .get(*hash)?
+                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                    .transpose()?
+                else {
+                    return Ok(None);
+                };
+                *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
+                self.get_node_mut(db)
+            }
         }
     }
 
@@ -169,31 +195,47 @@ impl Node {
         }
     }
 
-    /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
+    /// Inserts a value into the subtrie originating from this node. If the new root of the subtrie is
+    /// (potentially mutated) `self`, returns None. Otherwise returns Some(root).
     pub fn insert(
-        self,
+        &mut self,
         db: &dyn TrieDB,
         path: Nibbles,
         value: impl Into<ValueOrHash>,
-    ) -> Result<Node, TrieError> {
-        match self {
-            Node::Branch(n) => n.insert(db, path, value.into()),
+    ) -> Result<(), TrieError> {
+        let new_node = match self {
+            Node::Branch(n) => {
+                n.insert(db, path, value.into())?;
+                Ok(None)
+            }
             Node::Extension(n) => n.insert(db, path, value.into()),
-            Node::Leaf(n) => n.insert(path, value.into()),
+            Node::Leaf(n) => n.clone().insert(path, value.into()).map(Option::Some),
+        };
+        if let Some(new_node) = new_node? {
+            *self = new_node;
         }
+        Ok(())
     }
 
     /// Removes a value from the subtrie originating from this node given its path
-    /// Returns the new root of the subtrie (if any) and the removed value if it existed in the subtrie
+    /// Returns a bool indicating if the new subtrie is empty, and the removed value if it existed in the subtrie
     pub fn remove(
-        self,
+        &mut self,
         db: &dyn TrieDB,
         path: Nibbles,
-    ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
-        match self {
+    ) -> Result<(bool, Option<ValueRLP>), TrieError> {
+        let (new_root, value) = match self {
             Node::Branch(n) => n.remove(db, path),
             Node::Extension(n) => n.remove(db, path),
             Node::Leaf(n) => n.remove(path),
+        }?;
+        match new_root {
+            Some(Some(new_root)) => {
+                *self = new_root;
+                Ok((false, value))
+            }
+            Some(None) => Ok((true, value)),
+            None => Ok((false, value)),
         }
     }
 

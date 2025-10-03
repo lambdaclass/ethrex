@@ -108,16 +108,15 @@ impl Trie {
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
 
-        self.root = if self.root.is_valid() {
+        if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
             self.root
-                .get_node(self.db.as_ref())?
+                .get_node_mut(self.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, value)?
-                .into()
+                .insert(self.db.as_ref(), path, value)?;
         } else {
             // If the trie is empty, just add a leaf.
-            Node::from(LeafNode::new(path, value)).into()
+            self.root = Node::from(LeafNode::new(path, value)).into()
         };
 
         Ok(())
@@ -131,12 +130,14 @@ impl Trie {
         }
 
         // If the trie is not empty, call the root node's removal logic.
-        let (node, value) = self
+        let (empty_trie, value) = self
             .root
-            .get_node(self.db.as_ref())?
+            .get_node_mut(self.db.as_ref())?
             .ok_or(TrieError::InconsistentTree)?
             .remove(self.db.as_ref(), Nibbles::from_bytes(path))?;
-        self.root = node.map(Into::into).unwrap_or_default();
+        if empty_trie {
+            self.root = NodeRef::default();
+        }
 
         Ok(value)
     }
@@ -373,14 +374,14 @@ impl Trie {
 
         fn get_node_inner(
             db: &dyn TrieDB,
-            node: Node,
+            node: Arc<Node>,
             mut partial_path: Nibbles,
         ) -> Result<Vec<u8>, TrieError> {
             // If we reached the end of the partial path, return the current node
             if partial_path.is_empty() {
                 return Ok(node.encode_raw());
             }
-            match node {
+            match &*node {
                 Node::Branch(branch_node) => match partial_path.next_choice() {
                     Some(idx) => {
                         let child_ref = &branch_node.choices[idx];
@@ -429,7 +430,8 @@ impl Trie {
         if self.hash_no_commit() == *EMPTY_TRIE_HASH {
             return Ok(None);
         }
-        self.root.get_node(self.db.as_ref())
+        let node = self.root.get_node(self.db.as_ref())?.unwrap();
+        Ok(Some((*node).clone()))
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
@@ -463,16 +465,15 @@ impl ProofTrie {
         partial_path: Nibbles,
         external_ref: NodeHash,
     ) -> Result<(), TrieError> {
-        self.0.root = if self.0.root.is_valid() {
+        if self.0.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
             self.0
                 .root
-                .get_node(self.0.db.as_ref())?
+                .get_node_mut(self.0.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
                 .insert(self.0.db.as_ref(), partial_path, external_ref)?
-                .into()
         } else {
-            external_ref.into()
+            self.0.root = external_ref.into();
         };
 
         Ok(())
