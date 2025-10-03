@@ -34,12 +34,9 @@ use std::{
 use tracing::{debug, info};
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(any(
-    not(any(feature = "rocksdb", feature = "libmdbx")),
-    all(feature = "rocksdb", feature = "libmdbx")
-))]
+#[cfg(not(feature = "rocksdb"))]
 const _: () = {
-    compile_error!("Either the `rocksdb` or `libmdbx` feature must be enabled.");
+    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
@@ -384,9 +381,6 @@ impl Command {
                 store_path,
                 coinbase,
             } => {
-                #[cfg(feature = "libmdbx")]
-                let store_type = EngineType::Libmdbx;
-
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
 
