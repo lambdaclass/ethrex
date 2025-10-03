@@ -18,7 +18,7 @@ use std::{
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{Nibbles, Node, NodeHash, NodeKey, TrieDB, TrieError, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeKey, TrieDB, TrieError};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -294,24 +294,29 @@ async fn heal_state_trie(
                             let leaf_hash = leaf.compute_hash();
                             match leaf_hash {
                                 NodeHash::Hashed(hash) => {
-                                    encoded_to_write
-                                        .insert(NodeKey{nibble: path.concat(leaf.partial.clone()), hash}, leaf.value.clone());
-                                        }
+                                    encoded_to_write.insert(
+                                        NodeKey {
+                                            nibble: path.concat(leaf.partial.clone()),
+                                            hash,
+                                        },
+                                        leaf.value.clone(),
+                                    );
+                                }
                                 NodeHash::Inline(_) => {
                                     // Inline nodes are not stored in the DB
                                 }
                             }
-                            
                         }
                         let node_hash = node.compute_hash();
-                            match node_hash {
-                                NodeHash::Hashed(hash) => {
-                                    encoded_to_write.insert(NodeKey{nibble:path, hash}, node.encode_to_vec());
-                                }
-                                NodeHash::Inline(_) => {
-                                    // Inline nodes are not stored in the DB
-                                }
+                        match node_hash {
+                            NodeHash::Hashed(hash) => {
+                                encoded_to_write
+                                    .insert(NodeKey { nibble: path, hash }, node.encode_to_vec());
                             }
+                            NodeHash::Inline(_) => {
+                                // Inline nodes are not stored in the DB
+                            }
+                        }
                     }
                     let trie_db = store
                         .open_direct_state_trie(*EMPTY_TRIE_HASH)

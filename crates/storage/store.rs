@@ -567,9 +567,15 @@ impl Store {
             nodes
                 .into_iter()
                 .flat_map(|(account_hash, nodes)| {
-                    nodes
-                        .into_iter()
-                        .map(move |(key, node)| (NodeKey{nibble: apply_prefix(Some(account_hash), key.nibble), hash: key.hash}, node))
+                    nodes.into_iter().map(move |(key, node)| {
+                        (
+                            NodeKey {
+                                nibble: apply_prefix(Some(account_hash), key.nibble),
+                                hash: key.hash,
+                            },
+                            node,
+                        )
+                    })
                 })
                 .chain(state_nodes)
                 .collect(),

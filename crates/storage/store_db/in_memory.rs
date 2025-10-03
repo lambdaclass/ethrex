@@ -4,7 +4,7 @@ use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{db::nibbles_to_fixed_size, InMemoryTrieDB, Nibbles, NodeKey, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeKey, Trie, db::nibbles_to_fixed_size};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,

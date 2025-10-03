@@ -2,7 +2,7 @@ use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
 use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
-use ethrex_trie::{Nibbles, Node, NodeKey, TrieDB, TrieError, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeKey, TrieDB, TrieError};
 
 #[derive(Debug)]
 struct TrieLayer {
@@ -125,7 +125,15 @@ impl TrieDB for TrieWrapper {
             new_state_root,
             key_values
                 .into_iter()
-                .map(move |(key, node)| (NodeKey{nibble: apply_prefix(self.prefix, key.nibble), hash: key.hash}, node))
+                .map(move |(key, node)| {
+                    (
+                        NodeKey {
+                            nibble: apply_prefix(self.prefix, key.nibble),
+                            hash: key.hash,
+                        },
+                        node,
+                    )
+                })
                 .collect(),
         );
         Ok(())

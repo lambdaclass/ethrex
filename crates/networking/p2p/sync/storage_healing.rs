@@ -18,7 +18,7 @@ use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, apply_prefix, error::StoreError};
-use ethrex_trie::{Nibbles, Node, NodeHash, NodeKey, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeKey};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
@@ -231,28 +231,32 @@ pub async fn heal_storage_trie(
                             if let Node::Leaf(leaf) = &node {
                                 match leaf.compute_hash() {
                                     NodeHash::Hashed(hash) => {
-                                        account_nodes
-                                            .push((NodeKey{nibble: path.concat(leaf.partial.clone()), hash}, leaf.value.clone()));
-                                    },
-                                    NodeHash::Inline(_) => {
-                                        
+                                        account_nodes.push((
+                                            NodeKey {
+                                                nibble: path.concat(leaf.partial.clone()),
+                                                hash,
+                                            },
+                                            leaf.value.clone(),
+                                        ));
                                     }
+                                    NodeHash::Inline(_) => {}
                                 }
                             }
                             match node.compute_hash() {
                                 NodeHash::Hashed(hash) => {
-                                    account_nodes.push((NodeKey{nibble: path, hash}, node.encode_to_vec()));
-                                },
-                                NodeHash::Inline(_) => {
-                                    
+                                    account_nodes.push((
+                                        NodeKey { nibble: path, hash },
+                                        node.encode_to_vec(),
+                                    ));
                                 }
+                                NodeHash::Inline(_) => {}
                             }
                         }
                         /*let account_nodes = to_delete
-                            .into_iter()
-                            .map(|path| (path, vec![]))
-                            .chain(account_nodes)
-                            .collect();*/
+                        .into_iter()
+                        .map(|path| (path, vec![]))
+                        .chain(account_nodes)
+                        .collect();*/
                         encoded_to_write.push((hashed_account, account_nodes));
                     }
 

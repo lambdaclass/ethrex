@@ -1,6 +1,6 @@
 use ethereum_types::H256;
 
-use crate::{db::nibbles_to_fixed_size, Nibbles};
+use crate::{Nibbles, db::nibbles_to_fixed_size};
 
 /// Struct representing the key of a node
 #[derive(Debug, Clone, Default)]

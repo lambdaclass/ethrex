@@ -1,6 +1,6 @@
 use ethereum_types::H256;
 
-use crate::{error::TrieError, Nibbles, NodeKey, NodeRLP, Trie};
+use crate::{Nibbles, NodeKey, NodeRLP, Trie, error::TrieError};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},

@@ -17,7 +17,7 @@ use ethrex_rlp::{
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{error::TrieError, nibbles::Nibbles, NodeKey, TrieDB};
+use crate::{NodeKey, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -31,14 +31,14 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles ) -> Result<Option<Node>, TrieError> {
+    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
             NodeRef::Hash(NodeHash::Hashed(hash)) => db
-                .get(NodeKey{nibble: path, hash})?
+                .get(NodeKey { nibble: path, hash })?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
                     Ok(node) => {
@@ -65,7 +65,7 @@ impl NodeRef {
                 Ok(Some((true, Node::decode_raw(&data[..len as usize])?)))
             }
             NodeRef::Hash(NodeHash::Hashed(hash)) => db
-                .get(NodeKey{nibble: path, hash})?
+                .get(NodeKey { nibble: path, hash })?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
                     Ok(node) => Some(Ok((node.compute_hash() == NodeHash::Hashed(hash), node))),
@@ -101,21 +101,31 @@ impl NodeRef {
                 //println!("commit {path:?} => {node:?}");
                 let hash = hash.get_or_init(|| node.compute_hash());
                 match hash {
-                    NodeHash::Inline((data, len)) => {
-                        
-                    }
+                    NodeHash::Inline((data, len)) => {}
                     NodeHash::Hashed(hash) => {
-                        acc.push((NodeKey{nibble: path.clone(), hash: *hash}, node.encode_to_vec()));
+                        acc.push((
+                            NodeKey {
+                                nibble: path.clone(),
+                                hash: *hash,
+                            },
+                            node.encode_to_vec(),
+                        ));
                     }
                 }
-                
+
                 if let Node::Leaf(leaf) = node.as_ref() {
                     match leaf.compute_hash() {
                         NodeHash::Inline((data, len)) => {
                             //println!("inline leaf at {path:?} => {:?}", &data[..*len as usize]);
                         }
                         NodeHash::Hashed(hash) => {
-                            acc.push((NodeKey{nibble: path.concat(leaf.partial.clone()), hash}, leaf.value.clone()));
+                            acc.push((
+                                NodeKey {
+                                    nibble: path.concat(leaf.partial.clone()),
+                                    hash,
+                                },
+                                leaf.value.clone(),
+                            ));
                         }
                     }
                 }

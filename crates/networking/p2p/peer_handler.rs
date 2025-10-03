@@ -2000,7 +2000,7 @@ pub struct RequestMetadata {
     pub path: Nibbles,
     /// What node is the parent of this node
     pub parent_path: Nibbles,
-    pub previous: Option<Node>
+    pub previous: Option<Node>,
 }
 
 #[derive(Debug, thiserror::Error)]

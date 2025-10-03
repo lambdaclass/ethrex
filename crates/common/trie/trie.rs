@@ -4,8 +4,8 @@ pub mod logger;
 mod nibbles;
 pub mod node;
 mod node_hash;
-mod rlp;
 mod node_key;
+mod rlp;
 #[cfg(test)]
 mod test_utils;
 mod trie_iter;
@@ -113,7 +113,10 @@ impl Trie {
             NodeRef::Hash(NodeHash::Hashed(hash)) => Node::decode(
                 &self
                     .db
-                    .get(NodeKey{nibble: Nibbles::default(), hash})?
+                    .get(NodeKey {
+                        nibble: Nibbles::default(),
+                        hash,
+                    })?
                     .ok_or(TrieError::InconsistentTree)?,
             )
             .map_err(TrieError::RLPDecode)?
@@ -211,7 +214,13 @@ impl Trie {
             self.root.commit(Nibbles::default(), &mut acc);
         }
         if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
-            acc.push((NodeKey{nibble: Nibbles::default(), hash: *EMPTY_TRIE_HASH}, vec![RLP_NULL]))
+            acc.push((
+                NodeKey {
+                    nibble: Nibbles::default(),
+                    hash: *EMPTY_TRIE_HASH,
+                },
+                vec![RLP_NULL],
+            ))
         }
         acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
 

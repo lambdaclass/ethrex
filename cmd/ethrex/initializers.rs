@@ -377,7 +377,7 @@ async fn set_sync_block(store: &Store) {
 async fn reset_to_head(store: &Store) -> eyre::Result<()> {
     let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
     let Some(root) = trie.db().get(Default::default()).unwrap() else {
-        return Ok(())
+        return Ok(());
     };
     let root = ethrex_trie::Node::decode(&root).unwrap();
     let state_root = root.compute_hash().finalize();

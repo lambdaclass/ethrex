@@ -1,7 +1,7 @@
-use ethrex_common::H256;
-use ethrex_trie::{error::TrieError, Nibbles, NodeHash, NodeKey, TrieDB};
-use rocksdb::{DBWithThreadMode, MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
 use core::hash;
+use ethrex_common::H256;
+use ethrex_trie::{Nibbles, NodeHash, NodeKey, TrieDB, error::TrieError};
+use rocksdb::{DBWithThreadMode, MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
 use std::sync::Arc;
 
 use crate::trie_db::layering::apply_prefix;
@@ -44,7 +44,12 @@ impl RocksDBLockedTrieDB {
     }
 
     fn make_key(&self, node_hash: NodeKey) -> Vec<u8> {
-        NodeKey{nibble: apply_prefix(self.address_prefix, node_hash.nibble), hash : node_hash.hash}.to_fixed_size().to_vec()
+        NodeKey {
+            nibble: apply_prefix(self.address_prefix, node_hash.nibble),
+            hash: node_hash.hash,
+        }
+        .to_fixed_size()
+        .to_vec()
     }
 }
 

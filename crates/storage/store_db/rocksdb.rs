@@ -504,9 +504,15 @@ impl StoreEngine for Store {
                     .storage_updates
                     .into_iter()
                     .flat_map(|(account_hash, nodes)| {
-                        nodes
-                            .into_iter()
-                            .map(move |(key, node)| (NodeKey{nibble: apply_prefix(Some(account_hash), key.nibble), hash: key.hash} , node))
+                        nodes.into_iter().map(move |(key, node)| {
+                            (
+                                NodeKey {
+                                    nibble: apply_prefix(Some(account_hash), key.nibble),
+                                    hash: key.hash,
+                                },
+                                node,
+                            )
+                        })
                     })
                     .chain(update_batch.account_updates)
                     .collect(),
@@ -1486,9 +1492,24 @@ impl StoreEngine for Store {
                 for (node_key, node_data) in nodes {
                     let path = apply_prefix(Some(address_hash), node_key.nibble);
                     if node_data.is_empty() {
-                        batch.delete_cf(&cf, NodeKey{nibble: path, hash: node_key.hash}.to_fixed_size());
+                        batch.delete_cf(
+                            &cf,
+                            NodeKey {
+                                nibble: path,
+                                hash: node_key.hash,
+                            }
+                            .to_fixed_size(),
+                        );
                     } else {
-                        batch.put_cf(&cf, NodeKey{nibble: path, hash: node_key.hash}.to_fixed_size(), node_data);
+                        batch.put_cf(
+                            &cf,
+                            NodeKey {
+                                nibble: path,
+                                hash: node_key.hash,
+                            }
+                            .to_fixed_size(),
+                            node_data,
+                        );
                     }
                 }
             }
