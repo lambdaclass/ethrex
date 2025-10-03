@@ -683,13 +683,14 @@ impl FullBlockSyncState {
         .await
         {
             if let Some(batch_failure) = batch_failure {
-                warn!("Failed to add block during FullSync: {err}");
+                let failed_block_hash = batch_failure.failed_block_hash;
+                warn!(%err, block=%failed_block_hash, "Failed to add block during FullSync");
                 // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
                 if let ChainError::InvalidBlock(_) = err {
                     let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
                     if let Some(index) = block_batch_hashes
                         .iter()
-                        .position(|x| x == &batch_failure.failed_block_hash)
+                        .position(|x| x == &failed_block_hash)
                     {
                         block_hashes_with_invalid_ancestor = block_batch_hashes[index..].to_vec();
                     }

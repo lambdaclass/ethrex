@@ -41,6 +41,15 @@ use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
 
+// Compile-time check to ensure that at least one of the database features is enabled.
+#[cfg(any(
+    not(any(feature = "rocksdb", feature = "libmdbx")),
+    all(feature = "rocksdb", feature = "libmdbx")
+))]
+const _: () = {
+    compile_error!("Either the `rocksdb` or `libmdbx` feature must be enabled.");
+};
+
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
@@ -102,16 +111,10 @@ pub fn open_store(datadir: &Path) -> Store {
     if datadir.ends_with("memory") {
         Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
     } else {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "rocksdb")] {
-                let engine_type = EngineType::RocksDB;
-            } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
-            } else {
-                error!("No database specified. The feature flag `rocksdb` or `libmdbx` should've been set while building.");
-                panic!("Specify the desired database engine.");
-            }
-        };
+        #[cfg(feature = "rocksdb")]
+        let engine_type = EngineType::RocksDB;
+        #[cfg(feature = "libmdbx")]
+        let engine_type = EngineType::Libmdbx;
         #[cfg(feature = "metrics")]
         ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")

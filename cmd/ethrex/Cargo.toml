@@ -46,8 +46,6 @@ thiserror.workspace = true
 itertools = "0.14.0"
 tui-logger.workspace = true
 
-cfg-if = "1.0.0"
-
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
