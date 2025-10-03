@@ -29,7 +29,7 @@ impl Debug for SQLStore {
 }
 
 // Change version if the DB_SCHEMA changes
-const MIGRATION_VERSION: u64 = 1;
+pub const MIGRATION_VERSION: u64 = 1;
 const DB_SCHEMA: [&str; 10] = [
     "CREATE TABLE batches (number INT PRIMARY KEY, first_block INT NOT NULL, last_block INT NOT NULL, privileged_transactions_hash BLOB, state_root BLOB NOT NULL, commit_tx BLOB, verify_tx BLOB, signature BLOB)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
@@ -44,7 +44,7 @@ const DB_SCHEMA: [&str; 10] = [
 ];
 
 impl SQLStore {
-    pub fn new(path: impl AsRef<Path>) -> Result<Self, RollupStoreError> {
+    pub fn new(path: impl AsRef<Path>, check_version: bool) -> Result<Self, RollupStoreError> {
         futures::executor::block_on(async {
             let db = Builder::new_local(path).build().await?;
             let write_conn = db.connect()?;
@@ -57,12 +57,14 @@ impl SQLStore {
                 write_conn: Arc::new(Mutex::new(write_conn)),
             };
 
-            if let Ok(current_version) = store.get_version().await {
-                if current_version != MIGRATION_VERSION {
-                    return Err(RollupStoreError::VersionMismatch {
-                        current: current_version,
-                        expected: MIGRATION_VERSION,
-                    });
+            if check_version {
+                if let Ok(current_version) = store.get_version().await {
+                    if current_version != MIGRATION_VERSION {
+                        return Err(RollupStoreError::VersionMismatch {
+                            current: current_version,
+                            expected: MIGRATION_VERSION,
+                        });
+                    }
                 }
             }
 
@@ -90,7 +92,7 @@ impl SQLStore {
 
         let mut rows = self
             .query(
-                "SELECT name FROM sqlite_schema WHERE type='table' AND name='migrations'",
+                "SELECT name FROM sqlite_schema WHERE type='table' AND (name='migrations' OR name='messages')",
                 (),
             )
             .await?;
@@ -109,7 +111,7 @@ impl SQLStore {
     /// Executes a set of queries in a SQL transaction
     /// if the db_tx parameter is Some then it uses that transaction and does not commit to the DB after execution
     /// if the db_tx parameter is None then it creates a transaction and commits to the DB after execution
-    async fn execute_in_tx(
+    pub async fn execute_in_tx(
         &self,
         queries: Vec<(&str, Params)>,
         db_tx: Option<&Transaction>,
@@ -179,7 +181,7 @@ impl SQLStore {
         self.execute_in_tx(query, db_tx).await
     }
 
-    async fn get_version(&self) -> Result<u64, RollupStoreError> {
+    pub async fn get_version(&self) -> Result<u64, RollupStoreError> {
         let mut rows = self
             .query("SELECT MAX(version) FROM migrations", ())
             .await?;
@@ -696,7 +698,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schema_tables() -> anyhow::Result<()> {
-        let store = SQLStore::new(":memory:")?;
+        let store = SQLStore::new(":memory:", false)?;
         let tables = [
             "batches",
             "messages",

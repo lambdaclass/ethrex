@@ -7059,6 +7059,8 @@ dependencies = [
  "ethrex-common 1.0.0",
  "ethrex-storage 0.1.0",
  "ethrex-storage 1.0.0",
+ "ethrex-storage-rollup",
+ "libsql",
  "tokio",
 ]
 
