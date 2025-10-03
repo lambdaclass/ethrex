@@ -1,29 +1,27 @@
-use crate::api::StoreEngine;
-use crate::error::StoreError;
-use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
-use crate::store_db::rocksdb::Store as RocksDBStore;
+use crate::backend::rocksdb::RocksDBBackend;
+use crate::{
+    api::StorageBackend, backend::in_memory::InMemoryBackend, engine::StoreEngine,
+    error::StoreError,
+};
 use bytes::Bytes;
-
-use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
-    constants::EMPTY_TRIE_HASH,
+    Address, H256, U256,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
         code_hash,
     },
 };
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
-use sha3::{Digest as _, Keccak256};
-use std::sync::Arc;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
+use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::RwLock,
+    path::Path,
+    sync::Arc,
 };
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, sync::RwLock};
 use tracing::{debug, error, info, instrument};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -33,12 +31,10 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    pub engine: Arc<dyn StoreEngine>,
+    pub engine: Arc<StoreEngine>,
     pub chain_config: Arc<RwLock<ChainConfig>>,
     pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
-
-pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
@@ -60,7 +56,7 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Bytes)>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+pub type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
 
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
@@ -76,16 +72,15 @@ impl Store {
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
         let path = path.as_ref();
-        info!(engine = ?engine_type, ?path, "Opening storage engine");
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
-                engine: Arc::new(RocksDBStore::new(path)?),
+                engine: Arc::new(StoreEngine::new(Arc::new(RocksDBBackend::open(path)?))?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             EngineType::InMemory => Self {
-                engine: Arc::new(InMemoryStore::new()),
+                engine: Arc::new(StoreEngine::new(Arc::new(InMemoryBackend::open(path)?))?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -450,6 +445,7 @@ impl Store {
                     storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                storage_trie.commit()?;
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
@@ -1281,7 +1277,7 @@ impl Store {
 
     pub async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: StorageTrieNodes,
+        storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
         self.engine
             .write_storage_trie_nodes_batch(storage_trie_nodes)

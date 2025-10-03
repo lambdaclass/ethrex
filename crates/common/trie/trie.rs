@@ -180,6 +180,9 @@ impl Trie {
             self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
+        // Commit the underlying transaction
+        self.db.commit()?;
+
         Ok(())
     }
 

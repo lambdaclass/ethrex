@@ -1,13 +1,13 @@
-mod api;
-
-#[cfg(feature = "rocksdb")]
-mod rlp;
-mod store;
-pub mod store_db;
-mod trie_db;
-mod utils;
-
+// New unified storage interface
+pub mod api;
+pub mod backend;
+pub mod engine;
 pub mod error;
+pub mod rlp;
+pub mod store;
+pub mod trie;
+pub mod utils;
+
 pub use store::{
     AccountUpdatesList, EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, UpdateBatch,
     hash_address, hash_key,
