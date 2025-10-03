@@ -77,8 +77,6 @@
 // always try the ancients first, and only go thorugh the statedb when
 // the data is not in the freezer.
 use clap::{ArgGroup, Parser};
-use ethrex::initializers::open_store;
-use ethrex::utils::{default_datadir, init_datadir};
 use ethrex_common::Address;
 use ethrex_common::types::BlockHash;
 use ethrex_common::{BigEndianHash, H256, U256, types::BlockNumber};
@@ -88,7 +86,6 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_storage::Store;
 use ethrex_trie::{NodeHash, Trie, TrieDB, TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
@@ -123,11 +120,21 @@ impl GethDB {
         })
     }
 
-    fn try_read_hashes_from_freezer(&self, start: u64, end: u64) -> eyre::Result<Vec<[u8; 32]>> {
-        todo!()
+    fn try_read_hashes_from_freezer(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
+        eyre::bail!("not implemented yet")
     }
-    fn try_read_hashes_from_statedb(&self, start: u64, end: u64) -> eyre::Result<Vec<[u8; 32]>> {
-        todo!()
+    fn try_read_hashes_from_statedb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
+        // ['h' || block_num || 'n']
+        let keys = (first..=last).map(|i| {
+            let mut key = [0u8; 34];
+            key[0] = b'h';
+            key[33] = b'n';
+            key[1..33].copy_from_slice(&i.to_be_bytes());
+            key
+        });
+        let values = self.state_db.multi_get(keys);
+        println!("{values:?}");
+        Ok(Vec::new())
     }
 
     // It is valid for the block to not be in the freezer, but if it's not in the statedb either it's an error
@@ -136,7 +143,7 @@ impl GethDB {
         block_num: u64,
         block_hash: [u8; 32],
     ) -> eyre::Result<Option<Block>> {
-        todo!()
+        eyre::bail!("not implemented yet")
     }
     fn try_read_block_from_statedb(
         &self,
@@ -146,10 +153,10 @@ impl GethDB {
         todo!()
     }
 
-    pub fn read_hashes_from_gethdb(&self, start: u64, end: u64) -> eyre::Result<Vec<[u8; 32]>> {
-        let frozen_hashes = self.try_read_hashes_from_freezer(start, end)?;
+    pub fn read_hashes_from_gethdb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
+        let frozen_hashes = self.try_read_hashes_from_freezer(first, last)?;
         let state_hashes =
-            self.try_read_hashes_from_statedb(start + frozen_hashes.len() as u64, end)?;
+            self.try_read_hashes_from_statedb(first + frozen_hashes.len() as u64, last)?;
         Ok([frozen_hashes, state_hashes].concat())
     }
     pub fn read_block_from_gethdb(
@@ -238,6 +245,10 @@ pub fn geth2ethrex(
     let migration_start: Instant = Instant::now();
 
     let gethdb = GethDB::open(input_dir)?;
+    let hashes = gethdb.read_hashes_from_gethdb(
+        block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
+        block_number,
+    )?;
 
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time}");
@@ -262,15 +273,6 @@ struct Args {
         help = "Block number to sync to"
     )]
     block_number: BlockNumber,
-    #[arg(
-        long = "datadir",
-        value_name = "DATABASE_DIRECTORY",
-        default_value = default_datadir().into_os_string(),
-        help = "Receives the name of the directory where the Database is located.",
-        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
-        env = "ETHREX_DATADIR"
-    )]
-    pub datadir: PathBuf,
     #[arg(
         long = "input_dir",
         value_name = "INPUT_DIRECTORY",
