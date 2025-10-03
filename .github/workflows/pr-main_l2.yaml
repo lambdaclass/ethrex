@@ -438,11 +438,6 @@ jobs:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
-      - name: Build prover
-        run: |
-          cd crates/l2
-          make build-prover
-
       - name: Start ethrex
         run: |
           COMPILE_CONTRACTS=true \
@@ -463,8 +458,7 @@ jobs:
       
       - name: Init prover
         run: |
-          cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
+          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 &
       
       - name: Run test
         run: |
