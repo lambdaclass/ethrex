@@ -270,10 +270,8 @@ contract CommonBridge is
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
-    /// @notice Deposits are not allowed via the fallback function. Use deposit() instead.
-    /// @dev This is to prevent accidental deposits of ETH to the contract.
     receive() external payable whenNotPaused {
-        revert("CommonBridge: use deposit() for native token deposits");
+        _deposit(0, msg.sender);
     }
 
     function depositERC20(
