@@ -163,7 +163,10 @@ pub async fn init_l2(
     let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts).await?;
 
     let fee_config = FeeConfig {
-        fee_vault: opts.sequencer_opts.block_producer_opts.fee_vault_address,
+        base_fee_vault: opts
+            .sequencer_opts
+            .block_producer_opts
+            .base_fee_vault_address,
         operator_fee_config,
     };
 

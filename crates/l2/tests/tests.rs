@@ -57,7 +57,9 @@ use tokio::task::JoinSet;
 /// Contract addresses:
 /// ETHREX_WATCHER_BRIDGE_ADDRESS: The address of the l1 bridge contract
 /// INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS: The address of the l2 coinbase
-/// INTEGRATION_TEST_PROPOSER_FEE_VAULT_ADDRESS: The address of the l2 fee_vault
+/// INTEGRATION_TEST_PROPOSER_BASE_FEE_VAULT_ADDRESS: The address of the l2 base_fee_vault
+/// INTEGRATION_TEST_PROPOSER_OPERATOR_FEE_VAULT_ADDRESS: The address of the l2 operator_fee_vault
+/// INTEGRATION_TEST_OPERATOR_FEE_VAULT_ADDRESS
 ///
 /// Test parameters:
 ///
@@ -82,7 +84,7 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
 ]);
 
 // 0x000c0d6b7c4516a5b274c51ea331a9410fe69127
-const DEFAULT_PROPOSER_FEE_VAULT_ADDRESS: Address = H160([
+const DEFAULT_PROPOSER_BASE_FEE_VAULT_ADDRESS: Address = H160([
     0x00, 0x0c, 0x0d, 0x6b, 0x7c, 0x45, 0x16, 0xa5, 0xb2, 0x74, 0xc5, 0x1e, 0xa3, 0x31, 0xa9, 0x41,
     0x0f, 0xe6, 0x91, 0x27,
 ]);
@@ -114,8 +116,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let coinbase_balance_before_tests = l2_client
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
-    let fee_vault_balance_before_tests = l2_client
-        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+    let base_fee_vault_balance_before_tests = l2_client
+        .get_balance(base_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
     let operator_fee_vault_balance_before_tests = l2_client
         .get_balance(operator_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
@@ -209,8 +211,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let fee_vault_balance_after_tests = l2_client
-        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+    let base_fee_vault_balance_after_tests = l2_client
+        .get_balance(base_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let operator_fee_vault_balance_after_tests = l2_client
@@ -225,11 +227,11 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "Coinbase is not correct after tests"
     );
 
-    if std::env::var("INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK").is_err() {
+    if std::env::var("INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK").is_err() {
         assert_eq!(
-            fee_vault_balance_after_tests,
-            fee_vault_balance_before_tests + acc_base_fees,
-            "Fee vault is not correct after tests"
+            base_fee_vault_balance_after_tests,
+            base_fee_vault_balance_before_tests + acc_base_fees,
+            "Base fee vault is not correct after tests"
         );
     }
 
@@ -1023,7 +1025,7 @@ async fn test_send(
 }
 
 /// Test depositing ETH from L1 to L2
-/// 1. Fetch initial balances of depositor on L1, recipient on L2, bridge on L1 and coinbase, fee vault and operator vault on L2
+/// 1. Fetch initial balances of depositor on L1, recipient on L2, bridge on L1 and coinbase, base and operator fee vault on L2
 /// 2. Perform deposit from L1 to L2
 /// 3. Check final balances.
 async fn test_deposit(
@@ -1060,8 +1062,8 @@ async fn test_deposit(
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let fee_vault_balance_before_deposit = l2_client
-        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+    let base_fee_vault_balance_before_deposit = l2_client
+        .get_balance(base_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let operator_vault_balance_before_deposit = l2_client
@@ -1131,8 +1133,8 @@ async fn test_deposit(
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let fee_vault_balance_after_deposit = l2_client
-        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+    let base_fee_vault_balance_after_deposit = l2_client
+        .get_balance(base_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let operator_fee_vault_balance_after_deposit = l2_client
@@ -1145,8 +1147,8 @@ async fn test_deposit(
     );
 
     assert_eq!(
-        fee_vault_balance_after_deposit, fee_vault_balance_before_deposit,
-        "Fee vault balance should not change after deposit"
+        base_fee_vault_balance_after_deposit, base_fee_vault_balance_before_deposit,
+        "Base fee vault balance should not change after deposit"
     );
 
     assert_eq!(
@@ -1509,8 +1511,8 @@ async fn test_n_withdraws(
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let fee_vault_balance_before_withdrawal = l2_client
-        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+    let base_fee_vault_balance_before_withdrawal = l2_client
+        .get_balance(base_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let operator_fee_vault_balance_before_withdrawal = l2_client
@@ -1583,8 +1585,8 @@ async fn test_n_withdraws(
         .get_balance(coinbase(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let fee_vault_balance_after_withdrawal = l2_client
-        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+    let base_fee_vault_balance_after_withdrawal = l2_client
+        .get_balance(base_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
     let operator_fee_vault_balance_after_withdrawal = l2_client
         .get_balance(operator_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
@@ -1597,8 +1599,8 @@ async fn test_n_withdraws(
     );
 
     assert_eq!(
-        fee_vault_balance_after_withdrawal,
-        fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.base_fees,
+        base_fee_vault_balance_after_withdrawal,
+        base_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.base_fees,
         "Coinbase balance didn't increase as expected after withdrawal"
     );
 
@@ -1696,11 +1698,11 @@ async fn test_total_eth_l2(
 
     println!("Coinbase balance: {coinbase_balance}");
 
-    let fee_vault_balance = l2_client
-        .get_balance(fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
+    let base_fee_vault_balance = l2_client
+        .get_balance(base_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    println!("Fee vault balance: {fee_vault_balance}");
+    println!("Base fee vault balance: {base_fee_vault_balance}");
 
     let operator_fee_vault_balance = l2_client
         .get_balance(operator_fee_vault(), BlockIdentifier::Tag(BlockTag::Latest))
@@ -1708,11 +1710,13 @@ async fn test_total_eth_l2(
 
     println!("Operator fee vault balance: {operator_fee_vault_balance}");
 
-    let total_eth_on_l2 =
-        rich_accounts_balance + coinbase_balance + fee_vault_balance + operator_fee_vault_balance;
+    let total_eth_on_l2 = rich_accounts_balance
+        + coinbase_balance
+        + base_fee_vault_balance
+        + operator_fee_vault_balance;
 
     println!(
-        "Total ETH on L2: {rich_accounts_balance} + {coinbase_balance} + {fee_vault_balance} + {operator_fee_vault_balance} = {total_eth_on_l2}"
+        "Total ETH on L2: {rich_accounts_balance} + {coinbase_balance} + {base_fee_vault_balance} + {operator_fee_vault_balance} = {total_eth_on_l2}"
     );
     println!("Checking locked ETH on CommonBridge");
 
@@ -1723,7 +1727,7 @@ async fn test_total_eth_l2(
 
     println!("Bridge locked ETH: {bridge_locked_eth}");
 
-    if std::env::var("INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK").is_err() {
+    if std::env::var("INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK").is_err() {
         assert!(
             total_eth_on_l2 == bridge_locked_eth,
             "Total ETH on L2 ({total_eth_on_l2}) differs from bridge locked ETH ({bridge_locked_eth})"
@@ -1988,14 +1992,14 @@ fn coinbase() -> Address {
         .unwrap_or(DEFAULT_PROPOSER_COINBASE_ADDRESS)
 }
 
-fn fee_vault() -> Address {
-    std::env::var("INTEGRATION_TEST_PROPOSER_FEE_VAULT_ADDRESS")
+fn base_fee_vault() -> Address {
+    std::env::var("INTEGRATION_TEST_PROPOSER_BASE_FEE_VAULT_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer coinbase address"))
-        .unwrap_or(DEFAULT_PROPOSER_FEE_VAULT_ADDRESS)
+        .unwrap_or(DEFAULT_PROPOSER_BASE_FEE_VAULT_ADDRESS)
 }
 
 fn operator_fee_vault() -> Address {
-    std::env::var("INTEGRATION_TEST_OPERATOR_FEE_VAULT_ADDRESS")
+    std::env::var("INTEGRATION_TEST_PROPOSER_OPERATOR_FEE_VAULT_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer coinbase address"))
         .unwrap_or(DEFAULT_OPERATOR_FEE_VAULT_ADDRESS)
 }

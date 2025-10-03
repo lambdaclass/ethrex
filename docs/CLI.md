@@ -293,8 +293,11 @@ Block producer options:
       --block-producer.coinbase-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS=]
 
-      --block-producer.fee-vault-address <ADDRESS>
-          [env: ETHREX_BLOCK_PRODUCER_FEE_VAULT_ADDRESS=]
+      --block-producer.base-fee-vault-address <ADDRESS>
+          [env: ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=]
+      
+      --block-producer.operator-fee-vault-address <ADDRESS>
+          [env: ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=]
 
       --block-producer.block-gas-limit <UINT64>
           Maximum gas limit for the L2 blocks.

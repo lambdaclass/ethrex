@@ -120,7 +120,7 @@ impl Hook for L2Hook {
             // Different from L1:
 
             // Base fee is not burned
-            pay_fee_vault(vm, ctx_result.gas_used, self.fee_config.fee_vault)?;
+            pay_base_fee_vault(vm, ctx_result.gas_used, self.fee_config.base_fee_vault)?;
 
             // Operator fee is paid to the chain operator
             pay_operator_fee(vm, self.fee_config.operator_fee_config)?;
@@ -155,13 +155,13 @@ fn deduct_operator_fee(
     Ok(())
 }
 
-fn pay_fee_vault(
+fn pay_base_fee_vault(
     vm: &mut VM<'_>,
     gas_to_pay: u64,
-    fee_vault: Option<Address>,
+    base_fee_vault: Option<Address>,
 ) -> Result<(), crate::errors::VMError> {
-    let Some(fee_vault) = fee_vault else {
-        // No fee vault configured, base fee is effectively burned
+    let Some(base_fee_vault) = base_fee_vault else {
+        // No base fee vault configured, base fee is effectively burned
         return Ok(());
     };
 
@@ -169,7 +169,7 @@ fn pay_fee_vault(
         .checked_mul(vm.env.base_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    vm.increase_account_balance(fee_vault, base_fee)?;
+    vm.increase_account_balance(base_fee_vault, base_fee)?;
     Ok(())
 }
 

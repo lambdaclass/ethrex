@@ -70,7 +70,7 @@ pub enum EthClientError {
     #[error("Failed to parse hex string: {0}")]
     FromStrRadixError(#[from] FromStrRadixErr),
     #[error("ethrex_getFeeVaultAddress request error: {0}")]
-    GetFeeVaultAddressError(#[from] GetFeeVaultAddressError),
+    GetFeeVaultAddressError(#[from] GetBaseFeeVaultAddressError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -306,7 +306,7 @@ pub enum GetBatchByNumberError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum GetFeeVaultAddressError {
+pub enum GetBaseFeeVaultAddressError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]

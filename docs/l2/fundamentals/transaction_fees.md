@@ -12,14 +12,14 @@ Execution fees consist of two components: **base fee** and **priority fee**.
 ### Base Fee
 
 The base fee follows the same rules as the Ethereum L1 base fee. It adjusts dynamically depending on network congestion to ensure stable transaction pricing.  
-By default, base fees are burned. However a sequencer can configure a `fee vault` address to receive the collected base fees instead of burning them.
+By default, base fees are burned. However a sequencer can configure a `base fee vault` address to receive the collected base fees instead of burning them.
 
 ```sh
 ethrex l2 --block-producer.fee-vault-address <l2-fee-vault-address>
 ```
 
 > [!CAUTION]  
-> If the fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
+> If the base fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
 
 ### Priority Fee
 
@@ -48,7 +48,7 @@ ethrex l2 --block-producer.operator-fee-vault-address <operator-fee-vault-addres
 ```
 
 > [!CAUTION]  
-> If the fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
+> If the operator fee vault and coinbase addresses are the same, its balance will change in a way that differs from the standard L1 behavior, which may break assumptions about EVM compatibility.
 
 
 ## L1 Fees
