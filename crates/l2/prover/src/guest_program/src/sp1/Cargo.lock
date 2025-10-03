@@ -920,7 +920,6 @@ name = "ethrex-blockchain"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "cfg-if",
  "ethrex-common",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -941,6 +940,7 @@ dependencies = [
  "bytes",
  "crc32fast",
  "ethereum-types",
+ "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
@@ -963,6 +963,10 @@ dependencies = [
 [[package]]
 name = "ethrex-crypto"
 version = "0.1.0"
+dependencies = [
+ "kzg-rs",
+ "thiserror",
+]
 
 [[package]]
 name = "ethrex-l2-common"
@@ -1081,7 +1085,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
- "cfg-if",
  "derive_more",
  "dyn-clone",
  "ethereum-types",
@@ -1289,6 +1292,7 @@ dependencies = [
  "bytes",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",

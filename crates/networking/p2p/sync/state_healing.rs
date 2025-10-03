@@ -86,7 +86,7 @@ pub async fn heal_state_trie_wrap(
 async fn heal_state_trie(
     state_root: H256,
     store: Store,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     mut membatch: HashMap<Nibbles, MembatchEntryValue>,
@@ -122,9 +122,9 @@ async fn heal_state_trie(
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
-                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
                 .await
-                .len();
+                .unwrap_or(0);
             last_update = Instant::now();
             let downloads_rate =
                 downloads_success as f64 / (downloads_success + downloads_fail) as f64;
@@ -163,7 +163,7 @@ async fn heal_state_trie(
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
             // Mark the peer as available
-            peers.peer_table.free_peer(peer_id).await;
+            peers.peer_table.free_peer(&peer_id).await?;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -181,12 +181,9 @@ async fn heal_state_trie(
                             }
 
                             storage_accounts.healed_accounts.insert(account_hash);
-                            let old_value = storage_accounts
+                            storage_accounts
                                 .accounts_with_storage_root
-                                .get_mut(&account_hash);
-                            if let Some((old_root, _)) = old_value {
-                                *old_root = None;
-                            }
+                                .remove(&account_hash);
                         }
                     }
                     leafs_healed += nodes
@@ -199,7 +196,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    peers.peer_table.record_success(peer_id).await;
+                    peers.peer_table.record_success(&peer_id).await?;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -208,7 +205,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    peers.peer_table.record_failure(peer_id).await;
+                    peers.peer_table.record_failure(&peer_id).await?;
                 }
             }
         }
@@ -227,10 +224,12 @@ async fn heal_state_trie(
                 );
                 let Some((peer_id, mut peer_channel)) = peers
                     .peer_table
-                    .get_peer_channel_with_highest_score_and_mark_as_used(
-                        &SUPPORTED_SNAP_CAPABILITIES,
-                    )
+                    .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                     .await
+                    .inspect_err(
+                        |err| error!(err= ?err, "Error requesting a peer to perform state healing"),
+                    )
+                    .unwrap_or(None)
                 else {
                     // If there are no peers available, re-add the batch to the paths vector, and continue
                     paths.extend(batch);
