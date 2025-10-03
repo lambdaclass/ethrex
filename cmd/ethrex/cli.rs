@@ -200,6 +200,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
@@ -219,6 +220,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
