@@ -11,10 +11,4 @@ on:
 
 jobs:
   workflow-call:
-    uses: lambdaclass/ethrex-replay/.github/workflows/workflow-call.yaml@move_replay
-    with:
-      checkout_repo: lambdaclass/ethrex-replay
-      checkout_ref: move_replay
-    # If the target repo is private, make sure A has a PAT secret named REPO_TOKEN
-    # with access to B, and pass it along:
-    secrets: inherit
+    uses: lambdaclass/ethrex-replay/.github/workflows/workflow-call.yaml@add_remote_workflow
