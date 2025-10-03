@@ -114,6 +114,7 @@ fn main() {
             mnemonics_to_bytecode(strings)
         };
 
+        // ok-clone: we need to return the bytecode after
         debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
 
         bytecode
@@ -277,7 +278,7 @@ fn setup_initial_state(
     let input_pre_state: BTreeMap<Address, Account> = runner_input
         .pre
         .iter()
-        .map(|(addr, acc)| (*addr, Account::from(acc.clone())))
+        .map(|(addr, acc)| (*addr, Account::from(acc.clone()))) // ok-clone: we are storing the prestate so the struct can't be shared
         .collect();
     initial_state.extend(input_pre_state);
     // Contract bytecode or initcode
