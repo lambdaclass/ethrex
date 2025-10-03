@@ -80,6 +80,7 @@ impl GeneralizedDatabase {
             Entry::Vacant(entry) => {
                 let info = self.store.get_account_info(address)?;
                 let account = LevmAccount::from(info);
+                // ok-clone: we need two copies of the account to insert in each struct
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
             }

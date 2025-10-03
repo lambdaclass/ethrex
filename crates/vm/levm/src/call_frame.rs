@@ -288,8 +288,10 @@ impl CallFrameBackup {
         self.original_accounts_info
             .entry(address)
             .or_insert_with(|| LevmAccount {
+                // ok-clone: account info is being backed up, the original copy still needs to be in the account struct
                 info: account.info.clone(),
                 storage: BTreeMap::new(),
+                // ok-clone: account info is being backed up, the original copy still needs to be in the account struct
                 status: account.status.clone(),
             });
 

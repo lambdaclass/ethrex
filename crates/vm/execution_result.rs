@@ -31,24 +31,11 @@ impl ExecutionResult {
             ExecutionResult::Halt { gas_used, .. } => *gas_used,
         }
     }
-    pub fn logs(&self) -> Vec<Log> {
-        match self {
-            ExecutionResult::Success { logs, .. } => logs.clone(),
-            _ => vec![],
-        }
-    }
+
     pub fn gas_refunded(&self) -> u64 {
         match self {
             ExecutionResult::Success { gas_refunded, .. } => *gas_refunded,
             _ => 0,
-        }
-    }
-
-    pub fn output(&self) -> Bytes {
-        match self {
-            ExecutionResult::Success { output, .. } => output.clone(),
-            ExecutionResult::Revert { output, .. } => output.clone(),
-            ExecutionResult::Halt { .. } => Bytes::new(),
         }
     }
 }

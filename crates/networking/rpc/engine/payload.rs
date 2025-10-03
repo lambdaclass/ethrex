@@ -563,11 +563,17 @@ async fn handle_new_payload_v3(
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
     // V3 specific: validate blob hashes
-    let blob_versioned_hashes: Vec<H256> = block
+    let blob_versioned_hashes: Vec<&H256> = block
         .body
         .transactions
         .iter()
-        .flat_map(|tx| tx.blob_versioned_hashes())
+        .flat_map(|tx| {
+            if let Some(blob_hashes) = tx.blob_versioned_hashes() {
+                blob_hashes
+            } else {
+                &Vec::new()
+            }
+        })
         .collect();
 
     if expected_blob_versioned_hashes != blob_versioned_hashes {
