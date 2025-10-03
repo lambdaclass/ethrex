@@ -277,10 +277,10 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
+            to: crate::types::TxKind::Call(crate::Address::from_low_u64_be(1)), // Normal tx
+            value: crate::U256::zero(),                                         // Value zero
+            data: crate::Bytes::default(),                                      // No data
+            access_list: Default::default(),                                    // No access list
             blob_versioned_hashes,
             ..Default::default()
         };
@@ -320,10 +320,10 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
+            to: crate::types::TxKind::Call(crate::Address::from_low_u64_be(1)), // Normal tx
+            value: crate::U256::zero(),                                         // Value zero
+            data: crate::Bytes::default(),                                      // No data
+            access_list: Default::default(),                                    // No access list
             blob_versioned_hashes: vec![
                 "01ec8054d05bfec80f49231c6e90528bbb826ccd1464c255f38004099c8918d9",
                 "0180cb2dee9e6e016fabb5da4fb208555f5145c32895ccd13b26266d558cd77d",
@@ -372,10 +372,10 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
+            to: crate::types::TxKind::Call(crate::Address::from_low_u64_be(1)), // Normal tx
+            value: crate::U256::zero(),                                         // Value zero
+            data: crate::Bytes::default(),                                      // No data
+            access_list: Default::default(),                                    // No access list
             blob_versioned_hashes: vec![
                 "01ec8054d05bfec80f49231c6e90528bbb826ccd1464c255f38004099c8918d9",
                 "0180cb2dee9e6e016fabb5da4fb208555f5145c32895ccd13b26266d558cd77d",
@@ -414,10 +414,10 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
+            to: crate::types::TxKind::Call(crate::Address::from_low_u64_be(1)), // Normal tx
+            value: crate::U256::zero(),                                         // Value zero
+            data: crate::Bytes::default(),                                      // No data
+            access_list: Default::default(),                                    // No access list
             blob_versioned_hashes,
             ..Default::default()
         };
