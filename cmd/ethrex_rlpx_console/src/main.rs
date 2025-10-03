@@ -94,7 +94,7 @@ async fn get_p2p_context(network: String) -> Result<P2PContext, StoreError> {
 }
 
 const SAI_TEST_TOKEN: &'static str =
-    "e16550feb95232113739d716ce0942ff9970657b35894bb43028336cc25ae796";
+    "013c26ef617641ae2cee1656782ae0bb2be27c4805533504cb6ef6501bb0357e";
 
 const UNISWAP_TEST_TOKEN: &'static str =
     "22002fe30a172d0a479f6add89c63b29dce29b6071b3c7e486b0fb4bc431f885";
@@ -194,11 +194,15 @@ fn print_trie_nodes(nodes: TrieNodes) -> H256 {
 fn print_storage_ranges(storage_ranges: StorageRanges) -> H256 {
     println!("{:?}", storage_ranges.proof.len());
     println!("{:?}", storage_ranges.slots.iter().flatten().count());
+    println!("{:x?}", storage_ranges.slots);
     println!(
         "{:?}",
         storage_ranges.slots.last().unwrap().last().unwrap().hash
     );
     //println!("{storage_ranges:x?}")
+    if storage_ranges.proof.is_empty() {
+        return H256::repeat_byte(0xff);
+    }
     return storage_ranges.slots.last().unwrap().last().unwrap().hash;
 }
 
@@ -262,6 +266,9 @@ async fn main() -> Result<(), ConsoleError> {
                 error!("Connection closed unexpectedly");
                 break;
             }
+        };
+        if starting_hash == H256::repeat_byte(0xff) {
+            break;
         }
     }
 
