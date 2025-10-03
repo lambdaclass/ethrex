@@ -476,7 +476,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        if (publicData.length != 256) {
+        if (publicData.length != 288) {
             return "invalid public data length";
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
