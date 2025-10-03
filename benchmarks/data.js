@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759510895191,
+  "lastUpdate": 1759523621743,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36538,6 +36538,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.0046153234945791825,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6c50e9060226e9829eee13f959aad63ccfc54170",
+          "message": "feat(l1): run hive execute-blobs tests + add `getNewPayloadV5` + `getBlobsV2` (#4712)\n\n**Motivation**\nBe able to run hive eest/execute-blobs test suite\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `run-hive-eest-blobs` makefile target\n* Add `eest/execute-blobs` test suite to daily hive workflow\n* Add endpoints `GetPayloadV5` and `BlobsBundleV2`\n* Add `version` field to `BlobsBundle` and `wrapper_version` field to\n`WrappedEIP4844Transaction`\n* Support cell proof verification for extended blobs (only under c-kzg\nfeature)\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3844\n\n---------\n\nCo-authored-by: Pablo Deymonnaz <pdeymon@fi.uba.ar>",
+          "timestamp": "2025-10-03T14:31:08Z",
+          "tree_id": "8c1708619d997c6ecc1a281a349e77fb715a933a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6c50e9060226e9829eee13f959aad63ccfc54170"
+        },
+        "date": 1759523620360,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004619108870697309,
             "unit": "Mgas/s"
           }
         ]
