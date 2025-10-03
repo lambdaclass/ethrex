@@ -266,8 +266,11 @@ impl GethDB {
 
     pub fn read_hashes_from_gethdb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
         let frozen_hashes = self.try_read_hashes_from_freezer(first, last)?;
-        let state_hashes =
-            self.try_read_hashes_from_statedb(first + frozen_hashes.len() as u64, last)?;
+        let state_hashes = if last - first + 1 != frozen_hashes.len() as u64 {
+            self.try_read_hashes_from_statedb(first + frozen_hashes.len() as u64, last)?
+        } else {
+            Vec::new()
+        };
         Ok([frozen_hashes, state_hashes].concat())
     }
     pub fn read_block_from_gethdb(

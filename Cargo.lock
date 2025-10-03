@@ -4732,8 +4732,8 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "eyre",
- "hex",
  "rocksdb",
+ "snap",
  "tracing",
  "tracing-subscriber 0.3.20",
 ]
