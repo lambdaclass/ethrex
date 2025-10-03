@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759466659995,
+  "lastUpdate": 1759468393747,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36451,6 +36451,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.004616440210326206,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d5bddf4050e1987f73bc718e0bb1cafa511eddaa",
+          "message": "feat(l1,l2): add tooling to migrate from libmdbx to rocksdb (#4697)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWith the implementation of RocksDB as the default database, current\nnetworks need a tool to migrate its old DB.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nCreate a tool for migrations. This tool supports adding new migration\noptions in the future.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Leandro Serra <leandro.serra@lambdaclass.com>",
+          "timestamp": "2025-10-02T23:50:39Z",
+          "tree_id": "b3340852ef5d86c61c4985e108ae18727efe1a75",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d5bddf4050e1987f73bc718e0bb1cafa511eddaa"
+        },
+        "date": 1759468392977,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.004577445595063817,
             "unit": "Mgas/s"
           }
         ]
