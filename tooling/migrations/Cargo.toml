@@ -15,3 +15,5 @@ ethrex-storage-libmdbx = { features = [
 ], git = "https://github.com/lambdaclass/ethrex", tag = "v1.0.0", package = "ethrex-storage" }
 ethrex-storage = { features = ["rocksdb"], workspace = true }
 tokio = { features = ["full"], workspace = true }
+ethrex-storage-rollup = { features = ["sql"], workspace = true }
+libsql.workspace = true

@@ -93,27 +93,23 @@ impl GlobalChainStatusTable {
         let last_committed_block = if last_committed_batch == 0 {
             0
         } else {
-            match rollup_store
+            rollup_store
                 .get_block_numbers_by_batch(last_committed_batch)
                 .await
                 .map_err(|e| MonitorError::GetBlocksByBatch(last_committed_batch, e))?
-            {
-                Some(block_numbers) => block_numbers.last().copied().unwrap_or(0),
-                None => 0,
-            }
+                .map(|(_first, last)| last)
+                .unwrap_or(0)
         };
 
         let last_verified_block = if last_verified_batch == 0 {
             0
         } else {
-            match rollup_store
+            rollup_store
                 .get_block_numbers_by_batch(last_verified_batch)
                 .await
                 .map_err(|e| MonitorError::GetBlocksByBatch(last_verified_batch, e))?
-            {
-                Some(block_numbers) => block_numbers.last().copied().unwrap_or(0),
-                None => 0,
-            }
+                .map(|(_first, last)| last)
+                .unwrap_or(0)
         };
 
         let current_block = store

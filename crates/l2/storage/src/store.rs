@@ -41,7 +41,7 @@ impl Store {
             },
             #[cfg(feature = "sql")]
             EngineType::SQL => Self {
-                engine: Arc::new(SQLStore::new(_path)?),
+                engine: Arc::new(SQLStore::new(_path, true)?),
             },
         };
         info!("Started l2 store engine");
@@ -49,28 +49,30 @@ impl Store {
     }
 
     pub async fn init(&self) -> Result<(), RollupStoreError> {
-        // Stores batch 0 with block 0
-        self.seal_batch(Batch {
-            number: 0,
-            first_block: 0,
-            last_block: 0,
-            state_root: H256::zero(),
-            privileged_transactions_hash: H256::zero(),
-            message_hashes: Vec::new(),
-            blobs_bundle: BlobsBundle::empty(),
-            commit_tx: None,
-            verify_tx: None,
-        })
-        .await?;
-        // Sets the lastest sent batch proof to 0
-        self.set_lastest_sent_batch_proof(0).await
+        if !self.contains_batch(&0).await? {
+            // Stores batch 0 with block 0
+            return self
+                .seal_batch(Batch {
+                    number: 0,
+                    first_block: 0,
+                    last_block: 0,
+                    state_root: H256::zero(),
+                    privileged_transactions_hash: H256::zero(),
+                    message_hashes: Vec::new(),
+                    blobs_bundle: BlobsBundle::empty(),
+                    commit_tx: None,
+                    verify_tx: None,
+                })
+                .await;
+        }
+        Ok(())
     }
 
     /// Returns the block numbers by a given batch_number
     pub async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError> {
+    ) -> Result<Option<(BlockNumber, BlockNumber)>, RollupStoreError> {
         self.engine.get_block_numbers_by_batch(batch_number).await
     }
 
@@ -154,18 +156,10 @@ impl Store {
     }
 
     pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, RollupStoreError> {
-        let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
+        let Some((first_block, last_block)) = self.get_block_numbers_by_batch(batch_number).await?
+        else {
             return Ok(None);
         };
-
-        let first_block = *blocks.first().ok_or(RollupStoreError::Custom(
-            "Failed while trying to retrieve the first block of a known batch. This is a bug."
-                .to_owned(),
-        ))?;
-        let last_block = *blocks.last().ok_or(RollupStoreError::Custom(
-            "Failed while trying to retrieve the last block of a known batch. This is a bug."
-                .to_owned(),
-        ))?;
 
         let state_root =
             self.get_state_root_by_batch(batch_number)
@@ -289,14 +283,6 @@ impl Store {
     /// Returns the lastest sent batch proof
     pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         self.engine.get_lastest_sent_batch_proof().await
-    }
-
-    /// Sets the lastest sent batch proof
-    pub async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.engine.set_lastest_sent_batch_proof(batch_number).await
     }
 
     /// Returns the account updates yielded from executing a block

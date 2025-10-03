@@ -30,7 +30,7 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError>;
+    ) -> Result<Option<(BlockNumber, BlockNumber)>, RollupStoreError>;
 
     async fn get_privileged_transactions_hash_by_batch_number(
         &self,
@@ -112,9 +112,6 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
-
-    async fn set_lastest_sent_batch_proof(&self, batch_number: u64)
-    -> Result<(), RollupStoreError>;
 
     async fn get_account_updates_by_block_number(
         &self,

@@ -32,6 +32,7 @@
 
 - [Introduction](./l2/introduction.md)
 - [Deploy an L2](./l2/deploy.md)
+- [Upgrading a node](./l2/upgrading.md)
 - [Monitoring and metrics](./l2/monitoring.md)
 - [Admin server](./l2/admin.md)
 - [Architecture](./l2/architecture/README.md)

@@ -461,7 +461,7 @@ impl ProofCoordinator {
         batch_number: u64,
     ) -> Result<ProverInputData, ProofCoordinatorError> {
         // Get blocks in batch
-        let Some(block_numbers) = self
+        let Some((first_block, last_block)) = self
             .rollup_store
             .get_block_numbers_by_batch(batch_number)
             .await?
@@ -471,7 +471,7 @@ impl ProofCoordinator {
             )));
         };
 
-        let blocks = self.fetch_blocks(block_numbers).await?;
+        let blocks = self.fetch_blocks(first_block, last_block).await?;
 
         let witness = self
             .blockchain
@@ -514,10 +514,11 @@ impl ProofCoordinator {
 
     async fn fetch_blocks(
         &mut self,
-        block_numbers: Vec<u64>,
+        first_block: u64,
+        last_block: u64,
     ) -> Result<Vec<Block>, ProofCoordinatorError> {
         let mut blocks = vec![];
-        for block_number in block_numbers {
+        for block_number in first_block..=last_block {
             let header = self
                 .store
                 .get_block_header(block_number)?

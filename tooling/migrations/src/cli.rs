@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use clap::{Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::types::Block;
+use ethrex_storage_rollup::SQLStore;
+use libsql::params::IntoParams;
 
 use crate::utils::{migrate_block_body, migrate_block_header};
 
@@ -36,24 +38,42 @@ pub enum Subcommand {
         /// Path for the new RocksDB database
         new_storage_path: PathBuf,
     },
+    #[command(
+        name = "rollup-store.migrate",
+        visible_alias = "rsm",
+        about = "Migrate rollup store's SQL tables"
+    )]
+    RollupStoreMigrate {
+        #[arg()]
+        /// Version to upgrade/downgrade to
+        version: Option<u64>,
+        #[arg(long)]
+        /// Path to the network's datadir
+        datadir: PathBuf,
+    },
 }
 
 impl Subcommand {
-    pub async fn run(&self) {
+    pub async fn run(self) {
         match self {
             Self::Libmdbx2Rocksdb {
                 genesis_path,
                 old_storage_path,
                 new_storage_path,
-            } => migrate_libmdbx_to_rocksdb(genesis_path, old_storage_path, new_storage_path).await,
-        }
+            } => {
+                migrate_libmdbx_to_rocksdb(genesis_path, old_storage_path, new_storage_path).await;
+            }
+            Self::RollupStoreMigrate { version, datadir } => {
+                migrate_rollup_store(version, datadir).await;
+            }
+        };
     }
 }
 
 async fn migrate_libmdbx_to_rocksdb(
-    genesis_path: &Path,
-    old_storage_path: &Path,
-    new_storage_path: &Path,
+    genesis_path: PathBuf,
+    old_storage_path: PathBuf,
+    new_storage_path: PathBuf,
 ) {
     let old_store = ethrex_storage_libmdbx::Store::new(
         old_storage_path.to_str().expect("Invalid old storage path"),
@@ -66,7 +86,7 @@ async fn migrate_libmdbx_to_rocksdb(
         .expect("Cannot load libmdbx store state");
 
     let new_store = ethrex_storage::Store::new_from_genesis(
-        new_storage_path,
+        new_storage_path.as_path(),
         ethrex_storage::EngineType::RocksDB,
         genesis_path
             .to_str()
@@ -140,4 +160,63 @@ async fn migrate_libmdbx_to_rocksdb(
         )
         .await
         .expect("Cannot apply forkchoice update");
+}
+
+async fn migrate_rollup_store(new_version: Option<u64>, datadir: PathBuf) {
+    let store =
+        SQLStore::new(&datadir.join("rollup_store"), false).expect("Failed to initiate store");
+
+    let current_version = store.get_version().await.unwrap_or(0);
+
+    let new_version = new_version.unwrap_or(ethrex_storage_rollup::MIGRATION_VERSION);
+
+    if new_version == current_version {
+        println!("Database is already in desired version");
+        return;
+    }
+
+    let script_name = if new_version > current_version {
+        "migrate.sql"
+    } else {
+        "revert.sql"
+    };
+
+    let mut migrations: Vec<Vec<String>> =
+        Vec::with_capacity((new_version - current_version) as usize);
+    for version in current_version + 1..=new_version {
+        let path = Path::new("./rollup_store_migrations")
+            .join(format!("v{version}"))
+            .join(script_name);
+        let sql_script = std::fs::read_to_string(path)
+            .expect(&format!("Error reading migration for version {version}"));
+
+        let instructions: Vec<String> = sql_script
+            .split(";")
+            .filter_map(|instruction| {
+                if instruction.trim().is_empty() {
+                    return None;
+                }
+                Some(instruction.trim().to_string())
+            })
+            .collect();
+
+        migrations.push(instructions);
+    }
+
+    let empty_params = ().into_params().expect("Unexpected error");
+    if new_version < current_version {
+        migrations.reverse();
+    }
+
+    store
+        .execute_in_tx(
+            migrations
+                .iter()
+                .flatten()
+                .map(|migration| (migration.as_str(), empty_params.clone()))
+                .collect(),
+            None,
+        )
+        .await
+        .expect(&format!("Error migrating to version {new_version}"))
 }
