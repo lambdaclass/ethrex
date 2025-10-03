@@ -4,13 +4,13 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, Signature,
     types::{Block, batch::Batch},
 };
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
-use keccak_hash::keccak;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::{ops::Deref as _, sync::Arc};
 
@@ -65,7 +65,7 @@ impl BatchSealed {
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&SecpMessage::from_digest(hash.into()), secret_key)
             .serialize_compact();
-        let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
+        let recovery_id: u8 = Into::<i32>::into(recovery_id).try_into().map_err(|e| {
             RLPxError::InternalError(format!(
                 "Failed to convert recovery id to u8: {e}. This is a bug."
             ))
