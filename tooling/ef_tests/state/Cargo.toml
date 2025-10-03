@@ -24,7 +24,7 @@ hex = "0.4.3"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 itertools = "0.13.0"
-revm = { version = "19.0.0", features = [
+revm = { version = "27.0.3", features = [
     "serde",
     "std",
     "serde-json",
