@@ -1,4 +1,6 @@
 name: Workflow Call Replay
+permissions:
+  contents: read
 
 on:
   push:
