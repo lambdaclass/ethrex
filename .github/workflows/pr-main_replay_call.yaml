@@ -1,7 +1,0 @@
-name: Workflow Call Replay
-
-on: [push, workflow_dispatch]
-
-jobs:
-  quick-run:
-    uses: lambdaclass/ethrex-replay/.github/workflows/workflow-call.yaml@move_replay
