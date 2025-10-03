@@ -1230,6 +1230,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff",
+ "bitvec",
  "bls12_381",
  "bytes",
  "datatest-stable",
