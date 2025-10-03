@@ -16,7 +16,7 @@ use spawned_concurrency::{
 use tracing::{debug, error, info};
 
 use crate::{
-    kademlia::{Kademlia, PeerChannels},
+    discv4::peer_table::{PeerChannels, PeerTableError, PeerTableHandle},
     rlpx::{
         Message,
         connection::server::CastMessage,
@@ -89,7 +89,7 @@ impl Default for BroadcastRecord {
 
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
-    kademlia: Kademlia,
+    peer_table: PeerTableHandle,
     blockchain: Arc<Blockchain>,
     // tx_hash -> broadcast record (which peers know it and when it was last sent)
     known_txs: HashMap<H256, BroadcastRecord>,
@@ -113,13 +113,13 @@ pub enum OutMessage {
 
 impl TxBroadcaster {
     pub async fn spawn(
-        kademlia: Kademlia,
+        kademlia: PeerTableHandle,
         blockchain: Arc<Blockchain>,
     ) -> Result<GenServerHandle<TxBroadcaster>, TxBroadcasterError> {
         info!("Starting Transaction Broadcaster");
 
         let state = TxBroadcaster {
-            kademlia,
+            peer_table: kademlia,
             blockchain,
             known_txs: HashMap::new(),
             peer_indexer: HashMap::new(),
@@ -186,7 +186,7 @@ impl TxBroadcaster {
             debug!("No transactions to broadcast");
             return Ok(());
         }
-        let peers = self.kademlia.get_peer_channels_with_capabilities(&[]).await;
+        let peers = self.peer_table.get_peers_with_capabilities().await?;
         let peer_sqrt = (peers.len() as f64).sqrt();
 
         let full_txs = txs_to_broadcast
@@ -359,4 +359,6 @@ pub enum TxBroadcasterError {
     Broadcast,
     #[error(transparent)]
     StoreError(#[from] StoreError),
+    #[error(transparent)]
+    PeerTableError(#[from] PeerTableError),
 }

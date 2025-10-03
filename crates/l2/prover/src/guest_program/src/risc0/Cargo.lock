@@ -617,8 +617,8 @@ dependencies = [
 
 [[package]]
 name = "c-kzg"
-version = "1.0.3"
-source = "git+https://github.com/risc0/c-kzg-4844?tag=c-kzg%2Fv1.0.3-risczero.1#69ecb82af521baba5b57f9ba77348f8200a64dc7"
+version = "2.1.1"
+source = "git+https://github.com/risc0/c-kzg-4844?tag=c-kzg%2Fv2.1.1-risczero.0#1a8fa5497c80eb7f1fecbd7026f9bf86cc63fee2"
 dependencies = [
  "blst",
  "bytemuck",
@@ -4205,6 +4205,7 @@ dependencies = [
 name = "zkvm-risc0-program"
 version = "0.1.0"
 dependencies = [
+ "c-kzg",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",

@@ -2,6 +2,7 @@ mod code_collector;
 mod state_healing;
 mod storage_healing;
 
+use crate::discv4::peer_table::PeerTableError;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
@@ -216,7 +217,7 @@ impl Syncer {
             let Some(mut block_headers) = self
                 .peers
                 .request_block_headers(current_head_number, sync_head)
-                .await
+                .await?
             else {
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
@@ -365,7 +366,7 @@ impl Syncer {
                 let Some(mut block_headers) = self
                     .peers
                     .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
-                    .await
+                    .await?
                 else {
                     warn!("Sync failed to find target block header, aborting");
                     debug!("Sync Log 8: Sync failed to find target block header, aborting");
@@ -562,7 +563,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
+        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
@@ -585,12 +586,12 @@ async fn store_block_bodies(
 #[allow(unused)]
 async fn store_receipts(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Receipts ");
-        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await {
+        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await? {
             debug!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
             for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
@@ -704,7 +705,7 @@ impl FullBlockSyncState {
             &self.current_headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, self.current_headers.len())];
         let bodies = peers
             .request_and_validate_block_bodies(headers)
-            .await
+            .await?
             .ok_or(SyncError::BodiesNotFound)?;
         debug!("Obtained: {} block bodies", bodies.len());
         let blocks = self
@@ -915,14 +916,15 @@ impl SnapBlockSyncState {
 /// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
 /// Logs with where the function was when it found this error
 /// TODO: remove this function once peer table has moved to spawned implementation
-async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
-    if peer_handler.peer_table.free_peers().await != 0 {
+async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) -> Result<(), SyncError> {
+    if peer_handler.peer_table.free_peers().await? != 0 {
         let step = METRICS.current_step.lock().await.clone();
         error!(
             step = step,
             "Found peers marked as used even though we just finished this step"
         );
-    }
+    };
+    Ok(())
 }
 
 impl Syncer {
@@ -986,7 +988,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-            free_peers_and_log_if_not_empty(&self.peers).await;
+            free_peers_and_log_if_not_empty(&mut self.peers).await?;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -1098,7 +1100,7 @@ impl Syncer {
                 {
                     continue;
                 };
-                free_peers_and_log_if_not_empty(&self.peers).await;
+                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -1114,7 +1116,7 @@ impl Syncer {
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
-                free_peers_and_log_if_not_empty(&self.peers).await;
+                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -1233,9 +1235,9 @@ impl Syncer {
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_storage_leafs_healed,
             )
-            .await;
+            .await?;
 
-            free_peers_and_log_if_not_empty(&self.peers).await;
+            free_peers_and_log_if_not_empty(&mut self.peers).await?;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1403,11 +1405,11 @@ pub async fn update_pivot(
     loop {
         let (peer_id, mut peer_channel) = peers
             .peer_table
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES)
-            .await
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+            .await?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peers.peer_table.get_score(&peer_id).await;
+        let peer_score = peers.peer_table.get_score(&peer_id).await?;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1417,8 +1419,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_table.record_failure(peer_id).await;
-            let peer_score = peers.peer_table.get_score(&peer_id).await;
+            peers.peer_table.record_failure(&peer_id).await?;
+            let peer_score = peers.peer_table.get_score(&peer_id).await?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1426,12 +1428,12 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_table.record_success(peer_id).await;
+        peers.peer_table.record_success(&peer_id).await?;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
                 .request_block_headers(block_number + 1, pivot.hash())
-                .await
+                .await?
                 .ok_or(SyncError::NoBlockHeaders)?;
             sync_state.process_incoming_headers(block_headers).await?;
         } else {
@@ -1518,6 +1520,8 @@ pub enum SyncError {
     CorruptPath,
     #[error("Bytecode file error")]
     BytecodeFileError,
+    #[error("Error in Peer Table: {0}")]
+    PeerTableError(#[from] PeerTableError),
 }
 
 impl<T> From<SendError<T>> for SyncError {
