@@ -118,7 +118,7 @@ async fn migrate_libmdbx_to_rocksdb(
         let block_number = header.number;
         let block = Block::new(header, body);
 
-        let block_hash() = block.hash();
+        let block_hash = block.hash();
         blockchain
             .add_block(block)
             .await
