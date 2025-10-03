@@ -11,8 +11,8 @@ use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    kademlia::Kademlia,
-    network::{P2PContext, peer_table},
+    discv4::peer_table::{PeerTable, PeerTableHandle},
+    network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
@@ -42,12 +42,9 @@ use tracing_subscriber::{
 };
 
 // Compile-time check to ensure that at least one of the database features is enabled.
-#[cfg(any(
-    not(any(feature = "rocksdb", feature = "libmdbx")),
-    all(feature = "rocksdb", feature = "libmdbx")
-))]
+#[cfg(not(feature = "rocksdb"))]
 const _: () = {
-    compile_error!("Either the `rocksdb` or `libmdbx` feature must be enabled.");
+    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
@@ -113,8 +110,6 @@ pub fn open_store(datadir: &Path) -> Store {
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
-        #[cfg(feature = "libmdbx")]
-        let engine_type = EngineType::Libmdbx;
         #[cfg(feature = "metrics")]
         ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")
@@ -214,7 +209,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_handler.peer_table.peers.clone(),
+        peer_handler.peer_table,
     ));
 }
 
@@ -413,7 +408,12 @@ async fn reset_to_head(store: &Store) -> eyre::Result<()> {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTableHandle,
+    Arc<Mutex<NodeRecord>>,
+)> {
     let datadir = &opts.datadir;
     init_datadir(datadir);
 
@@ -447,7 +447,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_handler = PeerHandler::new(PeerTable::spawn());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();

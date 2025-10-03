@@ -1,7 +1,5 @@
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, trie_db::layering::apply_prefix};
@@ -45,8 +43,6 @@ pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
@@ -85,12 +81,6 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -1413,12 +1403,6 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_store() {
         test_store_suite(EngineType::InMemory).await;
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[tokio::test]
-    async fn test_libmdbx_store() {
-        test_store_suite(EngineType::Libmdbx).await;
     }
 
     #[cfg(feature = "rocksdb")]

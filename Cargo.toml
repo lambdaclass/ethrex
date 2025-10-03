@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "cmd/ethrex",
-  "cmd/ethrex_replay",
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
@@ -29,9 +28,9 @@ members = [
   "tooling/load_test",
   "tooling/loc",
   "tooling/archive_sync",
-  "tooling/testpathbased",
   "crates/common/config",
   "tooling/reorgs",
+  "tooling/migrations",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
 resolver = "2"
@@ -84,7 +83,6 @@ ethereum-types = { version = "0.15.1", features = ["serialize"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
 serde_json = "1.0.117"
-libmdbx = { version = "=0.5.3", features = ["orm"] }
 bytes = { version = "1.6.0", features = ["serde"] }
 tokio = { version = "1.41.1", default-features = false }
 thiserror = "2.0.9"
