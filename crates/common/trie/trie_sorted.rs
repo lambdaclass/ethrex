@@ -312,10 +312,10 @@ mod test {
     use ethereum_types::U256;
     use ethrex_rlp::encode::RLPEncode;
 
-    use crate::Trie;
+    use crate::{InMemoryTrieDB, Trie};
 
     use super::*;
-    use std::{collections::BTreeMap, str::FromStr};
+    use std::{collections::BTreeMap, str::FromStr, sync::Mutex};
 
     fn generate_input_1() -> BTreeMap<H256, Vec<u8>> {
         let mut accounts: BTreeMap<H256, Vec<u8>> = BTreeMap::new();
@@ -367,6 +367,23 @@ mod test {
         accounts
     }
 
+    fn generate_input_5() -> BTreeMap<H256, Vec<u8>> {
+        let mut accounts: BTreeMap<H256, Vec<u8>> = BTreeMap::new();
+        for (string, value) in [
+            (
+                "290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563",
+                U256::from_str("1191240792495687806002885977912460542139236513636").unwrap(),
+            ),
+            (
+                "295841a49a1089f4b560f91cfbb0133326654dcbb1041861fc5dde96c724a22f",
+                U256::from(480),
+            ),
+        ] {
+            accounts.insert(H256::from_str(string).unwrap(), value.encode_to_vec());
+        }
+        accounts
+    }
+
     fn generate_input_slots_1() -> BTreeMap<H256, U256> {
         let mut slots: BTreeMap<H256, U256> = BTreeMap::new();
         for string in [
@@ -380,7 +397,8 @@ mod test {
     }
 
     pub fn run_test_account_state(accounts: BTreeMap<H256, Vec<u8>>) {
-        let trie = Trie::stateless();
+        let computed_data = Arc::new(Mutex::new(BTreeMap::new()));
+        let trie = Trie::new(Box::new(InMemoryTrieDB::new(computed_data.clone())));
         let db = trie.db();
         let tested_trie_hash: H256 = trie_from_sorted_accounts_wrap(
             db,
@@ -391,13 +409,21 @@ mod test {
         )
         .expect("Shouldn't have errors");
 
-        let mut trie: Trie = Trie::empty_in_memory();
+        let expected_data = Arc::new(Mutex::new(BTreeMap::new()));
+        let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(expected_data.clone())));
         for account in accounts.iter() {
             trie.insert(account.0.as_bytes().to_vec(), account.1.encode_to_vec())
                 .unwrap();
         }
 
-        assert!(tested_trie_hash == trie.hash_no_commit())
+        assert_eq!(tested_trie_hash, trie.hash().unwrap());
+
+        let computed_data = computed_data.lock().unwrap();
+        let expected_data = expected_data.lock().unwrap();
+        for (k, v) in computed_data.iter() {
+            assert!(expected_data.contains_key(k));
+            assert_eq!(*v, expected_data[k]);
+        }
     }
 
     pub fn run_test_storage_slots(slots: BTreeMap<H256, U256>) {
@@ -441,6 +467,11 @@ mod test {
     #[test]
     fn test_4() {
         run_test_account_state(generate_input_4());
+    }
+
+    #[test]
+    fn test_5() {
+        run_test_account_state(generate_input_5());
     }
 
     #[test]
