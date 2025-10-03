@@ -90,7 +90,7 @@ contract CommonBridge is
     /// @notice The L1 token address that is treated as the one to be bridged to the L2.
     /// @dev If set to address(0), ETH is considered the native token.
     /// Otherwise, this address is used for native token deposits and withdrawals.
-    address public NATIVE_TOKEN_L1_ADDRESS;
+    address public NATIVE_TOKEN;
 
     modifier onlyOnChainProposer() {
         require(
@@ -106,12 +106,12 @@ contract CommonBridge is
     /// @param owner the address of the owner who can perform upgrades.
     /// @param onChainProposer the address of the OnChainProposer contract.
     /// @param inclusionMaxWait the maximum time the sequencer is allowed to take without processing a privileged transaction.
-    /// @param _nativeTokenL1Address the address of the native token on L1, or address(0) if ETH is the native token.
+    /// @param _nativeToken the address of the native token on L1, or address(0) if ETH is the native token.
     function initialize(
         address owner,
         address onChainProposer,
         uint256 inclusionMaxWait,
-        address _nativeTokenL1Address
+        address _nativeToken
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -124,7 +124,7 @@ contract CommonBridge is
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
-        NATIVE_TOKEN_L1_ADDRESS = _nativeTokenL1Address;
+        NATIVE_TOKEN = _nativeToken;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -220,7 +220,7 @@ contract CommonBridge is
         uint256 value;
 
         // Here we define value depending on whether the native token is ETH or an ERC20
-        if (NATIVE_TOKEN_L1_ADDRESS == address(0)) {
+        if (NATIVE_TOKEN == address(0)) {
             require(
                 msg.value > 0,
                 "CommonBridge: the native token is ETH, msg.value must be greater than zero"
@@ -246,11 +246,7 @@ contract CommonBridge is
             value = _amount;
 
             // We lock the tokens in the bridge contract
-            IERC20(NATIVE_TOKEN_L1_ADDRESS).transferFrom(
-                msg.sender,
-                address(this),
-                value
-            );
+            IERC20(NATIVE_TOKEN).transferFrom(msg.sender, address(this), value);
         }
 
         deposits[ETH_TOKEN][ETH_TOKEN] += value;
@@ -282,7 +278,7 @@ contract CommonBridge is
     ) external whenNotPaused {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
         require(
-            tokenL1 != NATIVE_TOKEN_L1_ADDRESS,
+            tokenL1 != NATIVE_TOKEN,
             "CommonBridge: tokenL1 is the native token address, use deposit() instead"
         );
         deposits[tokenL1][tokenL2] += amount;
@@ -389,17 +385,14 @@ contract CommonBridge is
             withdrawalProof
         );
 
-        if (NATIVE_TOKEN_L1_ADDRESS == address(0)) {
+        if (NATIVE_TOKEN == address(0)) {
             (bool success, ) = payable(msg.sender).call{value: claimedAmount}(
                 ""
             );
 
             require(success, "CommonBridge: failed to send the claimed amount");
         } else {
-            IERC20(NATIVE_TOKEN_L1_ADDRESS).safeTransfer(
-                msg.sender,
-                claimedAmount
-            );
+            IERC20(NATIVE_TOKEN).safeTransfer(msg.sender, claimedAmount);
         }
     }
 
@@ -418,7 +411,7 @@ contract CommonBridge is
         );
 
         require(
-            tokenL1 != NATIVE_TOKEN_L1_ADDRESS,
+            tokenL1 != NATIVE_TOKEN,
             "CommonBridge: attempted to withdraw the native token as if it were ERC20, use claimWithdrawal() instead"
         );
 
