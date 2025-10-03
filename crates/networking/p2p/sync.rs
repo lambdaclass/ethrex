@@ -2,6 +2,7 @@ mod code_collector;
 mod state_healing;
 mod storage_healing;
 
+use crate::discv4::peer_table::PeerTableError;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
@@ -55,6 +56,12 @@ const BYTECODE_CHUNK_SIZE: usize = 50_000;
 /// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
 /// that are unlikely to be re-orged.
 const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
+
+/// Searching for pending blocks to include during syncing can potentially slow down block processing if we have a large chain of pending blocks.
+/// For example, if we are syncing from genesis, it might take a while until this chain connects, but the searching for pending blocks loop will
+/// happen each time we process a batch of blocks, and can potentially take long, that's why we just limit this check to 32 blocks.
+/// Eventually we will implement some in-memory structure to make this check easy.
+const PENDING_BLOCKS_RETRIEVAL_LIMIT: usize = 32;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -149,7 +156,8 @@ impl Syncer {
                     start_time.elapsed().as_secs()
                 );
             }
-            Err(error) => warn!(
+            // TODO #2767: If the error is irrecoverable, we should exit ethrex
+            Err(error) => error!(
                 "Sync cycle failed due to {error}, time elapsed: {} secs ",
                 start_time.elapsed().as_secs()
             ),
@@ -209,7 +217,7 @@ impl Syncer {
             let Some(mut block_headers) = self
                 .peers
                 .request_block_headers(current_head_number, sync_head)
-                .await
+                .await?
             else {
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
@@ -307,7 +315,7 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store.clone(), &mut block_sync_state).await?;
+            self.snap_sync(&store, &mut block_sync_state).await?;
 
             store.clear_snap_state().await?;
 
@@ -335,6 +343,16 @@ impl Syncer {
             current_head, sync_head
         );
 
+        // Try syncing backwards from the sync_head to find a common ancestor
+        if self
+            .synced_new_to_old(&mut block_sync_state, sync_head, store)
+            .await?
+        {
+            return Ok(());
+        }
+        // synced_new_to_old returns true in case syncing was finished from NewToOld or if the requested headers were None
+        // if sync_finished is false that means we are more than 1024 blocks behind so, for now, we go back to syncing as it follows.
+        // TODO: Have full syncing always be from NewToOld, issue: https://github.com/lambdaclass/ethrex/issues/4717
         loop {
             debug!("Sync Log 1: In Full Sync");
             debug!(
@@ -346,12 +364,12 @@ impl Syncer {
                 block_sync_state.current_blocks.len()
             );
 
-            debug!("Requesting Block Headers from {current_head}");
+            debug!("Requesting Block Headers from OldToNew from current_head {current_head}");
 
             let Some(mut block_headers) = self
                 .peers
                 .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
-                .await
+                .await?
             else {
                 warn!("Sync failed to find target block header, aborting");
                 debug!("Sync Log 8: Sync failed to find target block header, aborting");
@@ -369,6 +387,7 @@ impl Syncer {
                 Some(header) => (header.hash(), header.number),
                 None => continue,
             };
+
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_hash == last_block_hash
@@ -424,7 +443,86 @@ impl Syncer {
                 break;
             };
         }
+
         Ok(())
+    }
+
+    /// Tries to perform syncing going backwards from the sync_head with one batch of requested headers.
+    /// This is to cover the case where we are on a sidechain and the peer doesn't have our current_head
+    /// so when requesting headers from our current_head on we get None and we never get to finish syncing.
+    /// For more context go to the PR https://github.com/lambdaclass/ethrex/pull/4676
+    ///
+    /// # Returns
+    ///
+    /// Returns an error if the sync fails at any given step and aborts all active processes
+    /// otherwise returns true whether syncing was finished or in case the request of headers returned None,
+    /// otherwise returns false, this means we couldn't find a common ancestor within the requested headers,
+    /// which in turn means the chain is more than 1024 blocks behind.
+    async fn synced_new_to_old(
+        &mut self,
+        block_sync_state: &mut FullBlockSyncState,
+        sync_head: H256,
+        store: Store,
+    ) -> Result<bool, SyncError> {
+        debug!("Sync Log 1: In Full Sync");
+        debug!(
+            "Sync Log 3: State current headers len {}",
+            block_sync_state.current_headers.len()
+        );
+        debug!(
+            "Sync Log 4: State current blocks len {}",
+            block_sync_state.current_blocks.len()
+        );
+
+        debug!("Requesting Block Headers from NewToOld from sync_head {sync_head}");
+
+        // Get oldest pending block to use in the request for headers
+        let mut requested_header = sync_head;
+        while let Some(block) = store.get_pending_block(requested_header).await? {
+            requested_header = block.header.parent_hash;
+        }
+
+        let Some(mut block_headers) = self
+            .peers
+            .request_block_headers_from_hash(requested_header, BlockRequestOrder::NewToOld)
+            .await?
+        else {
+            // sync_head or sync_head parent was not found
+            warn!("Sync failed to find target block header, aborting");
+            debug!("Sync Log 8: Sync failed to find target block header, aborting");
+            return Ok(true);
+        };
+
+        debug!("Sync Log 9: Received {} block headers", block_headers.len());
+
+        let mut found_common_ancestor = false;
+        for i in 0..block_headers.len() {
+            if store
+                .get_block_by_hash(block_headers[i].hash())
+                .await?
+                .is_some()
+            {
+                block_headers.drain(i..);
+                found_common_ancestor = true;
+                break;
+            }
+        }
+
+        if found_common_ancestor {
+            block_headers.reverse();
+            block_sync_state
+                .process_incoming_headers(
+                    block_headers,
+                    sync_head,
+                    true, // sync_head_found is true because of the NewToOld headers request
+                    self.blockchain.clone(),
+                    self.peers.clone(),
+                    self.cancel_token.clone(),
+                )
+                .await?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Executes the given blocks and stores them
@@ -466,7 +564,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
+        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
@@ -489,12 +587,12 @@ async fn store_block_bodies(
 #[allow(unused)]
 async fn store_receipts(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Receipts ");
-        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await {
+        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await? {
             debug!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
             for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
@@ -608,7 +706,7 @@ impl FullBlockSyncState {
             &self.current_headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, self.current_headers.len())];
         let bodies = peers
             .request_and_validate_block_bodies(headers)
-            .await
+            .await?
             .ok_or(SyncError::BodiesNotFound)?;
         debug!("Obtained: {} block bodies", bodies.len());
         let blocks = self
@@ -619,16 +717,32 @@ impl FullBlockSyncState {
         self.current_blocks.extend(blocks);
         // }
 
-        // If we have the sync_head as a pending block from a new_payload request and its parent_hash matches the hash of the latest received header
-        // we set the sync_head as found. Then we add it in current_blocks for execution.
-        if let Some(block) = self.store.get_pending_block(sync_head).await? {
-            if let Some(last_block) = self.current_blocks.last() {
-                if last_block.hash() == block.header.parent_hash {
-                    self.current_blocks.push(block);
-                    sync_head_found = true;
-                }
+        // We check if we have pending blocks we didn't request that are needed for syncing
+        // Then we add it in current_blocks for execution.
+        let mut pending_block_to_sync = vec![];
+        let mut last_header_to_sync = sync_head;
+        let mut pending_blocks_retieved = 0;
+        while let Some(block) = self.store.get_pending_block(last_header_to_sync).await? {
+            let block_parent = block.header.parent_hash;
+            if self
+                .current_blocks
+                .last()
+                .is_some_and(|block| block.hash() == block_parent)
+            {
+                pending_block_to_sync.push(block);
+                sync_head_found = true;
+                pending_block_to_sync.reverse();
+                self.current_blocks.extend(pending_block_to_sync);
+                break;
             }
+            pending_block_to_sync.push(block);
+            last_header_to_sync = block_parent;
+            if pending_blocks_retieved > PENDING_BLOCKS_RETRIEVAL_LIMIT {
+                break;
+            }
+            pending_blocks_retieved += 1;
         }
+
         // Execute full blocks
         // while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
         //     || (!self.current_blocks.is_empty() && sync_head_found)
@@ -803,20 +917,21 @@ impl SnapBlockSyncState {
 /// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
 /// Logs with where the function was when it found this error
 /// TODO: remove this function once peer table has moved to spawned implementation
-async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
-    if peer_handler.peer_table.free_peers().await != 0 {
+async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) -> Result<(), SyncError> {
+    if peer_handler.peer_table.free_peers().await? != 0 {
         let step = METRICS.current_step.lock().await.clone();
         error!(
             step = step,
             "Found peers marked as used even though we just finished this step"
         );
-    }
+    };
+    Ok(())
 }
 
 impl Syncer {
     async fn snap_sync(
         &mut self,
-        store: Store,
+        store: &Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
@@ -874,7 +989,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-            free_peers_and_log_if_not_empty(&self.peers).await;
+            free_peers_and_log_if_not_empty(&mut self.peers).await?;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -986,7 +1101,7 @@ impl Syncer {
                 {
                     continue;
                 };
-                free_peers_and_log_if_not_empty(&self.peers).await;
+                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -1002,7 +1117,7 @@ impl Syncer {
                     )
                     .await
                     .map_err(SyncError::PeerHandler)?;
-                free_peers_and_log_if_not_empty(&self.peers).await;
+                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -1121,9 +1236,9 @@ impl Syncer {
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_storage_leafs_healed,
             )
-            .await;
+            .await?;
 
-            free_peers_and_log_if_not_empty(&self.peers).await;
+            free_peers_and_log_if_not_empty(&mut self.peers).await?;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1291,11 +1406,11 @@ pub async fn update_pivot(
     loop {
         let (peer_id, mut peer_channel) = peers
             .peer_table
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES)
-            .await
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+            .await?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peers.peer_table.get_score(&peer_id).await;
+        let peer_score = peers.peer_table.get_score(&peer_id).await?;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1305,8 +1420,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_table.record_failure(peer_id).await;
-            let peer_score = peers.peer_table.get_score(&peer_id).await;
+            peers.peer_table.record_failure(&peer_id).await?;
+            let peer_score = peers.peer_table.get_score(&peer_id).await?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1314,12 +1429,12 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_table.record_success(peer_id).await;
+        peers.peer_table.record_success(&peer_id).await?;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
                 .request_block_headers(block_number + 1, pivot.hash())
-                .await
+                .await?
                 .ok_or(SyncError::NoBlockHeaders)?;
             sync_state.process_incoming_headers(block_headers).await?;
         } else {
@@ -1406,6 +1521,8 @@ pub enum SyncError {
     CorruptPath,
     #[error("Bytecode file error")]
     BytecodeFileError,
+    #[error("Error in Peer Table: {0}")]
+    PeerTableError(#[from] PeerTableError),
 }
 
 impl<T> From<SendError<T>> for SyncError {

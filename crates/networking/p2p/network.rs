@@ -1,10 +1,12 @@
 use crate::{
-    discv4::server::{DiscoveryServer, DiscoveryServerError},
-    kademlia::{Kademlia, PeerData},
+    discv4::{
+        peer_table::{PeerData, PeerTableHandle},
+        server::{DiscoveryServer, DiscoveryServerError},
+    },
     metrics::METRICS,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
-        initiator::{RLPxInitiator, RLPxInitiatorError},
+        initiator::RLPxInitiator,
         l2::l2_connection::P2PBasedContext,
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -13,12 +15,10 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{
-    collections::BTreeMap,
     io,
     net::SocketAddr,
     sync::{Arc, atomic::Ordering},
@@ -37,7 +37,7 @@ pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 pub struct P2PContext {
     pub tracker: TaskTracker,
     pub signer: SecretKey,
-    pub table: Kademlia,
+    pub table: PeerTableHandle,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: RLPxConnBroadcastSender,
@@ -55,7 +55,7 @@ impl P2PContext {
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
         signer: SecretKey,
-        peer_table: Kademlia,
+        peer_table: PeerTableHandle,
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
@@ -92,14 +92,8 @@ impl P2PContext {
 pub enum NetworkError {
     #[error("Failed to start discovery server: {0}")]
     DiscoveryServerError(#[from] DiscoveryServerError),
-    #[error("Failed to start RLPx Initiator: {0}")]
-    RLPxInitiatorError(#[from] RLPxInitiatorError),
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
-}
-
-pub fn peer_table() -> Kademlia {
-    Kademlia::new()
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
@@ -121,11 +115,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         error!("Failed to start discovery server: {e}");
     })?;
 
-    RLPxInitiator::spawn(context.clone())
-        .await
-        .inspect_err(|e| {
-            error!("Failed to start RLPx Initiator: {e}");
-        })?;
+    RLPxInitiator::spawn(context.clone()).await;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
@@ -170,15 +160,15 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 
 pub async fn periodically_show_peer_stats(
     blockchain: Arc<Blockchain>,
-    peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
+    mut peer_table: PeerTableHandle,
 ) {
-    periodically_show_peer_stats_during_syncing(blockchain, peers.clone()).await;
-    periodically_show_peer_stats_after_sync(peers).await;
+    periodically_show_peer_stats_during_syncing(blockchain, &mut peer_table).await;
+    periodically_show_peer_stats_after_sync(&mut peer_table).await;
 }
 
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
-    peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
+    peer_table: &mut PeerTableHandle,
 ) {
     let start = std::time::Instant::now();
     loop {
@@ -195,7 +185,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
             // Common metrics
             let elapsed = format_duration(start.elapsed());
-            let peer_number = peers.lock().await.len();
+            let peer_number = peer_table.peer_count().await.unwrap_or(0);
             let current_step = METRICS.current_step.lock().await.clone();
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
@@ -376,12 +366,12 @@ bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_down
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
-pub async fn periodically_show_peer_stats_after_sync(peers: Arc<Mutex<BTreeMap<H256, PeerData>>>) {
+pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTableHandle) {
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
         // clone peers to keep the lock short
-        let peers: Vec<PeerData> = peers.lock().await.values().cloned().collect();
+        let peers: Vec<PeerData> = peer_table.get_peers_data().await.unwrap_or(Vec::new());
         let active_peers = peers
             .iter()
             .filter(|peer| -> bool { peer.channels.as_ref().is_some() })

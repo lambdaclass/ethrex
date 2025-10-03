@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io
+		load-test-fibonacci load-test-io run-hive-eest-blobs
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -12,7 +12,7 @@ lint: ## 🧹 Linter check
 	# Note that we are compiling without the "gpu" feature (see #4048 for why)
 	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
 	cargo clippy --all-targets -F debug,risc0,sp1,sync-test \
-		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
+		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
 		--release -- -D warnings
 
 CRATE ?= *
@@ -123,8 +123,11 @@ run-hive-eest: build-image setup-hive ## 🧪 Generic command for running Hive E
 run-hive-eest-engine: ## Run hive EEST Engine tests
 	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-engine
 
-run-hive-eest-rlp: ## Run hive EEST Engine tests
+run-hive-eest-rlp: ## Run hive EEST RLP tests
 	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-rlp
+
+run-hive-eest-blobs: ## Run hive EEST Blobs tests
+	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/execute-blobs
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
@@ -133,14 +136,8 @@ view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
 	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
-	@if [ -z "$$L" ]; then \
-		LEVM="revm"; \
-		echo "Running the test-node without the LEVM feature"; \
-		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
-	else \
-		LEVM="levm"; \
-		echo "Running the test-node with the LEVM feature"; \
-	fi; \
+	echo "Running the test-node with LEVM"; \
+
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
 	-- \
