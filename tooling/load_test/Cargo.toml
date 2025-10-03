@@ -21,7 +21,7 @@ ethrex-l2-rpc = { workspace = true, default-features = false }
 
 clap.workspace = true
 hex.workspace = true
-secp256k1.workspace = true                        # FIXME
+secp256k1.workspace = true
 ethereum-types.workspace = true
 eyre.workspace = true
 tokio = { workspace = true, features = ["full"] }

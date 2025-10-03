@@ -45,7 +45,7 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
 # Clients
 envy = "0.4.2"
 thiserror.workspace = true
-secp256k1.workspace = true # FIXME
+secp256k1.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

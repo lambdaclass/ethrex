@@ -16,7 +16,6 @@ serde.workspace = true
 
 ethrex-common.workspace = true
 
-
 prometheus = { version = "0.13.4", features = ["process"], optional = true }
 axum = { workspace = true, optional = true }
 tracing-subscriber.workspace = true

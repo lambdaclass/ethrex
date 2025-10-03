@@ -13,8 +13,6 @@ ethrex-common = { workspace = true, default-features = false }
 ethrex-storage = { workspace = true, default-features = false }
 ethrex-vm = { workspace = true, default-features = false }
 
-secp256k1.workspace = true # FIXME
-
 thiserror.workspace = true
 sha3.workspace = true
 tracing.workspace = true

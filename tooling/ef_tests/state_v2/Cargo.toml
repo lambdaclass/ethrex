@@ -20,7 +20,7 @@ ethrex-storage = { workspace = true, default-features = false }
 ethrex-l2-rpc = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
 
-secp256k1.workspace = true                        # FIXME
+secp256k1.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true

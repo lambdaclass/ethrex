@@ -19,7 +19,7 @@ ethrex-sdk-contract-utils = { path = "contract_utils" }
 ethereum-types.workspace = true
 tokio.workspace = true
 hex.workspace = true
-secp256k1.workspace = true      # FIXME
+secp256k1.workspace = true
 itertools = "0.13.0"
 thiserror.workspace = true
 serde_json.workspace = true

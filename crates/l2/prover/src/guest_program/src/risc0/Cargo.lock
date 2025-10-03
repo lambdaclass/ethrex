@@ -1124,7 +1124,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
- "secp256k1",
  "sha3",
  "thiserror",
  "tokio",

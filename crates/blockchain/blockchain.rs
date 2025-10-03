@@ -661,7 +661,15 @@ impl Blockchain {
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
-        let sender = transaction.sender()?;
+        // FIXME: This error should be hanlded but the error is from secp256k1
+        // and we need this library to compile for both secp256k1 & k256 crates.
+        // For now, we opted to remove the secp256k1 dep to avoid the addition of
+        // feature flags.
+        // The correct thing to do here is to wrap the error so this crate doesn't
+        // need to import secp256k1.
+        let sender = transaction
+            .sender()
+            .expect("FIXME: wrap the secp256k1::Error instead");
 
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
@@ -698,7 +706,15 @@ impl Blockchain {
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
-        let sender = transaction.sender()?;
+        // FIXME: This error should be hanlded but the error is from secp256k1
+        // and we need this library to compile for both secp256k1 & k256 crates.
+        // For now, we opted to remove the secp256k1 dep to avoid the addition of
+        // feature flags.
+        // The correct thing to do here is to wrap the error so this crate doesn't
+        // need to import secp256k1.
+        let sender = transaction
+            .sender()
+            .expect("FIXME: wrap the secp256k1::Error instead");
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
