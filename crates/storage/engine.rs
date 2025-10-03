@@ -261,7 +261,8 @@ impl StoreEngine {
             for number in numbers {
                 let Some(hash) = txn
                     .get(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?
-                    .map(|bytes| H256::from_slice(&bytes))
+                    .map(|bytes| H256::decode(bytes.as_slice()))
+                    .transpose()?
                 else {
                     return Err(StoreError::Custom(format!(
                         "Block hash not found for number: {number}"
@@ -453,7 +454,8 @@ impl StoreEngine {
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().as_slice(),
                     )?
-                    .map(|bytes| H256::from_slice(&bytes))
+                    .map(|bytes| H256::decode(bytes.as_slice()))
+                    .transpose()?
                 };
 
                 if canonical_hash == Some(block_hash) {
@@ -598,8 +600,9 @@ impl StoreEngine {
                     CANONICAL_BLOCK_HASHES,
                     block_number.to_le_bytes().as_slice(),
                 )?
-                .map(|bytes| Ok(H256::from_slice(&bytes)))
+                .map(|bytes| H256::decode(bytes.as_slice()))
                 .transpose()
+                .map_err(StoreError::from)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -778,7 +781,7 @@ impl StoreEngine {
 
             if let Some(canonical_blocks) = new_canonical_blocks {
                 for (block_number, block_hash) in canonical_blocks {
-                    let head_value = block_hash.as_bytes().to_vec();
+                    let head_value = block_hash.encode_to_vec();
                     batch_items.push((
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().to_vec(),
@@ -792,7 +795,7 @@ impl StoreEngine {
             }
 
             // Make head canonical
-            let head_value = head_hash.as_bytes().to_vec();
+            let head_value = head_hash.encode_to_vec();
             batch_items.push((
                 CANONICAL_BLOCK_HASHES,
                 head_number.to_le_bytes().to_vec(),
@@ -873,8 +876,9 @@ impl StoreEngine {
         self.backend
             .begin_read()?
             .get(SNAP_STATE, &key)?
-            .map(|bytes| Ok(H256::from_slice(&bytes)))
+            .map(|bytes| H256::decode(bytes.as_slice()))
             .transpose()
+            .map_err(StoreError::from)
     }
 
     /// Sets the last key fetched from the state trie being fetched during snap sync
@@ -994,7 +998,7 @@ impl StoreEngine {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
-        let value = latest_valid.as_bytes().to_vec();
+        let value = latest_valid.encode_to_vec();
         self.write_async(INVALID_CHAINS, bad_block.as_bytes().to_vec(), value)
             .await
     }
@@ -1007,8 +1011,9 @@ impl StoreEngine {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_async(INVALID_CHAINS, block.as_bytes().to_vec())
             .await?
-            .map(|bytes| Ok(H256::from_slice(&bytes)))
+            .map(|bytes| H256::decode(bytes.as_slice()))
             .transpose()
+            .map_err(StoreError::from)
     }
 
     /// Obtain block number for a given hash
@@ -1037,8 +1042,9 @@ impl StoreEngine {
             CANONICAL_BLOCK_HASHES,
             block_number.to_le_bytes().as_slice(),
         )?
-        .map(|bytes| Ok(H256::from_slice(&bytes)))
+        .map(|bytes| H256::decode(bytes.as_slice()))
         .transpose()
+        .map_err(StoreError::from)
     }
 
     pub async fn write_storage_trie_nodes_batch(
