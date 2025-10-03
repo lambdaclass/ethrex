@@ -33,8 +33,7 @@ async fn main() {
 
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
 
-    // TODO: this test is failing
-    // run_test(&cmd_path, test_many_blocks_reorg).await;
+    run_test(&cmd_path, test_many_blocks_reorg).await;
 }
 
 async fn get_ethrex_version(cmd_path: &Path) -> String {
