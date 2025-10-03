@@ -227,6 +227,7 @@ jobs:
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           COMPILE_CONTRACTS=true \
+          ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE=0x0 \
           docker compose up contract_deployer
 
       - name: Copy env to host
