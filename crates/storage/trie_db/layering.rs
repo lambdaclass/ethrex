@@ -94,6 +94,12 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 }
 
 impl TrieDB for TrieWrapper {
+    fn leaves_present(&self) -> bool {
+        let Ok(inner) = self.inner.read() else {
+            return false;
+        };
+        inner.counter > 1 // heruistic
+    }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
         if let Some(value) = self

@@ -106,6 +106,7 @@ impl Trie {
             }
             return Ok(Some(value_rlp));
         }
+
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => Node::decode(

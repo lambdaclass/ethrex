@@ -15,7 +15,8 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, OptimisticTransactionDB, Options, WriteBatch, WriteBatchWithTransaction
+    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode,
+    MultiThreaded, OptimisticTransactionDB, Options, WriteBatch, WriteBatchWithTransaction,
 };
 use std::{
     collections::HashSet,
@@ -1499,7 +1500,7 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    async fn delete_range_batch(&self, ranges: Vec<(Nibbles,Nibbles)>) -> Result<(), StoreError> {
+    async fn delete_range_batch(&self, ranges: Vec<(Nibbles, Nibbles)>) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatch::default();

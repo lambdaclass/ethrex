@@ -302,6 +302,7 @@ async fn heal_state_trie(
                         .open_direct_state_trie(*EMPTY_TRIE_HASH)
                         .expect("Store should open");
                     let db = trie_db.db();
+                    encoded_to_write.retain(|path, _| path.len() < 32);
                     db.put_batch(encoded_to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
                     info!(
@@ -395,55 +396,6 @@ async fn perform_needed_deletions(
     // Nodes should be in the DB only if their children are also in the DB.
     for i in 0..node_path.len() {
         nodes_to_write.insert(node_path.slice(0, i), vec![]);
-    }
-    if let Some(Node::Leaf(leaf)) = previous {
-        nodes_to_write.insert(node_path.concat(leaf.partial), vec![]);
-        return Ok(());
-    }
-    match node {
-        Node::Branch(node) => {
-            let children = node
-                .choices
-                .iter()
-                .enumerate()
-                .filter(|(_, child)| !child.is_valid())
-                .filter(|(choice, _)| match &previous {
-                    Some(Node::Branch(previous)) => previous.choices[*choice].is_valid(),
-                    Some(Node::Extension(previous)) => {
-                        previous.prefix != Nibbles::from_hex(vec![*choice as u8])
-                    }
-                    Some(Node::Leaf(_)) => false,
-                    None => true,
-                })
-                .map(|(choice, _)| choice as u8)
-                .collect();
-            ranges_to_delete
-                .append(&mut store.get_ranges_to_delete_in_subtree(node_path.clone(), children)?);
-        }
-        Node::Extension(node) => {
-            // An extension node is equivalent to a series of branch nodes with only
-            // one valid child each, so we remove all the empty siblings on the path.
-            let (first, second) = compute_subtree_ranges(&node_path, &node.prefix);
-
-            if !first.is_empty() {
-                ranges_to_delete.push((first.start, first.end));
-            }
-            if !second.is_empty() {
-                ranges_to_delete.push((second.start, second.end));
-            }
-        }
-        Node::Leaf(node) => {
-            // An extension node is equivalent to a series of branch nodes with only
-            // one valid child each, so we remove all the empty siblings on the path.
-            let (first, second) = compute_subtree_ranges(&node_path, &node.partial);
-
-            if !first.is_empty() {
-                ranges_to_delete.push((first.start, first.end));
-            }
-            if !second.is_empty() {
-                ranges_to_delete.push((second.start, second.end));
-            }
-        }
     }
     Ok(())
 }

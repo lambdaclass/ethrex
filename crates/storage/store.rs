@@ -1316,7 +1316,7 @@ impl Store {
         &self,
         root: Nibbles,
         mut children: Vec<u8>,
-    ) -> Result<Vec<(Nibbles,Nibbles)>, StoreError> {
+    ) -> Result<Vec<(Nibbles, Nibbles)>, StoreError> {
         children.sort();
         children.dedup();
 
@@ -1344,7 +1344,10 @@ impl Store {
     }
 
     /// Removes entries in the range [from, to)
-    pub async fn delete_range_batch(&self, ranges: Vec<(Nibbles,Nibbles)>) -> Result<(), StoreError> {
+    pub async fn delete_range_batch(
+        &self,
+        ranges: Vec<(Nibbles, Nibbles)>,
+    ) -> Result<(), StoreError> {
         self.engine.delete_range_batch(ranges).await
     }
 
