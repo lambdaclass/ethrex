@@ -1,7 +1,6 @@
 use ethrex_common::types::Block;
 use ethrex_common::types::ChainConfig;
 use ethrex_common::types::blobs_bundle;
-use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_config::networks::Network;
 use ethrex_rpc::debug::execution_witness::RpcExecutionWitness;
 use eyre::OptionExt;
@@ -23,7 +22,6 @@ pub struct L2Fields {
     pub blob_commitment: blobs_bundle::Commitment,
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
-    pub fee_config: FeeConfig,
 }
 /// Structure holding input data needed to execute or prove blocks.
 /// Optional fields are included only when relevant (e.g. L2 or custom chain).
@@ -77,11 +75,18 @@ impl Cache {
         witness: RpcExecutionWitness,
         chain_config: ChainConfig,
         dir: PathBuf,
-        l2_fields: Option<L2Fields>,
     ) -> Self {
         let network = network_from_chain_id(chain_config.chain_id);
         #[cfg(feature = "l2")]
+        let l2_fields = Some(L2Fields {
+            blob_commitment: [0u8; 48],
+            blob_proof: [0u8; 48],
+        });
+        #[cfg(feature = "l2")]
         let chain_config = Some(chain_config);
+
+        #[cfg(not(feature = "l2"))]
+        let l2_fields = None;
         #[cfg(not(feature = "l2"))]
         let chain_config = None;
         Self {

@@ -1,6 +1,4 @@
-use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_config::networks::Network;
-use ethrex_l2_rpc::clients::get_fee_vault_address;
 use ethrex_levm::vm::VMType;
 use ethrex_rpc::{
     EthClient,
@@ -20,6 +18,7 @@ use crate::{
     rpc::db::RpcDB,
 };
 
+#[cfg(feature = "l2")]
 use crate::cache::L2Fields;
 #[cfg(feature = "l2")]
 use crate::cache::get_batch_cache_file_name;
@@ -148,15 +147,10 @@ async fn get_blockdata_rpc(
         Err(EthClientError::GetWitnessError(GetWitnessError::RPCError(_))) => {
             warn!("debug_executionWitness endpoint not implemented, using fallback eth_getProof");
 
-            let vm_type = if cfg!(feature = "l2") {
-                let fee_config = FeeConfig {
-                    fee_vault: get_fee_vault_address(&eth_client).await?,
-                    ..Default::default()
-                };
-                VMType::L2(fee_config)
-            } else {
-                VMType::L1
-            };
+            #[cfg(feature = "l2")]
+            let vm_type = VMType::L2;
+            #[cfg(not(feature = "l2"))]
+            let vm_type = VMType::L1;
 
             info!(
                 "Caching callers and recipients state for block {}",
@@ -207,25 +201,11 @@ async fn get_blockdata_rpc(
         format_duration(&execution_witness_retrieval_duration)
     );
 
-    let l2_fields = if cfg!(feature = "l2") {
-        Some(L2Fields {
-            blob_commitment: [0u8; 48],
-            blob_proof: [0u8; 48],
-            fee_config: FeeConfig {
-                fee_vault: get_fee_vault_address(&eth_client).await?,
-                ..Default::default()
-            },
-        })
-    } else {
-        None
-    };
-
     Ok(Cache::new(
         vec![block],
         witness_rpc,
         chain_config,
         cache_dir,
-        l2_fields,
     ))
 }
 
@@ -239,7 +219,6 @@ async fn fetch_rangedata_from_client(
     from: u64,
     to: u64,
     dir: PathBuf,
-    _fee_config: Option<FeeConfig>,
 ) -> eyre::Result<Cache> {
     info!("Validating RPC chain ID");
 
@@ -306,17 +285,7 @@ async fn fetch_rangedata_from_client(
         format_duration(&execution_witness_retrieval_duration)
     );
 
-    let l2_fields = if cfg!(feature = "l2") {
-        Some(L2Fields {
-            blob_commitment: [0u8; 48],
-            blob_proof: [0u8; 48],
-            fee_config: _fee_config.ok_or_else(|| eyre::eyre!("fee_config is required for L2"))?,
-        })
-    } else {
-        None
-    };
-
-    let cache = Cache::new(blocks, witness_rpc, chain_config, dir, l2_fields);
+    let cache = Cache::new(blocks, witness_rpc, chain_config, dir);
 
     Ok(cache)
 }
@@ -327,7 +296,6 @@ pub async fn get_batchdata(
     network: Network,
     batch_number: u64,
     cache_dir: PathBuf,
-    fee_config: FeeConfig,
 ) -> eyre::Result<Cache> {
     use ethrex_l2_rpc::clients::get_batch_by_number;
 
@@ -346,7 +314,6 @@ pub async fn get_batchdata(
         rpc_batch.batch.first_block,
         rpc_batch.batch.last_block,
         cache_dir,
-        Some(fee_config),
     )
     .await?;
 
@@ -364,7 +331,6 @@ pub async fn get_batchdata(
             .proofs
             .first()
             .unwrap_or(&[0_u8; 48]),
-        fee_config,
     });
 
     cache.write()?;
