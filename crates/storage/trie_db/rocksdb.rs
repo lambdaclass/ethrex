@@ -1,7 +1,9 @@
 use ethrex_common::H256;
-use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
+use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
+
+use crate::trie_db::layering::apply_prefix;
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
@@ -40,39 +42,37 @@ impl RocksDBTrieDB {
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
-    fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
-        match &self.address_prefix {
-            Some(address) => {
-                // For storage tries, prefix with address
-                let mut key = address.as_bytes().to_vec();
-                key.extend_from_slice(node_hash.as_ref());
-                key
-            }
-            None => {
-                // For state trie, use node hash directly
-                node_hash.as_ref().to_vec()
-            }
-        }
+    fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
+        apply_prefix(self.address_prefix, node_hash)
+            .as_ref()
+            .to_vec()
     }
 }
 
 impl TrieDB for RocksDBTrieDB {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle()?;
         let db_key = self.make_key(key);
 
-        self.db
-            .get_cf(&cf, db_key)
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))
+        let res = self
+            .db
+            .get_cf(&cf, &db_key)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
+
+        Ok(res)
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
 
         for (key, value) in key_values {
             let db_key = self.make_key(key);
-            batch.put_cf(&cf, db_key, value);
+            if value.is_empty() {
+                batch.delete_cf(&cf, db_key);
+            } else {
+                batch.put_cf(&cf, db_key, value);
+            }
         }
 
         self.db
@@ -84,7 +84,7 @@ impl TrieDB for RocksDBTrieDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_trie::NodeHash;
+    use ethrex_trie::Nibbles;
     use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
     use tempfile::TempDir;
 
@@ -111,12 +111,12 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
 
         // Test data
-        let node_hash = NodeHash::from(H256::from([1u8; 32]));
+        let node_hash = Nibbles::from_hex(vec![1]);
         let node_data = vec![1, 2, 3, 4, 5];
 
         // Test put_batch
         trie_db
-            .put_batch(vec![(node_hash, node_data.clone())])
+            .put_batch(vec![(node_hash.clone(), node_data.clone())])
             .unwrap();
 
         // Test get
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(retrieved_data, node_data);
 
         // Test get nonexistent
-        let nonexistent_hash = NodeHash::from(H256::from([2u8; 32]));
+        let nonexistent_hash = Nibbles::from_hex(vec![2]);
         assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
     }
 
@@ -152,12 +152,12 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", Some(address)).unwrap();
 
         // Test data
-        let node_hash = NodeHash::from(H256::from([1u8; 32]));
+        let node_hash = Nibbles::from_hex(vec![1]);
         let node_data = vec![1, 2, 3, 4, 5];
 
         // Test put_batch
         trie_db
-            .put_batch(vec![(node_hash, node_data.clone())])
+            .put_batch(vec![(node_hash.clone(), node_data.clone())])
             .unwrap();
 
         // Test get
@@ -189,9 +189,9 @@ mod tests {
 
         // Test data
         let batch_data = vec![
-            (NodeHash::from(H256::from([1u8; 32])), vec![1, 2, 3]),
-            (NodeHash::from(H256::from([2u8; 32])), vec![4, 5, 6]),
-            (NodeHash::from(H256::from([3u8; 32])), vec![7, 8, 9]),
+            (Nibbles::from_hex(vec![1]), vec![1, 2, 3]),
+            (Nibbles::from_hex(vec![1]), vec![4, 5, 6]),
+            (Nibbles::from_hex(vec![1]), vec![7, 8, 9]),
         ];
 
         // Test batch put

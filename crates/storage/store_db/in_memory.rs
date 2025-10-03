@@ -4,13 +4,13 @@ use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::nibbles_to_fixed_size};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-pub type NodeMap = Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -29,7 +29,7 @@ pub struct StoreInner {
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
     pub state_trie_nodes: NodeMap,
     // A storage trie for each hashed account address
-    pub storage_trie_nodes: HashMap<H256, NodeMap>,
+    pub storage_trie_nodes: HashMap<Nibbles, NodeMap>,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores invalid blocks and their latest valid ancestor
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
@@ -73,6 +73,14 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    fn open_direct_storage_trie(&self, _: H256, _: H256) -> Result<Trie, StoreError> {
+        todo!()
+    }
+
+    fn open_direct_state_trie(&self, _: H256) -> Result<Trie, StoreError> {
+        todo!()
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {
@@ -82,7 +90,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in update_batch.account_updates {
-                state_trie_store.insert(node_hash, node_data);
+                state_trie_store.insert(nibbles_to_fixed_size(node_hash), node_data);
             }
         }
 
@@ -94,12 +102,12 @@ impl StoreEngine for Store {
         for (hashed_address, nodes) in update_batch.storage_updates {
             let mut addr_store = store
                 .storage_trie_nodes
-                .entry(hashed_address)
+                .entry(Nibbles::from_bytes(&hashed_address.0))
                 .or_default()
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
+                addr_store.insert(nibbles_to_fixed_size(node_hash), node_data);
             }
         }
 
@@ -401,9 +409,13 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        state_root: H256,
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
-        let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
+        let trie_backend = store
+            .storage_trie_nodes
+            .entry(Nibbles::from_bytes(&hashed_address.0))
+            .or_default();
         let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
         Ok(Trie::open(db, storage_root))
     }
@@ -613,19 +625,19 @@ impl StoreEngine for Store {
 
     async fn write_storage_trie_nodes_batch(
         &self,
-        storage_trie_nodes: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+        storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
         for (hashed_address, nodes) in storage_trie_nodes {
             let mut addr_store = store
                 .storage_trie_nodes
-                .entry(hashed_address)
+                .entry(Nibbles::from_bytes(&hashed_address.0))
                 .or_default()
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
+                addr_store.insert(nibbles_to_fixed_size(node_hash), node_data);
             }
         }
 
@@ -643,6 +655,10 @@ impl StoreEngine for Store {
         }
 
         Ok(())
+    }
+
+    async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
+        todo!()
     }
 }
 

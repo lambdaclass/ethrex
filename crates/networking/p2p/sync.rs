@@ -24,7 +24,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{NodeHash, Trie, TrieError};
+use ethrex_trie::{Nibbles, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -684,13 +684,14 @@ impl FullBlockSyncState {
         .await
         {
             if let Some(batch_failure) = batch_failure {
-                warn!("Failed to add block during FullSync: {err}");
+                let failed_block_hash = batch_failure.failed_block_hash;
+                warn!(%err, block=%failed_block_hash, "Failed to add block during FullSync");
                 // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
                 if let ChainError::InvalidBlock(_) = err {
                     let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
                     if let Some(index) = block_batch_hashes
                         .iter()
-                        .position(|x| x == &batch_failure.failed_block_hash)
+                        .position(|x| x == &failed_block_hash)
                     {
                         block_hashes_with_invalid_ancestor = block_batch_hashes[index..].to_vec();
                     }
@@ -928,7 +929,7 @@ impl Syncer {
                 let store_clone = store.clone();
                 let current_state_root =
                     tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                        let mut trie = store_clone.open_state_trie(computed_state_root)?;
+                        let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
 
                         for (account_hash, account) in account_states_snapshot {
                             METRICS
@@ -938,7 +939,8 @@ impl Syncer {
                         }
                         *METRICS.current_step.blocking_lock() =
                             "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
-                        let current_state_root = trie.hash()?;
+                        let (current_state_root, changes) = trie.collect_changes_since_last_hash();
+                        trie.db().put_batch(changes)?;
                         Ok(current_state_root)
                     })
                     .await??;
@@ -1093,15 +1095,16 @@ impl Syncer {
         let mut healing_done = false;
         while !healing_done {
             // This if is an edge case for the skip snap sync scenario
-            if block_is_stale(&pivot_header) {
-                pivot_header = update_pivot(
-                    pivot_header.number,
-                    pivot_header.timestamp,
-                    &mut self.peers,
-                    block_sync_state,
-                )
-                .await?;
-            }
+            // TODO: UNCOMMENT CONDITION
+            //if block_is_stale(&pivot_header) {
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                &mut self.peers,
+                block_sync_state,
+            )
+            .await?;
+            //}
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
@@ -1132,6 +1135,7 @@ impl Syncer {
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+
         info!("Finished healing");
 
         // Finish code hash collection
@@ -1232,7 +1236,7 @@ impl Syncer {
     }
 }
 
-type StorageRoots = (H256, Vec<(NodeHash, Vec<u8>)>);
+type StorageRoots = (H256, Vec<(Nibbles, Vec<u8>)>);
 
 fn compute_storage_roots(
     maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
@@ -1250,7 +1254,7 @@ fn compute_storage_roots(
         Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
     };
 
-    let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root)?;
+    let mut storage_trie = store.open_direct_storage_trie(account_hash, account_storage_root)?;
 
     for (hashed_key, value) in key_value_pairs {
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
@@ -1267,13 +1271,15 @@ fn compute_storage_roots(
         .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
     if computed_storage_root == account_state.storage_root {
         METRICS.storage_tries_state_roots_computed.inc();
-    } else {
+    }
+    if account_storage_root != *EMPTY_TRIE_HASH
+        || computed_storage_root != account_state.storage_root
+    {
         maybe_big_account_storage_state_roots
             .lock()
             .map_err(|_| SyncError::MaybeBigAccount)?
             .insert(account_hash, computed_storage_root);
     }
-
     Ok((account_hash, changes))
 }
 

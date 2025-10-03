@@ -5,7 +5,7 @@ use std::{
 
 use ethrex_rlp::decode::RLPDecode;
 
-use crate::{Node, NodeHash, Trie, TrieDB, TrieError};
+use crate::{Nibbles, Node, Trie, TrieDB, TrieError};
 
 pub type TrieWitness = Arc<Mutex<HashSet<Vec<u8>>>>;
 
@@ -33,7 +33,7 @@ impl TrieLogger {
 }
 
 impl TrieDB for TrieLogger {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let result = self.inner_db.get(key)?;
         if let Some(result) = result.as_ref() {
             if let Ok(decoded) = Node::decode(result) {
@@ -44,11 +44,11 @@ impl TrieDB for TrieLogger {
         Ok(result)
     }
 
-    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
         self.inner_db.put(key, value)
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         self.inner_db.put_batch(key_values)
     }
 }
