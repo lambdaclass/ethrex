@@ -459,6 +459,7 @@ impl Blockchain {
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn print_add_block_logs(
         gas_used: u64,
         gas_limit: u64,
