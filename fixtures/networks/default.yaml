@@ -28,6 +28,14 @@ participants:
     validator_count: 32
     # snooper_enabled: true
 
+port_publisher:
+  cl:
+    enabled: true
+    public_port_start: 33000
+  el:
+    enabled: true
+    public_port_start: 32000
+
 ethereum_metrics_exporter_enabled: true
 
 additional_services:
