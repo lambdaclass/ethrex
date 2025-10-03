@@ -381,6 +381,15 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
+    if !(contract_address == HISTORY_STORAGE_ADDRESS.address
+        || contract_address == BEACON_ROOTS_ADDRESS.address)
+        && db.get_account_code(contract_address)?.is_empty()
+    {
+        return Err(EvmError::SystemContractCallFailed(format!(
+            "System contract: {contract_address} has no code after deployment"
+        )));
+    };
+
     let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(contract_address),
         value: U256::zero(),
