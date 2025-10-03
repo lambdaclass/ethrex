@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759509332768,
+  "lastUpdate": 1759510895191,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -36509,6 +36509,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, NVIDIA RTX A6000",
             "value": 0.00461637287918185,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0a43c28ed606cac5e7ffec3c54f300724158eefd",
+          "message": "refactor(l1): spawnify kademlia (#4574)\n\n**Motivation**\n\nCurrent kademlia module is just a peer table that requires a lot of\nMutexes and locks() (and in fact it is not a kademlia implementation)\n\n**Description**\n\nThis pr converts the PeerTable data structure into a GenServer in order\nto avoid all the `Mutex.lock()` required in previous version and ensure\ndata consistency.\n\nIt is still a work in progress as I have to deal with the possible\nerrors when accessing PeerTable server.\n\nCloses #4383",
+          "timestamp": "2025-10-03T14:31:04Z",
+          "tree_id": "3c0595b627148586fece9c7330a78c3e3f0733c0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0a43c28ed606cac5e7ffec3c54f300724158eefd"
+        },
+        "date": 1759510894355,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, NVIDIA RTX A6000",
+            "value": 0.0046153234945791825,
             "unit": "Mgas/s"
           }
         ]
