@@ -484,7 +484,7 @@ impl Syncer {
         let Some(mut block_headers) = self
             .peers
             .request_block_headers_from_hash(requested_header, BlockRequestOrder::NewToOld)
-            .await
+            .await?
         else {
             // sync_head or sync_head parent was not found
             warn!("Sync failed to find target block header, aborting");
