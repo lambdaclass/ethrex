@@ -80,7 +80,7 @@
 // the data is not in the freezer.
 use clap::{ArgGroup, Parser};
 use ethrex_common::Address;
-use ethrex_common::types::BlockHash;
+use ethrex_common::types::{BlockHash, BlockHeader};
 use ethrex_common::{BigEndianHash, H256, U256, types::BlockNumber};
 use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
@@ -137,35 +137,16 @@ impl GethDB {
             "{name}.{}",
             if compressed { "cidx" } else { "ridx" }
         ));
-        let meta_path = self.ancient_db_path.join(format!("{name}.meta"));
-
-        let mut meta_file = File::open(meta_path)?;
-        let mut meta_encoded = Vec::with_capacity(20);
-        meta_file.read_to_end(&mut meta_encoded)?;
-        let (version, tail, offset): (u16, u64, u64) = match RLPDecode::decode(&meta_encoded) {
-            Ok((version, tail, offset)) if version == 2 => (version, tail, offset),
-            Ok((_, _, _)) => eyre::bail!("bad version"),
-            Err(_) => {
-                let (version, tail) = RLPDecode::decode(&meta_encoded)?;
-                if version != 1 {
-                    eyre::bail!("bad version")
-                }
-                (version, tail, 0)
-            }
-        };
-        println!("{version} {tail} {offset}");
-        println!("opening {}", idx_path.to_string_lossy());
         let index_file = File::open(idx_path)?;
-        println!("opened");
         let size = index_file.metadata()?.size();
         let last = last.min(size / 6);
         // We need one index back to find the start of the entries.
-        let first = first.saturating_sub(1);
-        let to_read = ((last - first + 1) * 6) as usize;
+        let to_read = ((last - first + 2) * 6) as usize;
         let mut index_buf = vec![0; to_read];
+        println!("{}", index_buf.len() / 6);
         index_file.read_exact_at(&mut index_buf, 6 * first)?;
         let index_entries: Vec<_> = index_buf
-            .chunks(6)
+            .chunks_exact(6)
             .map(|entry_bytes| {
                 let fnum_bytes = entry_bytes[..2].try_into().unwrap();
                 let offs_bytes = entry_bytes[2..].try_into().unwrap();
@@ -184,7 +165,6 @@ impl GethDB {
         ) else {
             return Ok(Vec::new());
         };
-        println!("file range: {first_file}..={last_file}");
         let data_files: Vec<_> = (first_file..=last_file)
             .map(|f| {
                 File::open(self.ancient_db_path.join(format!(
@@ -199,6 +179,7 @@ impl GethDB {
             if pnum != fnum {
                 poff = 0;
             }
+            println!("reading from {poff} to {offset}");
             let file = &data_files[(fnum - first_file) as usize];
             let mut entry_data = vec![0; (offset - poff) as usize];
             file.read_exact_at(&mut entry_data, poff as u64)?;
@@ -212,24 +193,16 @@ impl GethDB {
     }
 
     fn try_read_hashes_from_freezer(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
-        // TODO
         let hashes_vecs = self.read_from_freezer_table("hashes", false, first, last)?;
-        let mut hashes = Vec::with_capacity((last - first + 1) as usize);
-        for hash in hashes_vecs {
-            let hash = hash.try_into().map_err(|_| eyre::eyre!("bad hash"))?;
-            hashes.push(hash);
-        }
-        Ok(hashes)
+        hashes_vecs
+            .into_iter()
+            .map(|h| <[u8; 32]>::try_from(h.as_slice()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| eyre::eyre!("bad length"))
     }
     fn try_read_hashes_from_statedb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
         // ['h' || block_num || 'n']
-        let keys = (first..=last).map(|i| {
-            let mut key = [0u8; 10];
-            key[0] = b'h';
-            key[9] = b'n';
-            key[1..9].copy_from_slice(&i.to_be_bytes());
-            key
-        });
+        let keys = (first..=last).map(|i| [&b"h"[..], &i.to_be_bytes(), b"n"].concat());
         let values = self.state_db.multi_get(keys);
         println!("{values:?}");
         Ok(Vec::new())
@@ -239,6 +212,7 @@ impl GethDB {
     fn try_read_block_from_freezer(&self, block_num: u64) -> eyre::Result<[Option<Vec<u8>>; 2]> {
         let mut header = self.read_from_freezer_table("headers", true, block_num, block_num)?;
         let mut body = self.read_from_freezer_table("bodies", true, block_num, block_num)?;
+        assert_eq!(header.len(), 1);
         Ok([header.drain(..).next(), body.drain(..).next()])
     }
     fn try_read_block_from_statedb(
@@ -248,13 +222,9 @@ impl GethDB {
         key_prefixes: &[u8],
     ) -> eyre::Result<[Option<Vec<u8>>; 2]> {
         // ['h' || block_num || header_hash]
-        let keys = key_prefixes.iter().map(|p| {
-            let mut key = [0u8; 41];
-            key[0] = *p;
-            key[1..9].copy_from_slice(&block_num.to_be_bytes());
-            key[9..].copy_from_slice(&block_hash);
-            key
-        });
+        let keys = key_prefixes
+            .iter()
+            .map(|p| [&[*p][..], &block_num.to_be_bytes(), &block_hash].concat());
         let mut values = self.state_db.multi_get(keys);
         debug_assert_eq!(values.len(), 2);
         if values.len() != 2 {
@@ -336,8 +306,8 @@ impl GethDB {
 //    Really big accounts probably need to be bucketed internally as well, taking the node
 //    hash instead of the address.
 //    Another plausible way to classify the tries by size is to always iterate to the first
-//    leaf and extraplote from its depths: given keys get randomized by keccak, the cardinality
-//    of a trie is approximately 16 ^ H, where H is height measured in branch nodes.
+//    leaf and extraplote from theri depths: given keys get randomized by keccak, the
+//    cardinality of a trie is approximately 16 ^ H, where H is height measured in branch nodes.
 //
 //    If absolutely necessary, we might implement our own lightweight iterator.
 struct GethTrieIterator {}
@@ -392,6 +362,15 @@ pub fn geth2ethrex(
     println!("{} {}", header.len(), body.len());
     // TODO: save header and body to ethrex DB
     // TODO: extract root hash from header
+    let header: BlockHeader = RLPDecode::decode(&header)?;
+    println!("state root: {}", header.state_root);
+    println!("header block number: {}", header.number);
+    println!("parent hash: {}", header.parent_hash);
+    println!(
+        "last hash: {:32x}{:32x}",
+        u128::from_be_bytes(block_hash[..16].try_into().unwrap()),
+        u128::from_be_bytes(block_hash[16..].try_into().unwrap())
+    );
 
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time}");
