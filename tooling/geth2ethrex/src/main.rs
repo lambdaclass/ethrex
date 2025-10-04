@@ -91,7 +91,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_trie::{NodeHash, Trie, TrieDB, TrieError};
 use eyre::OptionExt;
-use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
+use rocksdb::{DBWithThreadMode, MultiThreaded, Options, SingleThreaded};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
@@ -276,6 +276,16 @@ impl GethDB {
             [Some(header), Some(body)] => Ok([header, body]),
         }
     }
+
+    pub fn triedb(
+        &self,
+        bucket_path: impl AsRef<Path>,
+        bucket_prefix: &str,
+    ) -> eyre::Result<Box<dyn TrieDB>> {
+        let trie_db =
+            DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
+        GethTrieDBWithNodeBuckets::new(trie_db, bucket_path, bucket_prefix)
+    }
 }
 
 // Our iterator performs two separate but related tasks:
@@ -312,11 +322,25 @@ impl GethDB {
 //    If absolutely necessary, we might implement our own lightweight iterator.
 struct GethTrieIterator {}
 struct GethTrieDBWithNodeBuckets {
-    db: DBWithThreadMode<MultiThreaded>,
+    db: DBWithThreadMode<SingleThreaded>,
     // No love for trait TrieDB
     buckets: [Arc<Mutex<BufWriter<File>>>; 16],
 }
 impl GethTrieDBWithNodeBuckets {
+    pub fn new(
+        // TODO: actually I should use SingleThreaded, one per-thread, to avoid locks.
+        db: DBWithThreadMode<SingleThreaded>,
+        bucket_path: impl AsRef<Path>,
+        bucket_prefix: &str,
+    ) -> eyre::Result<Box<dyn TrieDB>> {
+        let mut buckets = Vec::with_capacity(16);
+        for i in 0..16 {
+            let f = File::create_new(bucket_path.as_ref().join(format!("{bucket_prefix}.{i:x}")))?;
+            buckets.push(Arc::new(Mutex::new(BufWriter::new(f))));
+        }
+        let buckets = std::array::from_fn(move |i| buckets[i].clone());
+        Ok(Box::new(Self { db, buckets }))
+    }
     pub fn flush(&mut self) -> eyre::Result<()> {
         for bucket in &mut self.buckets {
             Arc::get_mut(bucket).unwrap().get_mut().unwrap().flush()?;
@@ -371,6 +395,13 @@ pub fn geth2ethrex(
         u128::from_be_bytes(block_hash[..16].try_into().unwrap()),
         u128::from_be_bytes(block_hash[16..].try_into().unwrap())
     );
+
+    let trie = Trie::open(
+        gethdb.triedb("/tmp", "account_state_bucket.0")?,
+        header.state_root,
+    );
+    let node_count = trie.into_iter().count();
+    println!("iterated {node_count} nodes");
 
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time}");
