@@ -1,4 +1,9 @@
-use std::{fmt, fs::{self, OpenOptions}, io::Write, path::PathBuf};
+use std::{
+    fmt,
+    fs::{self, OpenOptions},
+    io::Write,
+    path::PathBuf,
+};
 
 use chrono::Local;
 use prettytable::{Cell, Row, Table};
@@ -9,8 +14,9 @@ use crate::modules::{error::RunnerError, result_check::PostCheckResult, types::T
 fn ensure_reports_dir() -> Result<(), RunnerError> {
     let reports_dir = PathBuf::from("./reports");
     if !reports_dir.exists() {
-        fs::create_dir_all(&reports_dir)
-            .map_err(|e| RunnerError::Custom(format!("Failed to create reports directory: {}", e)))?;
+        fs::create_dir_all(&reports_dir).map_err(|e| {
+            RunnerError::Custom(format!("Failed to create reports directory: {}", e))
+        })?;
     }
     Ok(())
 }
@@ -56,27 +62,33 @@ pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostChe
     // Create header table
     let mut header_table = Table::new();
     header_table.add_row(Row::new(vec![
-        Cell::new("Test Information").style_spec("Fb")
+        Cell::new("Test Information").style_spec("Fb"),
     ]));
-    header_table.add_row(Row::new(vec![
-        Cell::new("Name"),
-        Cell::new(&test.name)
-    ]));
+    header_table.add_row(Row::new(vec![Cell::new("Name"), Cell::new(&test.name)]));
     header_table.add_row(Row::new(vec![
         Cell::new("Path"),
-        Cell::new(&test.path.display().to_string())
+        Cell::new(&test.path.display().to_string()),
     ]));
     header_table.add_row(Row::new(vec![
         Cell::new("Description"),
-        Cell::new(&test._info.description.clone().unwrap_or(
-            test._info.comment.clone()
-                .unwrap_or("No description or comment".to_string())
-        ))
+        Cell::new(
+            &test._info.description.clone().unwrap_or(
+                test._info
+                    .comment
+                    .clone()
+                    .unwrap_or("No description or comment".to_string()),
+            ),
+        ),
     ]));
     header_table.add_row(Row::new(vec![
         Cell::new("Reference"),
-        Cell::new(&test._info.reference_spec.clone()
-            .unwrap_or("No reference spec".to_string()))
+        Cell::new(
+            &test
+                ._info
+                .reference_spec
+                .clone()
+                .unwrap_or("No reference spec".to_string()),
+        ),
     ]));
 
     let header_content = format!("{}\n", header_table);
@@ -86,7 +98,8 @@ pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostChe
         let content = format!("\n{}", check_result);
         report.write_all(content.as_bytes()).unwrap();
     }
-    let dividing_line = "\n═══════════════════════════════════════════════════════════════════════\n\n".to_string();
+    let dividing_line =
+        "\n═══════════════════════════════════════════════════════════════════════\n\n".to_string();
     let _ = report.write_all(dividing_line.as_bytes());
 }
 
@@ -115,10 +128,7 @@ impl fmt::Display for PostCheckResult {
             let (expected_root, actual_root) = root_mismatch;
             writeln!(f, "\nERROR: Root Mismatch")?;
             let mut root_table = Table::new();
-            root_table.add_row(Row::new(vec![
-                Cell::new("Type"),
-                Cell::new("Value"),
-            ]));
+            root_table.add_row(Row::new(vec![Cell::new("Type"), Cell::new("Value")]));
             root_table.add_row(Row::new(vec![
                 Cell::new("Expected"),
                 Cell::new(&format!("{:?}", expected_root)),
@@ -135,10 +145,7 @@ impl fmt::Display for PostCheckResult {
             let (expected_exception, actual_exception) = exception_diff;
             writeln!(f, "\nERROR: Exception Mismatch")?;
             let mut exception_table = Table::new();
-            exception_table.add_row(Row::new(vec![
-                Cell::new("Type"),
-                Cell::new("Value"),
-            ]));
+            exception_table.add_row(Row::new(vec![Cell::new("Type"), Cell::new("Value")]));
             exception_table.add_row(Row::new(vec![
                 Cell::new("Expected"),
                 Cell::new(&format!("{:?}", expected_exception)),
@@ -155,10 +162,7 @@ impl fmt::Display for PostCheckResult {
             let (expected_log_hash, actual_log_hash) = logs_mismatch;
             writeln!(f, "\nERROR: Logs Mismatch")?;
             let mut logs_table = Table::new();
-            logs_table.add_row(Row::new(vec![
-                Cell::new("Type"),
-                Cell::new("Value"),
-            ]));
+            logs_table.add_row(Row::new(vec![Cell::new("Type"), Cell::new("Value")]));
             logs_table.add_row(Row::new(vec![
                 Cell::new("Expected"),
                 Cell::new(&format!("{:?}", expected_log_hash)),
@@ -186,10 +190,7 @@ impl fmt::Display for PostCheckResult {
                     };
 
                     let mut balance_table = Table::new();
-                    balance_table.add_row(Row::new(vec![
-                        Cell::new("Type"),
-                        Cell::new("Value"),
-                    ]));
+                    balance_table.add_row(Row::new(vec![Cell::new("Type"), Cell::new("Value")]));
                     balance_table.add_row(Row::new(vec![
                         Cell::new("Expected Balance"),
                         Cell::new(&format!("{:?}", expected_balance)),
@@ -208,10 +209,7 @@ impl fmt::Display for PostCheckResult {
                 if let Some(nonce_diff) = acc_mismatch.nonce_diff {
                     let (expected_nonce, actual_nonce) = nonce_diff;
                     let mut nonce_table = Table::new();
-                    nonce_table.add_row(Row::new(vec![
-                        Cell::new("Type"),
-                        Cell::new("Value"),
-                    ]));
+                    nonce_table.add_row(Row::new(vec![Cell::new("Type"), Cell::new("Value")]));
                     nonce_table.add_row(Row::new(vec![
                         Cell::new("Expected Nonce"),
                         Cell::new(&format!("{:?}", expected_nonce)),
@@ -226,10 +224,7 @@ impl fmt::Display for PostCheckResult {
                 if let Some(code_diff) = acc_mismatch.code_diff {
                     let (expected_code_hash, actual_code_hash) = code_diff;
                     let mut code_table = Table::new();
-                    code_table.add_row(Row::new(vec![
-                        Cell::new("Type"),
-                        Cell::new("Value"),
-                    ]));
+                    code_table.add_row(Row::new(vec![Cell::new("Type"), Cell::new("Value")]));
                     code_table.add_row(Row::new(vec![
                         Cell::new("Expected Code Hash"),
                         Cell::new(&format!("0x{}", hex::encode(expected_code_hash))),
@@ -244,10 +239,7 @@ impl fmt::Display for PostCheckResult {
                 if let Some(storage_diff) = acc_mismatch.storage_diff {
                     let (expected_storage, actual_storage) = storage_diff;
                     let mut storage_table = Table::new();
-                    storage_table.add_row(Row::new(vec![
-                        Cell::new("Type"),
-                        Cell::new("Value"),
-                    ]));
+                    storage_table.add_row(Row::new(vec![Cell::new("Type"), Cell::new("Value")]));
                     storage_table.add_row(Row::new(vec![
                         Cell::new("Expected Storage"),
                         Cell::new(&format!("{:?}", expected_storage)),
