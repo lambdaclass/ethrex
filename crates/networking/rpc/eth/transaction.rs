@@ -109,10 +109,9 @@ impl RpcHandler for CallRequest {
         };
         // Prepare transaction with gas limit
         let mut transaction = self.transaction.clone();
-        let gas_limit = match transaction.gas {
-            Some(gas) => u64::try_from(gas).unwrap_or(u64::MAX),
-            None => DEFAULT_ETH_CALL_GAS_LIMIT,
-        };
+        let gas_limit = transaction.gas.map_or(DEFAULT_ETH_CALL_GAS_LIMIT, |gas| {
+            u64::try_from(gas).unwrap_or(DEFAULT_ETH_CALL_GAS_LIMIT)
+        });
         transaction.gas = Some(gas_limit.into());
         // Run transaction
         let result = simulate_tx(&transaction, &header, context.storage, context.blockchain)?;
