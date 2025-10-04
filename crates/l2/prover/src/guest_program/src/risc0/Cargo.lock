@@ -1152,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "bytes",
  "c-kzg",
@@ -1198,11 +1198,11 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "ethrex-l2-common"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1294,7 +1294,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "bincode",
  "bytes",
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "guest_program"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "bytes",
  "ethrex-blockchain",
