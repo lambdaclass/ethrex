@@ -958,13 +958,13 @@ impl Syncer {
                 let mut number_keys_to_remove = 0;
                 for key in storage_accounts.accounts_with_storage_root.keys() {
                     keys_to_remove.push(*key);
-                    if number_keys_to_remove > 10000 {
-                        break;
-                    }
 
                     number_keys_to_remove += 1;
                     accounts_with_storage.remove(key);
                     storage_accounts.healed_accounts.insert(*key);
+                    if number_keys_to_remove > 10000 {
+                        break;
+                    }
                 }
 
                 for key in keys_to_remove {
