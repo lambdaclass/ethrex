@@ -540,7 +540,7 @@ pub async fn deploy_l1_contracts(
     initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
 
     if opts.deposit_rich {
-        if opts.native_token_l1_address == Address::zero() {
+        if opts.native_token_l1_address != Address::zero() {
             info!(
                 "Begging deposits with {} ERC20 as the native tokens",
                 opts.native_token_l1_address
