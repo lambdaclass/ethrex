@@ -301,6 +301,11 @@ pub async fn init_l2(
 pub async fn get_operator_fee_config(
     sequencer_opts: &SequencerOptions,
 ) -> eyre::Result<Option<OperatorFeeConfig>> {
+    if sequencer_opts.based {
+        // If based is enabled, operator fee is not applicable
+        return Ok(None);
+    }
+
     // Fetch operator fee from the on-chain proposer contract
     let operator_fee = fetch_operator_fee(
         sequencer_opts.eth_opts.rpc_url.clone(),
