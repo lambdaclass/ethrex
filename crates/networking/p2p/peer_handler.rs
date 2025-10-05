@@ -1757,6 +1757,7 @@ impl PeerHandler {
                 get_account_storages_snapshot_file(account_storages_snapshots_dir, *chunk_index);
             dump_storages_to_file(&path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(*chunk_index))?;
+            *chunk_index += 1;
         }
         disk_joinset
             .join_all()
