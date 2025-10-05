@@ -281,6 +281,7 @@ jobs:
           docker logs --follow ethrex_l2 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK=true \
+          INTEGRATION_TEST_OPERATOR_FEE_DISABLED=true \
           cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 

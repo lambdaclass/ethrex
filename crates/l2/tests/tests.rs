@@ -19,8 +19,7 @@ use ethrex_l2_sdk::{
     wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_verified_batch, get_operator_fee, send_generic_transaction,
-    wait_for_message_proof,
+    build_generic_tx, get_last_verified_batch, send_generic_transaction, wait_for_message_proof,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
@@ -68,6 +67,7 @@ use tokio::task::JoinSet;
 /// INTEGRATION_TEST_WITHDRAW_VALUE: amount in wei to withdraw from the l2 back to the l1 from L1_RICH_WALLET_PRIVATE_KEY this will be done INTEGRATION_TEST_WITHDRAW_COUNT times
 /// INTEGRATION_TEST_WITHDRAW_COUNT: amount of withdraw transactions to send
 /// INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH: if set the integration test will not check for total eth in the chain, only to be used if we don't know all the accounts that exist in l2
+/// INTEGRATION_TEST_OPERATOR_FEE_DISABLED: if set the integration test will assume the operator fee is 0, useful for local tests without operator fee set (based)
 const DEFAULT_L1_RPC: &str = "http://localhost:8545";
 const DEFAULT_L2_RPC: &str = "http://localhost:1729";
 
@@ -2209,4 +2209,11 @@ async fn wait_for_verified_proof(
     }
 
     proof
+}
+
+async fn get_operator_fee(l1_client: &EthClient, proposer_address: Address) -> Result<U256> {
+    if std::env::var("INTEGRATION_TEST_OPERATOR_FEE_DISABLED").is_err() {
+        return Ok(U256::zero());
+    }
+    Ok(ethrex_l2_sdk::get_operator_fee(l1_client, proposer_address).await?)
 }
