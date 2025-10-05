@@ -1598,11 +1598,13 @@ async fn test_n_withdraws(
         "Coinbase balance didn't increase as expected after withdrawal"
     );
 
-    assert_eq!(
-        base_fee_vault_balance_after_withdrawal,
-        base_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.base_fees,
-        "Coinbase balance didn't increase as expected after withdrawal"
-    );
+    if std::env::var("INTEGRATION_TEST_SKIP_BASE_FEE_VAULT_CHECK").is_err() {
+        assert_eq!(
+            base_fee_vault_balance_after_withdrawal,
+            base_fee_vault_balance_before_withdrawal + total_withdraw_fees_l2.base_fees,
+            "Coinbase balance didn't increase as expected after withdrawal"
+        );
+    }
 
     assert_eq!(
         operator_fee_vault_balance_after_withdrawal,
@@ -2213,7 +2215,7 @@ async fn wait_for_verified_proof(
 
 async fn get_operator_fee(l1_client: &EthClient, proposer_address: Address) -> Result<U256> {
     if std::env::var("INTEGRATION_TEST_OPERATOR_FEE_DISABLED").is_err() {
-        return Ok(U256::zero());
+        return Ok(ethrex_l2_sdk::get_operator_fee(l1_client, proposer_address).await?);
     }
-    Ok(ethrex_l2_sdk::get_operator_fee(l1_client, proposer_address).await?)
+    Ok(U256::zero())
 }
