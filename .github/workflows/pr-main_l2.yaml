@@ -438,11 +438,6 @@ jobs:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
-      - name: Build prover
-        run: |
-          cd crates/l2
-          make build-prover
-
       - name: Start ethrex
         run: |
           COMPILE_CONTRACTS=true \
@@ -450,7 +445,7 @@ jobs:
 
       - name: Wait for ethrex l2
         run: |
-          for i in {1..100}; do
+          for i in {1..20}; do
             echo "Checking if ethrex l2 is ready... (attempt $i)"
             if nc -z localhost 3900; then
               echo "ProofCoordinator ready!"
@@ -458,12 +453,10 @@ jobs:
             fi
             sleep 5
           done
-          # echo "ProofCoordinator not ready in time"
-          # exit 1
       
       - name: Init prover
         run: |
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
+          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 &
       
       - name: Run test
         run: |
