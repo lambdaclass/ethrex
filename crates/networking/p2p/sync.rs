@@ -890,7 +890,7 @@ impl Syncer {
 
             // Variable `accounts_with_storage` unused if not in rocksdb
             #[allow(unused_variables)]
-            let (computed_state_root, accounts_with_storage) = insert_accounts(
+            let (computed_state_root, mut accounts_with_storage) = insert_accounts(
                 store.clone(),
                 &mut storage_accounts,
                 &account_state_snapshots_dir,
@@ -948,9 +948,6 @@ impl Syncer {
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
                     storage_accounts.accounts_with_storage_root.len()
                 );
-                // This variable is a temporary solution until we figure out why we are
-                // sometimes trying infinitely on request_storage_ranges. It's not a big deal
-                // since the next healing step will fix it, but it's a bug and it should be fixed.
                 storage_range_request_attempts += 1;
                 if storage_range_request_attempts < 3 {
                     chunk_index = self
@@ -968,8 +965,15 @@ impl Syncer {
                     for (acc_hash, (maybe_root, old_intervals)) in
                         storage_accounts.accounts_with_storage_root.iter()
                     {
+                        // When we fall into this case what happened is there are certain accounts for which
+                        // the storage root went back to a previous value we already had, and thus could not download
+                        // their storage leaves because we were using an old value for their storage root.
+                        // The fallback is to ensure we
+                        // 1. Do not try to insert its leaves, as we don't have them
+                        // 2. Mark it for storage healing.
                         storage_accounts.healed_accounts.insert(*acc_hash);
-                        error!(
+                        accounts_with_storage.remove(acc_hash);
+                        warn!(
                             "We couldn't download these accounts on request_storage_ranges. Account hash: {:x?}, {:x?}. Number of intervals {}",
                             acc_hash,
                             maybe_root,
