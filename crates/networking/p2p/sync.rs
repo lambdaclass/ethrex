@@ -963,6 +963,7 @@ impl Syncer {
                     }
 
                     number_keys_to_remove += 1;
+                    accounts_with_storage.remove(key);
                 }
 
                 for key in keys_to_remove {
