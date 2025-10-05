@@ -441,7 +441,7 @@ jobs:
       - name: Start ethrex
         run: |
           COMPILE_CONTRACTS=true \
-          cargo run -r --bin ethrex -- l2 dev &
+          cargo run --release --bin ethrex -- l2 --dev &
 
       - name: Wait for ethrex l2
         run: |
