@@ -953,15 +953,21 @@ impl Syncer {
                 // since the next healing step will fix it, but it's a bug and it should be fixed.
 
                 // Remove a key to see if we trigger the bug.
-                let mut first_key = H256::zero();
+                let mut keys_to_remove = vec![];
 
+                let mut number_keys_to_remove = 0;
                 for key in storage_accounts.accounts_with_storage_root.keys() {
-                    first_key = *key;
-                    break;
+                    keys_to_remove.push(*key);
+                    if number_keys_to_remove > 10000 {
+                        break;
+                    }
+
+                    number_keys_to_remove += 1;
                 }
-                storage_accounts
-                    .accounts_with_storage_root
-                    .remove(&first_key);
+
+                for key in keys_to_remove {
+                    storage_accounts.accounts_with_storage_root.remove(&key);
+                }
 
                 storage_range_request_attempts += 1;
                 if storage_range_request_attempts < 3 {
