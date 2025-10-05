@@ -951,6 +951,18 @@ impl Syncer {
                 // This variable is a temporary solution until we figure out why we are
                 // sometimes trying infinitely on request_storage_ranges. It's not a big deal
                 // since the next healing step will fix it, but it's a bug and it should be fixed.
+
+                // Remove a key to see if we trigger the bug.
+                let mut first_key = H256::zero();
+
+                for key in storage_accounts.accounts_with_storage_root.keys() {
+                    first_key = *key;
+                    break;
+                }
+                storage_accounts
+                    .accounts_with_storage_root
+                    .remove(&first_key);
+
                 storage_range_request_attempts += 1;
                 if storage_range_request_attempts < 3 {
                     chunk_index = self
