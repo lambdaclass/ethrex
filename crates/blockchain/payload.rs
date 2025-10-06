@@ -249,7 +249,7 @@ impl PayloadBuildContext {
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
             blobs_bundle: BlobsBundle::default(),
-            store: storage.clone(),
+            store: storage.clone(), // ok-clone: increasing arc reference count
             vm,
             account_updates: Vec::new(),
         })

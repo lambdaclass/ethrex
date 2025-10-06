@@ -157,7 +157,7 @@ async fn find_link_with_canonical_chain(
     }
 
     let genesis_number = store.get_earliest_block_number().await?;
-    let mut header = block_header.clone();
+    let mut header = block_header;
 
     while block_number > genesis_number {
         block_number -= 1;
@@ -176,7 +176,7 @@ async fn find_link_with_canonical_chain(
             branch.push((block_number, parent_hash));
         }
 
-        header = parent_header;
+        header = &parent_header;
     }
 
     Ok(None)

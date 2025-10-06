@@ -407,13 +407,13 @@ impl Blockchain {
         let update_batch = UpdateBatch {
             account_updates: account_updates_list.state_updates,
             storage_updates: account_updates_list.storage_updates,
-            blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
+            blocks: vec![block],
             code_updates: account_updates_list.code_updates,
         };
 
         self.storage
-            .clone()
+            .clone() // ok-clone: increasing arc reference count
             .store_block_updates(update_batch)
             .await
             .map_err(|e| e.into())
@@ -521,7 +521,7 @@ impl Blockchain {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
-        let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
+        let Some(first_block_header) = blocks.first().map(|e| &e.header) else {
             return Err((ChainError::Custom("First block not found".into()), None));
         };
 
@@ -534,7 +534,7 @@ impl Blockchain {
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
+            self.storage.clone(), // ok-clone: increasing arc reference count
             first_block_header.parent_hash,
             block_hash_cache,
         );
@@ -553,7 +553,7 @@ impl Blockchain {
             }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                find_parent_header(&block.header, &self.storage).map_err(|err| {
+                &find_parent_header(&block.header, &self.storage).map_err(|err| {
                     (
                         err,
                         Some(BatchBlockProcessingFailure {
@@ -564,7 +564,7 @@ impl Blockchain {
                 })?
             } else {
                 // for the subsequent ones, the parent is the previous block
-                blocks[i - 1].header.clone()
+                &blocks[i - 1].header
             };
 
             let BlockExecutionResult { receipts, .. } = self
