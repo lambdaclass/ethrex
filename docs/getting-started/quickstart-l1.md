@@ -1,8 +1,32 @@
 # Quickstart: Run an Ethereum L1 Node
 
-Follow these steps to quickly launch an Ethereum L1 (mainnet) node using Docker. For advanced details, see the links at the end.
+Install ethrex and lighthouse:
 
-## Supported Networks
+```sh
+#install lightouse and ethrex
+brew install lambdaclass/ethrex
+brew install lighthouse
+```
+
+Create secrets directory and jwt secret:
+
+```sh
+mkdir -p ethereum/secrets/
+cd ethereum/
+openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
+```
+
+On one terminal:
+
+```sh
+ethrex --authrpc.jwtsecret ./secrets/jwt.hex --authrpc.addr localhost --authrpc.port 8551 --network hoodi
+```
+
+and on another one:
+
+```sh
+lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http (edited) v
+```
 
 - **mainnet**
 - **sepolia**
