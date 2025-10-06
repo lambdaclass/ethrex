@@ -440,8 +440,8 @@ jobs:
 
       - name: Start ethrex
         run: |
-          COMPILE_CONTRACTS=true \
-          cargo run --release --bin ethrex -- l2 --dev &
+          cd crates/l2
+          make init-l2-dev &
 
       - name: Wait for ethrex l2
         run: |
