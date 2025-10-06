@@ -93,7 +93,7 @@ use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block},
 };
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::decode::{RLPDecode, decode_bytes};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
@@ -356,26 +356,27 @@ impl GethTrieDBWithNodeBuckets {
 impl TrieDB for GethTrieDBWithNodeBuckets {
     fn get(&self, hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let hash = hash.finalize().0;
-        println!(
-            "node hash: {:32x}{:32x}",
-            u128::from_be_bytes(hash[..16].try_into().unwrap()),
-            u128::from_be_bytes(hash[16..].try_into().unwrap())
-        );
         let value = self.db.get(hash).unwrap().unwrap();
         debug_assert!(value.len() <= u16::MAX as usize);
         debug_assert_eq!(keccak(&value).0, hash);
 
-        let mut bucket = self.buckets[(hash[0] >> 4) as usize].lock().unwrap();
-        let mut buffer = [0u8; 34];
-        buffer[..32].copy_from_slice(&hash);
-        buffer[32..].copy_from_slice(&(value.len() as u16).to_le_bytes());
-        bucket.write_all(&buffer).unwrap();
-        bucket.write_all(&value).unwrap();
-        println!("value size: {}", value.len());
-        let node = Node::decode_raw(&value)?;
         // We use a redundant encoding, but I'm not changing it in this tool.
         // For now, decode and then encode.
+        let node = Node::decode_raw(&value)?;
         let encoded = node.encode_to_vec();
+        if let Node::Leaf(ref leaf) = node {
+            if let Ok(account) = <AccountState as RLPDecode>::decode(&leaf.value) {
+                if account.code_hash != *EMPTY_KECCACK_HASH {
+                    println!("has code");
+                }
+                if account.storage_root != *EMPTY_TRIE_HASH {
+                    println!("has storage");
+                }
+            }
+        }
+        let mut bucket = self.buckets[(hash[0] >> 4) as usize].lock().unwrap();
+        bucket.write_all(&hash).unwrap();
+        bucket.write_all(&value).unwrap();
         Ok(Some(encoded))
     }
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
@@ -417,8 +418,6 @@ pub fn geth2ethrex(
         header.state_root,
     );
     let mut iter = trie.into_iter();
-    let first_iter = iter.next();
-    println!("first iterated node: {first_iter:?}");
     let node_count = iter.count();
     println!("iterated {node_count} nodes");
 
