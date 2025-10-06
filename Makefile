@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
-		load-test-fibonacci load-test-io
+		load-test-fibonacci load-test-io run-hive-eest-blobs
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -11,22 +11,8 @@ build: ## 🔨 Build the client
 lint: ## 🧹 Linter check
 	# Note that we are compiling without the "gpu" feature (see #4048 for why)
 	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
-	cargo clippy --all-targets -F debug,l1,sync-test \
-		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
-		--release -- -D warnings
-
-lint-sp1: ## 🧹 Linter check
-	# Note that we are compiling without the "gpu" feature (see #4048 for why)
-	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
-	cargo clippy --all-targets -F debug,sp1,sync-test \
-		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
-		--release -- -D warnings
-
-lint-risc0: ## 🧹 Linter check
-	# Note that we are compiling without the "gpu" feature (see #4048 for why)
-	# To compile with it you can replace '-F' with '--all-features', but you need to have nvcc installed
-	cargo clippy --all-targets -F debug,risc0,sync-test \
-		--workspace --exclude ethrex-replay --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
+	cargo clippy --all-targets -F debug,sync-test \
+		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
 		--release -- -D warnings
 
 CRATE ?= *
@@ -137,8 +123,11 @@ run-hive-eest: build-image setup-hive ## 🧪 Generic command for running Hive E
 run-hive-eest-engine: ## Run hive EEST Engine tests
 	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-engine
 
-run-hive-eest-rlp: ## Run hive EEST Engine tests
+run-hive-eest-rlp: ## Run hive EEST RLP tests
 	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-rlp
+
+run-hive-eest-blobs: ## Run hive EEST Blobs tests
+	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/execute-blobs
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs

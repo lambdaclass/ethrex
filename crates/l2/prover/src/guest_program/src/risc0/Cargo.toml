@@ -6,6 +6,7 @@ edition = "2024"
 [workspace]
 
 [dependencies]
+c-kzg = { version = "2.1.1", features = ["eip-7594"] }
 risc0-zkvm = { version = "=3.0.3", default-features = false, features = [
     "std",
     "getrandom",

@@ -1,9 +1,15 @@
+use std::iter::repeat_n;
+
 // TODO: Currently, we cannot include the types crate independently of common because the crates are not yet split.
 // After issue #4596 ("Split types crate from common") is resolved, update this to import the types crate directly,
 // so that crypto/kzg.rs does not depend on common for type definitions.
 pub const BYTES_PER_FIELD_ELEMENT: usize = 32;
 pub const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
 pub const BYTES_PER_BLOB: usize = BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB;
+pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
+pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
+pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
+pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;
 type Bytes48 = [u8; 48];
 type Blob = [u8; BYTES_PER_BLOB];
 type Commitment = Bytes48;
@@ -44,6 +50,9 @@ pub enum KzgError {
     #[cfg(feature = "openvm-kzg")]
     #[error("openvm-kzg error: {0}")]
     OpenvmKzg(openvm_kzg::KzgError),
+    #[cfg(not(feature = "c-kzg"))]
+    #[error("{0} is not supported without c-kzg feature enabled")]
+    NotSupportedWithoutCKZG(String),
 }
 
 #[cfg(feature = "kzg-rs")]
@@ -57,6 +66,43 @@ impl From<kzg_rs::KzgError> for KzgError {
 impl From<openvm_kzg::KzgError> for KzgError {
     fn from(value: openvm_kzg::KzgError) -> Self {
         KzgError::OpenvmKzg(value)
+    }
+}
+
+/// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
+/// as defined by EIP-7594.
+pub fn verify_cell_kzg_proof_batch(
+    blobs: &[Blob],
+    commitments: &[Commitment],
+    cell_proof: &[Proof],
+) -> Result<bool, KzgError> {
+    #[cfg(not(feature = "c-kzg"))]
+    return Err(KzgError::NotSupportedWithoutCKZG(String::from(
+        "Cell proof verification",
+    )));
+    #[cfg(feature = "c-kzg")]
+    {
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
+        let mut cells = Vec::new();
+        for blob in blobs {
+            cells.extend(c_kzg_settings.compute_cells(&(*blob).into())?.into_iter());
+        }
+        c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
+            c_kzg_settings,
+            &commitments
+                .iter()
+                .flat_map(|commitment| repeat_n((*commitment).into(), CELLS_PER_EXT_BLOB))
+                .collect::<Vec<_>>(),
+            &repeat_n(0..CELLS_PER_EXT_BLOB as u64, blobs.len())
+                .flatten()
+                .collect::<Vec<_>>(),
+            &cells,
+            &cell_proof
+                .iter()
+                .map(|proof| (*proof).into())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(KzgError::from)
     }
 }
 

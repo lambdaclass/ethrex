@@ -93,7 +93,6 @@ l1 = [
 ]
 
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
-libmdbx = ["ethrex-storage/libmdbx"]
 rocksdb = ["ethrex-storage/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
