@@ -126,7 +126,7 @@ fn get_all_fork_id_combinations(forks: Vec<u64>, genesis_hash: BlockHash) -> Vec
             continue;
         }
         combinations.push((
-            H32::from_slice(&hasher.clone().finalize().to_be_bytes()), // ok-clone: a new hasher would need to bbe initialized for each combination anyways
+            H32::from_slice(&hasher.clone().finalize().to_be_bytes()), // ok-clone: a new hasher would need to be initialized for each combination anyways
             activation,
         ));
         hasher.update(&activation.to_be_bytes());
