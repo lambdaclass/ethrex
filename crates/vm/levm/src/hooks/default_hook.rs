@@ -421,7 +421,7 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<
     // blob gas cost = max fee per blob gas * blob gas used
     // https://eips.ethereum.org/EIPS/eip-4844
     let max_blob_gas_cost = get_max_blob_gas_price(
-        &vm.tx.blob_versioned_hashes().unwrap_or(&vec![]),
+        vm.tx.blob_versioned_hashes().unwrap_or(&vec![]),
         vm.env.tx_max_fee_per_blob_gas,
     )?;
 
