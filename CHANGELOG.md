@@ -2,10 +2,21 @@
 
 ## Perf
 
+### 2025-10-06
+
+- Refactor current_step sync metric from a `Mutex<String>` to a simple atomic. [#4772](https://github.com/lambdaclass/ethrex/pull/4772)
+
+### 2025-10-01
+
+- Change remaining_gas to i64, improving performance in gas cost calculations [#4684](https://github.com/lambdaclass/ethrex/pull/4684)
+
+### 2025-09-29
+
+- Remove `OpcodeResult` to improve tight loops of lightweight opcodes [#4650](https://github.com/lambdaclass/ethrex/pull/4650)
+
 ### 2025-09-24
 
 - Avoid dumping empty storage accounts to disk [#4590](https://github.com/lambdaclass/ethrex/pull/4590)
-
 
 ### 2025-09-22
 

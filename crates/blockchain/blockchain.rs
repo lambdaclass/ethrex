@@ -48,6 +48,7 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
+const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -67,12 +68,28 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
-    /// Whether performance logs should be emitted
-    pub perf_logs_enabled: bool,
-    pub r#type: BlockchainType,
+    pub options: BlockchainOptions,
     /// Mapping from a payload id to either a complete payload or a payload build task
     /// We need to keep completed payloads around in case consensus requests them twice
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockchainOptions {
+    pub max_mempool_size: usize,
+    /// Whether performance logs should be emitted
+    pub perf_logs_enabled: bool,
+    pub r#type: BlockchainType,
+}
+
+impl Default for BlockchainOptions {
+    fn default() -> Self {
+        Self {
+            max_mempool_size: MAX_MEMPOOL_SIZE_DEFAULT,
+            perf_logs_enabled: false,
+            r#type: BlockchainType::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -94,25 +111,23 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_type: BlockchainType, perf_logs_enabled: bool) -> Self {
+    pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
         Self {
             storage: store,
-            mempool: Mempool::new(),
+            mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
-            r#type: blockchain_type,
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            perf_logs_enabled,
+            options: blockchain_opts,
         }
     }
 
     pub fn default_with_store(store: Store) -> Self {
         Self {
             storage: store,
-            mempool: Mempool::new(),
+            mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
-            r#type: BlockchainType::default(),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            perf_logs_enabled: false,
+            options: BlockchainOptions::default(),
         }
     }
 
@@ -204,7 +219,7 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
-            let mut vm = match self.r#type {
+            let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
                 BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
             };
@@ -384,7 +399,7 @@ impl Blockchain {
 
     pub async fn store_block(
         &self,
-        block: &Block,
+        block: Block,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
@@ -394,8 +409,8 @@ impl Blockchain {
         let update_batch = UpdateBatch {
             account_updates: account_updates_list.state_updates,
             storage_updates: account_updates_list.storage_updates,
-            blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
+            blocks: vec![block],
             code_updates: account_updates_list.code_updates,
         };
 
@@ -406,9 +421,9 @@ impl Blockchain {
             .map_err(|e| e.into())
     }
 
-    pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub async fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(block).await?;
+        let (res, updates) = self.execute_block(&block).await?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root
@@ -418,18 +433,38 @@ impl Blockchain {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        let (gas_used, gas_limit, block_number, transactions_count) = (
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.number,
+            block.body.transactions.len(),
+        );
+
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
 
-        if self.perf_logs_enabled {
-            Self::print_add_block_logs(block, since, executed, merkleized, stored);
+        if self.options.perf_logs_enabled {
+            Self::print_add_block_logs(
+                gas_used,
+                gas_limit,
+                block_number,
+                transactions_count,
+                since,
+                executed,
+                merkleized,
+                stored,
+            );
         }
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn print_add_block_logs(
-        block: &Block,
+        gas_used: u64,
+        gas_limit: u64,
+        block_number: u64,
+        transactions_count: usize,
         since: Instant,
         executed: Instant,
         merkleized: Instant,
@@ -437,30 +472,29 @@ impl Blockchain {
     ) {
         let interval = stored.duration_since(since).as_millis() as f64;
         if interval != 0f64 {
-            let as_gigas = block.header.gas_used as f64 / 10_f64.powf(9_f64);
+            let as_gigas = gas_used as f64 / 10_f64.powf(9_f64);
             let throughput = as_gigas / interval * 1000_f64;
 
             metrics!(
-                let _ = METRICS_BLOCKS.set_block_number(block.header.number);
-                METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
-                METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
+                let _ = METRICS_BLOCKS.set_block_number(block_number);
+                METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
+                METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
             );
 
             let base_log = format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
-                block.header.number,
+                block_number,
                 throughput,
                 interval,
                 as_gigas,
-                (block.header.gas_used as f64 / block.header.gas_limit as f64) * 100.0,
-                block.body.transactions.len()
+                (gas_used as f64 / gas_limit as f64) * 100.0,
+                transactions_count
             );
 
             fn percentage(init: Instant, end: Instant, total: f64) -> f64 {
                 (end.duration_since(init).as_millis() as f64 / total * 100.0).round()
             }
-
             let extra_log = if as_gigas > 0.0 {
                 format!(
                     " exec: {}% merkle: {}% store: {}%",
@@ -471,7 +505,6 @@ impl Blockchain {
             } else {
                 "".to_string()
             };
-
             info!("{}{}", base_log, extra_log);
         }
     }
@@ -613,7 +646,7 @@ impl Blockchain {
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
-        if self.perf_logs_enabled {
+        if self.options.perf_logs_enabled {
             info!(
                 "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
                 blocks_len,
@@ -865,6 +898,7 @@ impl Blockchain {
 
                 P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                     tx: itx,
+                    wrapper_version: (bundle.version != 0).then_some(bundle.version),
                     blobs_bundle: bundle,
                 })
             }
@@ -883,7 +917,7 @@ impl Blockchain {
     }
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-        let evm = match self.r#type {
+        let evm = match self.options.r#type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
             BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
         };
