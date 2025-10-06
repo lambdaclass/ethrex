@@ -899,17 +899,11 @@ impl Syncer {
                     RLPDecode::decode(&snapshot_contents)
                         .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-                let (account_hashes, account_states): (Vec<H256>, Vec<AccountState>) =
-                    account_states_snapshot.iter().cloned().unzip();
-
                 storage_accounts.accounts_with_storage_root.extend(
-                    account_hashes
-                        .iter()
-                        .zip(account_states.iter())
-                        .filter_map(|(hash, state)| {
-                            (state.storage_root != *EMPTY_TRIE_HASH)
-                                .then_some((*hash, state.storage_root))
-                        }),
+                    account_states_snapshot.iter().filter_map(|(hash, state)| {
+                        (state.storage_root != *EMPTY_TRIE_HASH)
+                            .then_some((*hash, state.storage_root))
+                    }),
                 );
 
                 info!("Inserting accounts into the state trie");
