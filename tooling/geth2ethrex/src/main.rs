@@ -147,10 +147,7 @@ impl GethDB {
         let last = last.min(size / 6);
         // We need one index back to find the start of the entries.
         let to_read = ((last - first + 2) * 6) as usize;
-        dbg!(last, first, size);
-        println!("this overflows: {to_read}");
         let mut index_buf = vec![0; to_read];
-        println!("{}", index_buf.len() / 6);
         index_file.read_exact_at(&mut index_buf, 6 * first)?;
         let index_entries: Vec<_> = index_buf
             .chunks_exact(6)
@@ -200,7 +197,6 @@ impl GethDB {
     }
 
     fn try_read_hashes_from_freezer(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
-        dbg!(first, last);
         let hashes_vecs = self.read_from_freezer_table("hashes", false, first, last)?;
         hashes_vecs
             .into_iter()
@@ -243,7 +239,6 @@ impl GethDB {
     }
 
     pub fn read_hashes_from_gethdb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
-        dbg!(first, last);
         let frozen_hashes = self.try_read_hashes_from_freezer(first, last)?;
         let state_hashes = if last - first + 1 != frozen_hashes.len() as u64 {
             self.try_read_hashes_from_statedb(first + frozen_hashes.len() as u64, last)?
@@ -293,7 +288,7 @@ impl GethDB {
     ) -> eyre::Result<Box<dyn TrieDB>> {
         let trie_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
-        GethTrieDBWithNodeBuckets::new(trie_db, bucket_path, bucket_prefix)
+        GethTrieDBWithNodeBuckets::new_with_prefix(trie_db, bucket_path, bucket_prefix)
     }
 }
 
@@ -336,8 +331,7 @@ struct GethTrieDBWithNodeBuckets {
     buckets: [Arc<Mutex<BufWriter<File>>>; 16],
 }
 impl GethTrieDBWithNodeBuckets {
-    pub fn new(
-        // TODO: actually I should use SingleThreaded, one per-thread, to avoid locks.
+    pub fn new_with_prefix(
         db: DBWithThreadMode<SingleThreaded>,
         bucket_path: impl AsRef<Path>,
         bucket_prefix: &str,
@@ -360,7 +354,11 @@ impl GethTrieDBWithNodeBuckets {
 impl TrieDB for GethTrieDBWithNodeBuckets {
     fn get(&self, hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let hash = hash.finalize().0;
-        dbg!(hash);
+        println!(
+            "node hash: {:32x}{:32x}",
+            u128::from_be_bytes(hash[..16].try_into().unwrap()),
+            u128::from_be_bytes(hash[16..].try_into().unwrap())
+        );
         let value = self.db.get(hash).unwrap().unwrap();
         debug_assert!(value.len() <= u16::MAX as usize);
 
@@ -386,10 +384,6 @@ pub fn geth2ethrex(
     let migration_start: Instant = Instant::now();
 
     let gethdb = GethDB::open(input_dir)?;
-    dbg!(
-        block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
-        block_number
-    );
     let hashes = gethdb.read_hashes_from_gethdb(
         block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
         block_number,
