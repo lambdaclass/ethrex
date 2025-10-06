@@ -513,7 +513,7 @@ impl Syncer {
             block_headers.reverse();
             block_sync_state
                 .process_incoming_headers(
-                    block_headers,
+                    block_headers.into_iter(),
                     sync_head,
                     true, // sync_head_found is true because of the NewToOld headers request
                     self.blockchain.clone(),
