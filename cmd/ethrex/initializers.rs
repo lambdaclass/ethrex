@@ -7,6 +7,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::types::Genesis;
+use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
@@ -433,6 +434,8 @@ pub async fn init_l1(
     if opts.metrics_enabled {
         init_metrics(&opts, tracker.clone());
     }
+
+    raise_fd_limit()?;
 
     if opts.dev {
         #[cfg(feature = "dev")]
