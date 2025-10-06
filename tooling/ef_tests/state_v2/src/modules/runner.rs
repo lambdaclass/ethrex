@@ -142,7 +142,6 @@ pub fn get_vm_env_for_test(
         gas_price,
         block_excess_blob_gas: test_env.current_excess_blob_gas,
         block_blob_gas_used: None,
-        tx_blob_hashes: test_case.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: test_case.max_priority_fee_per_gas,
         tx_max_fee_per_gas: test_case.max_fee_per_gas,
         tx_max_fee_per_blob_gas: test_case.max_fee_per_blob_gas,
@@ -168,7 +167,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
     let mut tx = if let Some(list) = &test_case.authorization_list {
         Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match to {
-                TxKind::Call(to) => to,
+                TxKind::Call(_) => to,
                 TxKind::Create => return Err(RunnerError::EIP7702ShouldNotBeCreateType),
             },
             value,
@@ -193,7 +192,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
             max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
             gas: test_case.gas,
             to: match to {
-                TxKind::Call(to) => to,
+                TxKind::Call(_) => to,
                 TxKind::Create => return Err(RunnerError::EIP7702ShouldNotBeCreateType), //TODO: See what to do with this. Maybe we want to get rid of the error and skip the test.
             },
             value,

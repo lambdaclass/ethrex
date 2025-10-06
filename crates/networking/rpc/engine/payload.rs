@@ -137,7 +137,7 @@ impl RpcHandler for NewPayloadV3Request {
             &self.payload,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            &self.expected_blob_versioned_hashes,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -217,7 +217,7 @@ impl RpcHandler for NewPayloadV4Request {
             &self.payload,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            &self.expected_blob_versioned_hashes,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -612,17 +612,26 @@ async fn handle_new_payload_v3(
     payload: &ExecutionPayload,
     context: RpcApiContext,
     block: Block,
-    expected_blob_versioned_hashes: Vec<H256>,
+    expected_blob_versioned_hashes: &Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
     // V3 specific: validate blob hashes
-    let blob_versioned_hashes: &Vec<H256> = block
-        .body
-        .transactions
-        .iter()
-        .flat_map(|tx| tx.blob_versioned_hashes())
-        .collect();
+    let txs = &block.body.transactions;
 
-    if expected_blob_versioned_hashes != blob_versioned_hashes {
+    let mut expected_blobs_iter = expected_blob_versioned_hashes.iter();
+    for tx in txs {
+        for blob in tx.blob_versioned_hashes().unwrap_or(&vec![]) {
+            match expected_blobs_iter.next() {
+                Some(expected_blob) if blob == expected_blob => continue,
+                Some(_) | None => {
+                    return Ok(PayloadStatus::invalid_with_err(
+                        "Invalid blob_versioned_hashes",
+                    ));
+                }
+            }
+        }
+    }
+
+    if expected_blobs_iter.next().is_some() {
         return Ok(PayloadStatus::invalid_with_err(
             "Invalid blob_versioned_hashes",
         ));

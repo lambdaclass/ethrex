@@ -786,7 +786,7 @@ pub fn generate_blobs_bundle(
     let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 
     Ok((
-        BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
+        BlobsBundle::create_from_blobs(vec![blob]).map_err(CommitterError::from)?,
         blob_size,
     ))
 }
