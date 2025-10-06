@@ -1002,7 +1002,7 @@ impl Syncer {
 
             // Variable `accounts_with_storage` unused if not in rocksdb
             #[allow(unused_variables)]
-            let (computed_state_root, mut accounts_with_storage) = insert_accounts(
+            let (computed_state_root, accounts_with_storage) = insert_accounts(
                 store.clone(),
                 &mut storage_accounts,
                 &account_state_snapshots_dir,
@@ -1080,11 +1080,8 @@ impl Syncer {
                         // When we fall into this case what happened is there are certain accounts for which
                         // the storage root went back to a previous value we already had, and thus could not download
                         // their storage leaves because we were using an old value for their storage root.
-                        // The fallback is to ensure we
-                        // 1. Do not try to insert its leaves, as we don't have them
-                        // 2. Mark it for storage healing.
+                        // The fallback is to ensure we mark it for storage healing.
                         storage_accounts.healed_accounts.insert(*acc_hash);
-                        accounts_with_storage.remove(acc_hash);
                         debug!(
                             "We couldn't download these accounts on request_storage_ranges. Falling back to storage healing for it.
                             Account hash: {:x?}, {:x?}. Number of intervals {}",
