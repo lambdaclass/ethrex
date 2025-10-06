@@ -2,7 +2,13 @@ use std::mem;
 
 use ethrex_rlp::structs::Encoder;
 
-use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
+use crate::{
+    ValueRLP,
+    error::TrieError,
+    nibbles::Nibbles,
+    node::{BranchNode, NodeRemoveResult},
+    node_hash::NodeHash,
+};
 
 use super::{ExtensionNode, Node, ValueOrHash};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
@@ -109,11 +115,11 @@ impl LeafNode {
     pub fn remove(
         &mut self,
         path: Nibbles,
-    ) -> Result<(Option<Option<Node>>, Option<ValueRLP>), TrieError> {
+    ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
         Ok(if self.partial == path {
             (None, Some(self.value.clone()))
         } else {
-            (Some(None), None)
+            (Some(NodeRemoveResult::Mutated), None)
         })
     }
 

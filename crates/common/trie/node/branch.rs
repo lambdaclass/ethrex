@@ -2,7 +2,10 @@ use std::mem;
 
 use ethrex_rlp::structs::Encoder;
 
-use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
+use crate::{
+    TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node::NodeRemoveResult,
+    node_hash::NodeHash,
+};
 
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
@@ -109,16 +112,13 @@ impl BranchNode {
     }
 
     /// Removes a value from the subtrie originating from this node given its path
-    /// Returns the new root of the subtrie (if any) and the removed value if it existed in the subtrie
-    ///
-    /// - if the new root of the subtrie is a mutated version of `self`, this returns (Some(None), Option<ValueRLP>)
-    /// - if the new root of the subtrie is a new node, this returns (Some(Some(root)), Option<ValueRLP>)
-    /// - if there's no new root, this returns (None, Option<ValueRLP>)
+    /// Returns the new root of the subtrie (or a `Mutated` variant if the new root is `self`)
+    /// and the removed value if it existed in the subtrie.
     pub fn remove(
         &mut self,
         db: &dyn TrieDB,
         mut path: Nibbles,
-    ) -> Result<(Option<Option<Node>>, Option<ValueRLP>), TrieError> {
+    ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Step 1: Removal
                 Branch { [ ... ] Value } -> Branch { [...], None, None } (remove from self)
@@ -174,35 +174,34 @@ impl BranchNode {
             .collect::<Vec<_>>();
         let new_node = match (children.len(), !self.value.is_empty()) {
             // If this node still has a value but no longer has children, convert it into a leaf node
-            (0, true) => {
-                Some(LeafNode::new(Nibbles::from_hex(vec![16]), mem::take(&mut self.value)).into())
-            }
+            (0, true) => NodeRemoveResult::New(
+                LeafNode::new(Nibbles::from_hex(vec![16]), mem::take(&mut self.value)).into(),
+            ),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
                 let child = (*child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?).clone(); // TODO: remove this clone
-                match child {
+                let node = match child {
                     // Replace self with an extension node leading to the child
-                    Node::Branch(_) => Some(
-                        ExtensionNode::new(
-                            Nibbles::from_hex(vec![choice_index as u8]),
-                            child_ref.clone(),
-                        )
-                        .into(),
-                    ),
+                    Node::Branch(_) => ExtensionNode::new(
+                        Nibbles::from_hex(vec![choice_index as u8]),
+                        child_ref.clone(),
+                    )
+                    .into(),
                     // Replace self with the child extension node, updating its path in the process
                     Node::Extension(mut extension_node) => {
                         extension_node.prefix.prepend(choice_index as u8);
-                        Some(extension_node.into())
+                        extension_node.into()
                     }
                     Node::Leaf(mut leaf) => {
                         leaf.partial.prepend(choice_index as u8);
-                        Some(leaf.into())
+                        leaf.into()
                     }
-                }
+                };
+                NodeRemoveResult::New(node)
             }
             // Return the updated node
-            _ => None,
+            _ => NodeRemoveResult::Mutated,
         };
         Ok((Some(new_node), value))
     }
@@ -412,7 +411,7 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
             .unwrap();
 
-        assert!(matches!(node, Some(Some(Node::Leaf(_)))));
+        assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
         assert_eq!(value, Some(vec![0x00]));
     }
 
@@ -431,7 +430,7 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
             .unwrap();
 
-        assert!(matches!(node, Some(None)));
+        assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
         assert_eq!(value, Some(vec![0x00]));
     }
 
@@ -448,7 +447,7 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
             .unwrap();
 
-        assert!(matches!(node, Some(Some(Node::Leaf(_)))));
+        assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
         assert_eq!(value, Some(vec![0x00]));
     }
 
@@ -465,7 +464,7 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[]))
             .unwrap();
 
-        assert!(matches!(node, Some(Some(Node::Leaf(_)))));
+        assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
         assert_eq!(value, Some(vec![0xFF]));
     }
 
@@ -483,7 +482,7 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[]))
             .unwrap();
 
-        assert!(matches!(node, Some(None)));
+        assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
         assert_eq!(value, Some(vec![0xFF]));
     }
 

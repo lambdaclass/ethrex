@@ -235,11 +235,11 @@ impl Node {
             Node::Leaf(n) => n.remove(path),
         }?;
         match new_root {
-            Some(Some(new_root)) => {
+            Some(NodeRemoveResult::New(new_root)) => {
                 *self = new_root;
                 Ok((false, value))
             }
-            Some(None) => Ok((false, value)),
+            Some(NodeRemoveResult::Mutated) => Ok((false, value)),
             None => Ok((true, value)),
         }
     }
@@ -340,4 +340,12 @@ fn decode_child(rlp: &[u8]) -> NodeHash {
         Ok((&[], &[])) => NodeHash::default(),
         _ => NodeHash::from_slice(rlp),
     }
+}
+
+/// Used as return type for `Node` remove operations that may resolve into either:
+/// - a mutation of the `Node`
+/// - a new `Node`
+pub enum NodeRemoveResult {
+    Mutated,
+    New(Node),
 }

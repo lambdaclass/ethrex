@@ -4,6 +4,7 @@ use ethrex_rlp::structs::Encoder;
 
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;
+use crate::node::NodeRemoveResult;
 use crate::node_hash::NodeHash;
 use crate::{TrieDB, error::TrieError};
 
@@ -107,7 +108,7 @@ impl ExtensionNode {
         &mut self,
         db: &dyn TrieDB,
         mut path: Nibbles,
-    ) -> Result<(Option<Option<Node>>, Option<ValueRLP>), TrieError> {
+    ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Extension { prefix, child } -> Extension { prefix, child } (no removal)
             Extension { prefix, child } -> None (If child.remove = None)
@@ -133,7 +134,7 @@ impl ExtensionNode {
                     // If it is a branch node set it as self's child
                     branch_node @ Node::Branch(_) => {
                         self.child = branch_node.into();
-                        None
+                        NodeRemoveResult::Mutated
                     }
                     // If it is an extension replace self with it after updating its prefix
                     Node::Extension(mut extension_node) => {
@@ -141,7 +142,7 @@ impl ExtensionNode {
                         extension_node.prefix = Nibbles {
                             data: mem::take(&mut self.prefix.data),
                         }; // TODO: helper func (or impl mem::take)
-                        Some(extension_node.into())
+                        NodeRemoveResult::New(extension_node.into())
                     }
                     // If it is a leaf node replace self with it
                     Node::Leaf(mut leaf_node) => {
@@ -149,7 +150,7 @@ impl ExtensionNode {
                         leaf_node.partial = Nibbles {
                             data: mem::take(&mut self.prefix.data),
                         };
-                        Some(leaf_node.into())
+                        NodeRemoveResult::New(leaf_node.into())
                     }
                 };
                 Ok((Some(node), old_value))
@@ -157,7 +158,7 @@ impl ExtensionNode {
             self.child.clear_hash();
             result
         } else {
-            Ok((Some(None), None))
+            Ok((Some(NodeRemoveResult::Mutated), None))
         }
     }
 
@@ -387,7 +388,7 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x02]))
             .unwrap();
 
-        assert!(matches!(node, Some(None)));
+        assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
         assert_eq!(value, None);
     }
 
@@ -405,7 +406,7 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x01]))
             .unwrap();
 
-        assert!(matches!(node, Some(Some(Node::Leaf(_)))));
+        assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
         assert_eq!(value, Some(vec![0x01]));
     }
 
@@ -426,7 +427,10 @@ mod test {
             .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
             .unwrap();
 
-        assert!(matches!(node, Some(Some(Node::Extension(_)))));
+        assert!(matches!(
+            node,
+            Some(NodeRemoveResult::New(Node::Extension(_)))
+        ));
         assert_eq!(value, Some(vec![0x00]));
     }
 
