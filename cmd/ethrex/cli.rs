@@ -24,6 +24,9 @@ use crate::{
 };
 use ethrex_config::networks::Network;
 
+// Amount of seconds between each broadcast
+const BROADCAST_INTERVAL_MS: u64 = 1000; // 1 second
+
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
 #[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
@@ -177,7 +180,7 @@ pub struct Options {
     pub discovery_port: String,
     #[arg(
         long = "p2p.tx-broadcasting-interval",
-        default_value = "1000",
+        default_value_t = BROADCAST_INTERVAL_MS,
         value_name = "INTERVAL_MS",
         help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
         help_heading = "P2P options"
