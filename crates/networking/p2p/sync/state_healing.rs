@@ -22,7 +22,7 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError};
 use tracing::{debug, error, info};
 
 use crate::{
-    metrics::METRICS,
+    metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata, RequestStateTrieNodesError},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     sync::{AccountStorageRoots, code_collector::CodeHashCollector},
@@ -55,7 +55,7 @@ pub async fn heal_state_trie_wrap(
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
-    *METRICS.current_step.lock().await = "Healing State".to_string();
+    METRICS.current_step.set(CurrentStepValue::HealingState);
     info!("Starting state healing");
     while !healing_done {
         healing_done = heal_state_trie(
