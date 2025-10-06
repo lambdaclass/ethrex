@@ -277,7 +277,7 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::types::TxKind::Call(crate::Address::from_low_u64_be(1)), // Normal tx
+            to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
             value: crate::U256::zero(),                                         // Value zero
             data: crate::Bytes::default(),                                      // No data
             access_list: Default::default(),                                    // No access list
