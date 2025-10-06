@@ -36,7 +36,7 @@ async fn main() {
     run_test(&cmd_path, test_reorg_back_to_base).await;
     // This test is flaky 50% of the time, check that it runs correctly 30 times in a row
     for _ in 0..30 {
-        run_test(&cmd_path, reorgs_full_sync_smoke_test).await;
+        run_test(&cmd_path, test_chain_split).await;
     }
     run_test(&cmd_path, test_one_block_reorg_and_back).await;
     run_test(&cmd_path, test_reorg_back_to_base_with_common_ancestor).await;
@@ -144,7 +144,7 @@ async fn test_reorg_back_to_base_with_common_ancestor(simulator: Arc<Mutex<Simul
     node0.update_forkchoice(&base_chain).await;
 }
 
-async fn reorgs_full_sync_smoke_test(simulator: Arc<Mutex<Simulator>>) {
+async fn test_chain_split(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
 
     // Start three ethrex nodes
