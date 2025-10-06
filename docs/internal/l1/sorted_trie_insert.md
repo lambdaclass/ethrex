@@ -1,6 +1,7 @@
-## Sorted Trie Computing
+## Sorted Trie Insertion
 
-This algorithm is used to speed up the insertion time in snap sync.
+This documents the algorithm found at [crates/common/trie/trie_sorted.rs](/crates/common/trie/trie_sorted.rs)
+which is used to speed up the insertion time in snap sync.
 During that step we are inserting all of the account state and storage
 slots downloaded into the Ethereum world state merkle patricia trie.
 To know how that trie works, it's recomennded to [read this primer first.](https://epf.wiki/#/wiki/EL/data-structures?id=world-state-trie)
@@ -52,6 +53,5 @@ In this scenario, we know the leaf we need to compute from the current value
 so we write that. Furthermore, we know that we need a new branch at 0x17,
 so we create it and insert the leaf we just computed and insert into the branch.
 The current parent is stored in the stack.
-
 
 ![Image showing the insertion of 1 elements with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, while a new current parent branch 0x12 is created](sorted_trie_insert/Sorted%20Insertion%20Scenario%202.png)
