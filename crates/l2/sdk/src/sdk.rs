@@ -823,7 +823,7 @@ pub async fn build_generic_tx(
     }
     let mut tx = GenericTransaction {
         r#type,
-        to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
+        to: overrides.to.unwrap_or(TxKind::Call(to)),
         chain_id: Some(if let Some(chain_id) = overrides.chain_id {
             chain_id
         } else {

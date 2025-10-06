@@ -202,7 +202,7 @@ impl Tests {
             max_fee_per_blob_gas: raw_tx.max_fee_per_blob_gas,
             max_fee_per_gas: raw_tx.max_fee_per_gas,
             max_priority_fee_per_gas: raw_tx.max_priority_fee_per_gas,
-            to: raw_tx.to.clone(),
+            to: raw_tx.to,
             fork: *fork,
             authorization_list: raw_tx.authorization_list.clone(),
             access_list,

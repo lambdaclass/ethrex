@@ -612,7 +612,7 @@ async fn handle_new_payload_v3(
     payload: &ExecutionPayload,
     context: RpcApiContext,
     block: Block,
-    expected_blob_versioned_hashes: &Vec<H256>,
+    expected_blob_versioned_hashes: &[H256],
 ) -> Result<PayloadStatus, RpcErr> {
     // V3 specific: validate blob hashes
     let txs = &block.body.transactions;

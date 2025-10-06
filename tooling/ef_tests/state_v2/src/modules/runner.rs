@@ -156,7 +156,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
     let value = test_case.value;
     let data = test_case.data.clone();
     let nonce = test_case.nonce;
-    let to = test_case.to.clone();
+    let to = test_case.to;
     let chain_id = 1; // It's actually in the test config but it's always 1 I believe.
     let access_list = test_case
         .access_list

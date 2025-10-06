@@ -536,7 +536,7 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: tx.to.clone(),
+            to: tx.to,
             value: tx.value,
             data: tx.input.clone(),
             access_list: tx
