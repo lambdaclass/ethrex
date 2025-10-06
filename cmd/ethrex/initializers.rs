@@ -6,8 +6,8 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
-use ethrex_common::types::Genesis;
 use ethrex_common::fd_limit::raise_fd_limit;
+use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};

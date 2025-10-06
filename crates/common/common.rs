@@ -6,7 +6,7 @@ pub use bytes::Bytes;
 pub mod base64;
 pub use ethrex_trie::{TrieLogger, TrieWitness};
 pub mod evm;
+pub mod fd_limit;
 pub mod rkyv_utils;
 pub mod tracing;
 pub mod utils;
-pub mod fd_limit;
