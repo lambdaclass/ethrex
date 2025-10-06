@@ -147,6 +147,7 @@ impl GethDB {
         let last = last.min(size / 6);
         // We need one index back to find the start of the entries.
         let to_read = ((last - first + 2) * 6) as usize;
+        println!("this overflows: {to_read}");
         let mut index_buf = vec![0; to_read];
         println!("{}", index_buf.len() / 6);
         index_file.read_exact_at(&mut index_buf, 6 * first)?;
