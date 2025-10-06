@@ -2,7 +2,7 @@ use crate::{
     cli::remove_db,
     initializers::{init_l1, init_store, init_tracing},
     l2::{
-        self, SequencerOptions,
+        self,
         deployer::{DeployerOptions, deploy_l1_contracts},
         options::{Options, ProverClientOptions, parse_signer},
     },
@@ -86,7 +86,6 @@ impl L2Command {
             println!("Deploying contracts...");
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
-            dbg!(&contract_addresses);
 
             l2_options = l2::options::Options {
                 node_opts: crate::cli::Options::default_l2(),
