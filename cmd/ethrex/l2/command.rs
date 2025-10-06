@@ -2,7 +2,7 @@ use crate::{
     cli::remove_db,
     initializers::{init_l1, init_store, init_tracing},
     l2::{
-        self,
+        self, SequencerOptions,
         deployer::{DeployerOptions, deploy_l1_contracts},
         options::{Options, ProverClientOptions, parse_signer},
     },
@@ -89,6 +89,10 @@ impl L2Command {
 
             l2_options = l2::options::Options {
                 node_opts: crate::cli::Options::default_l2(),
+                sequencer_opts: SequencerOptions {
+                    no_monitor: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
             l2_options
