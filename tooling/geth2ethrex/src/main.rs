@@ -419,7 +419,7 @@ fn account_bucket_worker(
                 }
                 reader.read_exact(&mut len_buffer)?;
                 let len = u16::from_ne_bytes(len_buffer) as usize;
-                let mut encoded = vec![0u8; len];
+                let mut encoded = Vec::with_capacity(len);
                 reader.read_exact(&mut encoded)?;
                 sort_buffer.push((hash, encoded));
             }
