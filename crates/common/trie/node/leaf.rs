@@ -160,6 +160,16 @@ impl LeafNode {
         }
         Ok(())
     }
+
+    /// Creates a new node by emptying `self` partial and its value
+    ///
+    /// This is a way to "consume" the node when we just have a mutable reference to it
+    pub fn take(&mut self) -> Self {
+        LeafNode {
+            partial: self.partial.take(),
+            value: mem::take(&mut self.value),
+        }
+    }
 }
 
 #[cfg(test)]

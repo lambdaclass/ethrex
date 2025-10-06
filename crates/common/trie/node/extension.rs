@@ -1,5 +1,3 @@
-use std::mem;
-
 use ethrex_rlp::structs::Encoder;
 
 use crate::ValueRLP;
@@ -136,19 +134,19 @@ impl ExtensionNode {
                     }
                     // If it is an extension replace self with it after updating its prefix
                     Node::Extension(extension_node) => {
-                        self.prefix.extend(&extension_node.prefix);
-                        extension_node.prefix = Nibbles {
-                            data: mem::take(&mut self.prefix.data),
-                        };
-                        NodeRemoveResult::New(extension_node.clone().into())
+                        let mut extension_node = extension_node.take();
+                        let mut self_node = self.take();
+                        self_node.prefix.extend(&extension_node.prefix);
+                        extension_node.prefix = self_node.prefix;
+                        NodeRemoveResult::New(extension_node.into())
                     }
                     // If it is a leaf node replace self with it
                     Node::Leaf(leaf_node) => {
-                        self.prefix.extend(&leaf_node.partial);
-                        leaf_node.partial = Nibbles {
-                            data: mem::take(&mut self.prefix.data),
-                        };
-                        NodeRemoveResult::New(leaf_node.clone().into())
+                        let mut leaf_node = leaf_node.take();
+                        let mut self_node = self.take();
+                        self_node.prefix.extend(&leaf_node.partial);
+                        leaf_node.partial = self_node.prefix;
+                        NodeRemoveResult::New(leaf_node.into())
                     }
                 };
                 Ok((Some(node), old_value))
@@ -197,6 +195,16 @@ impl ExtensionNode {
             child_node.get_path(db, path, node_path)?;
         }
         Ok(())
+    }
+
+    /// Creates a new node by emptying `self` prefix and cloning the child ref
+    ///
+    /// This is a way to "consume" the node when we just have a mutable reference to it
+    pub fn take(&mut self) -> Self {
+        ExtensionNode {
+            prefix: self.prefix.take(),
+            child: self.child.clone(),
+        }
     }
 }
 

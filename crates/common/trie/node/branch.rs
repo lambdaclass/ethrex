@@ -192,12 +192,14 @@ impl BranchNode {
                     .into(),
                     // Replace self with the child extension node, updating its path in the process
                     Node::Extension(extension_node) => {
+                        let mut extension_node = extension_node.take();
                         extension_node.prefix.prepend(*choice_index as u8);
-                        extension_node.clone().into()
+                        extension_node.into()
                     }
                     Node::Leaf(leaf) => {
+                        let mut leaf = leaf.take();
                         leaf.partial.prepend(*choice_index as u8);
-                        leaf.clone().into()
+                        leaf.into()
                     }
                 };
                 NodeRemoveResult::New(node)
