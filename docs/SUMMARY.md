@@ -3,7 +3,6 @@
 # Introduction
 
 - [Getting started](./getting-started/README.md)
-  - [Quickstart L2](./getting-started/quickstart-l2.md)
   - [Hardware requirements]()
   - [Installation](./getting-started/installation/README.md)
     - [Binary distribution](./getting-started/installation/binary_distribution.md)
