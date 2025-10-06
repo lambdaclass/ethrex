@@ -68,7 +68,7 @@ and on another one:
 ./lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
 ```
 
-### Quickstart L2
+## Quickstart L2
 
 Follow these steps to quickly launch a local L2 node. For advanced options and real deployments, see the links at the end.
 
