@@ -429,6 +429,11 @@ fn account_bucket_worker(
             entries += sort_buffer.len();
 
             for (hash, encoded) in sort_buffer.drain(..) {
+                println!(
+                    "inserting hash: {:x}{:x}",
+                    u128::from_be_bytes(hash[..16].try_into().unwrap()),
+                    u128::from_be_bytes(hash[16..].try_into().unwrap())
+                );
                 sst.put(hash, encoded)?;
             }
             sort_buffer.clear();
