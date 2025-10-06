@@ -1031,15 +1031,15 @@ impl Syncer {
         while !healing_done {
             // This if is an edge case for the skip snap sync scenario
             // TODO: UNCOMMENT CONDITION
-            //if block_is_stale(&pivot_header) {
-            pivot_header = update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                &mut self.peers,
-                block_sync_state,
-            )
-            .await?;
-            //}
+            if block_is_stale(&pivot_header) {
+                pivot_header = update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    &mut self.peers,
+                    block_sync_state,
+                )
+                .await?;
+            }
             healing_done = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
