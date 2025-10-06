@@ -83,31 +83,32 @@
 // Migrate to use either Era archives or path-based archive as base,
 // as they are friendlier both with sync time and disk usage.
 // For now I was working on already synced hash-based archives.
-use clap::{ArgGroup, Parser};
-use ethrex_common::Address;
-use ethrex_common::base64::decode;
-use ethrex_common::types::{BlockHash, BlockHeader};
+use clap::Parser;
+use ethrex_common::types::BlockHeader;
+use ethrex_common::types::BlockNumber;
 use ethrex_common::utils::keccak;
-use ethrex_common::{BigEndianHash, H256, U256, types::BlockNumber};
 use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountState, Block},
+    types::AccountState,
 };
-use ethrex_rlp::decode::{RLPDecode, decode_bytes};
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::Store;
 use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
 use eyre::OptionExt;
-use rocksdb::{DBWithThreadMode, MultiThreaded, Options, SingleThreaded};
+use rocksdb::{
+    DBWithThreadMode, IngestExternalFileOptions, MultiThreaded, Options, SingleThreaded,
+    SstFileWriter,
+};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
+use std::fs::{File, read};
+use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::thread::scope;
 use std::time::Instant;
-use tempfile::tempfile_in;
+use tempfile::{NamedTempFile, tempfile_in};
 use tracing::{debug, info};
 use tracing_subscriber::FmtSubscriber;
 
@@ -187,7 +188,6 @@ impl GethDB {
             if pnum != fnum {
                 poff = 0;
             }
-            println!("reading from {poff} to {offset}");
             let file = &data_files[(fnum - first_file) as usize];
             let mut entry_data = vec![0; (offset - poff) as usize];
             file.read_exact_at(&mut entry_data, poff as u64)?;
@@ -285,10 +285,14 @@ impl GethDB {
         }
     }
 
-    pub fn triedb(&self, bucket_path: impl AsRef<Path>) -> eyre::Result<Box<dyn TrieDB>> {
+    // TODO: share a cache between DB instances (or not)
+    pub fn triedb(
+        &self,
+        bucket_senders: [SyncSender<([u8; 32], Vec<u8>)>; 16],
+    ) -> eyre::Result<Box<dyn TrieDB>> {
         let trie_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
-        GethTrieDBWithNodeBuckets::new_with_prefix(trie_db, bucket_path)
+        GethTrieDBWithNodeBuckets::new_with_prefix(trie_db, bucket_senders)
     }
 }
 
@@ -328,26 +332,14 @@ struct GethTrieIterator {}
 struct GethTrieDBWithNodeBuckets {
     db: DBWithThreadMode<SingleThreaded>,
     // No love for trait TrieDB
-    buckets: [Arc<Mutex<BufWriter<File>>>; 16],
+    bucket_senders: [SyncSender<([u8; 32], Vec<u8>)>; 16],
 }
 impl GethTrieDBWithNodeBuckets {
     pub fn new_with_prefix(
         db: DBWithThreadMode<SingleThreaded>,
-        bucket_path: impl AsRef<Path>,
+        bucket_senders: [SyncSender<([u8; 32], Vec<u8>)>; 16],
     ) -> eyre::Result<Box<dyn TrieDB>> {
-        let mut buckets = Vec::with_capacity(16);
-        for i in 0..16 {
-            let f = tempfile_in(bucket_path.as_ref())?;
-            buckets.push(Arc::new(Mutex::new(BufWriter::new(f))));
-        }
-        let buckets = std::array::from_fn(move |i| buckets[i].clone());
-        Ok(Box::new(Self { db, buckets }))
-    }
-    pub fn flush(&mut self) -> eyre::Result<()> {
-        for bucket in &mut self.buckets {
-            Arc::get_mut(bucket).unwrap().get_mut().unwrap().flush()?;
-        }
-        Ok(())
+        Ok(Box::new(Self { db, bucket_senders }))
     }
 }
 
@@ -375,14 +367,71 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
                 }
             }
         }
-        let mut bucket = self.buckets[(hash[0] >> 4) as usize].lock().unwrap();
-        bucket.write_all(&hash).unwrap();
-        bucket.write_all(&value).unwrap();
+        self.bucket_senders[(hash[0] >> 4) as usize]
+            .send((hash, encoded.clone()))
+            .unwrap();
         Ok(Some(encoded))
     }
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         unimplemented!()
     }
+}
+
+fn account_bucket_worker(
+    account_bucket_receiver: Receiver<([u8; 32], Vec<u8>)>,
+) -> eyre::Result<impl AsRef<Path>> {
+    // Internally we use extra buckets based on the second nibble to avoid
+    // memory use blowing up during sorting in step 2.
+    let lvl2_buckets: Vec<_> = (0..16)
+        .filter_map(|_| tempfile_in("./account_buckets/").ok())
+        .collect();
+    let sst_file = NamedTempFile::new_in("./account_ssts")?;
+    let opts = Options::default();
+    let mut sst = SstFileWriter::create(&opts);
+    sst.open(&sst_file)?;
+    {
+        // Step 1: accumulate all incoming nodes into files.
+        let mut writers: Vec<_> = lvl2_buckets.iter().map(BufWriter::new).collect();
+        while let Ok((hash, encoded)) = account_bucket_receiver.recv() {
+            let writer = &mut writers[hash[0] as usize & 0xf];
+            writer.write_all(&hash)?;
+            writer.write_all(&encoded.len().to_ne_bytes())?;
+            writer.write_all(&encoded)?;
+        }
+        writers.iter_mut().try_for_each(BufWriter::flush)?;
+    }
+    {
+        // Step 2: sort the data and write to SST file.
+        let mut sort_buffer = Vec::with_capacity(64 << 20);
+        for bucket in lvl2_buckets {
+            let mut reader = BufReader::new(bucket);
+            let mut hash = [0u8; 32];
+            let mut len_buffer = [0u8; 2];
+            // TODO: possibly just mmap and sort the slices
+            loop {
+                match reader.read_exact(&mut hash) {
+                    Ok(_) => (),
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => {
+                        eyre::bail!("read error {e}")
+                    }
+                }
+                reader.read_exact(&mut len_buffer)?;
+                let len = u16::from_ne_bytes(len_buffer) as usize;
+                let mut encoded = vec![0u8; len];
+                reader.read_exact(&mut encoded)?;
+                sort_buffer.push((hash, encoded));
+            }
+            sort_buffer.sort_unstable_by_key(|(hash, _)| *hash);
+
+            for (hash, encoded) in sort_buffer.drain(..) {
+                sst.put(hash, encoded)?;
+            }
+            sort_buffer.clear();
+        }
+        sst.finish()?;
+    }
+    Ok(sst_file.into_temp_path())
 }
 
 pub fn geth2ethrex(
@@ -414,10 +463,45 @@ pub fn geth2ethrex(
         u128::from_be_bytes(block_hash[16..].try_into().unwrap())
     );
 
-    let trie = Trie::open(gethdb.triedb(&output_dir)?, header.state_root);
-    let mut iter = trie.into_iter();
-    let node_count = iter.count();
-    println!("iterated {node_count} nodes");
+    scope(|s| {
+        let (account_bucket_senders, account_bucket_receivers): (Vec<_>, Vec<_>) =
+            (0..16).map(|_| sync_channel(1_000)).unzip();
+        let account_bucket_senders: [_; 16] = account_bucket_senders.try_into().unwrap();
+        let gethdbs = (0..16)
+            .map(|_| gethdb.triedb(account_bucket_senders.clone()))
+            .collect::<eyre::Result<Vec<_>>>()?;
+        std::mem::drop(account_bucket_senders);
+        let account_worker_handlers: Vec<_> = account_bucket_receivers
+            .into_iter()
+            .map(|r| s.spawn(|| account_bucket_worker(r)))
+            .collect();
+        let Some(root) = gethdbs[0].get(header.state_root.into())? else {
+            return Ok(());
+        };
+        let top_branch = match Node::decode_raw(&root)? {
+            Node::Leaf(_) => {
+                return Ok(());
+            }
+            Node::Extension(ext) => {
+                let child = gethdbs[0].get(ext.child.compute_hash())?.unwrap();
+                match Node::decode_raw(&child)? {
+                    Node::Branch(branch) => branch,
+                    _ => eyre::bail!("bad extension"),
+                }
+            }
+            Node::Branch(branch) => branch,
+        };
+        gethdbs.into_iter().enumerate().for_each(|(b, db)| {
+            let hash = top_branch.choices[b].compute_hash().finalize();
+            s.spawn(move || {
+                let trie = Trie::open(db, hash);
+                let iter = trie.into_iter();
+                let node_count = iter.count();
+                println!("iterated {node_count} nodes");
+            });
+        });
+        Ok(())
+    })?;
     println!(
         "found {} accounts with code and {} with storages",
         CODE_COUNTER.load(Ordering::Relaxed),
