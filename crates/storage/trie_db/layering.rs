@@ -98,7 +98,7 @@ impl TrieDB for TrieWrapper {
         let Ok(inner) = self.inner.read() else {
             return false;
         };
-        inner.counter > 1 // heruistic
+        inner.counter > 100 // heruistic
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);

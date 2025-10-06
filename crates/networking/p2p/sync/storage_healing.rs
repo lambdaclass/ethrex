@@ -583,7 +583,7 @@ fn get_initial_downloads(
 
                 let previous = match trie
                     .root
-                    .get_node_unchecked(trie.db(), Nibbles::default())
+                    .get_node_checked(trie.db(), Nibbles::default())
                     .expect("To be able to read the store")
                 {
                     Some((validity, previous)) => {
@@ -619,7 +619,7 @@ fn get_initial_downloads(
 
                 let previous = match trie
                     .root
-                    .get_node_unchecked(trie.db(), Nibbles::default())
+                    .get_node_checked(trie.db(), Nibbles::default())
                     .expect("To be able to read the store")
                 {
                     Some((validity, previous)) => {
@@ -675,7 +675,7 @@ pub fn determine_missing_children(
                     continue;
                 }
                 let (validity, previous) = match child
-                    .get_node_unchecked(trie_state, child_path.clone())
+                    .get_node_checked(trie_state, child_path.clone())
                     .inspect_err(|_| {
                         error!("Malformed data when doing get child of a branch node")
                     })? {
@@ -706,7 +706,7 @@ pub fn determine_missing_children(
             }
             let (validity, previous) = match node
                 .child
-                .get_node_unchecked(trie_state, child_path.clone())
+                .get_node_checked(trie_state, child_path.clone())
                 .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
             {
                 Some((validity, previous)) => (validity, Some(previous)),

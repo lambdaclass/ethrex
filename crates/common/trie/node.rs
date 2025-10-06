@@ -37,24 +37,18 @@ impl NodeRef {
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
-            NodeRef::Hash(hash) => db
+            NodeRef::Hash(_) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => {
-                        if node.compute_hash() == hash {
-                            Some(Ok(node))
-                        } else {
-                            None
-                        }
-                    }
+                    Ok(node) => Some(Ok(node)),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
                 .transpose(),
         }
     }
 
-    pub fn get_node_unchecked(
+    pub fn get_node_checked(
         &self,
         db: &dyn TrieDB,
         path: Nibbles,

@@ -452,7 +452,7 @@ pub fn node_missing_children(
                     continue;
                 }
                 let (validity, previous) = match child
-                    .get_node_unchecked(trie_state, child_path.clone())
+                    .get_node_checked(trie_state, child_path.clone())
                     .inspect_err(|_| {
                         error!("Malformed data when doing get child of a branch node")
                     })? {
@@ -479,7 +479,7 @@ pub fn node_missing_children(
             }
             let (validity, previous) = match node
                 .child
-                .get_node_unchecked(trie_state, child_path.clone())
+                .get_node_checked(trie_state, child_path.clone())
                 .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
             {
                 Some((validity, previous)) => (validity, Some(previous)),
