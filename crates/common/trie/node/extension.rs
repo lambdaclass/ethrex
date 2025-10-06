@@ -40,7 +40,6 @@ impl ExtensionNode {
         }
     }
 
-    // TODO: could return Option<BranchNode>
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie.
     /// If the new root happens to be `self` (potentially mutated), returns None. Otherwise, returns Some(node).
     pub fn insert(
@@ -129,28 +128,27 @@ impl ExtensionNode {
             let result = if empty_trie {
                 Ok((None, old_value))
             } else {
-                let node = match child_node.clone() {
-                    // TODO: remove clone
+                let node = match child_node {
                     // If it is a branch node set it as self's child
                     branch_node @ Node::Branch(_) => {
-                        self.child = branch_node.into();
+                        self.child = (*branch_node).clone().into();
                         NodeRemoveResult::Mutated
                     }
                     // If it is an extension replace self with it after updating its prefix
-                    Node::Extension(mut extension_node) => {
+                    Node::Extension(extension_node) => {
                         self.prefix.extend(&extension_node.prefix);
                         extension_node.prefix = Nibbles {
                             data: mem::take(&mut self.prefix.data),
-                        }; // TODO: helper func (or impl mem::take)
-                        NodeRemoveResult::New(extension_node.into())
+                        };
+                        NodeRemoveResult::New(extension_node.clone().into())
                     }
                     // If it is a leaf node replace self with it
-                    Node::Leaf(mut leaf_node) => {
+                    Node::Leaf(leaf_node) => {
                         self.prefix.extend(&leaf_node.partial);
                         leaf_node.partial = Nibbles {
                             data: mem::take(&mut self.prefix.data),
                         };
-                        NodeRemoveResult::New(leaf_node.into())
+                        NodeRemoveResult::New(leaf_node.clone().into())
                     }
                 };
                 Ok((Some(node), old_value))

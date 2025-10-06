@@ -166,9 +166,9 @@ impl BranchNode {
         };
 
         // Step 2: Restructure self
-        let children = self
+        let mut children = self
             .choices
-            .iter()
+            .iter_mut()
             .enumerate()
             .filter(|(_, child)| child.is_valid())
             .collect::<Vec<_>>();
@@ -179,23 +179,25 @@ impl BranchNode {
             ),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
-                let (choice_index, child_ref) = children[0];
-                let child = (*child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?).clone(); // TODO: remove this clone
+                let (choice_index, child_ref) = children.get_mut(0).unwrap();
+                let child = child_ref
+                    .get_node_mut(db)?
+                    .ok_or(TrieError::InconsistentTree)?;
                 let node = match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
-                        Nibbles::from_hex(vec![choice_index as u8]),
+                        Nibbles::from_hex(vec![*choice_index as u8]),
                         child_ref.clone(),
                     )
                     .into(),
                     // Replace self with the child extension node, updating its path in the process
-                    Node::Extension(mut extension_node) => {
-                        extension_node.prefix.prepend(choice_index as u8);
-                        extension_node.into()
+                    Node::Extension(extension_node) => {
+                        extension_node.prefix.prepend(*choice_index as u8);
+                        extension_node.clone().into()
                     }
-                    Node::Leaf(mut leaf) => {
-                        leaf.partial.prepend(choice_index as u8);
-                        leaf.into()
+                    Node::Leaf(leaf) => {
+                        leaf.partial.prepend(*choice_index as u8);
+                        leaf.clone().into()
                     }
                 };
                 NodeRemoveResult::New(node)

@@ -75,7 +75,14 @@ impl LeafNode {
                 // Create a branch node with self as a child and store the value in the branch node
                 // Branch { [Self,...], Value }
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[self_choice_idx] = Node::from(self.clone()).into(); // TODO: remove clone
+                let child: Node = LeafNode {
+                    partial: Nibbles {
+                        data: mem::take(&mut self.partial.data),
+                    },
+                    value: mem::take(&mut self.value),
+                }
+                .into();
+                choices[self_choice_idx] = child.into();
                 BranchNode::new_with_value(
                     choices,
                     match value {
@@ -94,7 +101,14 @@ impl LeafNode {
                     }
                     ValueOrHash::Hash(hash) => hash.into(),
                 };
-                choices[self_choice_idx] = Node::from(self.clone()).into(); // TODO: remove clone
+                let child: Node = LeafNode {
+                    partial: Nibbles {
+                        data: mem::take(&mut self.partial.data),
+                    },
+                    value: mem::take(&mut self.value),
+                }
+                .into();
+                choices[self_choice_idx] = child.into();
                 BranchNode::new(choices)
             };
 
