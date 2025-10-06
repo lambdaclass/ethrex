@@ -1667,7 +1667,7 @@ async fn insert_accounts(
 }
 
 #[cfg(feature = "rocksdb")]
-async fn insert_storages(
+pub async fn insert_storages(
     store: Store,
     accounts_with_storage: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,

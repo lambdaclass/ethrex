@@ -6,7 +6,10 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
-use ethrex_common::types::Genesis;
+use ethrex_common::{
+    H256,
+    types::{BlockHeader, Genesis},
+};
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
@@ -15,9 +18,10 @@ use ethrex_p2p::{
     network::{P2PContext, peer_table},
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
+    sync::insert_storages,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
-    utils::public_key_from_signing_key,
+    utils::{get_account_storages_snapshots_dir, public_key_from_signing_key},
 };
 use ethrex_storage::{EngineType, Store};
 use local_ip_address::{local_ip, local_ipv6};
@@ -26,9 +30,11 @@ use secp256k1::SecretKey;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
+    collections::BTreeSet,
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -381,6 +387,15 @@ pub async fn init_l1(
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
     let store = init_store(datadir, genesis).await;
+
+    let accounts_with_storage = BTreeSet::from_iter([H256::from_str(
+        "000a6ee6f9ca1b47b6ec7163c86833022eddcc1bf9c7ebd595602cca31eec3ed",
+    )
+    .unwrap()]);
+    let _header = BlockHeader::default();
+    let path = get_account_storages_snapshots_dir(datadir);
+    insert_storages(store, accounts_with_storage, &path, datadir, &_header);
+    std::process::exit(-1);
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
