@@ -62,7 +62,7 @@ pub enum BlockchainType {
 
 #[derive(Debug)]
 pub struct Blockchain {
-    storage: Store,
+    storage: Arc<Store>,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after
@@ -111,9 +111,9 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+    pub fn new(store: Arc<Store>, blockchain_opts: BlockchainOptions) -> Self {
         Self {
-            storage: store,
+            storage: store.into(),
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
@@ -123,7 +123,7 @@ impl Blockchain {
 
     pub fn default_with_store(store: Store) -> Self {
         Self {
-            storage: store,
+            storage: store.into(),
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
@@ -149,7 +149,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         // ok-clone: initializing StoreVmDatabase struct requires a copy of the Store anyways
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash); // ok-clone: cloning arc pointer
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -218,12 +218,12 @@ impl Blockchain {
             let parent_hash = block.header.parent_hash;
             // ok-clone: initializing StoreVmDatabase struct requires a copy of the Store anyways
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash)); // ok-clone: cloning arc pointer
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.options.r#type {
                 // ok-clone: increasing Arc reference count for logger
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()), // ok-clone: cloning arc pointer
+                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()), // ok-clone: cloning arc pointer
             };
 
             // Re-execute block with logger

@@ -45,7 +45,8 @@ pub async fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(payload, store, blockchain.options.r#type.clone())?;
+    let mut context =
+        PayloadBuildContext::new(payload, store.clone(), blockchain.options.r#type.clone())?;
 
     fill_transactions(
         blockchain.clone(),

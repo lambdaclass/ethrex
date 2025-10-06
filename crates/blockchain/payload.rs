@@ -211,7 +211,7 @@ pub struct PayloadBuildContext {
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
-    pub store: Store,
+    pub store: Arc<Store>,
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
 }
@@ -219,7 +219,7 @@ pub struct PayloadBuildContext {
 impl PayloadBuildContext {
     pub fn new(
         payload: Block,
-        storage: &Store,
+        storage: Arc<Store>,
         blockchain_type: BlockchainType,
     ) -> Result<Self, EvmError> {
         let config = storage
@@ -390,7 +390,7 @@ impl Blockchain {
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
         let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
+            PayloadBuildContext::new(payload, self.storage.clone(), self.options.r#type.clone())?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
