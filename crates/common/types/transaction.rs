@@ -1165,14 +1165,10 @@ impl Transaction {
         }
     }
 
-    pub fn blob_versioned_hashes(&self) -> Vec<H256> {
+    pub fn blob_versioned_hashes(&self) -> Option<&Vec<H256>> {
         match self {
-            Transaction::LegacyTransaction(_) => Vec::new(),
-            Transaction::EIP2930Transaction(_) => Vec::new(),
-            Transaction::EIP1559Transaction(_) => Vec::new(),
-            Transaction::EIP4844Transaction(tx) => tx.blob_versioned_hashes.clone(),
-            Transaction::EIP7702Transaction(_) => Vec::new(),
-            Transaction::PrivilegedL2Transaction(_) => Vec::new(),
+            Transaction::EIP4844Transaction(tx) => Some(&tx.blob_versioned_hashes),
+            _ => None,
         }
     }
 

@@ -312,12 +312,10 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
         return Err(TxValidationError::Type3TxPreFork.into());
     }
 
-    let blob_hashes = &vm.env.tx_blob_hashes;
-
     // (12) TYPE_3_TX_ZERO_BLOBS
-    if blob_hashes.is_empty() {
+    let Some(blob_hashes) = vm.tx.blob_versioned_hashes() else {
         return Err(TxValidationError::Type3TxZeroBlobs.into());
-    }
+    };
 
     // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
     for blob_hash in blob_hashes {
@@ -422,8 +420,10 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<
 
     // blob gas cost = max fee per blob gas * blob gas used
     // https://eips.ethereum.org/EIPS/eip-4844
-    let max_blob_gas_cost =
-        get_max_blob_gas_price(&vm.env.tx_blob_hashes, vm.env.tx_max_fee_per_blob_gas)?;
+    let max_blob_gas_cost = get_max_blob_gas_price(
+        &vm.tx.blob_versioned_hashes().unwrap_or(&vec![]),
+        vm.env.tx_max_fee_per_blob_gas,
+    )?;
 
     // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
     // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
@@ -456,7 +456,7 @@ pub fn deduct_caller(
     let value = vm.current_call_frame.msg_value;
 
     let blob_gas_cost = get_blob_gas_price(
-        &vm.env.tx_blob_hashes,
+        vm.tx.blob_versioned_hashes().unwrap_or(&vec![]),
         vm.env.block_excess_blob_gas,
         &vm.env.config,
     )?;
