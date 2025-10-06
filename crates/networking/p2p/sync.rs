@@ -1087,8 +1087,9 @@ impl Syncer {
                         // 2. Mark it for storage healing.
                         storage_accounts.healed_accounts.insert(*acc_hash);
                         accounts_with_storage.remove(acc_hash);
-                        warn!(
-                            "We couldn't download these accounts on request_storage_ranges. Account hash: {:x?}, {:x?}. Number of intervals {}",
+                        debug!(
+                            "We couldn't download these accounts on request_storage_ranges. Falling back to storage healing for it.
+                            Account hash: {:x?}, {:x?}. Number of intervals {}",
                             acc_hash,
                             maybe_root,
                             old_intervals.len()
