@@ -12,7 +12,7 @@ use spawned_concurrency::error::GenServerError;
 
 use crate::peer_handler::DumpError;
 use crate::{
-    kademlia::PeerChannels,
+    discv4::peer_table::PeerChannels,
     rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
 };
 use tracing::error;
