@@ -431,13 +431,13 @@ fn account_bucket_worker(
             let mut last = [0u8; 32];
             for (hash, encoded) in sort_buffer.drain(..) {
                 println!(
-                    "inserting hash: {:16x}{:16x}",
+                    "inserting hash: {:016x}{:016x}",
                     u128::from_be_bytes(hash[..16].try_into().unwrap()),
                     u128::from_be_bytes(hash[16..].try_into().unwrap())
                 );
                 sst.put(hash, encoded).inspect_err(|_| {
                     println!(
-                        "failed to insert: {:16x}{:16x} (prev: {:16x}{:16x})",
+                        "failed to insert: {:016x}{:016x} (prev: {:016x}{:016x})",
                         u128::from_be_bytes(hash[..16].try_into().unwrap()),
                         u128::from_be_bytes(hash[16..].try_into().unwrap()),
                         u128::from_be_bytes(last[..16].try_into().unwrap()),
