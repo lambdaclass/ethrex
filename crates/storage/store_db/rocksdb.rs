@@ -7,19 +7,20 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    H256,
+    H256, U256,
     types::{
         Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
         Transaction,
     },
 };
-use ethrex_trie::{Nibbles, NodeKey, Trie};
+use ethrex_trie::{Nibbles, Node, NodeHash, NodeKey, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
+    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBCommon, MultiThreaded,
     OptimisticTransactionDB, Options, WriteBatchWithTransaction,
 };
 use std::{
     collections::HashSet,
+    f32::consts::E,
     path::Path,
     sync::{Arc, RwLock},
 };
@@ -86,10 +87,15 @@ const CF_CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 const CF_SNAP_STATE: &str = "snap_state";
 
+/// State trie nodes column family: [`NodeKey`] => [`Vec<u8>`]
+/// - [`NodeKey`] = `node_hash.to_vec()`
+/// - [`Vec<u8>`] = `node_data`
+const CF_TRIE_NODES: &str = "trie_nodes";
+
 /// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
 /// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_TRIE_NODES: &str = "trie_nodes";
+const CF_TRIE_NODES_PATHBASED: &str = "trie_nodes_pathbased";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -161,6 +167,7 @@ impl Store {
             CF_CHAIN_DATA,
             CF_SNAP_STATE,
             CF_TRIE_NODES,
+            CF_TRIE_NODES_PATHBASED,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
         ];
@@ -229,7 +236,7 @@ impl Store {
                     block_opts.set_cache_index_and_filter_blocks(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_TRIE_NODES => {
+                CF_TRIE_NODES | CF_TRIE_NODES_PATHBASED => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
@@ -430,6 +437,112 @@ impl Store {
             }
 
             Ok(results)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    async fn transition_to_pathbased_trie(&self) -> Result<(), StoreError> {
+        info!("Transitioning to path-based trie storage");
+        let db = self.db.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let mut batch: WriteBatchWithTransaction<true> = WriteBatchWithTransaction::default();
+            let cf_trie_nodes = db
+                .cf_handle(CF_TRIE_NODES)
+                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+            let cf_trie_nodes_pathbased = db
+                .cf_handle(CF_TRIE_NODES_PATHBASED)
+                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+            let iterator = db.iterator_cf(&cf_trie_nodes, rocksdb::IteratorMode::Start);
+
+            let mut nodes_stack = vec![];
+            for item in iterator {
+                let (key, value) =
+                    item.map_err(|e| StoreError::Custom(format!("Iterator error: {}", e)))?;
+                if key.len() != 65 {
+                    return Err(StoreError::Custom(format!(
+                        "Invalid NodeKey length: {}",
+                        key.len()
+                    )));
+                }
+                let nibble_bytes = &key[0..33];
+                let nibble = Nibbles::from_bytes(nibble_bytes);
+                let hash = H256::from_slice(&key[33..65]);
+                // todo: check if its a value
+                let node = Node::decode(&value)
+                    .map_err(|e| StoreError::Custom(format!("RLP decode error: {}", e)))?;
+                if nodes_stack.is_empty() {
+                    info!("Nodes stack was empty");
+                    let child_amount = match &node {
+                        Node::Branch(parent) => {
+                            parent.choices.iter().filter(|c| c.is_valid()).count()
+                        }
+                        Node::Extension(_) => 1,
+                        Node::Leaf(_) => 0,
+                    };
+                    if !matches!(node, Node::Leaf(_)) {
+                        nodes_stack.push((nibble, node, child_amount));
+                    }
+                    batch.put_cf(&cf_trie_nodes_pathbased, nibble_bytes, value);
+                    continue;
+                }
+                let (last_node_nibble, last_node, child_amount) = nodes_stack.pop().unwrap();
+                let found = match last_node.clone() {
+                    Node::Branch(parent) => {
+                        info!("parent was branch child amount {}", child_amount);
+                        let mut found = false;
+                        for child in parent.choices.iter() {
+                            if child.compute_hash() == NodeHash::Hashed(hash) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if found {
+                            if child_amount > 1 {
+                                // still has other childs, push it back
+                                nodes_stack.push((
+                                    last_node_nibble.clone(),
+                                    last_node.clone(),
+                                    child_amount - 1,
+                                ));
+                            }
+                        }
+                        found
+                    }
+                    Node::Extension(parent) => {
+                        info!("parent was extension");
+                        parent.child.compute_hash() == NodeHash::Hashed(hash)
+                    }
+                    Node::Leaf(_) => {
+                        return Err(StoreError::Custom(format!(
+                            "Leaf node cannot have children"
+                        )));
+                    }
+                };
+                info!("found child in parent: {}", found);
+                if found {
+                    let child_amount = match &node {
+                        Node::Branch(parent) => {
+                            parent.choices.iter().filter(|c| c.is_valid()).count()
+                        }
+                        Node::Extension(_) => 1,
+                        Node::Leaf(_) => 0,
+                    };
+                    if !matches!(node, Node::Leaf(_)) {
+                        info!("pushing node to stack, child amount: {}", child_amount);
+                        nodes_stack.push((nibble, node, child_amount));
+                    }
+                    batch.put_cf(&cf_trie_nodes_pathbased, nibble_bytes, value);
+                    continue;
+                }
+            }
+            info!(
+                "Transition to path-based trie storage completed, stack size: {}",
+                nodes_stack.len()
+            );
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -985,7 +1098,9 @@ impl StoreEngine for Store {
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))??;
+
+        self.transition_to_pathbased_trie().await
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
