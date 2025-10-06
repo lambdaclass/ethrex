@@ -141,13 +141,10 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
         let index = self.current_call_frame.stack.pop1()?;
-        let Some(blob_hashes) = self.tx.blob_versioned_hashes() else {
-            self.current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
-        };
+        let blob_hashes = self.tx.blob_versioned_hashes();
 
-        let index = match u256_to_usize(index) {
-            Ok(index) if index < blob_hashes.len() => index,
+        let (index, blob_hashes) = match (u256_to_usize(index), blob_hashes) {
+            (Ok(index), Some(blob_hashes)) if index < blob_hashes.len() => (index, blob_hashes),
             _ => {
                 self.current_call_frame.stack.push_zero()?;
                 return Ok(OpcodeResult::Continue);
