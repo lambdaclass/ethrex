@@ -12,7 +12,7 @@ Naive algorithm: we insert keys in arbitrary (unsorted) order.
 This version requires O(n\*log(n)) reads-write to disk. 
 This is because each insertion creates a new leaf, which modifies 
 the hash of its parent branch recursively. We could avoid reads
-to disk by having the trie in memory, but this i unviable
+to disk by having the trie in memory, but this is unviable
 for large amounts of state data.
 
 Example of the Naive implementation:
@@ -29,8 +29,8 @@ input.
 
 The implementation maintains three pointers:
 
-1. The current element being processed,
-2. The next input value, and
+1. The current element being processed.
+2. The next input value.
 3. The parent of the current element.
 
 All parents that can still be modified are stored in a "parent stack". 
@@ -41,7 +41,7 @@ Based on these, the algorithm can determine the next write operation to perform.
 Depending on the state of the three current pointers, one of 3 scenarios
 can happen:
 
-Scenario 1: Current and next value are brothers with the current
+Scenario 1: Current and next value are siblings with the current
 parent being the parent of both values. 
 This happens when the parent and both values share the same 
 number of nibbles at the beginning of their paths.
@@ -52,8 +52,8 @@ update the parent to include a pointer to that leaf, and then continue.
 
 ![Image showing the insertion of 1 elements with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write](sorted_trie_insert/Sorted%20Insertion%20Scenario%201.png)
 
-Scenario 2: Current and next values are brothers of a new current parent.
-This happens when the parent shares less nibbles from their paths than what the brothers share.
+Scenario 2: Current and next values are siblings of a new current parent.
+This happens when the parent shares less nibbles from their paths than what the siblings share.
 In our example, the current and next value share 0x17, while the parent only shares 0x1.
 
 In this scenario, we know the leaf we need to compute from the current value
