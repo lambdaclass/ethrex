@@ -9,6 +9,7 @@ use ethrex_common::{
 };
 use ethrex_config::networks::Network;
 use ethrex_l2_rpc::signer::{Signable, Signer};
+use ethrex_p2p::sync::SyncMode;
 use ethrex_rpc::{
     EngineClient, EthClient,
     types::{
@@ -76,6 +77,7 @@ impl Simulator {
         opts.p2p_port = (30303 + n).to_string();
         opts.discovery_port = (30303 + n).to_string();
         opts.datadir = format!("data/node{n}").into();
+        opts.syncmode = SyncMode::Full;
 
         let _ = std::fs::remove_dir_all(&opts.datadir);
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
@@ -98,6 +100,7 @@ impl Simulator {
             format!("--discovery.port={}", opts.discovery_port),
             format!("--datadir={}", opts.datadir.display()),
             format!("--network={}", self.genesis_path.display()),
+            format!("--syncmode={:?}", opts.syncmode).to_lowercase(),
             "--force".to_string(),
         ])
         .stdin(Stdio::null())
