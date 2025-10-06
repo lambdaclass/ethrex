@@ -604,7 +604,7 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = try_execute_payload(&block, &context, latest_valid_hash).await?;
+    let payload_status = try_execute_payload(block, &context, latest_valid_hash).await?;
     Ok(payload_status)
 }
 
@@ -683,7 +683,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
 }
 
 async fn try_execute_payload(
-    block: &Block,
+    block: Block,
     context: &RpcApiContext,
     latest_valid_hash: H256,
 ) -> Result<PayloadStatus, RpcErr> {
