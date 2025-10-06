@@ -977,6 +977,7 @@ dependencies = [
  "hex",
  "kzg-rs",
  "lazy_static",
+ "libc",
  "once_cell",
  "rayon",
  "rkyv",
