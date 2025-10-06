@@ -27,6 +27,7 @@ impl TrieWrapperInner {
         }
         None
     }
+
     pub fn get_commitable(&mut self, mut state_root: H256) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
@@ -38,6 +39,7 @@ impl TrieWrapperInner {
         }
         None
     }
+
     pub fn put_batch(
         &mut self,
         parent: H256,
@@ -61,6 +63,7 @@ impl TrieWrapperInner {
                     .map(|(path, node)| (path.as_ref().to_vec(), node)),
             );
     }
+
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut layer = self.layers.remove(&state_root)?;
         // ensure parents are commited
@@ -106,6 +109,7 @@ impl TrieDB for TrieWrapper {
         }
         self.db.get(key)
     }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
         let new_state_root = match last_pair {
