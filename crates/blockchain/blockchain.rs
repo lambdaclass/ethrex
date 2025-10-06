@@ -113,7 +113,7 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 impl Blockchain {
     pub fn new(store: Arc<Store>, blockchain_opts: BlockchainOptions) -> Self {
         Self {
-            storage: store.into(),
+            storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
@@ -121,9 +121,9 @@ impl Blockchain {
         }
     }
 
-    pub fn default_with_store(store: Store) -> Self {
+    pub fn default_with_store(store: Arc<Store>) -> Self {
         Self {
-            storage: store.into(),
+            storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),

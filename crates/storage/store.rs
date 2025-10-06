@@ -20,7 +20,7 @@ use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::RwLock,
+    sync::{Arc, RwLock},
 };
 use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, instrument};
@@ -30,11 +30,11 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Store {
-    pub engine: Box<dyn StoreEngine>,
-    pub chain_config: RwLock<ChainConfig>,
-    pub latest_block_header: RwLock<BlockHeader>,
+    pub engine: Arc<dyn StoreEngine>,
+    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -79,14 +79,14 @@ impl Store {
         let store = match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
-                engine: Box::new(RocksDBStore::new(path)?),
+                engine: Arc::new(RocksDBStore::new(path)?),
                 chain_config: Default::default(),
-                latest_block_header: RwLock::new(BlockHeader::default()),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
             EngineType::InMemory => Self {
-                engine: Box::new(InMemoryStore::new()),
+                engine: Arc::new(InMemoryStore::new()),
                 chain_config: Default::default(),
-                latest_block_header: RwLock::new(BlockHeader::default()),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
         };
 
@@ -189,18 +189,18 @@ impl Store {
     pub fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,
-    ) -> Result<Option<&BlockHeader>, StoreError> {
+    ) -> Result<Option<BlockHeader>, StoreError> {
         {
             let latest = self
                 .latest_block_header
                 .read()
                 .map_err(|_| StoreError::LockError)?;
             if block_hash == latest.hash() {
-                return Ok(Some(&latest));
+                return Ok(Some(latest.clone()));
             }
         }
 
-        &self.engine.get_block_header_by_hash(block_hash)
+        self.engine.get_block_header_by_hash(block_hash)
     }
 
     pub async fn get_block_body_by_hash(

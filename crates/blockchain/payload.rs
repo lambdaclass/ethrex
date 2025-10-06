@@ -119,7 +119,7 @@ impl BuildPayloadArgs {
 // Basic payload block building, can and should be improved
 pub fn create_payload(
     args: &BuildPayloadArgs,
-    storage: &Store,
+    storage: Arc<Store>,
     extra_data: Bytes,
 ) -> Result<Block, ChainError> {
     let parent_block = storage
@@ -700,7 +700,7 @@ impl std::ops::Deref for HeadTransaction {
 
 impl From<HeadTransaction> for Transaction {
     fn from(val: HeadTransaction) -> Self {
-        val.tx.transaction().clone()
+        val.tx.into_transaction()
     }
 }
 
