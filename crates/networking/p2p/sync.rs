@@ -924,11 +924,8 @@ impl SnapBlockSyncState {
 /// TODO: remove this function once peer table has moved to spawned implementation
 async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) -> Result<(), SyncError> {
     if peer_handler.peer_table.free_peers().await? != 0 {
-        let step = METRICS.current_step.lock().await.clone();
-        error!(
-            step = step,
-            "Found peers marked as used even though we just finished this step"
-        );
+        let step = METRICS.current_step.get();
+        error!("Found peers marked as used even though we just finished this step: step = {step}");
     };
     Ok(())
 }
@@ -1120,8 +1117,9 @@ impl Syncer {
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
-            *METRICS.current_step.lock().await =
-                "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
+            METRICS
+                .current_step
+                .set(crate::metrics::CurrentStepValue::InsertingStorageRanges);
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
             insert_storages(

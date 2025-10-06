@@ -18,7 +18,7 @@ use ethrex_trie::{Node, verify_range};
 
 use crate::{
     discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableError, PeerTableHandle},
-    metrics::METRICS,
+    metrics::{CurrentStepValue, METRICS},
     rlpx::{
         connection::server::CastMessage,
         eth::{
@@ -175,7 +175,9 @@ impl PeerHandler {
         sync_head: H256,
     ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
         let start_time = SystemTime::now();
-        *METRICS.current_step.lock().await = "Downloading Headers".to_string();
+        METRICS
+            .current_step
+            .set(CurrentStepValue::DownloadingHeaders);
 
         let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
 
@@ -741,7 +743,9 @@ impl PeerHandler {
         pivot_header: &mut BlockHeader,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), PeerHandlerError> {
-        *METRICS.current_step.lock().await = "Requesting Account Ranges".to_string();
+        METRICS
+            .current_step
+            .set(CurrentStepValue::RequestingAccountRanges);
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -1072,7 +1076,9 @@ impl PeerHandler {
         &mut self,
         all_bytecode_hashes: &[H256],
     ) -> Result<Option<Vec<Bytes>>, PeerHandlerError> {
-        *METRICS.current_step.lock().await = "Requesting Bytecodes".to_string();
+        METRICS
+            .current_step
+            .set(CurrentStepValue::RequestingBytecodes);
         const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
         // 1) split the range in chunks of same length
         let chunk_count = 800;
@@ -1272,7 +1278,9 @@ impl PeerHandler {
         pivot_header: &mut BlockHeader,
         store: Store,
     ) -> Result<u64, PeerHandlerError> {
-        *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
+        METRICS
+            .current_step
+            .set(CurrentStepValue::RequestingStorageRanges);
         debug!("Starting request_storage_ranges function");
         // 1) split the range in chunks of same length
         let mut accounts_by_root_hash: BTreeMap<_, Vec<_>> = BTreeMap::new();

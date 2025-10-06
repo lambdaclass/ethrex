@@ -186,7 +186,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Common metrics
             let elapsed = format_duration(start.elapsed());
             let peer_number = peer_table.peer_count().await.unwrap_or(0);
-            let current_step = METRICS.current_step.lock().await.clone();
+            let current_step = METRICS.current_step.get();
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
