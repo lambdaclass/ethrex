@@ -29,14 +29,14 @@ input.
 
 The implementation is based on keeping three pointers to data. The current
 element we're processing, the next input value and the parent of the current
-element. All parents that can still be modified are stored in a stack. 
+element. All parents that can still be modified are stored in a "parent stack". 
 Based on those we can have enough knowledge to know what is the 
 next write operation.
 
 Scenario 1: Current and next value are brothers with the current
 parent being the parent of both values. This happens when
-the parent and both values share the same amount of bytes at the beginning of 
-their peth. In our example, all paths to the nodes starts with 0x1 and
+the parent and both values share the same amount of nibbles at the beginning of 
+their path. In our example, all paths to the nodes starts with 0x1 and
 then diverges.
 
 In this scenario, we know the leaf we need to compute from the current value
@@ -52,6 +52,20 @@ In our example, the current and next value share 0x17, while the parent only sha
 In this scenario, we know the leaf we need to compute from the current value
 so we write that. Furthermore, we know that we need a new branch at 0x17,
 so we create it and insert the leaf we just computed and insert into the branch.
-The current parent is stored in the stack.
+The current parent is stored in the "parent stack", and the new branch becomes the 
+current parent.
 
 ![Image showing the insertion of 1 elements with a current parent branch 0x1, the current element 0x172E and next element 0x175B. 0x172E is inserted with a single write, while the current parent branch is put onto the stack, while a new current parent branch 0x12 is created](sorted_trie_insert/Sorted%20Insertion%20Scenario%202.png)
+
+Scenario 3: The current parent is not the parent of the
+next value. This happens when the parent doesn't have
+all of the nibbles of it's path.
+
+In this scenario, we know the leaf we need to compute from the current value, 
+so we write that. We change the current value to be the current parent, and 
+the new current parent is popped from the "parent stack".
+
+![Image showing the insertion of 1 elements with a current parent branch 0x17, the current element 0x175B and next element 0x1825. 0x175B is inserted with a single write, while the current parent branch becomes the current value, while the current parent branch is popped from the stack](sorted_trie_insert/Sorted%20Insertion%20Scenario%203.png)
+
+These three scenarios keep repeating themselves until the trie is complete,
+at which point the algorithm returns a hash to the root node branch.
