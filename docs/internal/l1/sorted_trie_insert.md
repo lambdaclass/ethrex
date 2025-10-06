@@ -1,4 +1,4 @@
-## Sorted Trie Insertion
+# Sorted Trie Insertion
 
 This documents the algorithm found at [crates/common/trie/trie_sorted.rs](/crates/common/trie/trie_sorted.rs)
 which is used to speed up the insertion time in snap sync.
@@ -6,7 +6,7 @@ During that step we are inserting all of the account state and storage
 slots downloaded into the Ethereum world state merkle patricia trie.
 To know how that trie works, it's recomennded to [read this primer first.](https://epf.wiki/#/wiki/EL/data-structures?id=world-state-trie)
 
-### Concept
+## Concept
 
 Naive algorithm for computing: we just insert unordered. 
 This version requires O(n\*log(n)) reads-write to disk. 
@@ -25,13 +25,18 @@ that the leaf will have a partial path of 0xEBB (because no node exists
 between 0x0EBB and 0x172E if it's sorted). The root branch node we know exists and will be modified, so we don't write until we have read all
 input.
 
-### Implementation
+## Implementation
 
 The implementation is based on keeping three pointers to data. The current
 element we're processing, the next input value and the parent of the current
 element. All parents that can still be modified are stored in a "parent stack". 
 Based on those we can have enough knowledge to know what is the 
 next write operation.
+
+## Scenarios
+
+Depending on the state of the three current pointers, one of 3 scenarios
+can happen:
 
 Scenario 1: Current and next value are brothers with the current
 parent being the parent of both values. This happens when
@@ -69,3 +74,15 @@ the new current parent is popped from the "parent stack".
 
 These three scenarios keep repeating themselves until the trie is complete,
 at which point the algorithm returns a hash to the root node branch.
+
+### Inserting with extensions
+
+In general, each write to disk is prepared to properly handle extensions
+as the write function knows what it's writing and what was it's parent
+and full path. As such, it can check if the insertion is a branch and
+if there's an extension need.
+
+A specific edge is the root node, which is assumed to always be a branch
+node, but the code has special case code to check if the root node has 
+a single child, in which case it changes to an extension or leaf as needed.
+While modifying the other nodes in the trie.
