@@ -8,12 +8,10 @@ documentation.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-common = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
+ethrex-common = { workspace = true, default-features = false }
 ethrex-storage = { workspace = true, default-features = false }
 ethrex-vm = { workspace = true, default-features = false }
-
-secp256k1.workspace = true
 
 thiserror.workspace = true
 sha3.workspace = true
@@ -33,15 +31,16 @@ tokio = { workspace = true, features = ["full"] }
 path = "./blockchain.rs"
 
 [features]
-default = ["c-kzg"]
-c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg", "ethrex-storage/c-kzg"]
+default = ["l1"]
+
+c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 kzg-rs = ["ethrex-common/kzg-rs", "ethrex-vm/kzg-rs"]
 
 l1 = ["ethrex-common/l1", "ethrex-vm/l1", "c-kzg"]
+sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1", "kzg-rs"]
 risc0 = ["ethrex-common/risc0", "ethrex-vm/risc0", "c-kzg"]
 
 metrics = ["ethrex-metrics/transactions"]
 
-sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1", "ethrex-storage/sp1"]
 [lints.clippy]
 unwrap_used = "deny"
