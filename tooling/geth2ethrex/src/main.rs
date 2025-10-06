@@ -373,8 +373,10 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         bucket.write_all(&value).unwrap();
         println!("value size: {}", value.len());
         let node = Node::decode_raw(&value)?;
-        dbg!(node);
-        Ok(Some(value))
+        // We use a redundant encoding, but I'm not changing it in this tool.
+        // For now, decode and then encode.
+        let encoded = node.encode_to_vec();
+        Ok(Some(encoded))
     }
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         unimplemented!()
