@@ -11,8 +11,8 @@ use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    kademlia::Kademlia,
-    network::{P2PContext, peer_table},
+    discv4::peer_table::{PeerTable, PeerTableHandle},
+    network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
@@ -37,6 +37,12 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
+};
+
+// Compile-time check to ensure that at least one of the database features is enabled.
+#[cfg(not(feature = "rocksdb"))]
+const _: () = {
+    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
 pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
@@ -100,16 +106,10 @@ pub fn open_store(datadir: &Path) -> Store {
     if datadir.ends_with("memory") {
         Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
     } else {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "rocksdb")] {
-                let engine_type = EngineType::RocksDB;
-            } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
-            } else {
-                error!("No database specified. The feature flag `rocksdb` or `libmdbx` should've been set while building.");
-                panic!("Specify the desired database engine.");
-            }
-        };
+        #[cfg(feature = "rocksdb")]
+        let engine_type = EngineType::RocksDB;
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")
     }
 }
@@ -207,7 +207,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_handler.peer_table.peers.clone(),
+        peer_handler.peer_table,
     ));
 }
 
@@ -370,7 +370,12 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTableHandle,
+    Arc<Mutex<NodeRecord>>,
+)> {
     let datadir = &opts.datadir;
     init_datadir(datadir);
 
@@ -402,7 +407,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_handler = PeerHandler::new(PeerTable::spawn());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
