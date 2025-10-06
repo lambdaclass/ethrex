@@ -372,7 +372,7 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         bucket.write_all(&buffer).unwrap();
         bucket.write_all(&value).unwrap();
         println!("value size: {}", value.len());
-        let node: Node = <Node as RLPDecode>::decode(&value)?;
+        let node = Node::decode_raw(&value)?;
         dbg!(node);
         Ok(Some(value))
     }
