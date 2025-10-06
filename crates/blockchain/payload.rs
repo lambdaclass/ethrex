@@ -401,7 +401,10 @@ impl Blockchain {
         self.finalize_payload(&mut context).await?;
 
         let interval = Instant::now().duration_since(since).as_millis();
-        tracing::info!(
+        // TODO: expose as a proper metric
+        // Commented out because we build multiple blocks per request
+        // each one printing this metric can be spammy
+        tracing::debug!(
             "[METRIC] BUILDING PAYLOAD TOOK: {interval} ms, base fee {}",
             base_fee
         );
@@ -410,7 +413,10 @@ impl Blockchain {
 
             if interval != 0 {
                 let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-                tracing::info!(
+                // TODO: expose as a proper metric
+                // Commented out because we build multiple blocks per request
+                // each one printing this metric can be spammy
+                tracing::debug!(
                     "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
                 );
             }
@@ -543,7 +549,7 @@ impl Blockchain {
                 }
                 // Ignore following txs from sender
                 Err(e) => {
-                    error!("Failed to execute transaction: {tx_hash:x}, {e}");
+                    debug!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     txs.pop();
                     continue;
