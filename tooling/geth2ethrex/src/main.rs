@@ -379,11 +379,11 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
 
 fn account_bucket_worker(
     account_bucket_receiver: Receiver<([u8; 32], Vec<u8>)>,
-) -> eyre::Result<impl AsRef<Path>> {
+) -> eyre::Result<NamedTempFile> {
     // Internally we use extra buckets based on the second nibble to avoid
     // memory use blowing up during sorting in step 2.
     let lvl2_buckets: Vec<_> = (0..16).filter_map(|_| tempfile::tempfile().ok()).collect();
-    let sst_file = NamedTempFile::new_in("./")?;
+    let mut sst_file = NamedTempFile::new_in("./")?;
     let opts = Options::default();
     let mut sst = SstFileWriter::create(&opts);
     sst.open(&sst_file)?;
@@ -429,7 +429,8 @@ fn account_bucket_worker(
         }
         sst.finish()?;
     }
-    Ok(sst_file.into_temp_path())
+    sst_file.flush()?;
+    Ok(sst_file)
 }
 
 pub fn geth2ethrex(
@@ -471,7 +472,16 @@ pub fn geth2ethrex(
         std::mem::drop(account_bucket_senders);
         let account_worker_handlers: Vec<_> = account_bucket_receivers
             .into_iter()
-            .map(|r| s.spawn(|| account_bucket_worker(r)))
+            .map(|r| {
+                s.spawn(|| {
+                    let named = account_bucket_worker(r).unwrap();
+                    println!(
+                        "sst written to: {} ({} bytes)",
+                        &named.path().to_string_lossy(),
+                        named.as_file().metadata().unwrap().size()
+                    );
+                })
+            })
             .collect();
         let Some(root) = gethdbs[0].get(header.state_root.into())? else {
             return Ok(());
