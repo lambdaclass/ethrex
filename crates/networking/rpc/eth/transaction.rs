@@ -109,10 +109,11 @@ impl RpcHandler for CallRequest {
         };
         // Prepare transaction with gas limit
         let mut transaction = self.transaction.clone();
+        #[allow(clippy::useless_conversion)]
         let gas_limit = transaction.gas.map_or(DEFAULT_ETH_CALL_GAS_LIMIT, |gas| {
             u64::try_from(gas).unwrap_or(DEFAULT_ETH_CALL_GAS_LIMIT)
         });
-        transaction.gas = Some(gas_limit.into());
+        transaction.gas = Some(gas_limit);
         // Run transaction
         let result = simulate_tx(&transaction, &header, context.storage, context.blockchain)?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
