@@ -8,7 +8,7 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, U256,
     types::{
-        AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind,
+        AccountUpdate, EIP1559Transaction, EIP4844Transaction, EIP7702Transaction, Fork, Transaction, TxKind,
         tx_fields::*,
     },
 };
@@ -106,6 +106,11 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 Err(EFTestRunnerError::Internal(reason)) => {
                     return Err(EFTestRunnerError::Internal(reason));
                 }
+                Err(EFTestRunnerError::EIP4844ShouldNotBeCreateType) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::Custom(
+                        format!("This case should not happen. LEVM Runner {}.", line!()).to_owned(),
+                    )));
+                }
                 Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
                     return Err(EFTestRunnerError::Internal(InternalError::Custom(
                         format!("This case should not happen. LEVM Runner {}.", line!()).to_owned(),
@@ -135,6 +140,9 @@ pub async fn run_ef_test_tx(
     let levm_execution_result = match vm_creation_result {
         Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => Err(VMError::TxValidation(
             TxValidationError::Type4TxContractCreation,
+        )),
+        Err(EFTestRunnerError::EIP4844ShouldNotBeCreateType) => Err(VMError::TxValidation(
+            TxValidationError::Type3TxContractCreation,
         )),
         Err(error) => return Err(error),
         Ok(mut levm) => {
@@ -186,30 +194,46 @@ pub fn prepare_vm_for_tx<'a>(
             .collect::<Vec<AuthorizationTuple>>()
     });
 
+    let blob_hashes = test_tx.blob_versioned_hashes.clone();
     let blob_schedule = EVMConfig::canonical_values(*fork);
     let config = EVMConfig::new(*fork, blob_schedule);
 
-    let tx = match authorization_list {
-        Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
+    let tx = if authorization_list.is_some() {
+        Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_tx.to {
                 TxKind::Call(to) => to,
                 TxKind::Create => return Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType),
             },
             value: test_tx.value,
             data: test_tx.data.clone(),
-            access_list,
-            authorization_list: list,
+            access_list: access_list,
+            authorization_list: authorization_list.unwrap(),
             gas_limit: test_tx.gas_limit,
             ..Default::default()
-        }),
-        None => Transaction::EIP1559Transaction(EIP1559Transaction {
+        })
+    } else if !test_tx.blob_versioned_hashes.is_empty() {
+        Transaction::EIP4844Transaction(EIP4844Transaction {
+            to: match test_tx.to {
+                TxKind::Call(to) => to,
+                TxKind::Create => return Err(EFTestRunnerError::EIP4844ShouldNotBeCreateType),
+            },
+            value: test_tx.value,
+            data: test_tx.data.clone(),
+            access_list,
+            gas: test_tx.gas_limit,
+            blob_versioned_hashes: test_tx.blob_versioned_hashes.clone(),
+            max_fee_per_blob_gas: test_tx.max_fee_per_blob_gas.expect("EIP4844 tx should have max fee per blob gas"),
+            ..Default::default()
+        })
+    } else {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
             to: test_tx.to.clone(),
             value: test_tx.value,
             data: test_tx.data.clone(),
             access_list,
             gas_limit: test_tx.gas_limit,
             ..Default::default()
-        }),
+        })
     };
 
     VM::new(

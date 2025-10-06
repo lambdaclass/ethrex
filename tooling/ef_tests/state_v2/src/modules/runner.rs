@@ -193,7 +193,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
             gas: test_case.gas,
             to: match to {
                 TxKind::Call(to) => to,
-                TxKind::Create => return Err(RunnerError::EIP7702ShouldNotBeCreateType), //TODO: See what to do with this. Maybe we want to get rid of the error and skip the test.
+                TxKind::Create => return Err(RunnerError::EIP4844ShouldNotBeCreateType), //TODO: See what to do with this. Maybe we want to get rid of the error and skip the test.
             },
             value,
             data,
