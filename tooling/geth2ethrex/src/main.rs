@@ -104,6 +104,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tempfile::tempfile_in;
@@ -349,6 +350,10 @@ impl GethTrieDBWithNodeBuckets {
         Ok(())
     }
 }
+
+static CODE_COUNTER: AtomicU64 = AtomicU64::new(0);
+static STORE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 impl TrieDB for GethTrieDBWithNodeBuckets {
     fn get(&self, hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let hash = hash.finalize().0;
@@ -363,10 +368,10 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         if let Node::Leaf(ref leaf) = node {
             if let Ok(account) = <AccountState as RLPDecode>::decode(&leaf.value) {
                 if account.code_hash != *EMPTY_KECCACK_HASH {
-                    println!("has code");
+                    CODE_COUNTER.fetch_add(1, Ordering::Relaxed);
                 }
                 if account.storage_root != *EMPTY_TRIE_HASH {
-                    println!("has storage");
+                    STORE_COUNTER.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
@@ -413,6 +418,11 @@ pub fn geth2ethrex(
     let mut iter = trie.into_iter();
     let node_count = iter.count();
     println!("iterated {node_count} nodes");
+    println!(
+        "found {} accounts with code and {} with storages",
+        CODE_COUNTER.load(Ordering::Relaxed),
+        STORE_COUNTER.load(Ordering::Relaxed)
+    );
 
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time}");
