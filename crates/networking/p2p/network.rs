@@ -5,7 +5,7 @@ use crate::{
     },
     metrics::METRICS,
     rlpx::{
-        connection::server::{RLPxConnBroadcastSender, RLPxConnection},
+        connection::server::{PeerConnBroadcastSender, PeerConnection},
         initiator::RLPxInitiator,
         l2::l2_connection::P2PBasedContext,
         message::Message,
@@ -40,7 +40,7 @@ pub struct P2PContext {
     pub table: PeerTableHandle,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
-    pub(crate) broadcast: RLPxConnBroadcastSender,
+    pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
@@ -145,7 +145,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             continue;
         }
 
-        let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
     }
 }
 

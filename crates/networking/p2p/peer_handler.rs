@@ -19,7 +19,6 @@ use crate::{
     discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableError, PeerTableHandle},
     metrics::{CurrentStepValue, METRICS},
     rlpx::{
-        connection::server::CastMessage,
         eth::{
             blocks::{
                 BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
@@ -112,7 +111,7 @@ async fn ask_peer_head_number(
 
     peer_channel
         .connection
-        .cast(CastMessage::BackendMessage(request.clone()))
+        .backend_message(request)
         .await
         .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
@@ -440,11 +439,7 @@ impl PeerHandler {
                 None => return Ok(None),
                 Some((peer_id, mut peer_channel)) => {
                     let mut receiver = peer_channel.receiver.lock().await;
-                    if let Err(err) = peer_channel
-                        .connection
-                        .cast(CastMessage::BackendMessage(request))
-                        .await
-                    {
+                    if let Err(err) = peer_channel.connection.backend_message(request).await {
                         debug!("Failed to send message to peer: {err:?}");
                         continue;
                     }
@@ -509,7 +504,7 @@ impl PeerHandler {
         // FIXME! modify the cast and wait for a `call` version
         peer_channel
             .connection
-            .cast(CastMessage::BackendMessage(request))
+            .backend_message(request)
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
@@ -557,11 +552,7 @@ impl PeerHandler {
             None => Ok(None),
             Some((peer_id, mut peer_channel)) => {
                 let mut receiver = peer_channel.receiver.lock().await;
-                if let Err(err) = peer_channel
-                    .connection
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
+                if let Err(err) = peer_channel.connection.backend_message(request).await {
                     self.peer_table.record_failure(&peer_id).await?;
                     debug!("Failed to send message to peer: {err:?}");
                     return Ok(None);
@@ -680,11 +671,7 @@ impl PeerHandler {
                 None => return Ok(None),
                 Some((_, mut peer_channel)) => {
                     let mut receiver = peer_channel.receiver.lock().await;
-                    if let Err(err) = peer_channel
-                        .connection
-                        .cast(CastMessage::BackendMessage(request))
-                        .await
-                    {
+                    if let Err(err) = peer_channel.connection.backend_message(request).await {
                         debug!("Failed to send message to peer: {err:?}");
                         continue;
                     }
@@ -996,7 +983,7 @@ impl PeerHandler {
         });
         let mut receiver = free_downloader_channels_clone.receiver.lock().await;
         if let Err(err) = (free_downloader_channels_clone.connection)
-            .cast(CastMessage::BackendMessage(request))
+            .backend_message(request)
             .await
         {
             error!("Failed to send message to peer: {err:?}");
@@ -1223,10 +1210,7 @@ impl PeerHandler {
                     bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = peer_channel.receiver.lock().await;
-                if let Err(err) = (peer_channel.connection)
-                    .cast(CastMessage::BackendMessage(request))
-                    .await
-                {
+                if let Err(err) = (peer_channel.connection).backend_message(request).await {
                     error!("Failed to send message to peer: {err:?}");
                     tx.send(empty_task_result).await.ok();
                     return;
@@ -1667,7 +1651,7 @@ impl PeerHandler {
         });
         let mut receiver = free_downloader_channels_clone.receiver.lock().await;
         if let Err(err) = (free_downloader_channels_clone.connection)
-            .cast(CastMessage::BackendMessage(request))
+            .backend_message(request)
             .await
         {
             error!("Failed to send message to peer: {err:?}");
@@ -1895,7 +1879,7 @@ impl PeerHandler {
         debug!("locked the receiver for the peer_channel");
         peer_channel
             .connection
-            .cast(CastMessage::BackendMessage(request.clone()))
+            .backend_message(request)
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 

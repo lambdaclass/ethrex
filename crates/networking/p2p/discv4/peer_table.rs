@@ -1,7 +1,7 @@
 use crate::{
     discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
     metrics::METRICS,
-    rlpx::{self, connection::server::RLPxConnection, p2p::Capability},
+    rlpx::{self, connection::server::PeerConnectionHandle, p2p::Capability},
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
@@ -27,6 +27,8 @@ const MIN_SCORE: i64 = -50;
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 /// Maximum amount of FindNode messages sent to a single node.
 const MAX_FIND_NODE_PER_PEER: u64 = 20;
+/// Number of concurrent requests that can be made to a single peer.
+const MAX_REQUESTS_PER_PEER: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -115,16 +117,14 @@ impl PeerData {
 #[derive(Debug, Clone)]
 /// Holds the respective sender and receiver ends of the communication channels between the peer data and its active connection
 pub struct PeerChannels {
-    pub connection: GenServerHandle<RLPxConnection>,
+    pub connection: PeerConnectionHandle,
     pub receiver: Arc<Mutex<mpsc::Receiver<rlpx::Message>>>,
 }
 
 impl PeerChannels {
     /// Sets up the communication channels for the peer
     /// Returns the channel endpoints to send to the active connection's listen loop
-    pub(crate) fn create(
-        connection: GenServerHandle<RLPxConnection>,
-    ) -> (Self, mpsc::Sender<rlpx::Message>) {
+    pub(crate) fn create(connection: PeerConnectionHandle) -> (Self, mpsc::Sender<rlpx::Message>) {
         let (connection_sender, receiver) = mpsc::channel::<rlpx::Message>();
         (
             Self {

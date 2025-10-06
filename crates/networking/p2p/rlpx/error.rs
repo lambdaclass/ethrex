@@ -21,7 +21,7 @@ pub enum CryptographyError {
 
 // TODO improve errors
 #[derive(Debug, Error)]
-pub enum RLPxError {
+pub enum PeerConnectionError {
     #[error("{0}")]
     HandshakeError(String),
     #[error("Invalid connection state: {0}")]
@@ -86,7 +86,7 @@ pub enum RLPxError {
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly
 // so we will instead save the error's display message
-impl From<tokio::sync::mpsc::error::SendError<Message>> for RLPxError {
+impl From<tokio::sync::mpsc::error::SendError<Message>> for PeerConnectionError {
     fn from(value: tokio::sync::mpsc::error::SendError<Message>) -> Self {
         Self::SendMessage(value.to_string())
     }
@@ -94,20 +94,20 @@ impl From<tokio::sync::mpsc::error::SendError<Message>> for RLPxError {
 
 // Grouping all cryptographic related errors in a single CryptographicError variant
 // We can improve this to individual errors if required
-impl From<secp256k1::Error> for RLPxError {
+impl From<secp256k1::Error> for PeerConnectionError {
     fn from(e: secp256k1::Error) -> Self {
-        RLPxError::CryptographyError(e.to_string())
+        PeerConnectionError::CryptographyError(e.to_string())
     }
 }
 
-impl From<sha3::digest::InvalidLength> for RLPxError {
+impl From<sha3::digest::InvalidLength> for PeerConnectionError {
     fn from(e: sha3::digest::InvalidLength) -> Self {
-        RLPxError::CryptographyError(e.to_string())
+        PeerConnectionError::CryptographyError(e.to_string())
     }
 }
 
-impl From<aes::cipher::StreamCipherError> for RLPxError {
+impl From<aes::cipher::StreamCipherError> for PeerConnectionError {
     fn from(e: aes::cipher::StreamCipherError) -> Self {
-        RLPxError::CryptographyError(e.to_string())
+        PeerConnectionError::CryptographyError(e.to_string())
     }
 }

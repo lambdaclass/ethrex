@@ -19,7 +19,6 @@ use crate::{
     discv4::peer_table::{PeerChannels, PeerTableError, PeerTableHandle},
     rlpx::{
         Message,
-        connection::server::CastMessage,
         eth::transactions::{NewPooledTransactionHashes, Transactions},
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
     },
@@ -225,9 +224,7 @@ impl TxBroadcaster {
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
             });
-            peer_channels.connection.cast(CastMessage::BackendMessage(
-                txs_message,
-            )).await.unwrap_or_else(|err| {
+            peer_channels.connection.backend_message(txs_message).await.unwrap_or_else(|err| {
                 error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
             self.send_tx_hashes(blob_txs.clone(), capabilities, &mut peer_channels, peer_id)
@@ -298,11 +295,9 @@ pub async fn send_tx_hashes(
             let hashes_message = Message::NewPooledTransactionHashes(
                 NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
             );
-            peer_channels.connection.cast(CastMessage::BackendMessage(
-                    hashes_message.clone(),
-                )).await.unwrap_or_else(|err| {
-                    error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
-                });
+            peer_channels.connection.backend_message(hashes_message.clone()).await.unwrap_or_else(|err| {
+                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+            });
         }
     }
     Ok(())

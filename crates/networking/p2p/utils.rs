@@ -1,18 +1,15 @@
-use std::{
-    path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+use crate::{
+    discv4::peer_table::PeerChannels,
+    rlpx::{Message, error::PeerConnectionError, snap::TrieNodes},
 };
-
 use ethrex_common::utils::keccak;
 use ethrex_common::{H256, H512};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::Node;
 use secp256k1::{PublicKey, SecretKey};
-use spawned_concurrency::error::GenServerError;
-
-use crate::{
-    discv4::peer_table::PeerChannels,
-    rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
+use std::{
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::peer_handler::DumpError;
@@ -94,9 +91,9 @@ pub async fn send_message_and_wait_for_response(
         .map_err(|_| SendMessageError::PeerBusy)?;
     peer_channel
         .connection
-        .cast(CastMessage::BackendMessage(message))
+        .backend_message(message)
         .await
-        .map_err(SendMessageError::GenServerError)?;
+        .map_err(SendMessageError::ConnectionError)?;
     let nodes = tokio::time::timeout(
         Duration::from_secs(7),
         receive_trienodes(receiver, request_id),
@@ -125,9 +122,9 @@ pub async fn send_trie_nodes_messages_and_wait_for_reply(
         .map_err(|_| SendMessageError::PeerBusy)?;
     peer_channel
         .connection
-        .cast(CastMessage::BackendMessage(message))
+        .backend_message(message)
         .await
-        .map_err(SendMessageError::GenServerError)?;
+        .map_err(SendMessageError::ConnectionError)?;
     tokio::time::timeout(
         Duration::from_secs(7),
         receive_trienodes(receiver, request_id),
@@ -156,8 +153,8 @@ async fn receive_trienodes(
 pub enum SendMessageError {
     #[error("Peer timed out")]
     PeerTimeout,
-    #[error("GenServerError")]
-    GenServerError(GenServerError),
+    #[error("ConnectionError")]
+    ConnectionError(PeerConnectionError),
     #[error("Peer disconnected")]
     PeerDisconnected,
     #[error("Peer Busy")]
