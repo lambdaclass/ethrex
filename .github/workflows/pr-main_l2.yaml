@@ -449,11 +449,25 @@ jobs:
             echo "Checking if ethrex l2 is ready... (attempt $i)"
             if nc -z localhost 3900; then
               echo "ProofCoordinator ready!"
-              curl http://localhost:5555/health
               exit 0
             fi
             sleep 15
           done
+          echo "ProofCoordinator not ready in time"
+          exit 1
+
+      - name: Wait for health
+        run: |
+          for i in {1..100}; do
+            echo "Checking if ethrex l2 is healthy... (attempt $i)"
+            if curl -sf http://localhost:5555/health; then
+              echo "ethrex l2 is healthy!"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Endpoint health not ready in time"
+          exit 1
       
       - name: Init prover
         run: |
