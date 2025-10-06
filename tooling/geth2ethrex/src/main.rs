@@ -403,7 +403,7 @@ fn account_bucket_worker(
         // Step 2: sort the data and write to SST file.
         let mut entries = 0;
         let mut sort_buffer = Vec::with_capacity(64 << 20);
-        let mut meta_buffer = Vec::with_capacity(34);
+        let mut meta_buffer = [0u8; 34];
         for mut bucket in lvl2_buckets {
             bucket.seek(SeekFrom::Start(0))?;
             let mut reader = BufReader::new(bucket);
@@ -418,8 +418,7 @@ fn account_bucket_worker(
                 }
                 let hash: [u8; 32] = meta_buffer[..32].try_into().unwrap();
                 let len = u16::from_ne_bytes(meta_buffer[32..].try_into().unwrap()) as usize;
-                meta_buffer.clear();
-                let mut encoded = Vec::with_capacity(len);
+                let mut encoded = vec![0; len];
                 reader.read_exact(&mut encoded)?;
                 sort_buffer.push((hash, encoded));
             }
