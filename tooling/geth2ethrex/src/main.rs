@@ -106,6 +106,7 @@ use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tempfile::tempfile_in;
 use tracing::{debug, info};
 use tracing_subscriber::FmtSubscriber;
 
@@ -283,14 +284,10 @@ impl GethDB {
         }
     }
 
-    pub fn triedb(
-        &self,
-        bucket_path: impl AsRef<Path>,
-        bucket_prefix: &str,
-    ) -> eyre::Result<Box<dyn TrieDB>> {
+    pub fn triedb(&self, bucket_path: impl AsRef<Path>) -> eyre::Result<Box<dyn TrieDB>> {
         let trie_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
-        GethTrieDBWithNodeBuckets::new_with_prefix(trie_db, bucket_path, bucket_prefix)
+        GethTrieDBWithNodeBuckets::new_with_prefix(trie_db, bucket_path)
     }
 }
 
@@ -336,11 +333,10 @@ impl GethTrieDBWithNodeBuckets {
     pub fn new_with_prefix(
         db: DBWithThreadMode<SingleThreaded>,
         bucket_path: impl AsRef<Path>,
-        bucket_prefix: &str,
     ) -> eyre::Result<Box<dyn TrieDB>> {
         let mut buckets = Vec::with_capacity(16);
         for i in 0..16 {
-            let f = File::create_new(bucket_path.as_ref().join(format!("{bucket_prefix}.{i:x}")))?;
+            let f = tempfile_in(bucket_path.as_ref())?;
             buckets.push(Arc::new(Mutex::new(BufWriter::new(f))));
         }
         let buckets = std::array::from_fn(move |i| buckets[i].clone());
@@ -413,10 +409,7 @@ pub fn geth2ethrex(
         u128::from_be_bytes(block_hash[16..].try_into().unwrap())
     );
 
-    let trie = Trie::open(
-        gethdb.triedb("/tmp", "account_state_bucket.0")?,
-        header.state_root,
-    );
+    let trie = Trie::open(gethdb.triedb(&output_dir)?, header.state_root);
     let mut iter = trie.into_iter();
     let node_count = iter.count();
     println!("iterated {node_count} nodes");
