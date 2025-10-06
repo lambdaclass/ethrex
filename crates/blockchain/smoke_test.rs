@@ -296,7 +296,7 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_b);
     }
 
-    async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
+    async fn new_block(store: Arc<Store>, parent: &BlockHeader) -> Block {
         let args = BuildPayloadArgs {
             parent: parent.hash(),
             timestamp: parent.timestamp + 12,
@@ -310,7 +310,7 @@ mod blockchain_integration_test {
         };
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone().clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: increasing arc reference count
 
         let block = create_payload(&args, store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block).await.unwrap();
