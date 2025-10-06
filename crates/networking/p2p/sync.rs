@@ -1172,7 +1172,7 @@ impl Syncer {
 }
 
 #[cfg(not(feature = "rocksdb"))]
-type StorageRoots = (H256, Vec<(ethrex_trie::NodeHash, Vec<u8>)>);
+type StorageRoots = (H256, Vec<(Nibbles, Vec<u8>)>);
 
 #[cfg(not(feature = "rocksdb"))]
 fn compute_storage_roots(
