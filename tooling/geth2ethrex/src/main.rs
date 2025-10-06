@@ -86,6 +86,7 @@
 use clap::{ArgGroup, Parser};
 use ethrex_common::Address;
 use ethrex_common::types::{BlockHash, BlockHeader};
+use ethrex_common::utils::keccak;
 use ethrex_common::{BigEndianHash, H256, U256, types::BlockNumber};
 use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
@@ -361,6 +362,7 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         );
         let value = self.db.get(hash).unwrap().unwrap();
         debug_assert!(value.len() <= u16::MAX as usize);
+        debug_assert_eq!(keccak(&value).0, hash);
 
         let mut bucket = self.buckets[(hash[0] >> 4) as usize].lock().unwrap();
         let mut buffer = [0u8; 34];
@@ -408,7 +410,10 @@ pub fn geth2ethrex(
         gethdb.triedb("/tmp", "account_state_bucket.0")?,
         header.state_root,
     );
-    let node_count = trie.into_iter().count();
+    let mut iter = trie.into_iter();
+    let first_iter = iter.next();
+    println!("first iterated node: {first_iter:?}");
+    let node_count = iter.count();
     println!("iterated {node_count} nodes");
 
     let migration_time = migration_start.elapsed().as_secs_f64();
