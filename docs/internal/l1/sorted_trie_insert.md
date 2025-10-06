@@ -1,7 +1,9 @@
 ## Sorted Trie Computing
 
-Problem: we have to compute all of the nodes in the merkle 
-patricia trie of ethereum based on the key value pair of all the elements.
+This algorithm is used to speed up the insertion time in snap sync.
+During that step we are inserting all of the account state and storage
+slots downloaded into the Ethereum world state merkle patricia trie.
+To know how that trie works, it's recomennded to [read this primer first.](https://epf.wiki/#/wiki/EL/data-structures?id=world-state-trie)
 
 ### Concept
 
@@ -26,15 +28,22 @@ input.
 
 The implementation is based on keeping three pointers to data. The current
 element we're processing, the next input value and the parent of the current
-element. All parents that can still be modified are stored in a stack. Based on those we can have enough knowledge to know what is the 
+element. All parents that can still be modified are stored in a stack. 
+Based on those we can have enough knowledge to know what is the 
 next write operation.
 
 Scenario 1: Current and next value are brothers with the current
 parent being the parent of both values. This happens when
-the parent and both values share the same amount of nibbles at the beginning. In our example, all paths to the nodes starts with 0x1 and then diverges.
+the parent and both values share the same amount of bytes at the beginning of 
+their peth. In our example, all paths to the nodes starts with 0x1 and
+then diverges.
 
 In this scenario, we know the leaf we need to compute from the current value
 so we write that, modify the parent to include a pointer to that leaf 
 and continue with the algorithm.
 
 ![Image showing the insertion of 1 elements with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write](sorted_trie_insert/Sorted%20Insertion%20Scenario%201.png)
+
+Scenario 2: Current and next values are brothers of a new current parent.
+This happens when the parent shares less nibbles from their paths than what the brothers share.
+In our example, the current and next value share 0x12, while the parent only shares 0x1
