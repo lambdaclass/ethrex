@@ -1,6 +1,6 @@
 use crate::{
     discv4::{
-        peer_table::{PeerData, PeerTableHandle},
+        peer_table::{PeerData, PeerTable},
         server::{DiscoveryServer, DiscoveryServerError},
     },
     metrics::METRICS,
@@ -37,7 +37,7 @@ pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 pub struct P2PContext {
     pub tracker: TaskTracker,
     pub signer: SecretKey,
-    pub table: PeerTableHandle,
+    pub table: PeerTable,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
@@ -55,7 +55,7 @@ impl P2PContext {
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
         signer: SecretKey,
-        peer_table: PeerTableHandle,
+        peer_table: PeerTable,
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
@@ -158,17 +158,14 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-pub async fn periodically_show_peer_stats(
-    blockchain: Arc<Blockchain>,
-    mut peer_table: PeerTableHandle,
-) {
+pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, mut peer_table: PeerTable) {
     periodically_show_peer_stats_during_syncing(blockchain, &mut peer_table).await;
     periodically_show_peer_stats_after_sync(&mut peer_table).await;
 }
 
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
-    peer_table: &mut PeerTableHandle,
+    peer_table: &mut PeerTable,
 ) {
     let start = std::time::Instant::now();
     loop {
@@ -366,7 +363,7 @@ bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_down
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
-pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTableHandle) {
+pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable) {
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {

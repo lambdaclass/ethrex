@@ -16,7 +16,7 @@ use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableError, PeerTableHandle},
+    discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableError},
     metrics::{CurrentStepValue, METRICS},
     rlpx::{
         eth::{
@@ -66,7 +66,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 /// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
-    pub peer_table: PeerTableHandle,
+    pub peer_table: PeerTable,
 }
 
 pub enum BlockRequestOrder {
@@ -143,7 +143,7 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTableHandle) -> PeerHandler {
+    pub fn new(peer_table: PeerTable) -> PeerHandler {
         Self { peer_table }
     }
 

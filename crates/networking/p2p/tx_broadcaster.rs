@@ -16,7 +16,7 @@ use spawned_concurrency::{
 use tracing::{debug, error, info};
 
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerTableError, PeerTableHandle},
+    discv4::peer_table::{PeerChannels, PeerTable, PeerTableError},
     rlpx::{
         Message,
         eth::transactions::{NewPooledTransactionHashes, Transactions},
@@ -88,7 +88,7 @@ impl Default for BroadcastRecord {
 
 #[derive(Debug, Clone)]
 pub struct TxBroadcaster {
-    peer_table: PeerTableHandle,
+    peer_table: PeerTable,
     blockchain: Arc<Blockchain>,
     // tx_hash -> broadcast record (which peers know it and when it was last sent)
     known_txs: HashMap<H256, BroadcastRecord>,
@@ -112,7 +112,7 @@ pub enum OutMessage {
 
 impl TxBroadcaster {
     pub async fn spawn(
-        kademlia: PeerTableHandle,
+        kademlia: PeerTable,
         blockchain: Arc<Blockchain>,
     ) -> Result<GenServerHandle<TxBroadcaster>, TxBroadcasterError> {
         info!("Starting Transaction Broadcaster");

@@ -31,7 +31,7 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerTableHandle},
+    discv4::peer_table::{PeerChannels, PeerTable},
     metrics::METRICS,
     network::P2PContext,
     rlpx::{
@@ -74,13 +74,40 @@ const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
 #[derive(Clone, Debug)]
-pub struct PeerConnectionHandle {
-    inner: GenServerHandle<PeerConnection>,
+pub struct PeerConnection {
+    handle: GenServerHandle<PeerConnectionServer>,
 }
 
-impl PeerConnectionHandle {
+impl PeerConnection {
+    pub async fn spawn_as_receiver(
+        context: P2PContext,
+        peer_addr: SocketAddr,
+        stream: TcpStream,
+    ) -> PeerConnection {
+        let state = ConnectionState::Receiver(Receiver {
+            context,
+            peer_addr,
+            stream: Arc::new(stream),
+        });
+        let connection = PeerConnectionServer { state };
+        Self {
+            handle: connection.start(),
+        }
+    }
+
+    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> PeerConnection {
+        let state = ConnectionState::Initiator(Initiator {
+            context,
+            node: node.clone(),
+        });
+        let connection = PeerConnectionServer { state };
+        Self {
+            handle: connection.start(),
+        }
+    }
+
     pub async fn backend_message(&mut self, message: Message) -> Result<(), PeerConnectionError> {
-        self.inner
+        self.handle
             .cast(CastMessage::BackendMessage(message))
             .await
             .map_err(|err| PeerConnectionError::InternalError(err.to_string()))
@@ -126,7 +153,7 @@ pub struct Established {
     /// TODO: Improve this mechanism
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: PeerConnBroadcastSender,
-    pub(crate) peer_table: PeerTableHandle,
+    pub(crate) peer_table: PeerTable,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
@@ -175,40 +202,11 @@ pub enum OutMessage {
 }
 
 #[derive(Debug)]
-pub struct PeerConnection {
+pub struct PeerConnectionServer {
     state: ConnectionState,
 }
 
-impl PeerConnection {
-    pub async fn spawn_as_receiver(
-        context: P2PContext,
-        peer_addr: SocketAddr,
-        stream: TcpStream,
-    ) -> PeerConnectionHandle {
-        let state = ConnectionState::Receiver(Receiver {
-            context,
-            peer_addr,
-            stream: Arc::new(stream),
-        });
-        let connection = PeerConnection { state };
-        PeerConnectionHandle {
-            inner: connection.start(),
-        }
-    }
-
-    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> PeerConnectionHandle {
-        let state = ConnectionState::Initiator(Initiator {
-            context,
-            node: node.clone(),
-        });
-        let connection = PeerConnection { state };
-        PeerConnectionHandle {
-            inner: connection.start(),
-        }
-    }
-}
-
-impl GenServer for PeerConnection {
+impl GenServer for PeerConnectionServer {
     type CallMsg = Unused;
     type CastMsg = CastMessage;
     type OutMsg = Unused;
@@ -401,7 +399,7 @@ impl GenServer for PeerConnection {
 }
 
 async fn initialize_connection<S>(
-    handle: &GenServerHandle<PeerConnection>,
+    handle: &GenServerHandle<PeerConnectionServer>,
     state: &mut Established,
     mut stream: S,
     eth_version: Arc<RwLock<EthCapVersion>>,
@@ -423,8 +421,8 @@ where
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
-    let (mut peer_channels, sender) = PeerChannels::create(PeerConnectionHandle {
-        inner: handle.clone(),
+    let (mut peer_channels, sender) = PeerChannels::create(PeerConnection {
+        handle: handle.clone(),
     });
 
     // Updating the state to establish the backend channel
