@@ -93,6 +93,8 @@ pub struct TrieWrapper {
 }
 
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
+    // Apply a prefix with an invalid nibble (17) as a separator, to
+    // differentiate between a state trie value and a storage trie root.
     match prefix {
         Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
             .append_new(17)
