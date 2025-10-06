@@ -1,5 +1,5 @@
 use crate::{
-    metrics::METRICS,
+    metrics::{CurrentStepValue, METRICS},
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -130,7 +130,7 @@ pub async fn heal_storage_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
-    *METRICS.current_step.lock().await = "Healing Storage".to_string();
+    METRICS.current_step.set(CurrentStepValue::HealingStorage);
     let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
     info!(
         "Started Storage Healing with {} accounts",
