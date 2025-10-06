@@ -148,15 +148,15 @@ pub fn trie_from_sorted_accounts<'scope, T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
+    let Some(initial_value) = data_iter.next() else {
+        return Ok(*EMPTY_TRIE_HASH);
+    };
     let mut nodes_to_write: Vec<(NodeHash, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
 
     let mut left_side = StackElement::default();
-    let Some(initial_value) = data_iter.next() else {
-        return Ok(*EMPTY_TRIE_HASH);
-    };
     let mut center_side: CenterSide = CenterSide::from_value(initial_value.clone());
     let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
 
