@@ -373,13 +373,14 @@ pub mod test_utils {
     pub async fn start_test_api() {
         let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
         let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
-        let storage =
-            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        let storage = Arc::new(
+            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage"),
+        );
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .await
             .expect("Failed to build test genesis");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone())); // ok-clone: increase arc reference count
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         let local_node_record = example_local_node_record();
@@ -402,8 +403,8 @@ pub mod test_utils {
         .unwrap();
     }
 
-    pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    pub async fn default_context_with_storage(storage: Arc<Store>) -> RpcApiContext {
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone())); // ok-clone: increase arc reference count
         let local_node_record = example_local_node_record();
         RpcApiContext {
             storage,

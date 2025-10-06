@@ -132,9 +132,9 @@ impl Syncer {
             peers: PeerHandler::dummy(),
             // This won't be used
             cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
+            blockchain: Arc::new(Blockchain::default_with_store(Arc::new(
                 Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
-            )),
+            ))),
             datadir: ".".into(),
         }
     }

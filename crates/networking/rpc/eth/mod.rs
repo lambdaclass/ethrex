@@ -23,7 +23,7 @@ pub mod test_utils {
     };
     use ethrex_storage::{EngineType, Store};
     use hex_literal::hex;
-    use std::str::FromStr;
+    use std::{str::FromStr, sync::Arc};
 
     // Base price for each test transaction.
     pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
@@ -146,14 +146,14 @@ pub mod test_utils {
         })
     }
 
-    pub async fn setup_store() -> Store {
+    pub async fn setup_store() -> Arc<Store> {
         let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
         let genesis: Genesis =
             serde_json::from_str(genesis).expect("Fatal: test config is invalid");
         let store = Store::new("test-store", EngineType::InMemory)
             .expect("Fail to create in-memory db test");
         store.add_initial_state(genesis).await.unwrap();
-        store
+        Arc::new(store)
     }
 
     pub async fn add_legacy_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {

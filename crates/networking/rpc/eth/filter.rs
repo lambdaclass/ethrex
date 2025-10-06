@@ -66,7 +66,7 @@ impl NewFilterRequest {
 
     pub async fn handle(
         &self,
-        storage: ethrex_storage::Store,
+        storage: Arc<ethrex_storage::Store>,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let from = self
@@ -111,7 +111,7 @@ impl NewFilterRequest {
 
     pub async fn stateful_call(
         req: &RpcRequest,
-        storage: Store,
+        storage: Arc<Store>,
         state: ActiveFilters,
     ) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -139,7 +139,7 @@ impl DeleteFilterRequest {
 
     pub fn handle(
         &self,
-        _storage: ethrex_storage::Store,
+        _storage: Arc<ethrex_storage::Store>,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -156,7 +156,7 @@ impl DeleteFilterRequest {
 
     pub fn stateful_call(
         req: &RpcRequest,
-        storage: ethrex_storage::Store,
+        storage: Arc<ethrex_storage::Store>,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -183,7 +183,7 @@ impl FilterChangesRequest {
     }
     pub async fn handle(
         &self,
-        storage: ethrex_storage::Store,
+        storage: Arc<ethrex_storage::Store>,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let latest_block_num = storage.get_latest_block_number().await?;
@@ -240,7 +240,7 @@ impl FilterChangesRequest {
     }
     pub async fn stateful_call(
         req: &RpcRequest,
-        storage: ethrex_storage::Store,
+        storage: Arc<ethrex_storage::Store>,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -430,8 +430,10 @@ mod tests {
         json_req: serde_json::Value,
         filters_pointer: ActiveFilters,
     ) -> u64 {
-        let storage = Store::new("in-mem", EngineType::InMemory)
-            .expect("Fatal: could not create in memory test db");
+        let storage = Arc::new(
+            Store::new("in-mem", EngineType::InMemory)
+                .expect("Fatal: could not create in memory test db"),
+        );
         let mut context = default_context_with_storage(storage).await;
         context.active_filters = filters_pointer.clone();
 
@@ -486,8 +488,10 @@ mod tests {
         );
         let active_filters = Arc::new(Mutex::new(HashMap::from([filter])));
 
-        let storage = Store::new("in-mem", EngineType::InMemory)
-            .expect("Fatal: could not create in memory test db");
+        let storage = Arc::new(
+            Store::new("in-mem", EngineType::InMemory)
+                .expect("Fatal: could not create in memory test db"),
+        );
 
         let mut context = default_context_with_storage(storage).await;
         context.active_filters = active_filters.clone();
@@ -506,8 +510,10 @@ mod tests {
     async fn removing_non_existing_filter_returns_false() {
         let active_filters = Arc::new(Mutex::new(HashMap::new()));
 
-        let storage = Store::new("in-mem", EngineType::InMemory)
-            .expect("Fatal: could not create in memory test db");
+        let storage = Arc::new(
+            Store::new("in-mem", EngineType::InMemory)
+                .expect("Fatal: could not create in memory test db"),
+        );
         let mut context = default_context_with_storage(storage).await;
         context.active_filters = active_filters.clone();
 

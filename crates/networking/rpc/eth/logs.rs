@@ -11,7 +11,7 @@ use ethrex_common::{H160, H256};
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum AddressFilter {
@@ -105,7 +105,7 @@ impl RpcHandler for LogsFilter {
 
 pub(crate) async fn fetch_logs_with_filter(
     filter: &LogsFilter,
-    storage: Store,
+    storage: Arc<Store>,
 ) -> Result<Vec<RpcLog>, RpcErr> {
     let from = filter
         .from_block
