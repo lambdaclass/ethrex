@@ -167,7 +167,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
     let mut tx = if let Some(list) = &test_case.authorization_list {
         Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match to {
-                TxKind::Call(_) => to,
+                TxKind::Call(to) => to,
                 TxKind::Create => return Err(RunnerError::EIP7702ShouldNotBeCreateType),
             },
             value,
@@ -192,7 +192,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
             max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
             gas: test_case.gas,
             to: match to {
-                TxKind::Call(_) => to,
+                TxKind::Call(to) => to,
                 TxKind::Create => return Err(RunnerError::EIP7702ShouldNotBeCreateType), //TODO: See what to do with this. Maybe we want to get rid of the error and skip the test.
             },
             value,

@@ -313,8 +313,9 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     }
 
     // (12) TYPE_3_TX_ZERO_BLOBS
-    let Some(blob_hashes) = vm.tx.blob_versioned_hashes() else {
-        return Err(TxValidationError::Type3TxZeroBlobs.into());
+    let blob_hashes = match vm.tx.blob_versioned_hashes() {
+        Some(blobs) if !blobs.is_empty() => blobs,
+        _ => return Err(TxValidationError::Type3TxZeroBlobs.into()),
     };
 
     // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH

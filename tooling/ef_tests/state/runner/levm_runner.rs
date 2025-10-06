@@ -192,7 +192,7 @@ pub fn prepare_vm_for_tx<'a>(
     let tx = match authorization_list {
         Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_tx.to {
-                TxKind::Call(_) => test_tx.to.clone(),
+                TxKind::Call(to) => to,
                 TxKind::Create => return Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType),
             },
             value: test_tx.value,

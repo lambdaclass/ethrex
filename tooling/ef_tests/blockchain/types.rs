@@ -442,7 +442,7 @@ impl From<Transaction> for EIP4844Transaction {
                 .as_u64(),
             gas: val.gas_limit.as_u64(),
             to: match val.to {
-                TxKind::Call(_) => val.to,
+                TxKind::Call(address) => address,
                 TxKind::Create => panic!("EIP4844Transaction cannot be contract creation"),
             },
             value: val.value,
@@ -475,7 +475,7 @@ impl From<Transaction> for EIP7702Transaction {
                 .as_u64(),
             gas_limit: val.gas_limit.as_u64(),
             to: match val.to {
-                TxKind::Call(_) => val.to,
+                TxKind::Call(address) => address,
                 TxKind::Create => panic!("EIP7702Transaction cannot be contract creation"),
             },
             value: val.value,

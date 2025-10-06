@@ -561,9 +561,9 @@ impl<'a> VM<'a> {
     ) -> Result<(Address, bool), VMError> {
         match tx.to() {
             TxKind::Call(address_to) => {
-                substate.add_accessed_address(*address_to);
+                substate.add_accessed_address(address_to);
 
-                Ok((*address_to, false))
+                Ok((address_to, false))
             }
 
             TxKind::Create => {

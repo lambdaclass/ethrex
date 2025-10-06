@@ -234,7 +234,8 @@ pub struct EIP4844Transaction {
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     pub gas: u64,
-    pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub to: Address,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
@@ -261,7 +262,8 @@ pub struct EIP7702Transaction {
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
-    pub to: TxKind,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub to: Address,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
@@ -447,7 +449,7 @@ impl RLPDecode for Transaction {
 }
 
 /// The transaction's kind: call or create.
-#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub enum TxKind {
     Call(#[rkyv(with=crate::rkyv_utils::H160Wrapper)] Address),
     #[default]
@@ -1076,14 +1078,14 @@ impl Transaction {
         }
     }
 
-    pub fn to(&self) -> &TxKind {
+    pub fn to(&self) -> TxKind {
         match self {
-            Transaction::LegacyTransaction(tx) => &tx.to,
-            Transaction::EIP2930Transaction(tx) => &tx.to,
-            Transaction::EIP1559Transaction(tx) => &tx.to,
-            Transaction::EIP4844Transaction(tx) => &tx.to,
-            Transaction::EIP7702Transaction(tx) => &tx.to,
-            Transaction::PrivilegedL2Transaction(tx) => &tx.to,
+            Transaction::LegacyTransaction(tx) => tx.to,
+            Transaction::EIP2930Transaction(tx) => tx.to,
+            Transaction::EIP1559Transaction(tx) => tx.to,
+            Transaction::EIP4844Transaction(tx) => TxKind::Call(tx.to),
+            Transaction::EIP7702Transaction(tx) => TxKind::Call(tx.to),
+            Transaction::PrivilegedL2Transaction(tx) => tx.to,
         }
     }
 
@@ -2018,7 +2020,7 @@ mod serde_impl {
                 .as_u64(),
                 max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
                 gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
-                to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                to: deserialize_field::<Address, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
@@ -2060,7 +2062,7 @@ mod serde_impl {
                 .as_u64(),
                 max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
-                to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                to: deserialize_field::<Address, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
@@ -2257,7 +2259,7 @@ mod serde_impl {
             Self {
                 r#type: TxType::EIP4844,
                 nonce: Some(value.nonce),
-                to: value.to,
+                to: TxKind::Call(value.to),
                 gas: Some(value.gas),
                 value: value.value,
                 input: value.data,
@@ -2313,8 +2315,8 @@ mod serde_impl {
             Ok(Self {
                 nonce: value.nonce.unwrap_or_default(),
                 to: match value.to {
-                    TxKind::Call(_) => value.to,
-                    _ => TxKind::Call(H160::default()),
+                    TxKind::Call(address) => address,
+                    _ => H160::default(),
                 },
                 gas: value.gas.unwrap_or_default(),
                 value: value.value,
@@ -2339,7 +2341,7 @@ mod serde_impl {
             Self {
                 r#type: TxType::EIP7702,
                 nonce: Some(value.nonce),
-                to: value.to,
+                to: TxKind::Call(value.to),
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data,
@@ -2912,9 +2914,9 @@ mod tests {
         let deserialized_eip4844_transaction = EIP4844Transaction {
             chain_id: 0x01,
             nonce: 0x02,
-            to: TxKind::Call(Address::from_slice(
+            to: Address::from_slice(
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
-            )),
+            ),
             max_priority_fee_per_gas: 1,
             max_fee_per_gas: 1,
             max_fee_per_blob_gas: U256::from(0x03),
@@ -2982,9 +2984,7 @@ mod tests {
             max_priority_fee_per_gas: 1000,
             max_fee_per_gas: 2000,
             gas_limit: 21000,
-            to: TxKind::Call(
-                Address::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap(),
-            ),
+            to: Address::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap(),
             value: U256::from(100000),
             data: Bytes::from_static(b"03"),
             access_list: vec![],
