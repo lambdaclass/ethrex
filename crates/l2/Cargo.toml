@@ -19,11 +19,11 @@ ethrex-l2-rpc = { workspace = true, default-features = false }
 ethrex-sdk = { path = "./sdk", default-features = false }
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
-ethrex-config.workspace = true
+ethrex-config = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
-ethrex-rpc.workspace = true
+ethrex-rpc = { workspace = true, default-features = false }
 ethrex-trie.workspace = true
-ethrex-p2p.workspace = true
+ethrex-p2p = { workspace = true, default-features = false }
 
 reqwest.workspace = true
 tokio.workspace = true
@@ -119,32 +119,50 @@ kzg-rs = [
 ]
 
 l1 = [
-    "ethrex-blockchain/l1",
     "ethrex-common/l1",
-    "ethrex-l2-common/l1",
-    "ethrex-levm/l1",
-    "ethrex-metrics/l1",
+    "ethrex-blockchain/l1",
     "ethrex-storage/l1",
+    "ethrex-storage-rollup/l1",
     "ethrex-vm/l1",
-    "guest_program/l1",
+    "ethrex-levm/l1",
+    "ethrex-l2-common/l1",
+    "ethrex-l2-rpc/l1",
+    "ethrex-sdk/l1",
+    "ethrex-dev/l1",
+    "ethrex-metrics/l1",
+    "ethrex-config/l1",
+    "ethrex-rpc/l1",
+    "ethrex-p2p/l1",
 ]
 sp1 = [
-    "ethrex-blockchain/sp1",
     "ethrex-common/sp1",
-    "ethrex-l2-common/sp1",
-    "ethrex-levm/sp1",
-    "ethrex-metrics/sp1",
+    "ethrex-blockchain/sp1",
     "ethrex-storage/sp1",
+    "ethrex-storage-rollup/sp1",
     "ethrex-vm/sp1",
-    "guest_program/sp1",
+    "ethrex-levm/sp1",
+    "ethrex-l2-common/sp1",
+    "ethrex-l2-rpc/sp1",
+    "ethrex-sdk/sp1",
+    "ethrex-dev/sp1",
+    "ethrex-metrics/sp1",
+    "ethrex-config/sp1",
+    "ethrex-rpc/sp1",
+    "ethrex-p2p/sp1",
 ]
 risc0 = [
-    "ethrex-blockchain/risc0",
     "ethrex-common/risc0",
-    "ethrex-l2-common/risc0",
-    "ethrex-levm/risc0",
-    "ethrex-metrics/risc0",
+    "ethrex-blockchain/risc0",
     "ethrex-storage/risc0",
+    "ethrex-storage-rollup/risc0",
     "ethrex-vm/risc0",
-    "guest_program/risc0",
+    "ethrex-levm/risc0",
+    "ethrex-l2-common/risc0",
+    "ethrex-l2-rpc/risc0",
+    "ethrex-sdk/risc0",
+    "ethrex-dev/risc0",
+    "ethrex-metrics/risc0",
+    "ethrex-config/risc0",
+    "ethrex-rpc/risc0",
+    "ethrex-p2p/risc0",
 ]

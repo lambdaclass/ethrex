@@ -6,16 +6,10 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-# This crate is not a dependency of guest_program and vice versa, therefore, we
-# can re-enable the ethrex pacakges default feature (i.e. the l1 feature).
-ethrex-blockchain = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-common = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-vm = { workspace = true, default-features = false, features = ["l1"] }
-ethrex-levm = { workspace = true, default-features = false, features = ["l1"] }
+ethrex-blockchain = { workspace = true, default-features = false }
+ethrex-common = { workspace = true, default-features = false }
+ethrex-vm = { workspace = true, default-features = false }
+ethrex-levm = { workspace = true, default-features = false }
 ethrex-storage = { workspace = true, default-features = false }
 ethrex-l2-rpc = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
@@ -36,4 +30,15 @@ alloy-rlp = "0.3.12"
 hex = "0.4.3"
 
 [features]
+default = ["l1"]
+
+l1 = [
+    "ethrex-blockchain/l1",
+    "ethrex-common/l1",
+    "ethrex-vm/l1",
+    "ethrex-levm/l1",
+    "ethrex-storage/l1",
+    "ethrex-l2-rpc/l1",
+]
+
 block = []

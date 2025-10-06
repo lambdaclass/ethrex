@@ -8,13 +8,9 @@ documentation.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-common = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-blockchain = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-vm = { workspace = true, default-features = false, features = ["l1"] }
+ethrex-common = { workspace = true, default-features = false }
+ethrex-blockchain = { workspace = true, default-features = false }
+ethrex-vm = { workspace = true, default-features = false }
 ethrex-storage = { workspace = true, default-features = false }
 ethrex-p2p = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
@@ -58,4 +54,28 @@ path = "./lib.rs"
 unwrap_used = "deny"
 
 [features]
+default = ["l1"]
+
+l1 = [
+    "ethrex-blockchain/l1",
+    "ethrex-common/l1",
+    "ethrex-p2p/l1",
+    "ethrex-storage/l1",
+    "ethrex-vm/l1",
+]
+sp1 = [
+    "ethrex-blockchain/sp1",
+    "ethrex-common/sp1",
+    "ethrex-p2p/sp1",
+    "ethrex-storage/sp1",
+    "ethrex-vm/sp1",
+]
+risc0 = [
+    "ethrex-blockchain/risc0",
+    "ethrex-common/risc0",
+    "ethrex-p2p/risc0",
+    "ethrex-storage/risc0",
+    "ethrex-vm/risc0",
+]
+
 jemalloc_profiling = ["dep:jemalloc_pprof"]

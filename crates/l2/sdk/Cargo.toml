@@ -6,12 +6,8 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ethrex-common = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-l2-common = { workspace = true, default-features = false, features = [
-    "l1",
-] }
+ethrex-common = { workspace = true, default-features = false }
+ethrex-l2-common = { workspace = true, default-features = false }
 ethrex-rpc = { workspace = true, default-features = false }
 ethrex-l2-rpc = { workspace = true, default-features = false }
 ethrex-sdk-contract-utils = { path = "contract_utils" }
@@ -19,7 +15,7 @@ ethrex-sdk-contract-utils = { path = "contract_utils" }
 ethereum-types.workspace = true
 tokio.workspace = true
 hex.workspace = true
-secp256k1.workspace = true
+secp256k1.workspace = true      # FIXME
 itertools = "0.13.0"
 thiserror.workspace = true
 serde_json.workspace = true
@@ -46,3 +42,25 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+
+[features]
+default = ["l1"]
+
+l1 = [
+    "ethrex-common/l1",
+    "ethrex-l2-common/l1",
+    "ethrex-rpc/l1",
+    "ethrex-l2-rpc/l1",
+]
+sp1 = [
+    "ethrex-common/sp1",
+    "ethrex-l2-common/sp1",
+    "ethrex-rpc/sp1",
+    "ethrex-l2-rpc/sp1",
+]
+risc0 = [
+    "ethrex-common/risc0",
+    "ethrex-l2-common/risc0",
+    "ethrex-rpc/risc0",
+    "ethrex-l2-rpc/risc0",
+]

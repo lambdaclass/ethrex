@@ -3987,7 +3987,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-l2",
  "ethrex-l2-common",
- "ethrex-storage",
  "ethrex-vm",
  "guest_program",
  "hex",

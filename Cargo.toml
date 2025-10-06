@@ -58,7 +58,7 @@ debug = 2
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
 ethrex-common = { path = "./crates/common", default-features = false }
-ethrex-config = { path = "./crates/common/config" }
+ethrex-config = { path = "./crates/common/config", default-features = false }
 ethrex-crypto = { path = "./crates/common/crypto", default-features = false }
 ethrex-p2p = { path = "./crates/networking/p2p", default-features = false }
 ethrex-rpc = { path = "./crates/networking/rpc", default-features = false }

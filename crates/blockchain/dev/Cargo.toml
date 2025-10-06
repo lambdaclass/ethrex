@@ -25,3 +25,10 @@ sha2 = "0.10.8"
 
 [lib]
 path = "./dev.rs"
+
+[features]
+default = ["l1"]
+
+l1 = ["ethrex-rpc/l1"]
+sp1 = ["ethrex-rpc/sp1"]
+risc0 = ["ethrex-rpc/risc0"]

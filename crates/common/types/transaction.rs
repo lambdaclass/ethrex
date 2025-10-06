@@ -1289,7 +1289,7 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
 }
 
 #[cfg(feature = "k256")]
-pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, Error> {
+pub fn recover_address(_signature: Signature, _payload: H256) -> Result<Address, Error> {
     unimplemented!()
 }
 
@@ -1500,8 +1500,6 @@ mod serde_impl {
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
-    #[cfg(feature = "c-kzg")]
-    use crate::types::BYTES_PER_BLOB;
     use crate::types::{AccessListItem, AuthorizationTuple, BlobsBundleError};
 
     use super::*;
@@ -2303,7 +2301,7 @@ mod serde_impl {
         }
     }
 
-    #[cfg(feature = "c-kzg")]
+    #[cfg(any(feature = "c-kzg", feature = "kzg-rs"))]
     impl TryFrom<GenericTransaction> for WrappedEIP4844Transaction {
         type Error = GenericTransactionError;
 
@@ -2313,7 +2311,7 @@ mod serde_impl {
                 .iter()
                 .map(|bytes| {
                     let slice = bytes.as_ref();
-                    let mut blob = [0u8; BYTES_PER_BLOB];
+                    let mut blob = [0u8; ethrex_crypto::kzg::BYTES_PER_BLOB];
                     blob.copy_from_slice(slice);
                     blob
                 })

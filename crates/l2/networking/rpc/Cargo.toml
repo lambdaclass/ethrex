@@ -9,19 +9,13 @@ documentation.workspace = true
 [dependencies]
 # This crate is not a dependency of guest_program, therefore, we can re-enable
 # the ethrex pacakges default features (i.e. the l1 feature).
-ethrex-common = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-blockchain = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-l2-common = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-p2p.workspace = true
+ethrex-common = { workspace = true, default-features = false }
+ethrex-blockchain = { workspace = true, default-features = false }
+ethrex-l2-common = { workspace = true, default-features = false }
+ethrex-p2p = { workspace = true, default-features = false }
 ethrex-storage = { workspace = true, default-features = false }
 ethrex-storage-rollup = { workspace = true, default-features = false }
-ethrex-rpc.workspace = true
+ethrex-rpc = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
 
 axum.workspace = true
@@ -33,7 +27,7 @@ bytes.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
-secp256k1.workspace = true
+secp256k1.workspace = true # FIXME
 reqwest.workspace = true
 ethereum-types.workspace = true
 hex.workspace = true
@@ -45,3 +39,34 @@ path = "./lib.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
+
+[features]
+default = ["l1"]
+
+l1 = [
+    "ethrex-common/l1",
+    "ethrex-blockchain/l1",
+    "ethrex-l2-common/l1",
+    "ethrex-p2p/l1",
+    "ethrex-storage/l1",
+    "ethrex-storage-rollup/l1",
+    "ethrex-rpc/l1",
+]
+sp1 = [
+    "ethrex-common/sp1",
+    "ethrex-blockchain/sp1",
+    "ethrex-l2-common/sp1",
+    "ethrex-p2p/sp1",
+    "ethrex-storage/sp1",
+    "ethrex-storage-rollup/sp1",
+    "ethrex-rpc/sp1",
+]
+risc0 = [
+    "ethrex-common/risc0",
+    "ethrex-blockchain/risc0",
+    "ethrex-l2-common/risc0",
+    "ethrex-p2p/risc0",
+    "ethrex-storage/risc0",
+    "ethrex-storage-rollup/risc0",
+    "ethrex-rpc/risc0",
+]

@@ -41,9 +41,6 @@ sp1-sdk = { version = "=5.0.8", optional = true }
 sp1-prover = { version = "=5.0.8", optional = true }
 sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 
-[dev-dependencies]
-ethrex-storage.workspace = true
-
 [lib]
 name = "ethrex_prover_lib"
 path = "src/lib.rs"
