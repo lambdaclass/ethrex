@@ -1,8 +1,16 @@
-use std::{fs::File, io::Read, path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    fs::File,
+    io::Read,
+    path::PathBuf,
+    process::Stdio,
+    sync::atomic::AtomicU16,
+    time::{Duration, SystemTime},
+};
 
 use ethrex::{cli::Options, initializers::get_network};
 use ethrex_common::{
-    Bytes, H160, H256, U256,
+    Address, Bytes, H160, H256, U256,
+    evm::calculate_create_address,
     types::{
         Block, EIP1559Transaction, Genesis, Transaction, TxKind, requests::compute_requests_hash,
     },
@@ -26,6 +34,8 @@ use tracing::{error, info};
 
 pub struct Simulator {
     cmd_path: PathBuf,
+    test_name: String,
+
     base_opts: Options,
     jwt_secret: Bytes,
     genesis_path: PathBuf,
@@ -35,7 +45,7 @@ pub struct Simulator {
 }
 
 impl Simulator {
-    pub fn new(cmd_path: PathBuf) -> Self {
+    pub fn new(cmd_path: PathBuf, test_name: String) -> Self {
         let mut opts = Options::default_l1();
         let jwt_secret = generate_jwt_secret();
         std::fs::write("jwt.hex", hex::encode(&jwt_secret)).unwrap();
@@ -52,6 +62,7 @@ impl Simulator {
         opts.network = Some(Network::GenesisPath(genesis_path.clone()));
         Self {
             cmd_path,
+            test_name,
             base_opts: opts,
             genesis_path,
             jwt_secret,
@@ -69,18 +80,27 @@ impl Simulator {
 
     pub async fn start_node(&mut self) -> Node {
         let n = self.configs.len();
+        let test_name = &self.test_name;
         info!(node = n, "Starting node");
         let mut opts = self.base_opts.clone();
-        opts.http_port = (8545 + n * 2).to_string();
-        opts.authrpc_port = (8545 + n * 2 + 1).to_string();
-        opts.p2p_port = (30303 + n).to_string();
-        opts.discovery_port = (30303 + n).to_string();
-        opts.datadir = format!("data/node{n}").into();
+        opts.datadir = format!("data/{test_name}/node{n}").into();
+
+        opts.http_port = get_next_port().to_string();
+        opts.authrpc_port = get_next_port().to_string();
+
+        // These are one TCP and one UDP
+        let p2p_port = get_next_port();
+        opts.p2p_port = p2p_port.to_string();
+        opts.discovery_port = p2p_port.to_string();
 
         let _ = std::fs::remove_dir_all(&opts.datadir);
         std::fs::create_dir_all(&opts.datadir).expect("Failed to create data directory");
 
-        let logs_file_path = format!("data/node{n}.log");
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let logs_file_path = format!("data/{test_name}/node{n}_{now}.log");
         let logs_file = File::create(&logs_file_path).expect("Failed to create logs file");
 
         let cancel = CancellationToken::new();
@@ -274,6 +294,15 @@ impl Node {
         chain
     }
 
+    pub async fn extend_chain(&self, mut chain: Chain, num_blocks: usize) -> Chain {
+        for _ in 0..num_blocks {
+            chain = self.build_payload(chain).await;
+            self.notify_new_payload(&chain).await;
+        }
+        self.update_forkchoice(&chain).await;
+        chain
+    }
+
     pub async fn notify_new_payload(&self, chain: &Chain) {
         let head = chain.blocks.last().unwrap();
         let execution_payload = ExecutionPayload::from_block(head.clone());
@@ -333,14 +362,96 @@ impl Node {
             .unwrap();
     }
 
+    pub async fn send_call(&self, signer: &Signer, contract: H160, data: Bytes) {
+        info!(node = self.index, sender=%signer.address(), %contract, "Sending contract call");
+        let chain_id = self
+            .rpc_client
+            .get_chain_id()
+            .await
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let sender_address = signer.address();
+        let nonce = self
+            .rpc_client
+            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+            .await
+            .unwrap();
+        let tx = EIP1559Transaction {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000_000_000,
+            gas_limit: 50_000,
+            to: TxKind::Call(contract),
+            data,
+            ..Default::default()
+        };
+        let mut tx = Transaction::EIP1559Transaction(tx);
+        tx.sign_inplace(signer).await.unwrap();
+        let encoded_tx = tx.encode_canonical_to_vec();
+        self.rpc_client
+            .send_raw_transaction(&encoded_tx)
+            .await
+            .unwrap();
+    }
+
+    pub async fn send_contract_deploy(
+        &self,
+        signer: &Signer,
+        contract_deploy_bytecode: Bytes,
+    ) -> Address {
+        info!(node = self.index, sender=%signer.address(), "Deploying contract");
+        let chain_id = self
+            .rpc_client
+            .get_chain_id()
+            .await
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let sender_address = signer.address();
+        let nonce = self
+            .rpc_client
+            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+            .await
+            .unwrap();
+        let tx = EIP1559Transaction {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000_000_000,
+            gas_limit: 100_000,
+            to: TxKind::Create,
+            data: contract_deploy_bytecode,
+            ..Default::default()
+        };
+        let mut tx = Transaction::EIP1559Transaction(tx);
+        tx.sign_inplace(signer).await.unwrap();
+        let encoded_tx = tx.encode_canonical_to_vec();
+        self.rpc_client
+            .send_raw_transaction(&encoded_tx)
+            .await
+            .unwrap();
+
+        calculate_create_address(sender_address, nonce)
+    }
+
     pub async fn get_balance(&self, address: H160) -> U256 {
         self.rpc_client
             .get_balance(address, Default::default())
             .await
             .unwrap()
     }
+
+    pub async fn get_storage_at(&self, address: H160, key: U256) -> U256 {
+        self.rpc_client
+            .get_storage_at(address, key, Default::default())
+            .await
+            .unwrap()
+    }
 }
 
+#[derive(Debug)]
 pub struct Chain {
     block_hashes: Vec<H256>,
     blocks: Vec<Block>,
@@ -430,4 +541,9 @@ async fn wait_until_synced(engine_client: &EngineClient, fork_choice_state: Fork
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+fn get_next_port() -> u16 {
+    static NEXT_PORT: AtomicU16 = AtomicU16::new(8560);
+    NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }

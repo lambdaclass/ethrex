@@ -456,6 +456,7 @@ impl Blockchain {
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn print_add_block_logs(
         gas_used: u64,
         gas_limit: u64,
@@ -491,7 +492,6 @@ impl Blockchain {
             fn percentage(init: Instant, end: Instant, total: f64) -> f64 {
                 (end.duration_since(init).as_millis() as f64 / total * 100.0).round()
             }
-
             let extra_log = if as_gigas > 0.0 {
                 format!(
                     " exec: {}% merkle: {}% store: {}%",
@@ -502,7 +502,6 @@ impl Blockchain {
             } else {
                 "".to_string()
             };
-
             info!("{}{}", base_log, extra_log);
         }
     }

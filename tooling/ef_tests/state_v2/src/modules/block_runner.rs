@@ -149,7 +149,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         ethrex_blockchain::BlockchainOptions::default(),
     );
 
-    let result = blockchain.add_block(&block).await;
+    let result = blockchain.add_block(block).await;
 
     if result.is_err() && test_case.post.expected_exceptions.is_none() {
         return Err(RunnerError::Custom(
