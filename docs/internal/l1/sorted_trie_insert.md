@@ -3,8 +3,8 @@
 This documents the algorithm found at [crates/common/trie/trie_sorted.rs](/crates/common/trie/trie_sorted.rs)
 which is used to speed up the insertion time in snap sync.
 During that step we are inserting all of the account state and storage
-slots downloaded into the Ethereum world state merkle patricia trie.
-To know how that trie works, it's recomennded to [read this primer first.](https://epf.wiki/#/wiki/EL/data-structures?id=world-state-trie)
+slots downloaded into the Ethereum world state Merkle Patricia Trie.
+To know how that trie works, it's recommended to [read this primer first.](https://epf.wiki/#/wiki/EL/data-structures?id=world-state-trie)
 
 ## Concept
 
@@ -33,7 +33,7 @@ element. All parents that can still be modified are stored in a "parent stack".
 Based on those we can have enough knowledge to know what is the 
 next write operation.
 
-## Scenarios
+### Scenarios
 
 Depending on the state of the three current pointers, one of 3 scenarios
 can happen:
@@ -86,3 +86,18 @@ A specific edge is the root node, which is assumed to always be a branch
 node, but the code has special case code to check if the root node has 
 a single child, in which case it changes to an extension or leaf as needed.
 While modifying the other nodes in the trie.
+
+### Concurrency
+
+The slowest step in this excercise is the proper flushing to disk.
+To avoid stalling while the write is done, we use an internal buffer
+which holds a fixed amount of nodes. Once the buffer is filled, it
+creates a new task that writes it to disk in the background.
+
+We want to limit the amount of buffers we can have, so we allocate a 
+fixed number of buffers at the beginning and we use a channel for the
+algorithm to recieve empty buffers and the writing task clears the
+buffer and sends it back through the channels.
+
+For execution of these tasks, we use a custom threadpool defined in
+[/crates/concurrency/concurrency.rs](/crates/concurrency/concurrency.rs)
