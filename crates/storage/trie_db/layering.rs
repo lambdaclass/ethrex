@@ -12,12 +12,12 @@ struct TrieLayer {
 }
 
 #[derive(Debug, Default)]
-pub struct TrieWrapperInner {
+pub struct TrieLayerCache {
     counter: usize,
     layers: HashMap<H256, TrieLayer>,
 }
 
-impl TrieWrapperInner {
+impl TrieLayerCache {
     pub fn get(&self, mut state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         while let Some(layer) = self.layers.get(&state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
@@ -82,7 +82,7 @@ impl TrieWrapperInner {
 
 pub struct TrieWrapper {
     pub state_root: H256,
-    pub inner: Arc<RwLock<TrieWrapperInner>>,
+    pub inner: Arc<RwLock<TrieLayerCache>>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
 }

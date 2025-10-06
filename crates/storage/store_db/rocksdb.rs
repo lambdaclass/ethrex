@@ -1,7 +1,7 @@
 use crate::{
     rlp::AccountCodeHashRLP,
     trie_db::{
-        layering::{TrieWrapper, TrieWrapperInner, apply_prefix},
+        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
@@ -104,7 +104,7 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 #[derive(Debug)]
 pub struct Store {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
-    trie_cache: Arc<RwLock<TrieWrapperInner>>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
 }
 
 impl Store {
