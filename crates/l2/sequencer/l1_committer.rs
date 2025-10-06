@@ -404,7 +404,7 @@ impl L1Committer {
 
                 let vm_db =
                     StoreVmDatabase::new(self.store.clone(), block_to_commit.header.parent_hash);
-                let mut vm = self.blockchain.new_evm(vm_db)?;
+                let mut vm = self.blockchain.new_evm(vm_db).await?;
                 vm.execute_block(&block_to_commit)?;
                 vm.get_state_transitions()?
             };

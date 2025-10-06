@@ -7,7 +7,7 @@ use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, init_datadir, read_jwtsecret_file, store_node_config_file,
 };
-use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::U256;
 use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
@@ -171,9 +171,13 @@ pub async fn init_l2(
         l1_fee_config: None, // TODO: set properly
     };
 
+    let l2_config = L2Config {
+        fee_config: Arc::new(tokio::sync::RwLock::new(fee_config)),
+    };
+
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
         max_mempool_size: opts.node_opts.mempool_max_size,
-        r#type: BlockchainType::L2(fee_config),
+        r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
     };
 

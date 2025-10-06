@@ -164,6 +164,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
                 block_gas_limit: opts.block_producer_opts.block_gas_limit,
+                l1_blob_base_fee_update_interval: 60000, // TODO: make configurable
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts

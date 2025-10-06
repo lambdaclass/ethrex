@@ -203,6 +203,8 @@ pub enum BlockProducerError {
     FailedToGetDataFrom(String),
     #[error("Internal Error: {0}")]
     InternalError(#[from] GenServerError),
+    #[error("L1Watcher error: {0}")]
+    EthClientError(#[from] EthClientError),
 }
 
 #[derive(Debug, thiserror::Error)]

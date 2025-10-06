@@ -27,6 +27,7 @@ pub struct BlockProducerConfig {
     pub operator_fee_vault_address: Option<Address>,
     pub elasticity_multiplier: u64,
     pub block_gas_limit: u64,
+    pub l1_blob_base_fee_update_interval: u64,
 }
 
 #[derive(Clone, Debug)]

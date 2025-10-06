@@ -13,9 +13,11 @@ impl RpcHandler for GetFeeVaultAddress {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let base_fee_vault_address = match context.l1_ctx.blockchain.options.r#type {
+        let base_fee_vault_address = match &context.l1_ctx.blockchain.options.r#type {
             ethrex_blockchain::BlockchainType::L1 => None,
-            ethrex_blockchain::BlockchainType::L2(fee_config) => fee_config.base_fee_vault,
+            ethrex_blockchain::BlockchainType::L2(l2_config) => {
+                l2_config.fee_config.read().await.base_fee_vault
+            }
         };
 
         Ok(

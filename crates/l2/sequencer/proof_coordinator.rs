@@ -503,7 +503,7 @@ impl ProofCoordinator {
 
         debug!("Created prover input for batch {batch_number}");
 
-        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
+        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
             return Err(ProofCoordinatorError::InternalError(
                 "Invalid blockchain type, expected L2".to_string(),
             ));
@@ -517,7 +517,7 @@ impl ProofCoordinator {
             blob_commitment,
             #[cfg(feature = "l2")]
             blob_proof,
-            fee_config,
+            fee_config: *l2_config.fee_config.read().await,
         })
     }
 

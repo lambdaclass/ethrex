@@ -219,7 +219,7 @@ fn pay_l1_fee(
         .map_err(|e| InternalError::Custom(format!("Failed to get account diffs size: {}", e)))?;
 
     let l1_fee = fee_config
-        .l1_fee_per_blob_byte
+        .l1_fee_per_blob_gas
         .checked_mul(U256::from(account_diffs_size))
         .ok_or(InternalError::Overflow)?;
     let sender_address = vm.env.origin;

@@ -6,7 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
@@ -14,6 +14,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_common::H256;
+use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -25,7 +26,7 @@ use spawned_concurrency::tasks::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BlockProducerConfig, SequencerConfig,
+    BlockProducerConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
 };
 
@@ -43,6 +44,7 @@ pub enum CallMessage {
 #[derive(Clone)]
 pub enum InMessage {
     Produce,
+    UpdateL1BlobBaseFee,
 }
 
 #[derive(Clone)]
@@ -62,6 +64,8 @@ pub struct BlockProducer {
     // Needed to ensure privileged tx nonces are sequential
     last_privileged_nonce: Option<u64>,
     block_gas_limit: u64,
+    l1_blob_base_fee_update_interval: u64,
+    eth_client: EthClient,
 }
 
 #[derive(Clone, Serialize)]
@@ -75,11 +79,12 @@ pub struct BlockProducerHealth {
 impl BlockProducer {
     pub fn new(
         config: &BlockProducerConfig,
+        eth_config: &EthConfig,
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
-    ) -> Self {
+    ) -> Result<Self, BlockProducerError> {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
@@ -87,7 +92,10 @@ impl BlockProducer {
             operator_fee_vault_address,
             elasticity_multiplier,
             block_gas_limit,
+            l1_blob_base_fee_update_interval,
         } = config;
+
+        let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
 
         if let Some(base_fee_vault) = base_fee_vault_address {
             if base_fee_vault == coinbase_address {
@@ -105,7 +113,7 @@ impl BlockProducer {
             }
         }
 
-        Self {
+        Ok(Self {
             store,
             blockchain,
             sequencer_state,
@@ -116,7 +124,9 @@ impl BlockProducer {
             // FIXME: Initialize properly to the last privileged nonce in the chain
             last_privileged_nonce: None,
             block_gas_limit: *block_gas_limit,
-        }
+            l1_blob_base_fee_update_interval: *l1_blob_base_fee_update_interval,
+            eth_client,
+        })
     }
 
     pub async fn spawn(
@@ -128,12 +138,17 @@ impl BlockProducer {
     ) -> Result<GenServerHandle<BlockProducer>, BlockProducerError> {
         let mut block_producer = Self::new(
             &cfg.block_producer,
+            &cfg.eth,
             store,
             rollup_store,
             blockchain,
             sequencer_state,
-        )
+        )?
         .start_blocking();
+        block_producer
+            .cast(InMessage::UpdateL1BlobBaseFee)
+            .await
+            .map_err(BlockProducerError::InternalError)?;
         block_producer
             .cast(InMessage::Produce)
             .await
@@ -245,22 +260,52 @@ impl GenServer for BlockProducer {
 
     async fn handle_cast(
         &mut self,
-        _message: Self::CastMsg,
+        message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse {
-        // Right now we only have the Produce message, so we ignore the message
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .produce_block()
-                .await
-                .inspect_err(|e| error!("Block Producer Error: {e}"));
+        match message {
+            InMessage::Produce => {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                    let _ = self
+                        .produce_block()
+                        .await
+                        .inspect_err(|e| error!("Block Producer Error: {e}"));
+                }
+                send_after(
+                    Duration::from_millis(self.block_time_ms),
+                    handle.clone(),
+                    Self::CastMsg::Produce,
+                );
+                CastResponse::NoReply
+            }
+            InMessage::UpdateL1BlobBaseFee => {
+                let Ok(blob_base_fee) =
+                    self.eth_client.get_blob_base_fee().await.inspect_err(|e| {
+                        error!("Failed to fetch L1 blob base fee: {e}");
+                    })
+                else {
+                    return CastResponse::NoReply;
+                };
+
+                let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+                    error!("Invalid blockchain type. Expected L2.");
+                    return CastResponse::NoReply;
+                };
+
+                let mut fee_config_guard = l2_config.fee_config.write().await;
+
+                let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_mut() else {
+                    warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
+                    return CastResponse::NoReply;
+                };
+
+                l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
+
+                let interval = Duration::from_millis(self.l1_blob_base_fee_update_interval);
+                send_after(interval, handle.clone(), Self::CastMsg::UpdateL1BlobBaseFee);
+                CastResponse::NoReply
+            }
         }
-        send_after(
-            Duration::from_millis(self.block_time_ms),
-            handle.clone(),
-            Self::CastMsg::Produce,
-        );
-        CastResponse::NoReply
     }
 
     async fn handle_call(

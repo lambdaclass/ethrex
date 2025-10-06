@@ -663,6 +663,19 @@ impl EthClient {
         }
     }
 
+    pub async fn get_blob_base_fee(&self) -> Result<U256, EthClientError> {
+        let request = RpcRequest::new("eth_blobBaseFee", None);
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetBalanceError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(GetBalanceError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
     /// Smoke test the all the urls by calling eth_blockNumber
     pub async fn test_urls(&self) -> BTreeMap<String, serde_json::Value> {
         let mut map = BTreeMap::new();
