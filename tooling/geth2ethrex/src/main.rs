@@ -476,7 +476,7 @@ pub fn geth2ethrex(
         let Some(root) = gethdbs[0].get(header.state_root.into())? else {
             return Ok(());
         };
-        let top_branch = match Node::decode_raw(&root)? {
+        let top_branch = match Node::decode(&root)? {
             Node::Leaf(_) => {
                 return Ok(());
             }
