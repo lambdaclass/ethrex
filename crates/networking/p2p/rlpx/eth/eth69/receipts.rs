@@ -32,7 +32,7 @@ impl Receipts69 {
         }
         self.receipts
             .into_iter()
-            .map(|receipts| receipts.into_iter().map(Receipt::from).collect())
+            .map(|receipts| receipts.into_iter().collect())
             .collect()
     }
 }
