@@ -67,6 +67,11 @@ jobs:
               simulation: ethereum/eest/consume-rlp,
               limit: ".*fork_Osaka.*",
             }
+          - {
+              name: "Execute Blobs tests",
+              file_name: execute-blobs,
+              simulation: ethereum/eest/execute-blobs,
+            }
 
     steps:
       - name: Verify input parameters

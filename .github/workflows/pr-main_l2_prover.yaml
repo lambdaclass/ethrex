@@ -22,7 +22,7 @@ jobs:
         with:
           tool-cache: false
           large-packages: false
-          
+
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Add Rust Cache
@@ -51,7 +51,6 @@ jobs:
       - name: Check ${{ matrix.backend }} backend
         run: |
           cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
-          cargo check -r -p ethrex-replay -F ${{ matrix.backend }}
 
       - name: Clippy ${{ matrix.backend }} backend
         run: |

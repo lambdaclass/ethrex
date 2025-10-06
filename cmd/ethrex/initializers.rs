@@ -11,8 +11,8 @@ use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    kademlia::Kademlia,
-    network::{P2PContext, peer_table},
+    discv4::peer_table::{PeerTable, PeerTableHandle},
+    network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
@@ -207,7 +207,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_handler.peer_table.peers.clone(),
+        peer_handler.peer_table,
     ));
 }
 
@@ -370,7 +370,12 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTableHandle,
+    Arc<Mutex<NodeRecord>>,
+)> {
     let datadir = &opts.datadir;
     init_datadir(datadir);
 
@@ -402,7 +407,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_handler = PeerHandler::new(PeerTable::spawn());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
