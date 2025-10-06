@@ -1,5 +1,6 @@
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::{Nibbles, Node, NodeHash, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
 
@@ -52,7 +53,7 @@ impl RocksDBTrieDB {
 impl TrieDB for RocksDBTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle()?;
-        let db_key = self.make_key(key);
+        let db_key = self.make_key(&key);
 
         let res = self
             .db
@@ -78,6 +79,10 @@ impl TrieDB for RocksDBTrieDB {
         self.db
             .write(batch)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
+    }
+
+    fn put_batch_no_alloc(&self, key_values: &[(NodeHash, Node)]) -> Result<(), TrieError> {
+        todo!()
     }
 }
 
