@@ -1686,12 +1686,18 @@ pub async fn insert_storages(
     struct RocksDBIterator<'a> {
         iter: rocksdb::DBRawIterator<'a>,
         limit: H256,
+        counter: usize,
     }
 
     impl<'a> Iterator for RocksDBIterator<'a> {
         type Item = (H256, Vec<u8>);
 
         fn next(&mut self) -> Option<Self::Item> {
+            self.counter += 1;
+            debug!(
+                "Iterator next for account_hash {:x?}, counter: {}",
+                self.limit, self.counter
+            );
             if !self.iter.valid() {
                 return None;
             }
@@ -1712,6 +1718,7 @@ pub async fn insert_storages(
                     _ => None,
                 }
             };
+
             self.iter.next();
             return_value
         }
@@ -1780,6 +1787,7 @@ pub async fn insert_storages(
                 let mut iter = RocksDBIterator {
                     iter,
                     limit: *account_hash,
+                    counter: 0,
                 };
 
                 debug!("After seek {account_hash:x?}");
