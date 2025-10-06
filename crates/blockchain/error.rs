@@ -130,6 +130,8 @@ pub enum MempoolError {
     InvalidPooledTxSize,
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
+    #[error("Transaction sender is invalid {0}")]
+    InvalidTxSender(String),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
 }
