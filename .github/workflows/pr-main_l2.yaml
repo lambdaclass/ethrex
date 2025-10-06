@@ -441,17 +441,17 @@ jobs:
       - name: Start ethrex
         run: |
           cd crates/l2
-          make init-l2-dev
+          make init-l2-dev &
 
       - name: Wait for ethrex l2
         run: |
-          for i in {1..20}; do
+          for i in {1..100}; do
             echo "Checking if ethrex l2 is ready... (attempt $i)"
             if nc -z localhost 3900; then
               echo "ProofCoordinator ready!"
               exit 0
             fi
-            sleep 5
+            sleep 15
           done
       
       - name: Init prover
