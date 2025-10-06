@@ -12,8 +12,6 @@ on:
       - LEVM
       - Publish Docker
       - Publish Ethrex docs page
-      - Replay
-      - Replay proving
     branches:
       - main
     types:
@@ -34,7 +32,7 @@ jobs:
         id: select_webhook
         run: |
           WF_NAME="${{ github.event.workflow_run.name }}"
-          if echo "$WF_NAME" | grep -Eiq 'L2|Replay'; then
+          if echo "$WF_NAME" | grep -Eiq 'L2'; then
             echo "webhook=${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
           else
             echo "webhook=${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"

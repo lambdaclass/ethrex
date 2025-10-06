@@ -898,6 +898,7 @@ impl Blockchain {
 
                 P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                     tx: itx,
+                    wrapper_version: (bundle.version != 0).then_some(bundle.version),
                     blobs_bundle: bundle,
                 })
             }
