@@ -200,6 +200,7 @@ impl GethDB {
     }
 
     fn try_read_hashes_from_freezer(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
+        dbg!(first, last);
         let hashes_vecs = self.read_from_freezer_table("hashes", false, first, last)?;
         hashes_vecs
             .into_iter()
@@ -242,6 +243,7 @@ impl GethDB {
     }
 
     pub fn read_hashes_from_gethdb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
+        dbg!(first, last);
         let frozen_hashes = self.try_read_hashes_from_freezer(first, last)?;
         let state_hashes = if last - first + 1 != frozen_hashes.len() as u64 {
             self.try_read_hashes_from_statedb(first + frozen_hashes.len() as u64, last)?
@@ -383,6 +385,10 @@ pub fn geth2ethrex(
     let migration_start: Instant = Instant::now();
 
     let gethdb = GethDB::open(input_dir)?;
+    dbg!(
+        block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
+        block_number
+    );
     let hashes = gethdb.read_hashes_from_gethdb(
         block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
         block_number,
