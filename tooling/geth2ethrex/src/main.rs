@@ -424,6 +424,7 @@ fn account_bucket_worker(
                 sort_buffer.push((hash, encoded));
             }
             sort_buffer.sort_unstable_by_key(|(hash, _)| *hash);
+            sort_buffer.dedup_by_key(|(hash, _)| *hash);
             entries += sort_buffer.len();
 
             for (hash, encoded) in sort_buffer.drain(..) {
