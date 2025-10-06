@@ -25,6 +25,16 @@ impl Receipts69 {
     pub fn get_id(&self) -> u64 {
         self.id
     }
+
+    pub fn into_receipts(self) -> Vec<Vec<Receipt>> {
+        if self.receipts.is_empty() {
+            return vec![];
+        }
+        self.receipts
+            .into_iter()
+            .map(|receipts| receipts.into_iter().map(Receipt::from).collect())
+            .collect()
+    }
 }
 
 impl RLPxMessage for Receipts69 {

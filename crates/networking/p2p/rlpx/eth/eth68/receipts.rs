@@ -35,11 +35,11 @@ impl Receipts68 {
         }
     }
 
-    pub fn get_receipts(&mut self) -> Vec<Vec<Receipt>> {
+    pub fn into_receipts(self) -> Vec<Vec<Receipt>> {
         if self.receipts.is_empty() {
             return vec![];
         }
-        std::mem::take(&mut self.receipts)
+        self.receipts
             .into_iter()
             .map(|receipts| receipts.into_iter().map(Receipt::from).collect())
             .collect()
