@@ -249,7 +249,7 @@ contract CommonBridge is
             IERC20(NATIVE_TOKEN).transferFrom(msg.sender, address(this), value);
         }
 
-        deposits[NATIVE_TOKEN][NATIVE_TOKEN] += value;
+        deposits[ETH_TOKEN][ETH_TOKEN] += value;
 
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintETH,
