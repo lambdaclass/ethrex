@@ -23,3 +23,18 @@ between 0x0EBB and 0x172E if it's sorted). The root branch node we know exists a
 input.
 
 ### Implementation
+
+The implementation is based on keeping three pointers to data. The current
+element we're processing, the next input value and the parent of the current
+element. All parents that can still be modified are stored in a stack. Based on those we can have enough knowledge to know what is the 
+next write operation.
+
+Scenario 1: Current and next value are brothers with the current
+parent being the parent of both values. This happens when
+the parent and both values share the same amount of nibbles at the beginning. In our example, all paths to the nodes starts with 0x1 and then diverges.
+
+In this scenario, we know the leaf we need to compute from the current value
+so we write that, modify the parent to include a pointer to that leaf 
+and continue with the algorithm.
+
+![Image showing the insertion of 1 elements with a current parent branch 0x1, the current element 0x12E6 and next element 0x172E. 0x12E6 is inserted with a single write](sorted_trie_insert/Sorted%20Insertion%20Scenario%201.png)
