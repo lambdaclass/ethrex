@@ -86,10 +86,15 @@ const CF_CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block_hash).bytes().clone()`
 const CF_SNAP_STATE: &str = "snap_state";
 
-/// State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
+/// State trie account nodes column family: [`Nibbles`] => [`Vec<u8>`]
 /// - [`Nibbles`] = `node_hash.as_ref()`
 /// - [`Vec<u8>`] = `node_data`
-const CF_TRIE_NODES: &str = "trie_nodes";
+const CF_ACCOUNT_TRIE_NODES: &str = "account_trie_nodes";
+
+/// State trie storage nodes column family: ([`Nibbles`], [`Nibbles`]) => [`Vec<u8>`]
+/// - ([`Nibbles`], [`Nibbles`]) = `node_hash.as_ref()`
+/// - [`Vec<u8>`] = `node_data`
+const CF_STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -160,7 +165,8 @@ impl Store {
             CF_TRANSACTION_LOCATIONS,
             CF_CHAIN_DATA,
             CF_SNAP_STATE,
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
         ];
@@ -229,7 +235,7 @@ impl Store {
                     block_opts.set_cache_index_and_filter_blocks(true);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CF_TRIE_NODES => {
+                CF_ACCOUNT_TRIE_NODES | CF_STORAGE_TRIE_NODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
@@ -463,7 +469,8 @@ impl StoreEngine for Store {
             let _span = tracing::trace_span!("Block DB update").entered();
 
             let [
-                cf_trie_nodes,
+                cf_account_trie_nodes,
+                cf_storage_trie_nodes,
                 cf_receipts,
                 cf_codes,
                 cf_block_numbers,
@@ -473,7 +480,8 @@ impl StoreEngine for Store {
             ] = open_cfs(
                 &db,
                 [
-                    CF_TRIE_NODES,
+                    CF_ACCOUNT_TRIE_NODES,
+                    CF_STORAGE_TRIE_NODES,
                     CF_RECEIPTS,
                     CF_ACCOUNT_CODES,
                     CF_BLOCK_NUMBERS,
@@ -490,10 +498,15 @@ impl StoreEngine for Store {
             if let Some(root) = trie.get_commitable(parent_state_root) {
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
-                    if value.is_empty() {
-                        batch.delete_cf(&cf_trie_nodes, key);
+                    let cf = if key.len() > 64 {
+                        &cf_storage_trie_nodes
                     } else {
-                        batch.put_cf(&cf_trie_nodes, key, value);
+                        &cf_account_trie_nodes
+                    };
+                    if value.is_empty() {
+                        batch.delete_cf(cf, key);
+                    } else {
+                        batch.put_cf(cf, key, value);
                     }
                 }
             }
@@ -1144,7 +1157,11 @@ impl StoreEngine for Store {
         storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let db = Box::new(RocksDBTrieDB::new(
+            self.db.clone(),
+            CF_STORAGE_TRIE_NODES,
+            None,
+        )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: self.trie_cache.clone(),
@@ -1155,7 +1172,11 @@ impl StoreEngine for Store {
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let db = Box::new(RocksDBTrieDB::new(
+            self.db.clone(),
+            CF_ACCOUNT_TRIE_NODES,
+            None,
+        )?);
         let wrap_db = Box::new(TrieWrapper {
             state_root,
             inner: self.trie_cache.clone(),
@@ -1172,21 +1193,25 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
             Some(hashed_address),
         )?);
         Ok(Trie::open(db, storage_root))
     }
 
     fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(RocksDBTrieDB::new(self.db.clone(), CF_TRIE_NODES, None)?);
+        let db = Box::new(RocksDBTrieDB::new(
+            self.db.clone(),
+            CF_ACCOUNT_TRIE_NODES,
+            None,
+        )?);
         Ok(Trie::open(db, state_root))
     }
 
     fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_ACCOUNT_TRIE_NODES,
             None,
         )?);
         let wrap_db = Box::new(TrieWrapper {
@@ -1206,7 +1231,7 @@ impl StoreEngine for Store {
     ) -> Result<Trie, StoreError> {
         let db = Box::new(RocksDBLockedTrieDB::new(
             self.db.clone(),
-            CF_TRIE_NODES,
+            CF_STORAGE_TRIE_NODES,
             None,
         )?);
         let wrap_db = Box::new(TrieWrapper {
@@ -1475,8 +1500,8 @@ impl StoreEngine for Store {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatchWithTransaction::default();
-            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
+            let cf = db.cf_handle(&CF_STORAGE_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: CF_STORAGE_TRIE_NODES"))
             })?;
 
             for (address_hash, nodes) in storage_trie_nodes {
@@ -1500,8 +1525,15 @@ impl StoreEngine for Store {
     async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
+            let cf = db.cf_handle(&CF_ACCOUNT_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: CF_ACCOUNT_TRIE_NODES"))
+            })?;
+
+            db.delete_range_cf(&cf, from.clone(), to.clone())
+                .map_err(|e| StoreError::Custom(format!("RocksDB range delete error: {}", e)))?;
+
+            let cf = db.cf_handle(&CF_STORAGE_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom(format!("Column family not found: CF_STORAGE_TRIE_NODES"))
             })?;
 
             db.delete_range_cf(&cf, from, to)
