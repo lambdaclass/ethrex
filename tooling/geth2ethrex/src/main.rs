@@ -430,7 +430,7 @@ fn account_bucket_worker(
 
             for (hash, encoded) in sort_buffer.drain(..) {
                 println!(
-                    "inserting hash: {:x}{:x}",
+                    "inserting hash: {:16x}{:16x}",
                     u128::from_be_bytes(hash[..16].try_into().unwrap()),
                     u128::from_be_bytes(hash[16..].try_into().unwrap())
                 );
