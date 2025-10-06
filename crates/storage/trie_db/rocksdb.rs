@@ -53,7 +53,7 @@ impl RocksDBTrieDB {
 impl TrieDB for RocksDBTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle()?;
-        let db_key = self.make_key(&key);
+        let db_key = self.make_key(key);
 
         let res = self
             .db
