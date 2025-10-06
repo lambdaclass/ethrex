@@ -85,6 +85,7 @@
 // For now I was working on already synced hash-based archives.
 use clap::{ArgGroup, Parser};
 use ethrex_common::Address;
+use ethrex_common::base64::decode;
 use ethrex_common::types::{BlockHash, BlockHeader};
 use ethrex_common::utils::keccak;
 use ethrex_common::{BigEndianHash, H256, U256, types::BlockNumber};
@@ -95,7 +96,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
-use ethrex_trie::{NodeHash, Trie, TrieDB, TrieError};
+use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
 use eyre::OptionExt;
 use rocksdb::{DBWithThreadMode, MultiThreaded, Options, SingleThreaded};
 use std::collections::HashMap;
@@ -371,6 +372,8 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         bucket.write_all(&buffer).unwrap();
         bucket.write_all(&value).unwrap();
         println!("value size: {}", value.len());
+        let node: Node = <Node as RLPDecode>::decode(&value)?;
+        dbg!(node);
         Ok(Some(value))
     }
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
