@@ -1,13 +1,18 @@
 use crate::{
+    call_frame::CallFrameBackup,
     errors::{ContextResult, InternalError, TxValidationError},
     hooks::{DefaultHook, default_hook, hook::Hook},
     opcodes::Opcode,
+    utils::get_account_diffs_in_tx,
     vm::VM,
 };
 
 use ethrex_common::{
     Address, H160, U256,
-    types::fee_config::{FeeConfig, OperatorFeeConfig},
+    types::{
+        account_diff::get_accounts_diff_size,
+        fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig},
+    },
 };
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
@@ -17,6 +22,7 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
 
 pub struct L2Hook {
     pub fee_config: FeeConfig,
+    pub pre_execution_backup: CallFrameBackup,
 }
 
 impl Hook for L2Hook {
@@ -26,6 +32,9 @@ impl Hook for L2Hook {
             // Different from L1:
             // Operator fee is deducted from the sender before execution
             deduct_operator_fee(vm, &self.fee_config.operator_fee_config)?;
+
+            // We need to backup the callframe to calculate the state diff later
+            self.pre_execution_backup = vm.current_call_frame.call_frame_backup.clone();
             return Ok(());
         }
 
@@ -125,6 +134,13 @@ impl Hook for L2Hook {
             // Operator fee is paid to the chain operator
             pay_operator_fee(vm, self.fee_config.operator_fee_config)?;
 
+            //
+            pay_l1_fee(
+                vm,
+                std::mem::take(&mut self.pre_execution_backup),
+                self.fee_config.l1_fee_config,
+            )?;
+
             return Ok(());
         }
 
@@ -183,5 +199,38 @@ fn pay_operator_fee(
     };
 
     vm.increase_account_balance(fee_config.operator_fee_vault, fee_config.operator_fee)?;
+    Ok(())
+}
+
+fn pay_l1_fee(
+    vm: &mut VM<'_>,
+    pre_execution_backup: CallFrameBackup,
+    l1_fee_config: Option<L1FeeConfig>,
+) -> Result<(), crate::errors::VMError> {
+    let Some(fee_config) = l1_fee_config else {
+        // No l1 fee configured, l1 fee is not paid
+        return Ok(());
+    };
+
+    let mut execution_backup = vm.current_call_frame.call_frame_backup.clone();
+    execution_backup.extend(pre_execution_backup);
+    let account_diffs_in_tx = get_account_diffs_in_tx(vm.db, execution_backup)?;
+    let account_diffs_size = get_accounts_diff_size(&account_diffs_in_tx).map_err(|e| {
+        InternalError::Custom(format!(
+            "Failed to get account diffs size: {}",
+            e.to_string()
+        ))
+    })?;
+
+    let l1_fee = fee_config
+        .l1_fee_per_blob_byte
+        .checked_mul(U256::from(account_diffs_size))
+        .ok_or(InternalError::Overflow)?;
+    let sender_address = vm.env.origin;
+
+    vm.decrease_account_balance(sender_address, l1_fee)
+        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+
+    vm.increase_account_balance(fee_config.l1_fee_vault, l1_fee)?;
     Ok(())
 }
