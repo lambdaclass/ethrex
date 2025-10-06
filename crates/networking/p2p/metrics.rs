@@ -9,10 +9,7 @@ use std::{
 };
 
 use ethrex_common::H256;
-use prometheus::{
-    Gauge, IntCounter, Registry,
-    core::{Atomic, Metric, Number},
-};
+use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
 
 use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
