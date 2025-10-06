@@ -449,6 +449,7 @@ jobs:
             echo "Checking if ethrex l2 is ready... (attempt $i)"
             if nc -z localhost 3900; then
               echo "ProofCoordinator ready!"
+              curl http://localhost:5555/health
               exit 0
             fi
             sleep 15
