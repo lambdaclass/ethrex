@@ -8,10 +8,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::{
-    Address,
-    types::{Block, blobs_bundle},
-};
+use ethrex_common::{Address, types::Block};
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
@@ -45,10 +42,10 @@ pub struct ProverInputData {
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
-    pub blob_commitment: blobs_bundle::Commitment,
+    pub blob_commitment: ethrex_common::types::blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
-    pub blob_proof: blobs_bundle::Proof,
+    pub blob_proof: ethrex_common::types::blobs_bundle::Proof,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
