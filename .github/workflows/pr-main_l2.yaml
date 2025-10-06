@@ -456,25 +456,13 @@ jobs:
           echo "ProofCoordinator not ready in time"
           exit 1
 
-      - name: Wait for health
-        run: |
-          for i in {1..100}; do
-            echo "Checking if ethrex l2 is healthy... (attempt $i)"
-            if curl -sf http://localhost:5555/health; then
-              echo "ethrex l2 is healthy!"
-              exit 0
-            fi
-            sleep 15
-          done
-          echo "Endpoint health not ready in time"
-          exit 1
-      
       - name: Init prover
         run: |
           target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 &
       
       - name: Run test
         run: |
+          sudo chmod -R a+rw crates/l2
           cd crates/l2
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
 
