@@ -370,6 +370,7 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         buffer[32..].copy_from_slice(&(value.len() as u16).to_le_bytes());
         bucket.write_all(&buffer).unwrap();
         bucket.write_all(&value).unwrap();
+        println!("value size: {}", value.len());
         Ok(Some(value))
     }
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
