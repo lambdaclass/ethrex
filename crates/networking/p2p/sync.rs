@@ -1758,25 +1758,31 @@ async fn insert_storages(
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
+            debug!("Creating task with account hash {account_hash:x?}");
             let sender = sender.clone();
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
             if counter >= thread_count - 1 {
+                debug!("Waiting for the semaphore for {account_hash:x?}");
                 let _ = receiver.recv();
                 counter -= 1;
             }
+            debug!("Received a counter for {account_hash:x?}");
             counter += 1;
             let pool_clone = pool.clone();
             let mut iter = snapshot.raw_iterator();
             let task = Box::new(move || {
+                debug!("Started executing task {account_hash:x?}");
                 let mut buffer: [u8; 64] = [0_u8; 64];
                 buffer[..32].copy_from_slice(&account_hash.0);
+                debug!("Before seek {account_hash:x?}");
                 iter.seek(buffer);
                 let mut iter = RocksDBIterator {
                     iter,
                     limit: *account_hash,
                 };
 
+                debug!("After seek {account_hash:x?}");
                 let _ = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter,
@@ -1790,6 +1796,7 @@ async fn insert_storages(
                     );
                 })
                 .map_err(SyncError::TrieGenerationError);
+                debug!("Computed trie for {account_hash:x?}");
                 METRICS.storage_tries_state_roots_computed.inc();
                 let _ = sender.send(());
             });
