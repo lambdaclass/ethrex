@@ -394,7 +394,7 @@ fn account_bucket_worker(
         while let Ok((hash, encoded)) = account_bucket_receiver.recv() {
             let writer = &mut writers[hash[0] as usize & 0xf];
             writer.write_all(&hash)?;
-            writer.write_all(&encoded.len().to_ne_bytes())?;
+            writer.write_all(&(encoded.len() as u16).to_ne_bytes())?;
             writer.write_all(&encoded)?;
         }
         writers.iter_mut().try_for_each(BufWriter::flush)?;
