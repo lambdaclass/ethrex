@@ -105,8 +105,8 @@ jobs:
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 1'
           if [[ "$SIMULATION" == "ethereum/eest/consume-engine" || "$SIMULATION" == "ethereum/eest/consume-rlp" ]]; then
-            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.0.0/fixtures_develop.tar.gz"
-            FLAGS+=" --sim.buildarg branch=v5.0.0"
+            FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.1.0/fixtures_develop.tar.gz"
+            FLAGS+=" --sim.buildarg branch=v5.1.0"
             FLAGS+=" --client.checktimelimit=180s"
           fi
           if [[ -n "$SIM_LIMIT" ]]; then
