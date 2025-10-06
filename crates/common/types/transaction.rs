@@ -1,10 +1,11 @@
 use std::{cmp::min, fmt::Display};
 
-use crate::utils::keccak;
+use crate::{errors::Error, utils::keccak};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
+#[cfg(feature = "secp256k1")]
 use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction, GenericTransactionError};
@@ -934,7 +935,7 @@ impl RLPDecode for PrivilegedL2Transaction {
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Result<Address, secp256k1::Error> {
+    pub fn sender(&self) -> Result<Address, Error> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1263,14 +1264,15 @@ impl Transaction {
 pub fn recover_address_from_message(
     signature: Signature,
     message: &Bytes,
-) -> Result<Address, secp256k1::Error> {
+) -> Result<Address, Error> {
     // Hash message
     let payload: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
         .finalize()
         .into();
-    recover_address(signature, H256::from_slice(&payload))
+    recover_address(signature, H256::from_slice(&payload)).map_err(Error::from)
 }
 
+#[cfg(feature = "secp256k1")]
 pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = signature.to_fixed_bytes();
@@ -1284,6 +1286,11 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
     // Hash public key to obtain address
     let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
     Ok(Address::from_slice(&hash[12..]))
+}
+
+#[cfg(feature = "k256")]
+pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, Error> {
+    unimplemented!()
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {

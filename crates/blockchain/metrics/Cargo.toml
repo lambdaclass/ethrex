@@ -14,7 +14,7 @@ thiserror.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, default-features = false }
 
 prometheus = { version = "0.13.4", features = ["process"], optional = true }
 axum = { workspace = true, optional = true }
@@ -25,7 +25,12 @@ tracing-subscriber.workspace = true
 path = "./mod.rs"
 
 [features]
-default = ["api"]
+default = ["l1", "api"]
+
 transactions = []
 api = ["dep:axum", "dep:prometheus", "dep:tokio", "dep:tracing"]
 metrics = []
+
+l1 = ["ethrex-common/l1"]
+sp1 = ["ethrex-common/sp1"]
+risc0 = ["ethrex-common/risc0"]

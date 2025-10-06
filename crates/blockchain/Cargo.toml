@@ -10,6 +10,7 @@ documentation.workspace = true
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-common = { workspace = true, default-features = false }
+ethrex-metrics = { path = "./metrics", default-features = false }
 ethrex-storage = { workspace = true, default-features = false }
 ethrex-vm = { workspace = true, default-features = false }
 
@@ -19,8 +20,6 @@ tracing.workspace = true
 bytes.workspace = true
 tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
-
-ethrex-metrics = { path = "./metrics", default-features = false }
 
 [dev-dependencies]
 serde_json.workspace = true
@@ -33,12 +32,31 @@ path = "./blockchain.rs"
 [features]
 default = ["l1"]
 
+# The features c-kzg and kzg-rs must not be removed as this crate uses them.
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 kzg-rs = ["ethrex-common/kzg-rs", "ethrex-vm/kzg-rs"]
 
-l1 = ["ethrex-common/l1", "ethrex-vm/l1", "c-kzg"]
-sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1", "kzg-rs"]
-risc0 = ["ethrex-common/risc0", "ethrex-vm/risc0", "c-kzg"]
+l1 = [
+    "ethrex-common/l1",
+    "ethrex-metrics/l1",
+    "ethrex-storage/l1",
+    "ethrex-vm/l1",
+    "c-kzg",
+]
+sp1 = [
+    "ethrex-common/sp1",
+    "ethrex-metrics/sp1",
+    "ethrex-storage/sp1",
+    "ethrex-vm/sp1",
+    "kzg-rs",
+]
+risc0 = [
+    "ethrex-common/risc0",
+    "ethrex-metrics/risc0",
+    "ethrex-storage/risc0",
+    "ethrex-vm/risc0",
+    "c-kzg",
+]
 
 metrics = ["ethrex-metrics/transactions"]
 

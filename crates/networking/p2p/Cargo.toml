@@ -8,12 +8,8 @@ documentation.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-common = { workspace = true, default-features = false, features = [
-    "l1",
-] }
-ethrex-blockchain = { workspace = true, default-features = false, features = [
-    "l1",
-] }
+ethrex-common = { workspace = true, default-features = false }
+ethrex-blockchain = { workspace = true, default-features = false }
 ethrex-storage = { workspace = true, default-features = false }
 ethrex-storage-rollup = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
@@ -59,7 +55,28 @@ hex-literal = "0.4.1"
 path = "./p2p.rs"
 
 [features]
+default = ["l1"]
+
 sync-test = []
+
+l1 = [
+    "ethrex-blockchain/l1",
+    "ethrex-common/l1",
+    "ethrex-storage/l1",
+    "ethrex-storage-rollup/l1",
+]
+sp1 = [
+    "ethrex-blockchain/sp1",
+    "ethrex-common/sp1",
+    "ethrex-storage/sp1",
+    "ethrex-storage-rollup/sp1",
+]
+risc0 = [
+    "ethrex-blockchain/risc0",
+    "ethrex-common/risc0",
+    "ethrex-storage/risc0",
+    "ethrex-storage-rollup/risc0",
+]
 
 [lints.clippy]
 unwrap_used = "deny"

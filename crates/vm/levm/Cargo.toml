@@ -52,8 +52,8 @@ spinoff = "0.8.0"
 [features]
 default = ["l1"]
 
-secp256k1 = ["dep:secp256k1"]
-k256 = ["dep:k256"]
+secp256k1 = ["dep:secp256k1", "ethrex-common/secp256k1"]
+k256 = ["dep:k256", "ethrex-common/k256"]
 
 c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 kzg-rs = ["ethrex-common/kzg-rs", "ethrex-crypto/kzg-rs"]

@@ -7,7 +7,7 @@ documentation.workspace = true
 
 [dependencies]
 # Here we force enabling the c-kzg feature because we don't care about using other KZG crate.
-ethrex-common = { workspace = true, features = ["c-kzg"] }
+ethrex-common = { workspace = true, features = ["l1"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 
 [lib]

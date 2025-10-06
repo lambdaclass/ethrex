@@ -32,8 +32,8 @@ path = "./lib.rs"
 [features]
 default = ["l1"]
 
-secp256k1 = ["ethrex-levm/secp256k1"]
-k256 = ["ethrex-levm/k256"]
+secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1"]
+k256 = ["ethrex-levm/k256", "ethrex-common/k256"]
 
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 kzg-rs = ["ethrex-levm/kzg-rs", "ethrex-common/kzg-rs"]
