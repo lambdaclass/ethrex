@@ -428,13 +428,23 @@ fn account_bucket_worker(
             assert!(sort_buffer.is_sorted_by(|a, b| a < b));
             entries += sort_buffer.len();
 
+            let mut last = [0u8; 32];
             for (hash, encoded) in sort_buffer.drain(..) {
                 println!(
                     "inserting hash: {:16x}{:16x}",
                     u128::from_be_bytes(hash[..16].try_into().unwrap()),
                     u128::from_be_bytes(hash[16..].try_into().unwrap())
                 );
-                sst.put(hash, encoded)?;
+                sst.put(hash, encoded).inspect_err(|_| {
+                    println!(
+                        "failed to insert: {:16x}{:16x} (prev: {:16x}{:16x})",
+                        u128::from_be_bytes(hash[..16].try_into().unwrap()),
+                        u128::from_be_bytes(hash[16..].try_into().unwrap()),
+                        u128::from_be_bytes(last[..16].try_into().unwrap()),
+                        u128::from_be_bytes(last[16..].try_into().unwrap()),
+                    );
+                })?;
+                last = hash;
             }
             sort_buffer.clear();
         }
