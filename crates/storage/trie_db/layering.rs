@@ -16,7 +16,9 @@ struct TrieLayer {
 
 #[derive(Debug, Default)]
 pub struct TrieLayerCache {
-    counter: usize,
+    /// Monotonically increasing ID for layers, starting at 1.
+    /// TODO: this implementation panics on overflow
+    current_id: usize,
     layers: HashMap<H256, TrieLayer>,
 }
 
@@ -52,11 +54,11 @@ impl TrieLayerCache {
         self.layers
             .entry(state_root)
             .or_insert_with(|| {
-                self.counter += 1;
+                self.current_id += 1;
                 TrieLayer {
                     nodes: HashMap::new(),
                     parent,
-                    id: self.counter,
+                    id: self.current_id,
                 }
             })
             .nodes
