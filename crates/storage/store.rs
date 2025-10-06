@@ -1159,6 +1159,11 @@ impl Store {
             .open_locked_storage_trie(account_hash, storage_root, state_root)
     }
 
+    pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
+        let trie = self.engine.open_state_trie(state_root)?;
+        Ok(trie.db().get(Nibbles::default())?.is_some())
+    }
+
     /// Sets the hash of the last header downloaded during a snap sync
     pub async fn set_header_download_checkpoint(
         &self,
