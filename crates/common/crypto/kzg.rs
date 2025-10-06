@@ -1,5 +1,3 @@
-use std::iter::repeat_n;
-
 // TODO: Currently, we cannot include the types crate independently of common because the crates are not yet split.
 // After issue #4596 ("Split types crate from common") is resolved, update this to import the types crate directly,
 // so that crypto/kzg.rs does not depend on common for type definitions.
@@ -69,6 +67,25 @@ impl From<openvm_kzg::KzgError> for KzgError {
     }
 }
 
+#[cfg(feature = "kzg-rs")]
+pub fn verify_cell_kzg_proof_batch(
+    _blobs: &[Blob],
+    _commitments: &[Commitment],
+    _cell_proof: &[Proof],
+) -> Result<bool, KzgError> {
+    unimplemented!()
+}
+
+#[cfg(feature = "openvm-kzg")]
+pub fn verify_cell_kzg_proof_batch(
+    _blobs: &[Blob],
+    _commitments: &[Commitment],
+    _cell_proof: &[Proof],
+) -> Result<bool, KzgError> {
+    unimplemented!()
+}
+
+#[cfg(feature = "c-kzg")]
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
 /// as defined by EIP-7594.
 pub fn verify_cell_kzg_proof_batch(
@@ -76,12 +93,7 @@ pub fn verify_cell_kzg_proof_batch(
     commitments: &[Commitment],
     cell_proof: &[Proof],
 ) -> Result<bool, KzgError> {
-    #[cfg(not(feature = "c-kzg"))]
-    return Err(KzgError::NotSupportedWithoutCKZG(String::from(
-        "Cell proof verification",
-    )));
-    #[cfg(feature = "c-kzg")]
-    {
+        use std::iter::repeat_n;
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
         let mut cells = Vec::new();
         for blob in blobs {
@@ -103,7 +115,7 @@ pub fn verify_cell_kzg_proof_batch(
                 .collect::<Vec<_>>(),
         )
         .map_err(KzgError::from)
-    }
+    
 }
 
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol

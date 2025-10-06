@@ -190,7 +190,9 @@ impl BlockProducer {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        #[cfg(feature = "metrics")]
         let transactions_count = block.body.transactions.len();
+
         let block_number = block.header.number;
         let block_hash = block.hash();
         self.blockchain
