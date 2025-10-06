@@ -499,16 +499,6 @@ impl Store {
                                 break;
                             }
                         }
-                        if found {
-                            if child_amount > 1 {
-                                // still has other childs, push it back
-                                nodes_stack.push((
-                                    last_node_nibble.clone(),
-                                    last_node.clone(),
-                                    child_amount - 1,
-                                ));
-                            }
-                        }
                         found
                     }
                     Node::Extension(parent) => {
@@ -522,6 +512,17 @@ impl Store {
                     }
                 };
                 info!("found child in parent: {}", found);
+                if child_amount >= 1 {
+                    // still has other childs, push it back
+                    let new_child_amount = child_amount - (if found { 1 } else { 0 });
+                    if new_child_amount > 0 {
+                        nodes_stack.push((
+                            last_node_nibble.clone(),
+                            last_node.clone(),
+                            new_child_amount,
+                        ));
+                    }
+                }
                 if found {
                     let child_amount = match &node {
                         Node::Branch(parent) => {
