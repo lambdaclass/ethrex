@@ -360,6 +360,7 @@ impl GethTrieDBWithNodeBuckets {
 impl TrieDB for GethTrieDBWithNodeBuckets {
     fn get(&self, hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let hash = hash.finalize().0;
+        dbg!(hash);
         let value = self.db.get(hash).unwrap().unwrap();
         debug_assert!(value.len() <= u16::MAX as usize);
 
