@@ -125,10 +125,10 @@ impl ExtensionNode {
             // Remove value from child subtrie
             let (empty_trie, old_value) = child_node.remove(db, path)?;
             // Restructure node based on removal
-            let node = if empty_trie {
-                return Ok((None, old_value));
+            let result = if empty_trie {
+                Ok((None, old_value))
             } else {
-                match child_node.clone() {
+                let node = match child_node.clone() {
                     // TODO: remove clone
                     // If it is a branch node set it as self's child
                     branch_node @ Node::Branch(_) => {
@@ -151,10 +151,11 @@ impl ExtensionNode {
                         };
                         Some(leaf_node.into())
                     }
-                }
+                };
+                Ok((Some(node), old_value))
             };
-
-            Ok((Some(node), old_value))
+            self.child.clear_hash();
+            result
         } else {
             Ok((Some(None), None))
         }

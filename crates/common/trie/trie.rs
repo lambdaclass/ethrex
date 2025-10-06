@@ -913,12 +913,12 @@ mod test {
                 if *should_remove {
                     trie.remove(val).unwrap();
                     cita_trie.remove(val).unwrap();
+                    // Compare hashes
+                    let hash = trie.hash().unwrap().0.to_vec();
+                    let cita_hash = cita_trie.root().unwrap();
+                    prop_assert_eq!(hash, cita_hash);
                 }
             }
-            // Compare hashes
-            let hash = trie.hash().unwrap().0.to_vec();
-            let cita_hash = cita_trie.root().unwrap();
-            prop_assert_eq!(hash, cita_hash);
         }
 
         #[test]
@@ -941,12 +941,12 @@ mod test {
                 if remove(val) {
                     trie.remove(val).unwrap();
                     cita_trie.remove(val).unwrap();
+                    // Compare hashes
+                    let hash = trie.hash().unwrap().0.to_vec();
+                    let cita_hash = cita_trie.root().unwrap();
+                    prop_assert_eq!(hash, cita_hash);
                 }
             }
-            // Compare hashes
-            let hash = trie.hash().unwrap().0.to_vec();
-            let cita_hash = cita_trie.root().unwrap();
-            prop_assert_eq!(hash, cita_hash);
         }
 
         #[test]

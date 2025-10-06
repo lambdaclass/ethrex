@@ -150,6 +150,7 @@ impl BranchNode {
                     // Remove child hash if the child subtrie was removed in the process
                     self.choices[choice_index] = NodeHash::default().into();
                 }
+                self.choices[choice_index].clear_hash();
                 old_value
             } else {
                 None
