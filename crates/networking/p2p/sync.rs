@@ -469,7 +469,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await? {
+        if let Some(block_bodies) = peers.request_block_bodies(&block_hashes).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
