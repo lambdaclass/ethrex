@@ -379,7 +379,8 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
 
 fn account_bucket_worker(
     account_bucket_receiver: Receiver<([u8; 32], Vec<u8>)>,
-) -> eyre::Result<NamedTempFile> { // TODO: change return to option internally, empty files can't be added
+) -> eyre::Result<NamedTempFile> {
+    // TODO: change return to option internally, empty files can't be added
     // Internally we use extra buckets based on the second nibble to avoid
     // memory use blowing up during sorting in step 2.
     let lvl2_buckets: Vec<_> = (0..16).filter_map(|_| tempfile::tempfile().ok()).collect();
@@ -429,7 +430,7 @@ fn account_bucket_worker(
             }
             sort_buffer.clear();
         }
-        if entries != 0 {
+        if entries != 0 {
             sst.finish()?;
         }
     }
