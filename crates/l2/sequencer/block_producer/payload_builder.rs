@@ -11,7 +11,7 @@ use ethrex_common::{
     Address, U256,
     types::{
         Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction, TxType,
-        account_diff::{AccountStateDiff, DecoderError},
+        account_diff::{AccountStateDiff, get_accounts_diff_size},
     },
 };
 use ethrex_l2_common::state_diff::{
@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::ops::Div;
 use std::sync::Arc;
 use tokio::time::Instant;
-use tracing::{debug, error};
+use tracing::debug;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -204,8 +204,13 @@ pub async fn fill_transactions(
             }
         };
 
+        let tx_backup = context.vm.db.get_tx_backup().map_err(|e| {
+            BlockProducerError::FailedToGetDataFrom(format!("transaction backup: {e}"))
+        })?;
         let account_diffs_in_tx =
-            get_account_diffs_in_tx(context.vm.db, context.vm.db.get_tx_backup()?)?;
+            get_account_diffs_in_tx(&context.vm.db, tx_backup).map_err(|e| {
+                BlockProducerError::Custom(format!("Failed to get account diffs from tx: {e}"))
+            })?;
         let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
         let (tx_size_without_accounts, new_accounts_diff_size) =
@@ -332,7 +337,9 @@ fn calculate_tx_diff_size(
     head_tx: &HeadTransaction,
     receipt: &Receipt,
 ) -> Result<(u64, u64), BlockProducerError> {
-    let new_accounts_diff_size = get_accounts_diff_size(merged_diffs)?;
+    let new_accounts_diff_size = get_accounts_diff_size(merged_diffs).map_err(|e| {
+        BlockProducerError::Custom(format!("Failed to calculate account diffs size: {}", e))
+    })?;
 
     let mut tx_state_diff_size = 0;
 

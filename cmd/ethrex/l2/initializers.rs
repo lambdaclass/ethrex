@@ -168,6 +168,7 @@ pub async fn init_l2(
             .block_producer_opts
             .base_fee_vault_address,
         operator_fee_config,
+        l1_fee_config: None, // TODO: set properly
     };
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {

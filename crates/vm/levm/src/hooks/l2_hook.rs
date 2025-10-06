@@ -215,12 +215,8 @@ fn pay_l1_fee(
     let mut execution_backup = vm.current_call_frame.call_frame_backup.clone();
     execution_backup.extend(pre_execution_backup);
     let account_diffs_in_tx = get_account_diffs_in_tx(vm.db, execution_backup)?;
-    let account_diffs_size = get_accounts_diff_size(&account_diffs_in_tx).map_err(|e| {
-        InternalError::Custom(format!(
-            "Failed to get account diffs size: {}",
-            e.to_string()
-        ))
-    })?;
+    let account_diffs_size = get_accounts_diff_size(&account_diffs_in_tx)
+        .map_err(|e| InternalError::Custom(format!("Failed to get account diffs size: {}", e)))?;
 
     let l1_fee = fee_config
         .l1_fee_per_blob_byte

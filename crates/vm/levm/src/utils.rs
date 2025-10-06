@@ -185,7 +185,11 @@ pub fn get_account_diffs_in_tx(
             .get(address)
             .ok_or(DatabaseError::Custom("DB Cache".to_owned()))?;
 
-        let nonce_diff: u16 = (new_account.info.nonce - original_account.info.nonce)
+        let nonce_diff: u16 = new_account
+            .info
+            .nonce
+            .checked_sub(original_account.info.nonce)
+            .ok_or(InternalError::TypeConversion)?
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?;
 
