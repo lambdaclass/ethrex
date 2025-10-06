@@ -62,11 +62,11 @@ contract CommonBridge is
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
-    /// @dev The token can take the value {ETH_TOKEN} to represent ETH
+    /// @dev The token can take the value {NATIVE_TOKEN_L2} to represent the token of the L2
     mapping(address => mapping(address => uint256)) public deposits;
 
-    /// @notice Token address used to represent ETH
-    address public constant ETH_TOKEN =
+    /// @notice Token address used to represent the token of the L2
+    address public constant NATIVE_TOKEN_L2 =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice Owner of the L2 system contract proxies
@@ -90,7 +90,7 @@ contract CommonBridge is
     /// @notice The L1 token address that is treated as the one to be bridged to the L2.
     /// @dev If set to address(0), ETH is considered the native token.
     /// Otherwise, this address is used for native token deposits and withdrawals.
-    address public NATIVE_TOKEN;
+    address public NATIVE_TOKEN_L1;
 
     modifier onlyOnChainProposer() {
         require(
@@ -124,7 +124,7 @@ contract CommonBridge is
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
-        NATIVE_TOKEN = _nativeToken;
+        NATIVE_TOKEN_L1 = _nativeToken;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -220,7 +220,7 @@ contract CommonBridge is
         uint256 value;
 
         // Here we define value depending on whether the native token is ETH or an ERC20
-        if (NATIVE_TOKEN == address(0)) {
+        if (NATIVE_TOKEN_L1 == address(0)) {
             require(
                 msg.value > 0,
                 "CommonBridge: the native token is ETH, msg.value must be greater than zero"
@@ -246,10 +246,14 @@ contract CommonBridge is
             value = _amount;
 
             // We lock the tokens in the bridge contract
-            IERC20(NATIVE_TOKEN).transferFrom(msg.sender, address(this), value);
+            IERC20(NATIVE_TOKEN_L1).transferFrom(
+                msg.sender,
+                address(this),
+                value
+            );
         }
 
-        deposits[ETH_TOKEN][ETH_TOKEN] += value;
+        deposits[NATIVE_TOKEN_L2][NATIVE_TOKEN_L2] += value;
 
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintETH,
@@ -278,7 +282,7 @@ contract CommonBridge is
     ) external whenNotPaused {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
         require(
-            tokenL1 != NATIVE_TOKEN,
+            tokenL1 != NATIVE_TOKEN_L1,
             "CommonBridge: tokenL1 is the native token address, use deposit() instead"
         );
         deposits[tokenL1][tokenL2] += amount;
@@ -377,22 +381,22 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) public override whenNotPaused {
         _claimWithdrawal(
-            ETH_TOKEN,
-            ETH_TOKEN,
+            NATIVE_TOKEN_L2,
+            NATIVE_TOKEN_L2,
             claimedAmount,
             withdrawalBatchNumber,
             withdrawalMessageId,
             withdrawalProof
         );
 
-        if (NATIVE_TOKEN == address(0)) {
+        if (NATIVE_TOKEN_L1 == address(0)) {
             (bool success, ) = payable(msg.sender).call{value: claimedAmount}(
                 ""
             );
 
             require(success, "CommonBridge: failed to send the claimed amount");
         } else {
-            IERC20(NATIVE_TOKEN).safeTransfer(msg.sender, claimedAmount);
+            IERC20(NATIVE_TOKEN_L1).safeTransfer(msg.sender, claimedAmount);
         }
     }
 
@@ -406,12 +410,12 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) public override nonReentrant whenNotPaused {
         require(
-            tokenL1 != ETH_TOKEN,
+            tokenL1 != NATIVE_TOKEN_L2,
             "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
         );
 
         require(
-            tokenL1 != NATIVE_TOKEN,
+            tokenL1 != NATIVE_TOKEN_L1,
             "CommonBridge: attempted to withdraw the native token as if it were ERC20, use claimWithdrawal() instead"
         );
 
