@@ -382,10 +382,8 @@ fn account_bucket_worker(
 ) -> eyre::Result<impl AsRef<Path>> {
     // Internally we use extra buckets based on the second nibble to avoid
     // memory use blowing up during sorting in step 2.
-    let lvl2_buckets: Vec<_> = (0..16)
-        .filter_map(|_| tempfile_in("./account_buckets/").ok())
-        .collect();
-    let sst_file = NamedTempFile::new_in("./account_ssts")?;
+    let lvl2_buckets: Vec<_> = (0..16).filter_map(|_| tempfile::tempfile().ok()).collect();
+    let sst_file = NamedTempFile::new_in("./")?;
     let opts = Options::default();
     let mut sst = SstFileWriter::create(&opts);
     sst.open(&sst_file)?;
