@@ -15,7 +15,7 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, features = ["c-kzg"] }
 ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
@@ -35,7 +35,6 @@ hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 envy = "0.4.2"
 rand.workspace = true
 thiserror.workspace = true
@@ -48,7 +47,6 @@ serde_with.workspace = true
 lazy_static.workspace = true
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
 ethers = "2.0"
-cfg-if.workspace = true
 chrono = "0.4.41"
 clap.workspace = true
 crossterm = { version = "0.29.0", features = ["event-stream"] }

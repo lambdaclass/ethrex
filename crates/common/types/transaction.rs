@@ -1,8 +1,8 @@
 use std::{cmp::min, fmt::Display};
 
+use crate::utils::keccak;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, Signature, U256};
-use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use secp256k1::{Message, ecdsa::RecoveryId};
@@ -120,6 +120,7 @@ impl RLPDecode for P2PTransaction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WrappedEIP4844Transaction {
     pub tx: EIP4844Transaction,
+    pub wrapper_version: Option<u8>,
     pub blobs_bundle: BlobsBundle,
 }
 
@@ -128,6 +129,7 @@ impl RLPEncode for WrappedEIP4844Transaction {
         let encoder = Encoder::new(buf);
         encoder
             .encode_field(&self.tx)
+            .encode_optional_field(&self.wrapper_version)
             .encode_field(&self.blobs_bundle.blobs)
             .encode_field(&self.blobs_bundle.commitments)
             .encode_field(&self.blobs_bundle.proofs)
@@ -139,16 +141,19 @@ impl RLPDecode for WrappedEIP4844Transaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedEIP4844Transaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (tx, decoder) = decoder.decode_field("tx")?;
+        let (wrapper_version, decoder) = decoder.decode_optional_field();
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
 
         let wrapped = WrappedEIP4844Transaction {
             tx,
+            wrapper_version,
             blobs_bundle: BlobsBundle {
                 blobs,
                 commitments,
                 proofs,
+                version: wrapper_version.unwrap_or_default(),
             },
         };
         Ok((wrapped, decoder.finish()?))
@@ -1214,7 +1219,7 @@ impl Transaction {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
-        keccak_hash::keccak(self.encode_canonical_to_vec())
+        crate::utils::keccak(self.encode_canonical_to_vec())
     }
 
     pub fn hash(&self) -> H256 {
@@ -1276,7 +1281,7 @@ pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, s
     let signature_bytes = signature.to_fixed_bytes();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes[..64],
-        RecoveryId::from_i32(signature_bytes[64] as i32)?, // cannot fail
+        RecoveryId::try_from(signature_bytes[64] as i32)?, // cannot fail
     )?;
     // Recover public key
     let public = secp256k1::SECP256K1
@@ -1327,7 +1332,7 @@ impl PrivilegedL2Transaction {
         let u256_nonce = U256::from(self.nonce);
         let nonce = u256_nonce.to_big_endian();
 
-        Some(keccak_hash::keccak(
+        Some(crate::utils::keccak(
             [
                 self.from.as_bytes(),
                 to.as_bytes(),
@@ -2314,6 +2319,7 @@ mod serde_impl {
 
             Ok(Self {
                 tx: value.try_into()?,
+                wrapper_version: None,
                 blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
             })
         }

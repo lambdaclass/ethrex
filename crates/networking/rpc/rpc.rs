@@ -1,5 +1,7 @@
 use crate::authentication::authenticate;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
+use crate::engine::blobs::BlobsV2Request;
+use crate::engine::payload::GetPayloadV5Request;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -11,6 +13,7 @@ use crate::engine::{
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
 };
+use crate::eth::client::Config;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -169,6 +172,7 @@ pub struct NodeData {
     pub local_p2p_node: Node,
     pub local_node_record: NodeRecord,
     pub client_version: String,
+    pub extra_data: Bytes,
 }
 
 #[allow(async_fn_in_trait)]
@@ -205,6 +209,7 @@ pub async fn start_api(
     client_version: String,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: Option<u64>,
+    extra_data: String,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -220,6 +225,7 @@ pub async fn start_api(
             local_p2p_node,
             local_node_record,
             client_version,
+            extra_data: extra_data.into(),
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
@@ -421,6 +427,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_maxPriorityFeePerGas" => {
             eth::max_priority_fee::MaxPriorityFee::call(req, context).await
         }
+        "eth_config" => Config::call(req, context).await,
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
@@ -454,6 +461,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
+        "engine_getPayloadV5" => GetPayloadV5Request::call(req, context).await,
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
@@ -465,14 +473,18 @@ pub async fn map_engine_requests(
             GetPayloadBodiesByRangeV1Request::call(req, context).await
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
+        "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
 
-pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_admin_requests(
+    req: &RpcRequest,
+    mut context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
-        "admin_peers" => admin::peers(&context).await,
+        "admin_peers" => admin::peers(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
@@ -533,9 +545,9 @@ mod tests {
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
-    use std::fs::File;
     use std::io::BufReader;
     use std::str::FromStr;
+    use std::{fs::File, path::Path};
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -560,9 +572,11 @@ mod tests {
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
-            "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
-            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
-            "osaka": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+            "cancun": { "baseFeeUpdateFraction": 3338477, "max": 6, "target": 3,  },
+            "prague": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
+            "osaka": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
+            "bpo1": { "baseFeeUpdateFraction": 8346193, "max": 15, "target": 10,  },
+            "bpo2": { "baseFeeUpdateFraction": 11684671, "max": 21, "target": 14,  },
         });
         let json = serde_json::json!({
             "jsonrpc": "2.0",
@@ -700,5 +714,127 @@ mod tests {
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
         assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    #[tokio::test]
+    async fn eth_config_request_cancun_with_prague_scheduled() {
+        let body = r#"{"jsonrpc":"2.0", "method":"eth_config", "params":[], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let storage = Store::new_from_genesis(
+            Path::new("temp.db"),
+            EngineType::InMemory,
+            "../../../cmd/ethrex/networks/hoodi/genesis.json",
+        )
+        .await
+        .expect("Failed to create test DB");
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context).await;
+        let rpc_response = rpc_response(request.id, result).unwrap();
+        let json = serde_json::json!({
+            "id": 1,
+            "jsonrpc": "2.0",
+            "result": {
+                "current": {
+                    "activationTime": 0,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 3338477,
+                        "max": 6,
+                        "target": 3
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0xbef71d30",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02"
+                    }
+                },
+                "next": {
+                    "activationTime": 1742999832,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 5007716,
+                        "max": 9,
+                        "target": 6
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0x0929e24e",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
+                        "BLS12_G1MSM": "0x000000000000000000000000000000000000000c",
+                        "BLS12_G2ADD": "0x000000000000000000000000000000000000000d",
+                        "BLS12_G2MSM": "0x000000000000000000000000000000000000000e",
+                        "BLS12_MAP_FP2_TO_G2": "0x0000000000000000000000000000000000000011",
+                        "BLS12_MAP_FP_TO_G1": "0x0000000000000000000000000000000000000010",
+                        "BLS12_PAIRING_CHECK": "0x000000000000000000000000000000000000000f",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+                        "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                        "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                        "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS": "0x00000961ef480eb55e80d19ad83579a64c007002"
+                    }
+                },
+                "last": {
+                    "activationTime": 1762955544,
+                    "blobSchedule": {
+                        "baseFeeUpdateFraction": 11684671,
+                        "max": 21,
+                        "target": 14,
+                    },
+                    "chainId": "0x88bb0",
+                    "forkId": "0x23aa1351",
+                    "precompiles": {
+                        "BLAKE2F": "0x0000000000000000000000000000000000000009",
+                        "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
+                        "BLS12_G1MSM": "0x000000000000000000000000000000000000000c",
+                        "BLS12_G2ADD": "0x000000000000000000000000000000000000000d",
+                        "BLS12_G2MSM": "0x000000000000000000000000000000000000000e",
+                        "BLS12_MAP_FP2_TO_G2": "0x0000000000000000000000000000000000000011",
+                        "BLS12_MAP_FP_TO_G1": "0x0000000000000000000000000000000000000010",
+                        "BLS12_PAIRING_CHECK": "0x000000000000000000000000000000000000000f",
+                        "BN254_ADD": "0x0000000000000000000000000000000000000006",
+                        "BN254_MUL": "0x0000000000000000000000000000000000000007",
+                        "BN254_PAIRING": "0x0000000000000000000000000000000000000008",
+                        "ECREC": "0x0000000000000000000000000000000000000001",
+                        "ID": "0x0000000000000000000000000000000000000004",
+                        "KZG_POINT_EVALUATION": "0x000000000000000000000000000000000000000a",
+                        "MODEXP": "0x0000000000000000000000000000000000000005",
+                        "P256_VERIFICATION":"0x0000000000000000000000000000000000000100",
+                        "RIPEMD160": "0x0000000000000000000000000000000000000003",
+                        "SHA256": "0x0000000000000000000000000000000000000002"
+                    },
+                    "systemContracts": {
+                        "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+                        "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                        "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                        "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS": "0x00000961ef480eb55e80d19ad83579a64c007002"
+                    }
+                },
+            }
+        });
+        let expected_response = to_rpc_response_success_value(&json.to_string());
+        assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 }

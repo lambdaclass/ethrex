@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
     types::{
@@ -17,7 +18,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::eth::{EthClient, Overrides, errors::EthClientError};
 use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Add, Div};

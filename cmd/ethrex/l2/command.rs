@@ -9,6 +9,7 @@ use crate::{
     utils::{self, default_datadir, init_datadir, parse_private_key},
 };
 use clap::{FromArgMatches, Parser, Subcommand};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -23,7 +24,6 @@ use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::StoreRollup;
 use eyre::OptionExt;
 use itertools::Itertools;
-use keccak_hash::keccak;
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
 use std::{
@@ -32,6 +32,12 @@ use std::{
     time::Duration,
 };
 use tracing::{debug, info};
+
+// Compile-time check to ensure that at least one of the database features is enabled.
+#[cfg(not(feature = "rocksdb"))]
+const _: () = {
+    compile_error!("Database feature must be enabled (Available: `rocksdb`).");
+};
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
@@ -375,25 +381,11 @@ impl Command {
                 store_path,
                 coinbase,
             } => {
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "libmdbx")] {
-                        let store_type = EngineType::Libmdbx;
-                    }
-                };
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "rocksdb")] {
-                        let store_type = EngineType::RocksDB;
-                    } else {
-                        eyre::bail!("Expected rocksdb or libmdbx store engine");
-                    }
-                };
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "rollup_storage_sql")] {
-                        let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
-                    } else {
-                        eyre::bail!("Expected sql rollup store engine");
-                    }
-                };
+                #[cfg(feature = "rocksdb")]
+                let store_type = EngineType::RocksDB;
+
+                #[cfg(feature = "rollup_storage_sql")]
+                let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
 
                 // Init stores
                 let store = Store::new_from_genesis(
