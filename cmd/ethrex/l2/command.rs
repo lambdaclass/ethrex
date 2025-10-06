@@ -86,13 +86,10 @@ impl L2Command {
             println!("Deploying contracts...");
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;
+            dbg!(&contract_addresses);
 
             l2_options = l2::options::Options {
                 node_opts: crate::cli::Options::default_l2(),
-                sequencer_opts: SequencerOptions {
-                    no_monitor: true,
-                    ..Default::default()
-                },
                 ..Default::default()
             };
             l2_options
