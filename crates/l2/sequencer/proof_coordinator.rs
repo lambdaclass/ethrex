@@ -477,6 +477,7 @@ impl ProofCoordinator {
             .map_err(ProofCoordinatorError::from)?;
 
         // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
+        #[cfg(feature = "l2")]
         let (blob_commitment, blob_proof) = if self.validium {
             ([0; 48], [0; 48])
         } else {
