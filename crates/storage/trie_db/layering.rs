@@ -18,9 +18,9 @@ pub struct TrieWrapperInner {
 }
 
 impl TrieWrapperInner {
-    pub fn get(&self, mut state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+    pub fn get(&self, mut state_root: H256, key: NodeKey) -> Option<Vec<u8>> {
         while let Some(layer) = self.layers.get(&state_root) {
-            if let Some(value) = layer.nodes.get(key.as_ref()) {
+            if let Some(value) = layer.nodes.get(&key.to_vec()) {
                 return Some(value.clone());
             }
             state_root = layer.parent;
@@ -104,7 +104,7 @@ impl TrieDB for TrieWrapper {
             .inner
             .read()
             .map_err(|_| TrieError::LockError)?
-            .get(self.state_root, nibbles.clone())
+            .get(self.state_root, node_key.clone())
         {
             return Ok(Some(value));
         }
