@@ -192,7 +192,7 @@ pub fn prepare_vm_for_tx<'a>(
     let tx = match authorization_list {
         Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_tx.to {
-                TxKind::Call(to) => to,
+                TxKind::Call(_) => test_tx.to,
                 TxKind::Create => return Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType),
             },
             value: test_tx.value,
@@ -227,7 +227,6 @@ pub fn prepare_vm_for_tx<'a>(
             gas_price: effective_gas_price(test, &test_tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
             block_blob_gas_used: None,
-            tx_blob_hashes: test_tx.blob_versioned_hashes.clone(),
             tx_max_priority_fee_per_gas: test_tx.max_priority_fee_per_gas,
             tx_max_fee_per_gas: test_tx.max_fee_per_gas,
             tx_max_fee_per_blob_gas: test_tx.max_fee_per_blob_gas,

@@ -1546,7 +1546,7 @@ mod serde_impl {
         fn from(value: &AccessListItem) -> AccessListEntry {
             AccessListEntry {
                 address: value.0,
-                storage_keys: value.1.clone(),
+                storage_keys: value.1.clone(), //ok-clone: access list items cannot be consumed in cast
             }
         }
     }

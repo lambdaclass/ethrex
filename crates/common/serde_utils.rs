@@ -551,7 +551,7 @@ pub mod duration {
 /// For example, a duration such as "1h30m" or "1.6m" will be accepted but "-1s" or "30mh" will not
 /// Some imprecision can be expected when using milliseconds/microseconds/nanoseconds with significant decimal components
 /// If the format is incorrect this function will return None
-fn parse_duration(input: &String) -> Option<Duration> {
+fn parse_duration(input: &str) -> Option<Duration> {
     let mut res = Duration::ZERO;
     let mut integer_buffer = String::new();
     let mut chars = input.chars().peekable();

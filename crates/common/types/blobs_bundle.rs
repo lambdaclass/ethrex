@@ -93,7 +93,7 @@ impl BlobsBundle {
         }
 
         Ok(Self {
-            blobs: blobs,
+            blobs,
             commitments,
             proofs,
             version: 0,
