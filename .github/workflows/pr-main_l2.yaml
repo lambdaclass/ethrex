@@ -441,7 +441,7 @@ jobs:
       - name: Start ethrex
         run: |
           cd crates/l2
-          make init-l2-dev
+          make init-l2-dev &
 
       - name: Wait for ethrex l2
         run: |
