@@ -394,7 +394,7 @@ pub async fn init_l1(
     .unwrap()]);
     let _header = BlockHeader::default();
     let path = get_account_storages_snapshots_dir(datadir);
-    insert_storages(store, accounts_with_storage, &path, datadir, &_header);
+    insert_storages(store, accounts_with_storage, &path, datadir, &_header).await;
     std::process::exit(-1);
 
     #[cfg(feature = "sync-test")]
