@@ -78,6 +78,11 @@
 // Due to the age of the blocks this is expected to be used with, we
 // always try the ancients first, and only go thorugh the statedb when
 // the data is not in the freezer.
+//
+// AFTER AN INITIAL WORKING VERSION:
+// Migrate to use either Era archives or path-based archive as base,
+// as they are friendlier both with sync time and disk usage.
+// For now I was working on already synced hash-based archives.
 use clap::{ArgGroup, Parser};
 use ethrex_common::Address;
 use ethrex_common::types::{BlockHash, BlockHeader};
