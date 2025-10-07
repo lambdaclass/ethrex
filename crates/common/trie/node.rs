@@ -38,16 +38,10 @@ impl NodeRef {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
             NodeRef::Hash(hash) => db
-                .get(path.clone())?
+                .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => {
-                        if node.compute_hash() == hash {
-                            Some(Ok(node))
-                        } else {
-                            None
-                        }
-                    }
+                    Ok(node) => (node.compute_hash() == hash).then_some(Ok(node)),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
                 .transpose(),

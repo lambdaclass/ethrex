@@ -1,7 +1,7 @@
 use crate::{
     rlp::AccountCodeHashRLP,
     trie_db::{
-        layering::{TrieWrapper, TrieWrapperInner, apply_prefix},
+        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
@@ -15,8 +15,9 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode,
-    MultiThreaded, OptimisticTransactionDB, Options, WriteBatch, WriteBatchWithTransaction,
+    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
+    OptimisticTransactionDB, OptimisticTransactionDB, Options, WriteBatch,
+    WriteBatchWithTransaction,
 };
 use std::{
     collections::HashSet,
@@ -103,8 +104,8 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
 pub struct Store {
-    db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<RwLock<TrieWrapperInner>>,
+    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
 }
 
 impl Store {
@@ -274,7 +275,7 @@ impl Store {
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
 
-        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             path,
             cf_descriptors,
@@ -1506,7 +1507,7 @@ impl StoreEngine for Store {
 
 /// Open column families
 fn open_cfs<'a, const N: usize>(
-    db: &'a Arc<DBWithThreadMode<MultiThreaded>>,
+    db: &'a Arc<OptimisticTransactionDB<MultiThreaded>>,
     names: [&str; N],
 ) -> Result<[Arc<BoundColumnFamily<'a>>; N], StoreError> {
     let mut handles = Vec::with_capacity(N);

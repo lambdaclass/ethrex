@@ -943,6 +943,7 @@ impl Syncer {
                             .set(crate::metrics::CurrentStepValue::InsertingAccountRanges);
                         let (current_state_root, mut changes) =
                             trie.collect_changes_since_last_hash();
+                        // TODO: do we need this?
                         changes.retain(|(path, _)| path.len() < 64);
                         trie.db().put_batch(changes)?;
                         Ok(current_state_root)
@@ -1139,54 +1140,6 @@ impl Syncer {
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
-        /*
-        info!("Adding leaves...");
-        let trie = store.open_direct_state_trie(pivot_header.state_root)?;
-        let mut nodes_to_write = Vec::new();
-        let db = trie.db();
-        store
-            .open_direct_state_trie(pivot_header.state_root)?
-            .into_iter()
-            .try_for_each(|(path, node)| -> Result<(), SyncError> {
-                let Node::Leaf(node) = node else {
-                    return Ok(());
-                };
-
-                let account_state = AccountState::decode(&node.value)?;
-                let storage_trie = store.open_direct_storage_trie(
-                    H256::from_slice(&path.to_bytes()),
-                    account_state.storage_root,
-                )?;
-                let storage_db = storage_trie.db();
-
-                let mut storages_to_write = Vec::new();
-                store
-                    .open_direct_storage_trie(
-                        H256::from_slice(&path.to_bytes()),
-                        account_state.storage_root,
-                    )?
-                    .into_iter()
-                    .try_for_each(|(path, node)| -> Result<(), SyncError> {
-                        let Node::Leaf(node) = node else {
-                            return Ok(());
-                        };
-
-                        storages_to_write.push((path.concat(node.partial.clone()), node.encode_to_vec()));
-                        if storages_to_write.len() > 100_000 {
-                            storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
-                        }
-                        Ok(())
-                    })?;
-                storage_db.put_batch(storages_to_write)?;
-
-                nodes_to_write.push((path.concat(node.partial.clone()), node.encode_to_vec()));
-                if nodes_to_write.len() > 100_000 {
-                    db.put_batch(std::mem::take(&mut nodes_to_write))?;
-                }
-                Ok(())
-            })?;
-        */
-
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
 
@@ -1319,6 +1272,7 @@ fn compute_storage_roots(
     }
 
     let (computed_storage_root, mut changes) = storage_trie.collect_changes_since_last_hash();
+    // TODO: do we need this?
     changes.retain(|(path, _)| path.len() < 64);
 
     let account_state = store

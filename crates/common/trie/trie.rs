@@ -97,19 +97,6 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32
-            && !self.pending_removal.contains(&path)
-            && self.db().leaves_present()
-        {
-            let Some(value_rlp) = self.db.get(path)? else {
-                return Ok(None);
-            };
-            if value_rlp.is_empty() {
-                return Ok(None);
-            }
-            return Ok(Some(value_rlp));
-        }
-
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => Node::decode(
@@ -133,7 +120,7 @@ impl Trie {
             // If the trie is not empty, call the root node's insertion logic.
             self.root
                 .get_node(self.db.as_ref(), Nibbles::default())?
-                .ok_or(TrieError::RootNotFound)?
+                .ok_or(TrieError::InconsistentTree)?
                 .insert(self.db.as_ref(), path, value)?
                 .into()
         } else {

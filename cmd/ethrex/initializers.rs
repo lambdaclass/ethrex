@@ -379,15 +379,16 @@ async fn set_sync_block(store: &Store) {
 }
 
 async fn reset_to_head(store: &Store) -> eyre::Result<()> {
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
-    let Some(root) = trie.db().get(Default::default()).unwrap() else {
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let Some(root) = trie.db().get(Default::default())? else {
         return Ok(());
     };
-    let root = ethrex_trie::Node::decode(&root).unwrap();
+    let root = ethrex_trie::Node::decode(&root)?;
     let state_root = root.compute_hash().finalize();
 
-    for block_number in (0..=store.get_latest_block_number().await.unwrap()).rev() {
-        if let Some(header) = store.get_block_header(block_number).unwrap() {
+    // TODO: store latest state metadata in the DB to avoid this loop
+    for block_number in (0..=store.get_latest_block_number().await?).rev() {
+        if let Some(header) = store.get_block_header(block_number)? {
             if header.state_root == state_root {
                 info!("Resetting head to {block_number}");
                 let last_kept_block = block_number;
