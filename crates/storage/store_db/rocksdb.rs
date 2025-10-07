@@ -458,7 +458,9 @@ impl Store {
             let iterator = db.iterator_cf(&cf_trie_nodes, rocksdb::IteratorMode::Start);
 
             let mut nodes_stack = vec![];
+            let mut i = 0;
             for item in iterator {
+                i+=1;
                 let (key, value) =
                     item.map_err(|e| StoreError::Custom(format!("Iterator error: {}", e)))?;
                 if key.len() < 32 {
@@ -469,6 +471,9 @@ impl Store {
                 }
                 let nibble_bytes = &key[0..(key.len() - 32)];
                 let nibble = Nibbles::from_bytes(nibble_bytes);
+                if nibble == Nibbles::default() {
+                    info!("Found root in iteration {}", i);
+                }
                 let hash = H256::from_slice(&key[(key.len() - 32) ..]);
                 let node = Node::decode(&value)
                     .map_err(|e| StoreError::Custom(format!("RLP decode error: {}", e)))?;
