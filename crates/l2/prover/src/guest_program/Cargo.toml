@@ -81,23 +81,30 @@ l1 = [
     "ethrex-l2-common/l1",
 ]
 
+# This feature enables the SP1's guest program ELF compilation.
+# This feature mustn't be enabled whithin a guest program.
+sp1-guest = ["dep:sp1-build", "dep:sp1-sdk"]
+# This feature enables the RISC0's guest program ELF compilation.
+# This feature mustn't be enabled whithin a guest program.
+risc0-guest = ["dep:risc0-build", "dep:risc0-zkvm"]
+
+# This feature is meant to be enabled within SP1's guest program.
+# Enabling this feature ensures the optimal compilation for SP1's guest.
 sp1 = [
     "ethrex-vm/sp1",
     "ethrex-common/sp1",
     "ethrex-blockchain/sp1",
     "ethrex-crypto/sp1",
     "ethrex-l2-common/sp1",
-    "dep:sp1-build",
-    "dep:sp1-sdk",
 ]
+# This feature is meant to be enabled within RISC0's guest program.
+# Enabling this feature ensures the optimal compilation for RISC0's guest.
 risc0 = [
     "ethrex-vm/risc0",
     "ethrex-common/risc0",
     "ethrex-blockchain/risc0",
     "ethrex-crypto/risc0",
     "ethrex-l2-common/risc0",
-    "dep:risc0-build",
-    "dep:risc0-zkvm",
 ]
 
 l2 = []
