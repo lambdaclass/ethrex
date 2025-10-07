@@ -96,7 +96,7 @@ impl Trie {
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
-
+/*
         if pathrlp.len() == 32 && !self.pending_removal.contains(&path) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
@@ -106,6 +106,7 @@ impl Trie {
             }
             return Ok(Some(value_rlp));
         }
+        */
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => Node::decode(

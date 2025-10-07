@@ -147,6 +147,14 @@ async fn heal_state_trie(
             );
             downloads_success = 0;
             downloads_fail = 0;
+            /*
+            paths.sort_by(|a, b| {
+                if a.path.len() != b.path.len() {
+                    return b.path.len().cmp(&a.path.len());
+                }
+                a.path.cmp(&b.path)
+            });
+            */
         }
 
         // Attempt to receive a response from one of the peers
@@ -270,7 +278,7 @@ async fn heal_state_trie(
 
         let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
 
-        if nodes_to_write.len() > 100_000 || is_done || is_stale {
+        if nodes_to_write.len() > 1_000_000 || is_done || is_stale {
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
             if db_joinset.len() > 0 {
@@ -409,9 +417,7 @@ async fn perform_needed_deletions(
                 .filter(|(_, child)| !child.is_valid())
                 .filter(|(choice, _)| match &previous {
                     Some(Node::Branch(previous)) => previous.choices[*choice].is_valid(),
-                    Some(Node::Extension(previous)) => {
-                        previous.prefix != Nibbles::from_hex(vec![*choice as u8])
-                    }
+                    Some(Node::Extension(_)) => true,
                     Some(Node::Leaf(_)) => false,
                     None => true,
                 })

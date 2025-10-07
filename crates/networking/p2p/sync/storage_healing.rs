@@ -200,12 +200,21 @@ pub async fn heal_storage_trie(
             state.failed_downloads = 0;
             state.empty_count = 0;
             state.disconnected_count = 0;
+
+            /*
+            state.download_queue.make_contiguous().sort_by(|a, b| {
+                if a.storage_path.len() != b.storage_path.len() {
+                    return b.storage_path.len().cmp(&a.storage_path.len());
+                }
+                a.storage_path.cmp(&b.storage_path)
+            });
+            */
         }
 
         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
         let is_stale = current_unix_time() > state.staleness_timestamp;
 
-        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
+        if nodes_to_write.values().map(Vec::len).sum::<usize>() > 1_000_000 || is_done || is_stale {
             let to_write: Vec<_> = nodes_to_write.drain().collect();
             let store = state.store.clone();
             if db_joinset.len() > 0 {
@@ -219,6 +228,7 @@ pub async fn heal_storage_trie(
                         let mut account_nodes = vec![];
                         let mut to_delete = HashSet::new();
                         for (path, node, previous) in nodes {
+                            to_delete.remove(&path);
                             perform_needed_deletions(
                                 &store,
                                 &node,
@@ -750,9 +760,7 @@ async fn perform_needed_deletions(
                 .filter(|(_, child)| !child.is_valid())
                 .filter(|(choice, _)| match &previous {
                     Some(Node::Branch(previous)) => previous.choices[*choice].is_valid(),
-                    Some(Node::Extension(previous)) => {
-                        previous.prefix != Nibbles::from_hex(vec![*choice as u8])
-                    }
+                    Some(Node::Extension(_)) => true,
                     Some(Node::Leaf(_)) => false,
                     None => true,
                 })

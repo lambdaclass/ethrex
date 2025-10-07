@@ -1256,6 +1256,9 @@ fn compute_storage_roots(
     let mut storage_trie = store.open_direct_storage_trie(account_hash, account_storage_root)?;
 
     for (hashed_key, value) in key_value_pairs {
+        if account_storage_root != *EMPTY_TRIE_HASH  && value.div_mod(U256::from(111)).1.is_zero() {
+            continue;
+        }
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
             warn!(
                 "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
@@ -1424,9 +1427,10 @@ impl<T> From<SendError<T>> for SyncError {
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_state_root");
+    let store_clone = store.clone();
     let computed_state_root = tokio::task::spawn_blocking(move || {
         Trie::compute_hash_from_unsorted_iter(
-            store
+            store_clone
                 .iter_accounts(state_root)
                 .expect("we couldn't iterate over accounts")
                 .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
@@ -1435,12 +1439,32 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     .await
     .expect("We should be able to create threads");
 
+    let trie = store
+        .open_locked_state_trie(state_root)
+        .expect("we should be able to read the trie");
+
+    let valid_leaves = store
+        .iter_accounts(state_root)
+        .expect("we couldn't iterate over accounts")
+        .map(|(hash, state)| {
+            let Ok(Some(acc_rlp)) = trie.get(&hash.as_bytes().to_vec()) else {
+                error!("For {hash:x} we could not find the corresponding leaf.");
+                return false;
+            };
+            let is_ok = acc_rlp == state.encode_to_vec();
+            if !is_ok {
+                error!("For {hash:x} we found the wrong leaf. Got {:?} wanted {:?}", acc_rlp, state.encode_to_vec());
+            }
+            is_ok
+        })
+        .all(|v| v);
+
     let tree_validated = state_root == computed_state_root;
-    if tree_validated {
+    if tree_validated && valid_leaves {
         info!("Succesfully validated tree, {state_root} found");
     } else {
         error!(
-            "We have failed the validation of the state tree {state_root} expected but {computed_state_root} found"
+            "We have failed the validation of the state tree {state_root} expected, {computed_state_root} found"
         );
     }
     tree_validated
