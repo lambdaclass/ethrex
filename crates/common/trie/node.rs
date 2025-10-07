@@ -95,9 +95,9 @@ impl NodeRef {
                 //println!("commit {path:?} => {node:?}");
                 let hash = hash.get_or_init(|| node.compute_hash());
                 acc.push((path.clone(), node.encode_to_vec()));
-                if let Node::Leaf(leaf) = node.as_ref() {
-                    acc.push((path.concat(leaf.partial.clone()), leaf.value.clone()));
-                }
+                // if let Node::Leaf(leaf) = node.as_ref() {
+                //     acc.push((path.concat(leaf.partial.clone()), leaf.value.clone()));
+                // }
 
                 let hash = *hash;
                 *self = hash.into();
