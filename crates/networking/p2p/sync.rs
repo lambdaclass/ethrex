@@ -26,7 +26,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Nibbles, Trie, TrieError};
-use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 #[cfg(not(feature = "rocksdb"))]
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -1670,7 +1670,7 @@ async fn insert_storages(
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_threadpool::ThreadPool;
     use ethrex_trie::{
-        Node, NodeHash,
+        Node,
         trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
     };
     use std::thread::scope;
@@ -1742,7 +1742,7 @@ async fn insert_storages(
         .map(|num| num.into())
         .unwrap_or(8);
 
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(BUFFER_COUNT as usize);
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<(Nibbles, Node)>>(BUFFER_COUNT as usize);
     for _ in 0..BUFFER_COUNT {
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }

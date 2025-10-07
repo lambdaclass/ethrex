@@ -1,10 +1,9 @@
 use crate::{
-    EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, TrieDB, TrieError, nibbles,
+    EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use crossbeam::channel::{Receiver, Sender, bounded};
 use ethereum_types::H256;
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_threadpool::ThreadPool;
 use std::{sync::Arc, thread::scope};
 use tracing::debug;
