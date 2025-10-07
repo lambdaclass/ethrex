@@ -110,7 +110,7 @@ async fn heal_state_trie(
     let mut leafs_healed = 0;
     let mut empty_try_recv: u64 = 0;
     let mut heals_per_cycle: u64 = 0;
-    let mut nodes_to_write: Vec<(Nibbles, Node, Option<Node>)> = Vec::new();
+    let mut nodes_to_write: Vec<(Nibbles, Node)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -280,18 +280,10 @@ async fn heal_state_trie(
                 spawned_rt::tasks::block_on(async move {
                     // TODO: replace put batch with the async version
                     let mut encoded_to_write = BTreeMap::new();
-                    let mut ranges_to_delete = Vec::new();
-                    for (path, node, previous) in to_write {
-                        perform_needed_deletions(
-                            &store,
-                            &node,
-                            previous,
-                            &path,
-                            &mut encoded_to_write,
-                            &mut ranges_to_delete,
-                        )
-                        .await
-                        .unwrap();
+                    for (path, node) in to_write {
+                        for i in 0..path.len() {
+                            encoded_to_write.insert(path.slice(0, i), vec![]);
+                        }
                         if let Node::Leaf(leaf) = &node {
                             encoded_to_write
                                 .insert(path.concat(leaf.partial.clone()), leaf.value.clone());
@@ -305,15 +297,6 @@ async fn heal_state_trie(
                     encoded_to_write.retain(|path, _| path.len() < 32);
                     db.put_batch(encoded_to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
-                    info!(
-                        "Deliting ranges State healing: {:?}",
-                        ranges_to_delete.len()
-                    );
-                    store
-                        .delete_range_batch(ranges_to_delete)
-                        .await
-                        .expect("The range deletions on the store failed");
-                    info!("Deleted ranges State healing");
                 })
             });
         }
@@ -352,7 +335,7 @@ async fn heal_state_batch(
     nodes: Vec<Node>,
     store: Store,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut Vec<(Nibbles, Node, Option<Node>)>, // TODO: change tuple to struct
+    nodes_to_write: &mut Vec<(Nibbles, Node)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
@@ -364,7 +347,6 @@ async fn heal_state_batch(
             commit_node(
                 &store,
                 node,
-                path.previous,
                 &path.path,
                 &path.parent_path,
                 membatch,
@@ -384,32 +366,15 @@ async fn heal_state_batch(
     Ok(batch)
 }
 
-async fn perform_needed_deletions(
-    store: &Store,
-    node: &Node,
-    previous: Option<Node>,
-    node_path: &Nibbles,
-    nodes_to_write: &mut BTreeMap<Nibbles, Vec<u8>>,
-    ranges_to_delete: &mut Vec<(Nibbles, Nibbles)>,
-) -> Result<(), SyncError> {
-    // Delete all the parents of this node.
-    // Nodes should be in the DB only if their children are also in the DB.
-    for i in 0..node_path.len() {
-        nodes_to_write.insert(node_path.slice(0, i), vec![]);
-    }
-    Ok(())
-}
-
 async fn commit_node(
     store: &Store,
     node: Node,
-    previous: Option<Node>,
     path: &Nibbles,
     parent_path: &Nibbles,
     membatch: &mut HashMap<Nibbles, MembatchEntryValue>,
-    nodes_to_write: &mut Vec<(Nibbles, Node, Option<Node>)>,
+    nodes_to_write: &mut Vec<(Nibbles, Node)>,
 ) {
-    nodes_to_write.push((path.clone(), node, previous));
+    nodes_to_write.push((path.clone(), node));
 
     if parent_path == path {
         return; // Case where we're saving the root
@@ -424,7 +389,6 @@ async fn commit_node(
         Box::pin(commit_node(
             store,
             membatch_entry.node,
-            membatch_entry.previous,
             parent_path,
             &membatch_entry.parent_path,
             membatch,
@@ -500,94 +464,4 @@ pub fn node_missing_children(
         _ => {}
     }
     Ok((missing_children_count, paths))
-}
-
-pub(crate) struct SubTreeRange {
-    pub(crate) start: Nibbles,
-    pub(crate) end: Nibbles,
-}
-
-impl SubTreeRange {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.start == self.end
-    }
-}
-
-// Computes the subtree ranges for non-existent children paths of an extension node.
-// Returns two ranges:
-//  - [node_path.., 0] to [node_path.., node.prefix]
-//  - [node_path.., node.prefix++] to [node_path++]
-pub(crate) fn compute_subtree_ranges(
-    node_path: &Nibbles,
-    extension_prefix: &Nibbles,
-) -> (SubTreeRange, SubTreeRange) {
-    debug_assert!(!extension_prefix.is_empty(), "Extension prefix is empty");
-
-    let first_path = node_path.append_new(0);
-    let mut extended_path = node_path.clone();
-    extended_path.extend(extension_prefix);
-    let mut last_path = node_path.slice(0, node_path.len() - 1);
-    last_path.append(node_path.at(node_path.len() - 1) as u8 + 1);
-
-    let last_extension_nibble = extension_prefix.at(extension_prefix.len() - 1) as u8;
-    let extended_next_path = if last_extension_nibble == 15 {
-        last_path.clone()
-    } else {
-        let mut extended_next_path = extended_path.slice(0, extended_path.len() - 1);
-        extended_next_path.append(extended_path.at(extended_path.len() - 1) as u8 + 1);
-        extended_next_path
-    };
-
-    let first = SubTreeRange {
-        start: first_path,
-        end: extended_path,
-    };
-    let second = SubTreeRange {
-        start: extended_next_path,
-        end: last_path,
-    };
-    (first, second)
-}
-
-#[cfg(test)]
-mod tests {
-    use ethrex_trie::Nibbles;
-
-    use super::compute_subtree_ranges;
-
-    #[test]
-    fn test_compute_subtree_ranges() {
-        let node_path = Nibbles::from_hex(vec![5, 10, 3]);
-        let extension_prefix = Nibbles::from_hex(vec![1, 2]);
-        let (first, second) = compute_subtree_ranges(&node_path, &extension_prefix);
-
-        assert_eq!(first.start, Nibbles::from_hex(vec![5, 10, 3, 0]));
-        assert_eq!(first.end, Nibbles::from_hex(vec![5, 10, 3, 1, 2]));
-        assert_eq!(second.start, Nibbles::from_hex(vec![5, 10, 3, 1, 3]));
-        assert_eq!(second.end, Nibbles::from_hex(vec![5, 10, 4]));
-    }
-
-    #[test]
-    fn test_compute_subtree_ranges_single_prefix_nibble_0() {
-        let node_path = Nibbles::from_hex(vec![5, 10, 3]);
-        let extension_prefix = Nibbles::from_hex(vec![0]);
-        let (first, second) = compute_subtree_ranges(&node_path, &extension_prefix);
-
-        assert_eq!(first.start, Nibbles::from_hex(vec![5, 10, 3, 0]));
-        assert_eq!(first.end, Nibbles::from_hex(vec![5, 10, 3, 0]));
-        assert_eq!(second.start, Nibbles::from_hex(vec![5, 10, 3, 1]));
-        assert_eq!(second.end, Nibbles::from_hex(vec![5, 10, 4]));
-    }
-
-    #[test]
-    fn test_compute_subtree_ranges_single_prefix_nibble_f() {
-        let node_path = Nibbles::from_hex(vec![5, 10, 3]);
-        let extension_prefix = Nibbles::from_hex(vec![15]);
-        let (first, second) = compute_subtree_ranges(&node_path, &extension_prefix);
-
-        assert_eq!(first.start, Nibbles::from_hex(vec![5, 10, 3, 0]));
-        assert_eq!(first.end, Nibbles::from_hex(vec![5, 10, 3, 15]));
-        assert_eq!(second.start, Nibbles::from_hex(vec![5, 10, 4]));
-        assert_eq!(second.end, Nibbles::from_hex(vec![5, 10, 4]));
-    }
 }

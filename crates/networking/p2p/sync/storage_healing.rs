@@ -6,10 +6,8 @@ use crate::{
         snap::{GetTrieNodes, TrieNodes},
     },
     sync::{
-        AccountStorageRoots, SyncError,
-        state_healing::{
-            SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE, compute_subtree_ranges,
-        },
+        AccountStorageRoots,
+        state_healing::{SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE},
     },
     utils::current_unix_time,
 };
@@ -17,7 +15,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-use ethrex_storage::{Store, apply_prefix, error::StoreError};
+use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -106,9 +104,7 @@ pub struct NodeRequest {
     /// What node needs this node
     parent: Nibbles,
     /// What hash was requested. We use this for validation
-    hash: H256,
-    /// Previous node at that position
-    previous: Option<Node>,
+    hash: H256
 }
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
@@ -161,7 +157,7 @@ pub async fn heal_storage_trie(
         Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
     > = JoinSet::new();
 
-    let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Node, Option<Node>)>> = HashMap::new();
+    let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Node)>> = HashMap::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -214,34 +210,14 @@ pub async fn heal_storage_trie(
             db_joinset.spawn_blocking(|| {
                 spawned_rt::tasks::block_on(async move {
                     let mut encoded_to_write = vec![];
-                    let mut ranges_to_delete = vec![];
                     for (hashed_account, nodes) in to_write {
                         let mut account_nodes = vec![];
-                        let mut to_delete = HashSet::new();
-                        for (path, node, previous) in nodes {
-                            perform_needed_deletions(
-                                &store,
-                                &node,
-                                previous,
-                                hashed_account,
-                                &path,
-                                &mut to_delete,
-                                &mut ranges_to_delete,
-                            )
-                            .await
-                            .unwrap();
-                            if let Node::Leaf(leaf) = &node {
-                                account_nodes
-                                    .push((path.concat(leaf.partial.clone()), leaf.value.clone()));
+                        for (path, node) in nodes {
+                            for i in 0..path.len() {
+                                account_nodes.push((path.slice(0, i), vec![]));
                             }
                             account_nodes.push((path, node.encode_to_vec()));
                         }
-                        let mut account_nodes: Vec<_> = to_delete
-                            .into_iter()
-                            .map(|path| (path, vec![]))
-                            .chain(account_nodes)
-                            .collect();
-                        account_nodes.retain(|(path, _)| path.len() < 32);
                         encoded_to_write.push((hashed_account, account_nodes));
                     }
 
@@ -249,15 +225,6 @@ pub async fn heal_storage_trie(
                         .write_storage_trie_nodes_batch(encoded_to_write)
                         .await
                         .expect("db write failed");
-                    info!(
-                        "Deleting ranges Storage healing: {:?}",
-                        ranges_to_delete.len()
-                    );
-                    store
-                        .delete_range_batch(ranges_to_delete)
-                        .await
-                        .expect("The range deletions on the store failed");
-                    info!("Deleted ranges Storage healing");
                 })
             });
         }
@@ -508,7 +475,7 @@ async fn process_node_responses(
     global_leafs_healed: &mut u64,
     roots_healed: &mut usize,
     maximum_length_seen: &mut usize,
-    to_write: &mut HashMap<H256, Vec<(Nibbles, Node, Option<Node>)>>,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
@@ -599,8 +566,7 @@ fn get_initial_downloads(
                     acc_path: Nibbles::from_bytes(&acc_path.0),
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                     parent: Nibbles::default(),
-                    hash: account.storage_root,
-                    previous,
+                    hash: account.storage_root
                 })
             })
             .collect::<VecDeque<_>>(),
@@ -636,8 +602,7 @@ fn get_initial_downloads(
                     acc_path: Nibbles::from_bytes(&acc_path.0),
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                     parent: Nibbles::default(),
-                    hash: *storage_root,
-                    previous,
+                    hash: *storage_root
                 })
             })
             .collect::<VecDeque<_>>(),
@@ -691,8 +656,7 @@ pub fn determine_missing_children(
                     acc_path: node_response.node_request.acc_path.clone(),
                     storage_path: child_path,
                     parent: node_response.node_request.storage_path.clone(),
-                    hash: child.compute_hash().finalize(),
-                    previous,
+                    hash: child.compute_hash().finalize()
                 }]);
             }
         }
@@ -721,8 +685,7 @@ pub fn determine_missing_children(
                 acc_path: node_response.node_request.acc_path.clone(),
                 storage_path: child_path,
                 parent: node_response.node_request.storage_path.clone(),
-                hash: node.child.compute_hash().finalize(),
-                previous,
+                hash: node.child.compute_hash().finalize()
             }]);
         }
         _ => {}
@@ -730,36 +693,18 @@ pub fn determine_missing_children(
     Ok((paths, count))
 }
 
-async fn perform_needed_deletions(
-    store: &Store,
-    node: &Node,
-    previous: Option<Node>,
-    hashed_account: H256,
-    node_path: &Nibbles,
-    to_delete: &mut HashSet<Nibbles>,
-    ranges_to_delete: &mut Vec<(Nibbles, Nibbles)>,
-) -> Result<(), SyncError> {
-    // Delete all the parents of this node.
-    // Nodes should be in the DB only if their children are also in the DB.
-    for i in 0..node_path.len() {
-        to_delete.insert(node_path.slice(0, i));
-    }
-    Ok(())
-}
-
 async fn commit_node(
     store: &Store,
     node: &NodeResponse,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
-    to_write: &mut HashMap<H256, Vec<(Nibbles, Node, Option<Node>)>>,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
 
     to_write.entry(hashed_account).or_default().push((
         node.node_request.storage_path.clone(),
-        node.node.clone(),
-        node.node_request.previous.clone(),
+        node.node.clone()
     ));
 
     // Special case, we have just commited the root, we stop
