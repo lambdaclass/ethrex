@@ -1135,51 +1135,51 @@ impl Syncer {
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
-        info!("Adding leaves...");
-        let trie = store.open_direct_state_trie(pivot_header.state_root)?;
-        let db = trie.db();
-        store
-            .open_direct_state_trie(pivot_header.state_root)?
-            .into_iter()
-            .par_bridge()
-            .try_for_each(|(path, node)| -> Result<(), SyncError> {
-                let Node::Leaf(node) = node else {
-                    return Ok(());
-                };
-                let mut nodes_to_write = Vec::new();
+        // info!("Adding leaves...");
+        // let trie = store.open_direct_state_trie(pivot_header.state_root)?;
+        // let db = trie.db();
+        // store
+        //     .open_direct_state_trie(pivot_header.state_root)?
+        //     .into_iter()
+        //     .par_bridge()
+        //     .try_for_each(|(path, node)| -> Result<(), SyncError> {
+        //         let Node::Leaf(node) = node else {
+        //             return Ok(());
+        //         };
+        //         let mut nodes_to_write = Vec::new();
 
-                let account_state = AccountState::decode(&node.value)?;
-                let storage_trie = store.open_direct_storage_trie(
-                    H256::from_slice(&path.to_bytes()),
-                    account_state.storage_root,
-                )?;
-                let storage_db = storage_trie.db();
+        //         let account_state = AccountState::decode(&node.value)?;
+        //         let storage_trie = store.open_direct_storage_trie(
+        //             H256::from_slice(&path.to_bytes()),
+        //             account_state.storage_root,
+        //         )?;
+        //         let storage_db = storage_trie.db();
 
-                store
-                    .open_direct_storage_trie(
-                        H256::from_slice(&path.to_bytes()),
-                        account_state.storage_root,
-                    )?
-                    .into_iter()
-                    .par_bridge()
-                    .try_for_each(|(path, node)| -> Result<(), SyncError> {
-                        let Node::Leaf(node) = node else {
-                            return Ok(());
-                        };
-                        let mut storages_to_write = Vec::new();
-                        storages_to_write.push((path, node.encode_to_vec()));
-                        if storages_to_write.len() > 100_000 {
-                            storage_db.put_batch(storages_to_write)?;
-                        }
-                        Ok(())
-                    })?;
+        //         store
+        //             .open_direct_storage_trie(
+        //                 H256::from_slice(&path.to_bytes()),
+        //                 account_state.storage_root,
+        //             )?
+        //             .into_iter()
+        //             .par_bridge()
+        //             .try_for_each(|(path, node)| -> Result<(), SyncError> {
+        //                 let Node::Leaf(node) = node else {
+        //                     return Ok(());
+        //                 };
+        //                 let mut storages_to_write = Vec::new();
+        //                 storages_to_write.push((path, node.encode_to_vec()));
+        //                 if storages_to_write.len() > 100_000 {
+        //                     storage_db.put_batch(storages_to_write)?;
+        //                 }
+        //                 Ok(())
+        //             })?;
 
-                nodes_to_write.push((path, node.encode_to_vec()));
-                if nodes_to_write.len() > 100_000 {
-                    db.put_batch(nodes_to_write)?;
-                }
-                Ok(())
-            })?;
+        //         nodes_to_write.push((path, node.encode_to_vec()));
+        //         if nodes_to_write.len() > 100_000 {
+        //             db.put_batch(nodes_to_write)?;
+        //         }
+        //         Ok(())
+        //     })?;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
