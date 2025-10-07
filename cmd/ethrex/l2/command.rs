@@ -39,9 +39,6 @@ const _: () = {
     compile_error!("Database feature must be enabled (Available: `rocksdb`).");
 };
 
-pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
-pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
-
 const PAUSE_CONTRACT_SELECTOR: &str = "pause()";
 const UNPAUSE_CONTRACT_SELECTOR: &str = "unpause()";
 const REVERT_BATCH_SELECTOR: &str = "revertBatch(uint256)";

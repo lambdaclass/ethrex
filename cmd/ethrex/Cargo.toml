@@ -9,19 +9,23 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-config.workspace = true
 ethrex-blockchain.workspace = true
-ethrex-rpc.workspace = true
 ethrex-common.workspace = true
+ethrex-config.workspace = true
+ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
+ethrex-l2 = { workspace = true, optional = true }
+ethrex-l2-common = { workspace = true, optional = true }
+ethrex-l2-rpc = { workspace = true, optional = true }
+ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 ethrex-p2p.workspace = true
-ethrex-storage.workspace = true
-ethrex-vm.workspace = true
+ethrex-prover = { workspace = true, optional = true, features = ["l2"] }
 ethrex-rlp.workspace = true
-ethrex-storage-rollup.workspace = true
-ethrex-l2.workspace = true
-ethrex-l2-common.workspace = true
-ethrex-sdk.workspace = true
-ethrex-l2-rpc.workspace = true
+ethrex-rpc.workspace = true
+ethrex-sdk = { workspace = true, optional = true }
+ethrex-storage.workspace = true
+ethrex-storage-rollup = { workspace = true, optional = true }
+ethrex-vm.workspace = true
+
 tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms"] }
 bytes.workspace = true
 hex.workspace = true
@@ -43,12 +47,11 @@ secp256k1.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
-tui-logger.workspace = true
-
-ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
-ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
-ethrex-prover = { workspace = true, features = ["l2"] }
+
+# L2 external dependencies
+
+tui-logger = { workspace = true, optional = true }
 
 [target.'cfg(linux)'.dependencies]
 tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms", "background_threads"] }
@@ -63,7 +66,7 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "rollup_storage_sql", "dev", "metrics", "jemalloc"]
+default = ["rocksdb", "c-kzg", "dev", "metrics", "jemalloc"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [
   "ethrex-vm/c-kzg",
@@ -71,7 +74,7 @@ c-kzg = [
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
 rocksdb = ["ethrex-storage/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
@@ -80,8 +83,16 @@ jemalloc_profiling = [
   # forward to the RPC crate so its handlers and dependency are enabled
   "ethrex-rpc/jemalloc_profiling",
 ]
-rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = ["ethrex-p2p/sync-test"]
+
+l2 = [
+  "ethrex-l2",
+  "ethrex-l2-common",
+  "ethrex-l2-rpc",
+  "ethrex-prover",
+  "ethrex-storage-rollup/sql",
+  "dep:tui-logger",
+]
 sp1 = ["ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0"]
@@ -92,9 +103,9 @@ criterion = { version = "0.5.1", features = [
   "async_futures",
   "async_tokio",
 ] }
-ethrex-sdk.workspace = true
 secp256k1.workspace = true
 tempfile.workspace = true
+ethrex-l2-rpc.workspace = true
 
 [[bench]]
 path = "./bench/import_blocks_benchmark.rs"

@@ -44,17 +44,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         .add_instructions(&git2)?
         .emit()?;
 
-    download_script();
+    #[cfg(feature = "l2")]
+    {
+        download_script();
 
-    // If COMPILE_CONTRACTS is not set, skip
-    if env::var_os("COMPILE_CONTRACTS").is_some() {
-        let out_dir = env::var_os("OUT_DIR").unwrap();
-        update_genesis_file(L2_GENESIS_PATH.as_ref(), Path::new(&out_dir))?;
+        // If COMPILE_CONTRACTS is not set, skip
+        if env::var_os("COMPILE_CONTRACTS").is_some() {
+            let out_dir = env::var_os("OUT_DIR").unwrap();
+            update_genesis_file(L2_GENESIS_PATH.as_ref(), Path::new(&out_dir))?;
+        }
     }
 
     Ok(())
 }
 
+#[cfg(feature = "l2")]
 fn download_script() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let output_contracts_path = Path::new(&out_dir).join("contracts");
@@ -192,6 +196,7 @@ fn download_script() {
     decode_to_bytecode(&file_path, &output_file_path);
 }
 
+#[cfg(feature = "l2")]
 fn write_empty_bytecode_files(output_contracts_path: &Path) {
     let bytecode_dir = output_contracts_path.join("solc_out");
     fs::create_dir_all(&bytecode_dir).expect("Failed to create solc_out directory");
@@ -215,6 +220,7 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
     }
 }
 
+#[cfg(feature = "l2")]
 /// Clones OpenZeppelin, SP1 contracts and create2deployer into the specified path.
 fn download_contract_deps(contracts_path: &Path) {
     fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib dir");
@@ -257,6 +263,7 @@ fn download_contract_deps(contracts_path: &Path) {
     .expect("Failed to clone create2deployer");
 }
 
+#[cfg(feature = "l2")]
 fn compile_contract_to_bytecode(
     output_dir: &Path,
     contract_path: &Path,
@@ -294,6 +301,7 @@ fn compile_contract_to_bytecode(
     println!("Successfully generated {contract_name} bytecode");
 }
 
+#[cfg(feature = "l2")]
 fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
     let bytecode_hex = fs::read_to_string(input_file_path).expect("Failed to read file");
 
