@@ -47,7 +47,7 @@ path = "src/lib.rs"
 
 [features]
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
-default = ["l2"]
+default = ["l2", "l1"]
 
 secp256k1 = [
     "ethrex-vm/secp256k1",
@@ -69,7 +69,12 @@ kzg-rs = [
     "guest_program/kzg-rs",
 ]
 
-l1 = ["ethrex-vm/l1", "ethrex-common/l1", "ethrex-blockchain/l1"]
+l1 = [
+    "ethrex-vm/l1",
+    "ethrex-common/l1",
+    "ethrex-blockchain/l1",
+    "guest_program/l1",
+]
 sp1 = [
     "ethrex-vm/sp1",
     "ethrex-common/sp1",
@@ -94,7 +99,6 @@ gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = [
     "guest_program/l2",
     "ethrex-l2/l2",
-    "l1",
 ] # the prover can work with either l1 or l2 blocks
 
 [lints.clippy]

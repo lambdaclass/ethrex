@@ -80,11 +80,11 @@ unnecessary_cast = "warn"
 panic = "deny"
 
 [features]
-default = ["l2"]
+default = ["l2", "l1"]
 
 metrics = ["ethrex-blockchain/metrics"]
 
-l2 = ["guest_program/l2", "l1"]
+l2 = ["guest_program/l2"]
 
 secp256k1 = [
     "ethrex-common/secp256k1",
@@ -133,6 +133,7 @@ l1 = [
     "ethrex-config/l1",
     "ethrex-rpc/l1",
     "ethrex-p2p/l1",
+    "guest_program/l1",
 ]
 sp1 = [
     "ethrex-common/sp1",
@@ -149,6 +150,7 @@ sp1 = [
     "ethrex-config/sp1",
     "ethrex-rpc/sp1",
     "ethrex-p2p/sp1",
+    "guest_program/sp1",
 ]
 risc0 = [
     "ethrex-common/risc0",
@@ -165,4 +167,5 @@ risc0 = [
     "ethrex-config/risc0",
     "ethrex-rpc/risc0",
     "ethrex-p2p/risc0",
+    "guest_program/risc0",
 ]
