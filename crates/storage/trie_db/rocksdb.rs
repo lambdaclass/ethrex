@@ -58,7 +58,6 @@ impl TrieDB for RocksDBTrieDB {
             .db
             .get_cf(&cf, &db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
-
         Ok(res)
     }
 
