@@ -908,7 +908,7 @@ fn validate_pairing(
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
-    if calldata.len().is_multiple_of(192) {
+    if !calldata.len().is_multiple_of(192) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1262,7 +1262,7 @@ pub fn bls12_g1msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len().is_multiple_of(BLS12_381_G1_MSM_PAIR_LENGTH) {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G1_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1436,7 +1436,7 @@ pub fn bls12_g2msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len().is_multiple_of(BLS12_381_G2_MSM_PAIR_LENGTH) {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G2_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1492,7 +1492,7 @@ pub fn bls12_pairing_check(
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
     if calldata.is_empty()
-        || calldata
+        || !calldata
             .len()
             .is_multiple_of(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
     {

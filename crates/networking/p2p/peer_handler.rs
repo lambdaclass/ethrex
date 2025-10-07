@@ -250,7 +250,7 @@ impl PeerHandler {
         }
 
         // Push the reminder
-        if block_count.is_multiple_of(chunk_count) {
+        if !block_count.is_multiple_of(chunk_count) {
             tasks_queue_not_started
                 .push_back((chunk_count * chunk_limit + start, block_count % chunk_count));
         }
