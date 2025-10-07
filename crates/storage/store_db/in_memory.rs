@@ -260,9 +260,9 @@ impl StoreEngine for Store {
                 .transactions
                 .iter()
                 .enumerate()
-                .map(|(i, tx)| (tx.hash(), number, hash, i as u64));
-
-            self.add_transaction_locations(locations.collect()).await?;
+                .map(|(i, tx)| (number, tx.hash(), i as u64))
+                .collect();
+            self.inner()?.transaction_locations.insert(hash, locations);
             self.add_block_body(hash, block.body.clone()).await?;
             self.add_block_header(hash, header).await?;
         }
@@ -291,21 +291,6 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
         self.get_block_number_sync(block_hash)
-    }
-
-    async fn add_transaction_location(
-        &self,
-        transaction_hash: H256,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-        index: Index,
-    ) -> Result<(), StoreError> {
-        self.inner()?
-            .transaction_locations
-            .entry(transaction_hash)
-            .or_default()
-            .push((block_number, block_hash, index));
-        Ok(())
     }
 
     async fn get_transaction_location(
@@ -520,21 +505,6 @@ impl StoreEngine for Store {
         for (index, receipt) in receipts.into_iter().enumerate() {
             entry.insert(index as u64, receipt);
         }
-        Ok(())
-    }
-
-    async fn add_transaction_locations(
-        &self,
-        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
-    ) -> Result<(), StoreError> {
-        for (transaction_hash, block_number, block_hash, index) in locations {
-            self.inner()?
-                .transaction_locations
-                .entry(transaction_hash)
-                .or_default()
-                .push((block_number, block_hash, index));
-        }
-
         Ok(())
     }
 

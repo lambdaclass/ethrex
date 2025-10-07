@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    kademlia::Kademlia,
+    discv4::peer_table::PeerTableHandle,
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -26,14 +26,8 @@ pub struct NodeConfigFile {
 }
 
 impl NodeConfigFile {
-    pub async fn new(table: Kademlia, node_record: NodeRecord) -> Self {
-        let connected_peers = table
-            .peers
-            .lock()
-            .await
-            .iter()
-            .map(|(_id, peer)| peer.node.clone())
-            .collect::<Vec<_>>();
+    pub async fn new(mut peer_table: PeerTableHandle, node_record: NodeRecord) -> Self {
+        let connected_peers = peer_table.get_connected_nodes().await.unwrap_or(Vec::new());
 
         NodeConfigFile {
             known_peers: connected_peers,

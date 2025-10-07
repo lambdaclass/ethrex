@@ -1,7 +1,5 @@
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, trie_db::layering::apply_prefix};
@@ -45,8 +43,6 @@ pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
@@ -85,12 +81,6 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -313,33 +303,6 @@ impl Store {
             block_header.timestamp,
             block_number,
         ))
-    }
-
-    pub async fn add_transaction_location(
-        &self,
-        transaction_hash: H256,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-        index: Index,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .add_transaction_location(transaction_hash, block_number, block_hash, index)
-            .await
-    }
-
-    pub async fn add_transaction_locations(
-        &self,
-        transactions: &[Transaction],
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        let mut locations = vec![];
-
-        for (index, transaction) in transactions.iter().enumerate() {
-            locations.push((transaction.hash(), block_number, block_hash, index as Index));
-        }
-
-        self.engine.add_transaction_locations(locations).await
     }
 
     pub async fn get_transaction_location(
@@ -1420,12 +1383,6 @@ mod tests {
         test_store_suite(EngineType::InMemory).await;
     }
 
-    #[cfg(feature = "libmdbx")]
-    #[tokio::test]
-    async fn test_libmdbx_store() {
-        test_store_suite(EngineType::Libmdbx).await;
-    }
-
     #[cfg(feature = "rocksdb")]
     #[tokio::test]
     async fn test_rocksdb_store() {
@@ -1455,8 +1412,6 @@ mod tests {
     async fn test_store_suite(engine_type: EngineType) {
         run_test(test_store_block, engine_type).await;
         run_test(test_store_block_number, engine_type).await;
-        run_test(test_store_transaction_location, engine_type).await;
-        run_test(test_store_transaction_location_not_canonical, engine_type).await;
         run_test(test_store_block_receipt, engine_type).await;
         run_test(test_store_account_code, engine_type).await;
         run_test(test_store_block_tags, engine_type).await;
@@ -1659,73 +1614,6 @@ mod tests {
         let stored_number = store.get_block_number(block_hash).await.unwrap().unwrap();
 
         assert_eq!(stored_number, block_number);
-    }
-
-    async fn test_store_transaction_location(store: Store) {
-        let transaction_hash = H256::random();
-        let block_hash = H256::random();
-        let block_number = 6;
-        let index = 3;
-
-        store
-            .add_transaction_location(transaction_hash, block_number, block_hash, index)
-            .await
-            .unwrap();
-
-        store
-            .add_block_header(block_hash, BlockHeader::default())
-            .await
-            .unwrap();
-
-        store
-            .forkchoice_update(None, block_number, block_hash, None, None)
-            .await
-            .unwrap();
-
-        let stored_location = store
-            .get_transaction_location(transaction_hash)
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(stored_location, (block_number, block_hash, index));
-    }
-
-    async fn test_store_transaction_location_not_canonical(store: Store) {
-        let transaction_hash = H256::random();
-        let block_header = BlockHeader::default();
-        let random_hash = H256::random();
-        let block_number = 6;
-        let index = 3;
-
-        store
-            .add_transaction_location(transaction_hash, block_number, block_header.hash(), index)
-            .await
-            .unwrap();
-
-        store
-            .add_block_header(block_header.hash(), block_header.clone())
-            .await
-            .unwrap();
-
-        // Store random block hash
-        store
-            .add_block_header(random_hash, block_header)
-            .await
-            .unwrap();
-
-        store
-            .forkchoice_update(None, block_number, random_hash, None, None)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            store
-                .get_transaction_location(transaction_hash)
-                .await
-                .unwrap(),
-            None
-        )
     }
 
     async fn test_store_block_receipt(store: Store) {
