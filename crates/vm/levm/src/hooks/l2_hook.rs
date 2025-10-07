@@ -9,7 +9,9 @@ use crate::{
 
 use ethrex_common::{
     Address, H160, U256,
+    constants::GAS_PER_BLOB,
     types::{
+        SAFE_BYTES_PER_BLOB,
         account_diff::get_accounts_diff_size,
         fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig},
     },
@@ -218,10 +220,19 @@ fn pay_l1_fee(
     let account_diffs_size = get_accounts_diff_size(&account_diffs_in_tx)
         .map_err(|e| InternalError::Custom(format!("Failed to get account diffs size: {}", e)))?;
 
-    let l1_fee = fee_config
+    let l1_fee_per_blob: U256 = fee_config
         .l1_fee_per_blob_gas
+        .checked_mul(GAS_PER_BLOB.into())
+        .ok_or(InternalError::Overflow)?;
+
+    let l1_fee_per_blob_byte = l1_fee_per_blob
+        .checked_div(U256::from(SAFE_BYTES_PER_BLOB))
+        .ok_or(InternalError::DivisionByZero)?;
+
+    let l1_fee = l1_fee_per_blob_byte
         .checked_mul(U256::from(account_diffs_size))
         .ok_or(InternalError::Overflow)?;
+
     let sender_address = vm.env.origin;
 
     vm.decrease_account_balance(sender_address, l1_fee)
