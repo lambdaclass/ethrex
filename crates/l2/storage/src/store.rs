@@ -7,7 +7,7 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, Fork, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use tracing::info;
@@ -153,7 +153,12 @@ impl Store {
         self.engine.get_last_batch_number().await
     }
 
-    pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, RollupStoreError> {
+    pub async fn get_batch(
+        &self,
+        batch_number: u64,
+        // TODO: Should we get the fork from the last block of the batch instead?
+        fork: Fork,
+    ) -> Result<Option<Batch>, RollupStoreError> {
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
         };
@@ -181,7 +186,8 @@ impl Store {
             &self
                 .get_blobs_by_batch(batch_number)
                 .await?
-                .unwrap_or_default()
+                .unwrap_or_default(),
+                fork,
         ).map_err(|e| {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;

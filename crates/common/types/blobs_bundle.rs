@@ -1,6 +1,8 @@
 use std::ops::AddAssign;
 
 use crate::serde_utils;
+#[cfg(feature = "c-kzg")]
+use crate::types::Fork;
 use crate::types::constants::VERSIONED_HASH_VERSION_KZG;
 use crate::{Bytes, H256};
 
@@ -80,7 +82,7 @@ impl BlobsBundle {
 
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
     #[cfg(feature = "c-kzg")]
-    pub fn create_from_blobs(blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
+    pub fn create_from_blobs(blobs: &Vec<Blob>, fork: Fork) -> Result<Self, BlobsBundleError> {
         use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
@@ -266,8 +268,9 @@ mod tests {
             })
             .collect();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
-            .expect("Failed to create blobs bundle");
+        let blobs_bundle =
+            crate::types::BlobsBundle::create_from_blobs(&blobs, crate::types::Fork::Prague)
+                .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 
@@ -403,8 +406,9 @@ mod tests {
         let blobs =
             std::iter::repeat_n(blob, super::MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
-            .expect("Failed to create blobs bundle");
+        let blobs_bundle =
+            crate::types::BlobsBundle::create_from_blobs(&blobs, crate::types::Fork::Prague)
+                .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
 

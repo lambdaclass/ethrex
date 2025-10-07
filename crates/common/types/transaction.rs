@@ -1498,9 +1498,9 @@ mod serde_impl {
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
-    #[cfg(feature = "c-kzg")]
-    use crate::types::BYTES_PER_BLOB;
     use crate::types::{AccessListItem, AuthorizationTuple, BlobsBundleError};
+    #[cfg(feature = "c-kzg")]
+    use crate::types::{BYTES_PER_BLOB, Fork};
 
     use super::*;
 
@@ -2302,10 +2302,11 @@ mod serde_impl {
     }
 
     #[cfg(feature = "c-kzg")]
-    impl TryFrom<GenericTransaction> for WrappedEIP4844Transaction {
-        type Error = GenericTransactionError;
-
-        fn try_from(value: GenericTransaction) -> Result<Self, Self::Error> {
+    impl WrappedEIP4844Transaction {
+        pub fn from_generic_tx(
+            value: GenericTransaction,
+            fork: Fork,
+        ) -> Result<Self, GenericTransactionError> {
             let blobs = value
                 .blobs
                 .iter()
@@ -2320,7 +2321,7 @@ mod serde_impl {
             Ok(Self {
                 tx: value.try_into()?,
                 wrapper_version: None,
-                blobs_bundle: BlobsBundle::create_from_blobs(&blobs)?,
+                blobs_bundle: BlobsBundle::create_from_blobs(&blobs, fork)?,
             })
         }
     }

@@ -388,8 +388,9 @@ impl BlockFetcher {
         )
         .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
-        let (blobs_bundle, _) =
-            generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
+        let fork = self.blockchain.current_fork().await?;
+        let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, fork)
+            .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
         Ok(Batch {
             number: batch_number.as_u64(),

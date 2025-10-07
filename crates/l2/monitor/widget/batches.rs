@@ -1,4 +1,7 @@
-use ethrex_common::{Address, H256, types::batch::Batch};
+use ethrex_common::{
+    Address, H256,
+    types::{Fork, batch::Batch},
+};
 use ethrex_l2_sdk::get_last_committed_batch;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
@@ -82,8 +85,9 @@ impl BatchesTable {
                 refreshed_batches.push(batch.clone());
             } else {
                 let batch_number = batch.number;
+                // TODO: change this
                 let new_batch = rollup_store
-                    .get_batch(batch_number)
+                    .get_batch(batch_number, Fork::Prague)
                     .await
                     .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
                     .ok_or(MonitorError::BatchNotFound(batch_number))?;
@@ -131,8 +135,9 @@ impl BatchesTable {
         let mut new_batches = Vec::new();
 
         for batch_number in *from + 1..=to {
+            // TODO: change this fork
             let batch = rollup_store
-                .get_batch(batch_number)
+                .get_batch(batch_number, Fork::Prague)
                 .await
                 .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
                 .ok_or(MonitorError::BatchNotFound(batch_number))?;

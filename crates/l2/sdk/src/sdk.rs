@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
@@ -669,7 +670,8 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         TxType::EIP4844 => {
-            let mut tx: WrappedEIP4844Transaction = generic_tx.try_into()?;
+            // TODO: see how to check for fork
+            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, Fork::Prague)?;
             tx.tx
                 .sign_inplace(signer)
                 .await
