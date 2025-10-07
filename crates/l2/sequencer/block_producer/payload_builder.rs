@@ -58,6 +58,7 @@ pub async fn build_payload(
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
+    // TODO: expose as a proper metric
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
     #[allow(clippy::as_conversions)]
     if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
@@ -65,6 +66,7 @@ pub async fn build_payload(
 
         if interval != 0 {
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            // TODO: expose as a proper metric
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
