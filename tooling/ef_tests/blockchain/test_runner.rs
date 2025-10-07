@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    network::Fork,
+    fork::Fork,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{

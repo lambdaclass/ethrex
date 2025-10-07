@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::deserialize::deserialize_block_expected_exception;
-use crate::network::Fork;
+use crate::fork::Fork;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
