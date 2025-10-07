@@ -282,13 +282,14 @@ impl Syncer {
             }
 
             // Discard the first header as we already have it
-            block_headers.remove(0);
-            if !block_headers.is_empty() {
+            if block_headers.len() > 1 {
+                let block_headers_iter = block_headers.into_iter().skip(1);
+
                 match block_sync_state {
                     BlockSyncState::Full(ref mut state) => {
                         state
                             .process_incoming_headers(
-                                block_headers,
+                                block_headers_iter,
                                 sync_head,
                                 sync_head_found,
                                 self.blockchain.clone(),
@@ -298,7 +299,7 @@ impl Syncer {
                             .await?;
                     }
                     BlockSyncState::Snap(ref mut state) => {
-                        state.process_incoming_headers(block_headers).await?
+                        state.process_incoming_headers(block_headers_iter).await?
                     }
                 }
             }
@@ -404,13 +405,14 @@ impl Syncer {
             current_head = last_block_hash;
 
             // Discard the first header as we already have it
-            block_headers.remove(0);
-            if !block_headers.is_empty() {
+            if block_headers.len() > 1 {
                 let mut finished = false;
                 while !finished {
+                    let headers = std::mem::take(&mut block_headers);
+                    let block_headers_iter = headers.into_iter().skip(1);
                     (finished, sync_head_found) = block_sync_state
                         .process_incoming_headers(
-                            block_headers.clone(),
+                            block_headers_iter,
                             sync_head,
                             sync_head_found,
                             self.blockchain.clone(),
@@ -418,7 +420,6 @@ impl Syncer {
                             self.cancel_token.clone(),
                         )
                         .await?;
-                    block_headers.clear();
                 }
             }
 
@@ -469,7 +470,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await? {
+        if let Some(block_bodies) = peers.request_block_bodies(&block_hashes).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
@@ -586,7 +587,7 @@ impl FullBlockSyncState {
     /// Returns bool sync_head_found to know whether full sync was completed.
     async fn process_incoming_headers(
         &mut self,
-        block_headers: Vec<BlockHeader>,
+        block_headers: impl Iterator<Item = BlockHeader>,
         sync_head: H256,
         sync_head_found_in_block_headers: bool,
         blockchain: Arc<Blockchain>,
@@ -766,16 +767,21 @@ impl SnapBlockSyncState {
     /// Stores incoming headers to the Store and saves their hashes
     async fn process_incoming_headers(
         &mut self,
-        block_headers: Vec<BlockHeader>,
+        block_headers: impl Iterator<Item = BlockHeader>,
     ) -> Result<(), SyncError> {
-        let block_hashes = block_headers.iter().map(|h| h.hash()).collect::<Vec<_>>();
+        let mut block_headers_vec = Vec::with_capacity(block_headers.size_hint().1.unwrap_or(0));
+        let mut block_hashes = Vec::with_capacity(block_headers.size_hint().1.unwrap_or(0));
+        for header in block_headers {
+            block_hashes.push(header.hash());
+            block_headers_vec.push(header);
+        }
         self.store
             .set_header_download_checkpoint(
                 *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
             )
             .await?;
         self.block_hashes.extend_from_slice(&block_hashes);
-        self.store.add_block_headers(block_headers).await?;
+        self.store.add_block_headers(block_headers_vec).await?;
         Ok(())
     }
 
@@ -1321,7 +1327,9 @@ pub async fn update_pivot(
                 .request_block_headers(block_number + 1, pivot.hash())
                 .await?
                 .ok_or(SyncError::NoBlockHeaders)?;
-            sync_state.process_incoming_headers(block_headers).await?;
+            sync_state
+                .process_incoming_headers(block_headers.into_iter())
+                .await?;
         } else {
             return Err(SyncError::NotInSnapSync);
         }
