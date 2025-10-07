@@ -33,6 +33,5 @@ pub struct OperatorFeeConfig {
 pub struct L1FeeConfig {
     #[rkyv(with=H160Wrapper)]
     pub l1_fee_vault: Address,
-    #[rkyv(with=U256Wrapper)]
-    pub l1_fee_per_blob_gas: U256,
+    pub l1_fee_per_blob_gas: u64,
 }

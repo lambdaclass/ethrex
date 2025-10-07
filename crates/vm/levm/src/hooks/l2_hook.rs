@@ -223,7 +223,8 @@ fn pay_l1_fee(
     let l1_fee_per_blob: U256 = fee_config
         .l1_fee_per_blob_gas
         .checked_mul(GAS_PER_BLOB.into())
-        .ok_or(InternalError::Overflow)?;
+        .ok_or(InternalError::Overflow)?
+        .into();
 
     let l1_fee_per_blob_byte = l1_fee_per_blob
         .checked_div(U256::from(SAFE_BYTES_PER_BLOB))

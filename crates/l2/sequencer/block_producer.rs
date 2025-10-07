@@ -224,6 +224,8 @@ impl BlockProducer {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        self.store_l1_base_fee_by_block(block.header.number).await?;
+
         self.blockchain
             .store_block(&block, account_updates_list, execution_result)
             .await?;
@@ -248,6 +250,24 @@ impl BlockProducer {
             METRICS_TX.set_transactions_per_second(tps);
         );
 
+        Ok(())
+    }
+
+    async fn store_l1_base_fee_by_block(
+        &self,
+        block_number: u64,
+    ) -> Result<(), BlockProducerError> {
+        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+            error!("Invalid blockchain type. Expected L2.");
+            return Err(BlockProducerError::Custom("Invalid blockchain type".into()));
+        };
+
+        let fee_config_guard = l2_config.fee_config.read().await;
+        if let Some(l1_fee_config) = fee_config_guard.l1_fee_config.as_ref() {
+            self.rollup_store
+                .store_l1_blob_base_fee_by_block(block_number, l1_fee_config.l1_fee_per_blob_gas)
+                .await?;
+        };
         Ok(())
     }
 }

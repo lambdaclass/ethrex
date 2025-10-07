@@ -663,7 +663,7 @@ impl EthClient {
         }
     }
 
-    pub async fn get_blob_base_fee(&self) -> Result<U256, EthClientError> {
+    pub async fn get_blob_base_fee(&self) -> Result<u64, EthClientError> {
         let request = RpcRequest::new("eth_blobBaseFee", None);
 
         match self.send_request(request).await? {
