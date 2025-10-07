@@ -59,7 +59,7 @@ Node options:
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
-        
+
           [default: 10000]
 
 P2P options:
@@ -67,9 +67,9 @@ P2P options:
           Comma separated enode URLs for P2P discovery bootstrap.
 
       --syncmode <SYNC_MODE>
-          Can be either "full" or "snap" with "full" as default value.
+          Can be either "full" or "snap" with "snap" as default value.
 
-          [default: full]
+          [default: snap]
 
       --p2p.enabled
 
