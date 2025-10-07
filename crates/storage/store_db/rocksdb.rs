@@ -1208,7 +1208,7 @@ impl StoreEngine for Store {
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
-  
+
     // TODO: REVIEW LOGIC AGAINST LIBMDBX
     async fn get_receipts_for_block(
         &self,
@@ -1231,7 +1231,7 @@ impl StoreEngine for Store {
 
         Ok(receipts)
     }
-  
+
     async fn set_header_download_checkpoint(
         &self,
         block_hash: BlockHash,
