@@ -39,7 +39,7 @@ and on another one:
 lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
 ```
 
-### Linux
+### Linux x86
 
 Install ethrex and lighthouse:
 
@@ -68,6 +68,8 @@ and on another one:
 ./lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
 ```
 
+For other CPU architectures, see the [releases page](https://github.com/lambdaclass/ethrex/releases/).
+
 ## Quickstart L2
 
 Follow these steps to quickly launch a local L2 node. For advanced options and real deployments, see the links at the end.
@@ -80,7 +82,7 @@ brew install lambdaclass/ethrex
 ethrex l2 --dev
 ```
 
-### Linux
+### Linux x86
 
 ```sh
 # install ethrex
@@ -88,6 +90,8 @@ curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-li
 chmod +x ethrex
 ./ethrex l2 --dev
 ```
+
+For other CPU architectures, see the [releases page](https://github.com/lambdaclass/ethrex/releases/).
 
 ## Where to Start
 
