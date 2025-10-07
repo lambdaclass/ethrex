@@ -31,11 +31,11 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
 
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
     for _nonce in 0..runs - 1 {
-        let mut vm = init_vm(&mut db, 0, calldata.clone()).unwrap();
+        let mut vm = init_vm(&mut db, 0, calldata.clone()).unwrap(); // ok-clone: value needed later, used as part of bench runner
         let tx_report = black_box(vm.stateless_execute().unwrap());
         assert!(tx_report.is_success());
     }
-    let mut vm = init_vm(&mut db, 0, calldata.clone()).unwrap();
+    let mut vm = init_vm(&mut db, 0, calldata).unwrap();
     let tx_report = black_box(vm.stateless_execute().unwrap());
 
     assert!(tx_report.is_success(), "{:?}", tx_report.result);
@@ -58,7 +58,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     let cache = BTreeMap::from([
         (
             Address::from_low_u64_be(CONTRACT_ADDRESS),
-            Account::new(U256::MAX, bytecode.clone(), 0, BTreeMap::new()),
+            Account::new(U256::MAX, bytecode, 0, BTreeMap::new()),
         ),
         (
             Address::from_low_u64_be(SENDER_ADDRESS),
