@@ -246,35 +246,68 @@ The client supports running in two different modes:</p>
 <li>As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
 </ul>
 <p>We call the first one "ethrex L1" and the second one "ethrex L2".</p>
-<h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
-<h3 id="l1-run-an-ethereum-node"><a class="header" href="#l1-run-an-ethereum-node">L1: Run an Ethereum Node</a></h3>
-<p>Follow these steps to quickly launch an Ethereum L1 (mainnet) node using Docker. For advanced details, see the links at the end.</p>
-<h4 id="supported-networks"><a class="header" href="#supported-networks">Supported Networks</a></h4>
-<ul>
-<li><strong>mainnet</strong></li>
-<li><strong>sepolia</strong></li>
-<li><strong>holesky</strong></li>
-<li><strong>hoodi</strong></li>
-</ul>
-<p>By default, the command below runs a node on mainnet. To use a different network, change the <code>ETHREX_NETWORK</code> environment variable with one of the networks above.</p>
-<pre><code class="language-sh">curl -LO https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/docker-compose.yaml
-ETHREX_NETWORK=mainnet docker compose up
+<h2 id="quickstart-l1"><a class="header" href="#quickstart-l1">Quickstart L1</a></h2>
+<p>Follow these steps to sync an ethrex node on the Hoodi testnet.</p>
+<h3 id="macos"><a class="header" href="#macos">MacOS</a></h3>
+<p>Install ethrex and lighthouse:</p>
+<pre><code class="language-sh"># install lightouse and ethrex
+brew install lambdaclass/tap/ethrex
+brew install lighthouse
+
+# create secrets directory and jwt secret
+mkdir -p ethereum/secrets/
+cd ethereum/
+openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 </code></pre>
-<p>This will start an ethrex node along with a Lighthouse consensus client that syncs with the Ethereum network.</p>
-<h3 id="l2-run-an-l2-node"><a class="header" href="#l2-run-an-l2-node">L2: Run an L2 Node</a></h3>
-<p>Follow these steps to quickly launch an L2 node using Docker. For advanced details, see the links at the end.</p>
-<pre><code class="language-sh">docker run -p 1729:1729 ghcr.io/lambdaclass/ethrex:main l2 --dev
+<p>On one terminal:</p>
+<pre><code class="language-sh">ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
 </code></pre>
-<p>This will start a local L1 and L2 network.</p>
+<p>and on another one:</p>
+<pre><code class="language-sh">lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
+</code></pre>
+<h3 id="linux-x86"><a class="header" href="#linux-x86">Linux x86</a></h3>
+<p>Install ethrex and lighthouse:</p>
+<pre><code class="language-sh"># create secrets directory and jwt secret
+mkdir -p ethereum/secrets/
+cd ethereum/
+openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
+
+# install lightouse and ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+chmod +x ethrex
+curl -LO https://github.com/sigp/lighthouse/releases/download/v7.1.0/lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xvf lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
+</code></pre>
+<p>On one terminal:</p>
+<pre><code class="language-sh">./ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
+</code></pre>
+<p>and on another one:</p>
+<pre><code class="language-sh">./lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
+</code></pre>
+<p>For other CPU architectures, see the <a href="https://github.com/lambdaclass/ethrex/releases/">releases page</a>.</p>
+<h2 id="quickstart-l2"><a class="header" href="#quickstart-l2">Quickstart L2</a></h2>
+<p>Follow these steps to quickly launch a local L2 node. For advanced options and real deployments, see the links at the end.</p>
+<h3 id="macos-1"><a class="header" href="#macos-1">MacOS</a></h3>
+<pre><code class="language-sh"># install ethrex
+brew install lambdaclass/tap/ethrex
+ethrex l2 --dev
+</code></pre>
+<h3 id="linux-x86-1"><a class="header" href="#linux-x86-1">Linux x86</a></h3>
+<pre><code class="language-sh"># install ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+chmod +x ethrex
+./ethrex l2 --dev
+</code></pre>
+<p>For other CPU architectures, see the <a href="https://github.com/lambdaclass/ethrex/releases/">releases page</a>.</p>
 <h2 id="where-to-start"><a class="header" href="#where-to-start">Where to Start</a></h2>
 <ul>
 <li>
-<p><strong>Just want to run an Ethereum node?</strong></p>
-<p>Start with the <a href="getting-started/index.html#quickstart">Quickstart</a> or see <a href="getting-started/../l1/running">Node operation</a> for setup, configuration, monitoring, and best practices.</p>
+<p><strong>Want to run ethrex in production as an execution client?</strong></p>
+<p>See <a href="getting-started/../l1/running">Node operation</a> for setup, configuration, monitoring, and best practices.</p>
 </li>
 <li>
-<p><strong>Interested in building your own L2?</strong></p>
-<p>Begin with the <a href="getting-started/../l2/introduction.html">L2 introduction</a>, <a href="getting-started/../getting-started/quickstart-l2.html">L2 quickstart</a>, and see <a href="getting-started/../l2/deploy.html">L2 rollup deployment</a> for launching your own rollup, deploying contracts, and interacting with your L2.</p>
+<p><strong>Interested in deploying your own L2?</strong></p>
+<p>See <a href="getting-started/../l2/deploy.html">L2 rollup deployment</a> for launching your own rollup, deploying contracts, and interacting with your L2.</p>
 </li>
 <li>
 <p><strong>Looking to contribute or develop?</strong></p>
@@ -284,175 +317,6 @@ ETHREX_NETWORK=mainnet docker compose up
 <p><strong>Want to understand how ethrex works?</strong></p>
 <p>Explore <a href="getting-started/../l1/fundamentals">L1 fundamentals</a> and <a href="getting-started/../l2/architecture">L2 Architecture</a> for deep dives into ethrex's design, sync modes, networking, and more.</p>
 </li>
-</ul>
-<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
-<style>
-.mdbook-alerts {
-  padding: 8px 16px;
-  margin-bottom: 16px;
-  border-left: 0.25em solid var(--mdbook-alerts-color);
-}
-
-.mdbook-alerts > *:first-child {
-  margin-top: 0;
-}
-
-.mdbook-alerts > *:last-child {
-  margin-bottom: 0;
-}
-
-.mdbook-alerts-title {
-  display: flex;
-  font-weight: 600;
-  align-items: center;
-  line-height: 1;
-  color: var(--mdbook-alerts-color);
-  text-transform: capitalize;
-}
-
-.mdbook-alerts-icon {
-  display: inline-block;
-  width: 1em;
-  height: 1em;
-  margin-right: 0.2em;
-  background-color: currentColor;
-  -webkit-mask: no-repeat center / 100%;
-  mask: no-repeat center / 100%;
-  -webkit-mask-image: var(--mdbook-alerts-icon);
-  mask-image: var(--mdbook-alerts-icon);
-}
-
-.mdbook-alerts-note {
-  --mdbook-alerts-color: rgb(9, 105, 218);
-  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
-}
-
-.mdbook-alerts-tip {
-  --mdbook-alerts-color: rgb(26, 127, 55);
-  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
-}
-
-.mdbook-alerts-important {
-  --mdbook-alerts-color: rgb(130, 80, 223);
-  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
-}
-
-.mdbook-alerts-warning {
-  --mdbook-alerts-color: rgb(154, 103, 0);
-  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
-}
-
-.mdbook-alerts-caution {
-  --mdbook-alerts-color: rgb(207, 34, 46);
-  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
-}
-
-</style>
-<h1 id="quickstart-run-an-ethereum-l1-node"><a class="header" href="#quickstart-run-an-ethereum-l1-node">Quickstart: Run an Ethereum L1 Node</a></h1>
-<p>Follow these steps to quickly launch an Ethereum L1 (mainnet) node using Docker. For advanced details, see the links at the end.</p>
-<h2 id="supported-networks-1"><a class="header" href="#supported-networks-1">Supported Networks</a></h2>
-<ul>
-<li><strong>mainnet</strong></li>
-<li><strong>sepolia</strong></li>
-<li><strong>holesky</strong></li>
-<li><strong>hoodi</strong></li>
-</ul>
-<p>By default, the command below run a node on mainnet. To use a different network, change the <code>ETHREX_NETWORK</code> environment variable with one of the networks above.</p>
-<pre><code class="language-sh">curl -LO https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/docker-compose.yaml
-ETHREX_NETWORK=mainnet docker compose up
-</code></pre>
-<p>This will start an ethrex node along with a Lighthouse consensus client that syncs with the Ethereum network.</p>
-<hr />
-<p>For more details on installation, flags, and supported networks:</p>
-<ul>
-<li><a href="getting-started/./installation">Installation</a></li>
-<li><a href="getting-started/../l1/running">Advanced options and networks</a></li>
-</ul>
-<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
-<style>
-.mdbook-alerts {
-  padding: 8px 16px;
-  margin-bottom: 16px;
-  border-left: 0.25em solid var(--mdbook-alerts-color);
-}
-
-.mdbook-alerts > *:first-child {
-  margin-top: 0;
-}
-
-.mdbook-alerts > *:last-child {
-  margin-bottom: 0;
-}
-
-.mdbook-alerts-title {
-  display: flex;
-  font-weight: 600;
-  align-items: center;
-  line-height: 1;
-  color: var(--mdbook-alerts-color);
-  text-transform: capitalize;
-}
-
-.mdbook-alerts-icon {
-  display: inline-block;
-  width: 1em;
-  height: 1em;
-  margin-right: 0.2em;
-  background-color: currentColor;
-  -webkit-mask: no-repeat center / 100%;
-  mask: no-repeat center / 100%;
-  -webkit-mask-image: var(--mdbook-alerts-icon);
-  mask-image: var(--mdbook-alerts-icon);
-}
-
-.mdbook-alerts-note {
-  --mdbook-alerts-color: rgb(9, 105, 218);
-  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
-}
-
-.mdbook-alerts-tip {
-  --mdbook-alerts-color: rgb(26, 127, 55);
-  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
-}
-
-.mdbook-alerts-important {
-  --mdbook-alerts-color: rgb(130, 80, 223);
-  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
-}
-
-.mdbook-alerts-warning {
-  --mdbook-alerts-color: rgb(154, 103, 0);
-  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
-}
-
-.mdbook-alerts-caution {
-  --mdbook-alerts-color: rgb(207, 34, 46);
-  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
-  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
-}
-
-</style>
-<h1 id="quickstart-run-an-l2-node"><a class="header" href="#quickstart-run-an-l2-node">Quickstart: Run an L2 Node</a></h1>
-<p><strong>Ethrex</strong> is a framework that lets you launch your own L2 rollup or blockchain. With ethrex, you can deploy, run, and experiment with custom L2 networks, taking advantage of Ethereum's security while enabling high throughput and low fees.</p>
-<h2 id="start-a-development-l2"><a class="header" href="#start-a-development-l2">Start a development L2</a></h2>
-<p>Follow these steps to quickly launch an L2 node using Docker. For advanced details, see the links at the end.</p>
-<pre><code class="language-sh">docker run -p 1729:1729 ghcr.io/lambdaclass/ethrex:main l2 --dev
-</code></pre>
-<p>This will start a local L1 and L2 network. A JSON-RPC server compatible with Ethereum clients will be available at <code>http://localhost:1729</code>.</p>
-<hr />
-<p>For more details and configuration options, see:</p>
-<ul>
-<li><a href="getting-started/./installation">Installation</a></li>
-<li><a href="getting-started/../l2/introduction.html">Advanced options and more details</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
@@ -637,12 +501,6 @@ ETHREX_NETWORK=mainnet docker compose up
 <p>Check that Ethrex is installed and working:</p>
 <pre><code class="language-sh">ethrex --version
 </code></pre>
-<hr />
-<p><strong>Next steps:</strong></p>
-<ul>
-<li><a href="getting-started/installation/../quickstart-l1.html">L1 Quickstart</a></li>
-<li><a href="getting-started/installation/../quickstart-l2.html">L2 Quickstart</a></li>
-</ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -841,12 +699,6 @@ ETHREX_NETWORK=mainnet docker compose up
 <p><strong>Stop the node:</strong></p>
 <pre><code class="language-sh">docker stop ethrex
 </code></pre>
-<hr />
-<p><strong>Next steps:</strong></p>
-<ul>
-<li><a href="getting-started/installation/../quickstart-l1.html">L1 Quickstart</a></li>
-<li><a href="getting-started/installation/../quickstart-l2.html">L2 Quickstart</a></li>
-</ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -964,12 +816,6 @@ cd ethrex
 <p><strong>(Optional) Move the binary to your <code>$PATH</code>:</strong></p>
 <pre><code class="language-sh">sudo mv ./target/release/ethrex /usr/local/bin/
 </code></pre>
-<hr />
-<p><strong>Next steps:</strong></p>
-<ul>
-<li><a href="getting-started/installation/../quickstart-l1.html">L1 Quickstart</a></li>
-<li><a href="getting-started/installation/../quickstart-l2.html">L2 Quickstart</a></li>
-</ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
@@ -1203,7 +1049,7 @@ cd ethrex
 
 </style>
 <h1 id="node-startup"><a class="header" href="#node-startup">Node startup</a></h1>
-<h2 id="supported-networks-2"><a class="header" href="#supported-networks-2">Supported networks</a></h2>
+<h2 id="supported-networks"><a class="header" href="#supported-networks">Supported networks</a></h2>
 <p>Ethrex is designed to support Ethereum mainnet and its testnets</p>
 <div class="table-wrapper"><table><thead><tr><th>Network</th><th>Chain id</th><th>Supported sync modes</th></tr></thead><tbody>
 <tr><td>mainnet</td><td>1</td><td>snap</td></tr>
@@ -1888,7 +1734,7 @@ Also, the <code>storage_healer</code> will be spawned earlier, during state sync
 <p>Layer 2 (L2) solutions are protocols built on top of Ethereum to increase scalability and reduce transaction costs. L2s process transactions off-chain and periodically post data or proofs back to Ethereum mainnet, inheriting its security.</p>
 <p><strong>Ethrex</strong> is a framework that lets you launch your own L2 rollup or blockchain. With ethrex, you can deploy, run, and experiment with custom L2 networks, taking advantage of Ethereum's security while enabling high throughput and low fees.</p>
 <h2 id="get-started-with-your-l2"><a class="header" href="#get-started-with-your-l2">Get started with your L2</a></h2>
-<p>Check out the <a href="l2/../getting-started/quickstart-l2.html">L2 quickstart guide</a> to start your rollup in just a command, or jump right into the <a href="l2/./deploy.html">Deploy an L2</a> for more detailed instructions.</p>
+<p>Check out the <a href="l2/../getting-started#quickstart-l2">Quickstart L2 guide</a> to start your rollup in just a command, or jump right into the <a href="l2/./deploy.html">Deploy an L2</a> for more detailed instructions.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {

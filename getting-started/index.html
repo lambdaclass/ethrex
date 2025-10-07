@@ -245,35 +245,68 @@ The client supports running in two different modes:</p>
 <li>As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
 </ul>
 <p>We call the first one "ethrex L1" and the second one "ethrex L2".</p>
-<h2 id="quickstart"><a class="header" href="#quickstart">Quickstart</a></h2>
-<h3 id="l1-run-an-ethereum-node"><a class="header" href="#l1-run-an-ethereum-node">L1: Run an Ethereum Node</a></h3>
-<p>Follow these steps to quickly launch an Ethereum L1 (mainnet) node using Docker. For advanced details, see the links at the end.</p>
-<h4 id="supported-networks"><a class="header" href="#supported-networks">Supported Networks</a></h4>
-<ul>
-<li><strong>mainnet</strong></li>
-<li><strong>sepolia</strong></li>
-<li><strong>holesky</strong></li>
-<li><strong>hoodi</strong></li>
-</ul>
-<p>By default, the command below runs a node on mainnet. To use a different network, change the <code>ETHREX_NETWORK</code> environment variable with one of the networks above.</p>
-<pre><code class="language-sh">curl -LO https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/docker-compose.yaml
-ETHREX_NETWORK=mainnet docker compose up
+<h2 id="quickstart-l1"><a class="header" href="#quickstart-l1">Quickstart L1</a></h2>
+<p>Follow these steps to sync an ethrex node on the Hoodi testnet.</p>
+<h3 id="macos"><a class="header" href="#macos">MacOS</a></h3>
+<p>Install ethrex and lighthouse:</p>
+<pre><code class="language-sh"># install lightouse and ethrex
+brew install lambdaclass/tap/ethrex
+brew install lighthouse
+
+# create secrets directory and jwt secret
+mkdir -p ethereum/secrets/
+cd ethereum/
+openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 </code></pre>
-<p>This will start an ethrex node along with a Lighthouse consensus client that syncs with the Ethereum network.</p>
-<h3 id="l2-run-an-l2-node"><a class="header" href="#l2-run-an-l2-node">L2: Run an L2 Node</a></h3>
-<p>Follow these steps to quickly launch an L2 node using Docker. For advanced details, see the links at the end.</p>
-<pre><code class="language-sh">docker run -p 1729:1729 ghcr.io/lambdaclass/ethrex:main l2 --dev
+<p>On one terminal:</p>
+<pre><code class="language-sh">ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
 </code></pre>
-<p>This will start a local L1 and L2 network.</p>
+<p>and on another one:</p>
+<pre><code class="language-sh">lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
+</code></pre>
+<h3 id="linux-x86"><a class="header" href="#linux-x86">Linux x86</a></h3>
+<p>Install ethrex and lighthouse:</p>
+<pre><code class="language-sh"># create secrets directory and jwt secret
+mkdir -p ethereum/secrets/
+cd ethereum/
+openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
+
+# install lightouse and ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+chmod +x ethrex
+curl -LO https://github.com/sigp/lighthouse/releases/download/v7.1.0/lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xvf lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
+</code></pre>
+<p>On one terminal:</p>
+<pre><code class="language-sh">./ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
+</code></pre>
+<p>and on another one:</p>
+<pre><code class="language-sh">./lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ./secrets/jwt.hex --checkpoint-sync-url https://hoodi.checkpoint.sigp.io --http
+</code></pre>
+<p>For other CPU architectures, see the <a href="https://github.com/lambdaclass/ethrex/releases/">releases page</a>.</p>
+<h2 id="quickstart-l2"><a class="header" href="#quickstart-l2">Quickstart L2</a></h2>
+<p>Follow these steps to quickly launch a local L2 node. For advanced options and real deployments, see the links at the end.</p>
+<h3 id="macos-1"><a class="header" href="#macos-1">MacOS</a></h3>
+<pre><code class="language-sh"># install ethrex
+brew install lambdaclass/tap/ethrex
+ethrex l2 --dev
+</code></pre>
+<h3 id="linux-x86-1"><a class="header" href="#linux-x86-1">Linux x86</a></h3>
+<pre><code class="language-sh"># install ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+chmod +x ethrex
+./ethrex l2 --dev
+</code></pre>
+<p>For other CPU architectures, see the <a href="https://github.com/lambdaclass/ethrex/releases/">releases page</a>.</p>
 <h2 id="where-to-start"><a class="header" href="#where-to-start">Where to Start</a></h2>
 <ul>
 <li>
-<p><strong>Just want to run an Ethereum node?</strong></p>
-<p>Start with the <a href="#quickstart">Quickstart</a> or see <a href="../l1/running">Node operation</a> for setup, configuration, monitoring, and best practices.</p>
+<p><strong>Want to run ethrex in production as an execution client?</strong></p>
+<p>See <a href="../l1/running">Node operation</a> for setup, configuration, monitoring, and best practices.</p>
 </li>
 <li>
-<p><strong>Interested in building your own L2?</strong></p>
-<p>Begin with the <a href="../l2/introduction.html">L2 introduction</a>, <a href="../getting-started/quickstart-l2.html">L2 quickstart</a>, and see <a href="../l2/deploy.html">L2 rollup deployment</a> for launching your own rollup, deploying contracts, and interacting with your L2.</p>
+<p><strong>Interested in deploying your own L2?</strong></p>
+<p>See <a href="../l2/deploy.html">L2 rollup deployment</a> for launching your own rollup, deploying contracts, and interacting with your L2.</p>
 </li>
 <li>
 <p><strong>Looking to contribute or develop?</strong></p>
@@ -290,7 +323,7 @@ ETHREX_NETWORK=mainnet docker compose up
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
 
-                            <a rel="next prefetch" href="../getting-started/quickstart-l1.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../getting-started/installation/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -301,7 +334,7 @@ ETHREX_NETWORK=mainnet docker compose up
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
 
-                    <a rel="next prefetch" href="../getting-started/quickstart-l1.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../getting-started/installation/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
