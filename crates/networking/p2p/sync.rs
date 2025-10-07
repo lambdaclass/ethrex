@@ -1608,7 +1608,7 @@ async fn insert_accounts(
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
@@ -1730,7 +1730,7 @@ async fn insert_storages(
             (
                 account_hash,
                 store
-                    .open_storage_trie(account_hash, *EMPTY_TRIE_HASH, *EMPTY_TRIE_HASH)
+                    .open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)
                     .expect("Should be able to open trie"),
             )
         })
