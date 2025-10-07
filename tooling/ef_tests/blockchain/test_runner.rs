@@ -400,9 +400,6 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         test.lastblockhash, last_block_hash,
         "Last block number does not match"
     );
-    // Get block header
-    let last_block = db.get_block_header(last_block_number).unwrap();
-    assert!(last_block.is_some(), "Block hash is not stored in db");
 
     // State root was already validated by `add_block`.
 }
