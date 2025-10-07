@@ -10,8 +10,8 @@ const TEST_FOLDER: &str = "vectors/";
 
 // Base skips shared by all runs.
 const SKIPPED_BASE: &[&str] = &[
-    "system_contract_deployment",
-    "HighGasPriceParis", // Gas price higher than u64::MAX; impractical scenario.
+    "system_contract_deployment", // We don't want to implement the check being tested, it's unnecessary and impossible in known networks. It checks that withdrawal requests and consolidation requests accounts have code, which is always the case.
+    "HighGasPriceParis", // Gas price higher than u64::MAX; impractical scenario. We don't use 256 bits for gas price for performance reasons, however, it's debatable. See https://github.com/lambdaclass/ethrex/issues/3629
     "dynamicAccountOverwriteEmpty_Paris", // Scenario is virtually impossible.
     "create2collisionStorageParis", // Scenario is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
     "RevertInCreateInInitCreate2Paris", // Scenario is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
