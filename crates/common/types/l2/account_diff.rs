@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DecoderError {
@@ -82,7 +83,16 @@ pub fn get_accounts_diff_size(
     let mut new_accounts_diff_size = 0;
 
     for (address, diff) in account_diffs.iter() {
-        let encoded = diff.encode(address)?;
+        let encoded = match diff.encode(address) {
+            Ok(encoded) => encoded,
+            Err(AccountDiffError::EmptyAccountDiff) => {
+                debug!("Skipping empty account diff for address: {address}");
+                continue;
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        };
         let encoded_len: u64 = encoded.len().try_into()?;
         new_accounts_diff_size += encoded_len;
     }
