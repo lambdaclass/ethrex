@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    network::Network,
+    network::Fork,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
@@ -54,8 +54,8 @@ pub fn parse_and_execute(
     for (test_key, test) in tests {
         let test_eip = test.info.clone().reference_spec.unwrap_or_default();
 
-        let should_skip_test = test.network < Network::Merge
-            || (test.network > Network::Prague
+        let should_skip_test = test.network < Fork::Merge
+            || (test.network > Fork::Prague
                 && (!fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
                     && !hashes_of_fusaka_tests_to_run
                         .iter()

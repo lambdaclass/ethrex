@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::deserialize::deserialize_block_expected_exception;
-use crate::network::Network;
+use crate::network::Fork;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -22,11 +22,11 @@ pub struct TestUnit {
     #[serde(rename = "genesisRLP", with = "ethrex_common::serde_utils::bytes")]
     pub genesis_rlp: Bytes,
     pub lastblockhash: H256,
-    pub network: Network,
+    pub network: Fork,
     pub post_state: HashMap<Address, Account>,
     pub pre: HashMap<Address, Account>,
     pub seal_engine: serde_json::Value,
-    pub config: FixtureConfig,
+    pub config: Option<FixtureConfig>,
 }
 
 /// General information about the test. Matches the `_info` field in the `.json` file.
@@ -157,8 +157,10 @@ impl TestUnit {
     pub fn get_genesis(&self) -> Genesis {
         let mut config = *self.network.chain_config();
         // Overwrite default blob schedule with test's blob schedule
-        if let Some(ref schedule) = self.config.blob_schedule {
-            config.blob_schedule = schedule.clone().into();
+        if let Some(test_config) = &self.config {
+            if let Some(ref schedule) = test_config.blob_schedule {
+                config.blob_schedule = schedule.clone().into();
+            }
         }
         Genesis {
             config,
@@ -347,7 +349,7 @@ pub struct Transaction {
     pub max_priority_fee_per_gas: Option<U256>,
     pub blob_versioned_hashes: Option<Vec<H256>>,
     pub hash: Option<H256>,
-    pub sender: Address,
+    pub sender: Option<Address>,
     pub to: TxKind,
 }
 

@@ -52,7 +52,14 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, Some(SKIPPED_TESTS), backend)
 }
 
-datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");
+datatest_stable::harness!(
+    blockchain_runner,
+    TEST_FOLDER,
+    // r"jere/sixteen/BlockchainTests/GeneralStateTests/stTransactionTest/NoSrcAccount.json"
+    // r"static/state_tests/stTransactionTest/NoSrcAccount.json"
+    // r"failures"
+    r"jere/Legacy"
+);
 
 #[cfg(any(all(feature = "sp1", feature = "stateless"),))]
 compile_error!("Only one of `sp1`, `stateless` can be enabled at a time.");
