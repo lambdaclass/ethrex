@@ -28,6 +28,7 @@ use ethrex_levm::{
     vm::VM,
 };
 use std::cmp::min;
+use std::sync::Arc;
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -130,7 +131,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+        let env = Arc::new(Self::setup_env(tx, tx_sender, block_header, db)?);
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
@@ -154,6 +155,8 @@ impl LEVM {
         env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
         adjust_disabled_base_fee(&mut env);
+
+        let env = Arc::new(env);
 
         let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
@@ -303,13 +306,15 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let env = Arc::new(env);
+
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?; // ok-clone: increasing arc reference count
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env, db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 
@@ -363,7 +368,7 @@ pub fn generic_system_contract_levm(
         .current_accounts_state
         .get(&block_header.coinbase)
         .cloned();
-    let env = Environment {
+    let env = Arc::new(Environment {
         origin: system_address,
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
@@ -379,7 +384,7 @@ pub fn generic_system_contract_levm(
         block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
-    };
+    });
 
     let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(contract_address),
@@ -512,7 +517,7 @@ fn env_from_generic(
 
 fn vm_from_generic<'a>(
     tx: &GenericTransaction,
-    env: Environment,
+    env: Arc<Environment>,
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
 ) -> Result<VM<'a>, VMError> {

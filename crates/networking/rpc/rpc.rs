@@ -217,7 +217,7 @@ pub async fn start_api(
     let service_context = RpcApiContext {
         storage,
         blockchain,
-        active_filters: active_filters.clone(),
+        active_filters: active_filters.clone(), // ok-clone: increasing arc reference count
         syncer: Arc::new(syncer),
         peer_handler,
         node_data: NodeData {
@@ -235,11 +235,11 @@ pub async fn start_api(
     // Periodically clean up the active filters for the filters endpoints.
     tokio::task::spawn(async move {
         let mut interval = tokio::time::interval(FILTER_DURATION);
-        let filters = active_filters.clone();
+        let filters = active_filters.clone(); // ok-clone: increasing arc reference count
         loop {
             interval.tick().await;
             tracing::debug!("Running filter clean task");
-            filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
+            filter::clean_outdated_filters(filters.clone(), FILTER_DURATION); // ok-clone: increasing arc reference count
             tracing::debug!("Filter clean task complete");
         }
     });

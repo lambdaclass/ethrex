@@ -27,6 +27,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     mem,
     rc::Rc,
+    sync::Arc,
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -308,7 +309,7 @@ pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     /// The current call frame.
     pub current_call_frame: CallFrame,
-    pub env: Environment,
+    pub env: Arc<Environment>,
     pub substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
     pub tx: Transaction,
@@ -330,7 +331,7 @@ pub struct VM<'a> {
 
 impl<'a> VM<'a> {
     pub fn new(
-        env: Environment,
+        env: Arc<Environment>,
         db: &'a mut GeneralizedDatabase,
         tx: &Transaction,
         tracer: LevmCallTracer,

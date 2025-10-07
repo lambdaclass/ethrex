@@ -125,7 +125,7 @@ fn main() {
 
     // Now we want to initialize the VM, so we set up the environment and database.
     // Env
-    let env = Environment {
+    let env = Arc::new(Environment {
         origin: runner_input.transaction.sender,
         gas_limit: runner_input.transaction.gas_limit,
         gas_price: runner_input.transaction.gas_price,
@@ -136,7 +136,7 @@ fn main() {
         ),
         coinbase: COINBASE,
         ..Default::default()
-    };
+    });
 
     // DB
     let initial_state = setup_initial_state(&mut runner_input, bytecode);

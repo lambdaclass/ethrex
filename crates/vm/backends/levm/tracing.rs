@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
 use ethrex_levm::vm::VMType;
@@ -50,14 +52,14 @@ impl LEVM {
         with_log: bool,
         vm_type: VMType,
     ) -> Result<CallTrace, EvmError> {
-        let env = Self::setup_env(
+        let env = Arc::new(Self::setup_env(
             tx,
             tx.sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?,
             block_header,
             db,
-        )?;
+        )?);
         let mut vm = VM::new(
             env,
             db,

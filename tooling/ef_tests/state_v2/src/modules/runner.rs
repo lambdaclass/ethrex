@@ -5,6 +5,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::PathBuf,
+    sync::Arc,
 };
 
 use ethrex_common::{
@@ -124,11 +125,11 @@ pub async fn run_test(
 pub fn get_vm_env_for_test(
     test_env: Env,
     test_case: &TestCase,
-) -> Result<Environment, RunnerError> {
+) -> Result<Arc<Environment>, RunnerError> {
     let blob_schedule = EVMConfig::canonical_values(test_case.fork);
     let config = EVMConfig::new(test_case.fork, blob_schedule);
     let gas_price = effective_gas_price(&test_env, test_case)?;
-    Ok(Environment {
+    Ok(Arc::new(Environment {
         origin: test_case.sender,
         gas_limit: test_case.gas,
         config,
@@ -149,7 +150,7 @@ pub fn get_vm_env_for_test(
         tx_nonce: test_case.nonce,
         block_gas_limit: test_env.current_gas_limit,
         is_privileged: false,
-    })
+    }))
 }
 
 /// Constructs the transaction that will be executed in a specific test case.
