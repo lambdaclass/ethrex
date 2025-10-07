@@ -113,7 +113,7 @@ impl NodeRef {
                     }
                 }
 
-                if let Node::Leaf(leaf) = node.as_ref() {
+                /*if let Node::Leaf(leaf) = node.as_ref() {
                     match leaf.compute_hash() {
                         NodeHash::Inline((data, len)) => {
                             //println!("inline leaf at {path:?} => {:?}", &data[..*len as usize]);
@@ -128,7 +128,7 @@ impl NodeRef {
                             ));
                         }
                     }
-                }
+                }*/
 
                 let hash = *hash;
                 *self = hash.into();

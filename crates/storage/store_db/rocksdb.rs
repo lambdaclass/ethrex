@@ -461,7 +461,7 @@ impl Store {
             for item in iterator {
                 let (key, value) =
                     item.map_err(|e| StoreError::Custom(format!("Iterator error: {}", e)))?;
-                if key.len() < 65 {
+                if key.len() < 32 {
                     return Err(StoreError::Custom(format!(
                         "Invalid NodeKey length: {}",
                         key.len()
@@ -470,7 +470,6 @@ impl Store {
                 let nibble_bytes = &key[0..(key.len() - 32)];
                 let nibble = Nibbles::from_bytes(nibble_bytes);
                 let hash = H256::from_slice(&key[(key.len() - 32) ..]);
-                // todo: check if its a value
                 let node = Node::decode(&value)
                     .map_err(|e| StoreError::Custom(format!("RLP decode error: {}", e)))?;
                 if nodes_stack.is_empty() {

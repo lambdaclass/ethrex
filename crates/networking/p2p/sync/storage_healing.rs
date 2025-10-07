@@ -228,7 +228,7 @@ pub async fn heal_storage_trie(
                             )
                             .await
                             .unwrap();*/
-                            if let Node::Leaf(leaf) = &node {
+                            /*if let Node::Leaf(leaf) = &node {
                                 match leaf.compute_hash() {
                                     NodeHash::Hashed(hash) => {
                                         account_nodes.push((
@@ -241,7 +241,7 @@ pub async fn heal_storage_trie(
                                     }
                                     NodeHash::Inline(_) => {}
                                 }
-                            }
+                            }*/
                             match node.compute_hash() {
                                 NodeHash::Hashed(hash) => {
                                     account_nodes.push((

@@ -290,7 +290,7 @@ async fn heal_state_trie(
                         )
                         .await
                         .unwrap();*/
-                        if let Node::Leaf(leaf) = &node {
+                        /*if let Node::Leaf(leaf) = &node {
                             let leaf_hash = leaf.compute_hash();
                             match leaf_hash {
                                 NodeHash::Hashed(hash) => {
@@ -306,7 +306,7 @@ async fn heal_state_trie(
                                     // Inline nodes are not stored in the DB
                                 }
                             }
-                        }
+                        }*/
                         let node_hash = node.compute_hash();
                         match node_hash {
                             NodeHash::Hashed(hash) => {
