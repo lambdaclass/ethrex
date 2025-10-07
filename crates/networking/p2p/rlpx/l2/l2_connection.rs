@@ -380,7 +380,7 @@ async fn process_new_block(
         let block_hash = block.hash();
         let block_number = block.header.number;
         let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
-            RLPxError::InternalError("Failed to take ownership of block".to_string())
+            PeerConnectionError::InternalError("Failed to take ownership of block".to_string())
         })?;
         established
             .blockchain
