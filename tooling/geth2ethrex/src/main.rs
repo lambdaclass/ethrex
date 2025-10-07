@@ -292,7 +292,7 @@ impl GethDB {
     ) -> eyre::Result<Box<dyn TrieDB>> {
         let trie_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
-        GethTrieDBWithNodeBuckets::new_with_prefix(trie_db, bucket_senders)
+        GethTrieDBWithNodeBuckets::new_with_buckets(trie_db, bucket_senders)
     }
 }
 
@@ -335,16 +335,13 @@ struct GethTrieDBWithNodeBuckets {
     bucket_senders: [SyncSender<([u8; 32], Vec<u8>)>; 16],
 }
 impl GethTrieDBWithNodeBuckets {
-    pub fn new_with_prefix(
+    pub fn new_with_buckets(
         db: DBWithThreadMode<SingleThreaded>,
         bucket_senders: [SyncSender<([u8; 32], Vec<u8>)>; 16],
     ) -> eyre::Result<Box<dyn TrieDB>> {
         Ok(Box::new(Self { db, bucket_senders }))
     }
 }
-
-static CODE_COUNTER: AtomicU64 = AtomicU64::new(0);
-static STORE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 impl TrieDB for GethTrieDBWithNodeBuckets {
     fn get(&self, hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
@@ -357,16 +354,8 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         // For now, decode and then encode.
         let node = Node::decode_raw(&value)?;
         let encoded = node.encode_to_vec();
-        if let Node::Leaf(ref leaf) = node {
-            if let Ok(account) = <AccountState as RLPDecode>::decode(&leaf.value) {
-                if account.code_hash != *EMPTY_KECCACK_HASH {
-                    CODE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                }
-                if account.storage_root != *EMPTY_TRIE_HASH {
-                    STORE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        }
+        // TODO: if contention seems to be a problem, buffer some entries here
+        // before sending. Would need a flush at the end and be a bit more code.
         self.bucket_senders[(hash[0] >> 4) as usize]
             .send((hash, encoded.clone()))
             .unwrap();
@@ -377,13 +366,35 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
     }
 }
 
-fn account_bucket_worker(
-    account_bucket_receiver: Receiver<([u8; 32], Vec<u8>)>,
+// Trie handling:
+// - State trie is always computed in parallel. The root is processed first,
+//   as well as its child if it's an extension, then one worker per choice
+//   for the top level branch.
+// - Storage tries are first deduplicated by storage root, so we only need
+//   to iterate each trie once.
+// - Tries with more than ten repetitions are considered small, and we use
+//   only external parallelism for those.
+// - Tries with no repetitions are assumed big, and are processed sequentially
+//   of one another, with internal parallelism like the state trie, and use
+//   separate SSTs.
+// - In the middle, it's medium tries, they have internal parallelism but
+//   share SST files with small tries.
+// - We track big tries in memory, as we need to make sure to insert splits
+//   between SSTs before and after each of them. Other than that, everything
+//   is buffered to disk, and SSTs get split by size target.
+// - SST config should match our DB bottom level, which in turn shouldn't be
+//   far from Geth's.
+// - We need to use ingest behind to force data to the bottom level, as this
+//   is the oldest data our node will have, and we don't want unnecessary
+//   compaction to slow us down later.
+fn big_trie_bucket_worker(
+    bucket_receiver: Receiver<([u8; 32], Vec<u8>)>,
 ) -> eyre::Result<NamedTempFile> {
     // TODO: change return to option internally, empty files can't be added
     // Internally we use extra buckets based on the second nibble to avoid
     // memory use blowing up during sorting in step 2.
     let lvl2_buckets: Vec<_> = (0..16).filter_map(|_| tempfile::tempfile().ok()).collect();
+    let mut entries = 0;
     let mut sst_file = NamedTempFile::new_in("./")?;
     let opts = Options::default();
     let mut sst = SstFileWriter::create(&opts);
@@ -391,23 +402,43 @@ fn account_bucket_worker(
     {
         // Step 1: accumulate all incoming nodes into files.
         let mut writers: Vec<_> = lvl2_buckets.iter().map(BufWriter::new).collect();
-        while let Ok((hash, encoded)) = account_bucket_receiver.recv() {
+        while let Ok((hash, encoded)) = bucket_receiver.recv() {
             let writer = &mut writers[hash[0] as usize & 0xf];
             writer.write_all(&hash)?;
             writer.write_all(&(encoded.len() as u16).to_ne_bytes())?;
             writer.write_all(&encoded)?;
+            entries += 1;
+        }
+        if entries == 0 {
+            return Ok(sst_file); // FIXME: Ok(None)
         }
         writers.iter_mut().try_for_each(BufWriter::flush)?;
     }
     {
         // Step 2: sort the data and write to SST file.
-        let mut entries = 0;
         let mut sort_buffer = Vec::with_capacity(64 << 20);
         let mut meta_buffer = [0u8; 34];
         for mut bucket in lvl2_buckets {
             bucket.seek(SeekFrom::Start(0))?;
             let mut reader = BufReader::new(bucket);
-            // TODO: possibly just mmap and sort the slices
+            // TODO: use two vecs, keep the number of entries.
+            // With this I can do just two allocs here:
+            // 1. Vec for [[u8;32] || offset || len], by N entries;
+            // 2. Vec for file size - vec #1 len bytes.
+            // Then we sort only the descriptors by hash.
+            // We can actually do that for the files to keep memory usage lower,
+            // we can read the data after sorting, when we need it.
+            // We risk too much IO though.
+            // In any case, we could at lest mmap and use or `read_to_end` the
+            // second file.
+            // TODO: I could reuse this for big storage tries, but it would need
+            // at least one of the following changes:
+            // 1. Avoid SST creation, as I don't have all the prefixes for this trie yet;
+            // 2. Receive one prefix and assume big tries don't have duplicates, stats support this approach;
+            // 3. Parameterize the receiver so it can receive the node with its prefix;
+            // 4. Ditto, but with all its prefixes.
+            // It might be sensible to split phase 1 and 2 so we can change phase 2
+            // when needed.
             loop {
                 match reader.read_exact(&mut meta_buffer) {
                     Ok(_) => (),
@@ -447,9 +478,7 @@ fn account_bucket_worker(
             }
             sort_buffer.clear();
         }
-        if entries != 0 {
-            sst.finish()?;
-        }
+        sst.finish()?;
     }
     sst_file.flush()?;
     Ok(sst_file)
@@ -496,7 +525,7 @@ pub fn geth2ethrex(
             .into_iter()
             .map(|r| {
                 s.spawn(|| {
-                    let named = account_bucket_worker(r).unwrap();
+                    let named = big_trie_bucket_worker(r).unwrap();
                     println!(
                         "sst written to: {} ({} bytes)",
                         &named.path().to_string_lossy(),
@@ -505,11 +534,14 @@ pub fn geth2ethrex(
                 })
             })
             .collect();
+        // TODO: refactor into function, will need similar logic for storage
+        // tries and it's noisy to have here.
         let Some(root) = gethdbs[0].get(header.state_root.into())? else {
             return Ok(());
         };
         let top_branch = match Node::decode(&root)? {
             Node::Leaf(_) => {
+                // TODO: extract account data
                 return Ok(());
             }
             Node::Extension(ext) => {
@@ -521,22 +553,30 @@ pub fn geth2ethrex(
             }
             Node::Branch(branch) => branch,
         };
+        let (code_bucket_senders, code_bucket_receivers): (Vec<_>, Vec<_>) =
+            (0..16).map(|_| sync_channel(1_000)).unzip();
+        let code_bucket_senders: [_; 16] = code_bucket_senders.try_into().unwrap();
         gethdbs.into_iter().enumerate().for_each(|(b, db)| {
             let hash = top_branch.choices[b].compute_hash().finalize();
+            let code_bucket_senders = code_bucket_senders.clone();
             s.spawn(move || {
                 let trie = Trie::open(db, hash);
-                let iter = trie.into_iter();
-                let node_count = iter.count();
-                println!("iterated {node_count} nodes");
+                for (path, value) in trie.into_iter().content() {
+                    let hash: [u8; 32] = path.try_into().unwrap();
+                    let account_state = AccountState::decode(&value).unwrap();
+                    // TODO: extract into struct and method.
+                    let code_hash = account_state.code_hash;
+                    if code_hash != *EMPTY_KECCACK_HASH {
+                        code_bucket_senders[code_hash.0[0] as usize >> 4]
+                            .send(code_hash.0)
+                            .unwrap();
+                    }
+                    // TODO: struct and method to handle the storage trie.
+                }
             });
         });
         Ok(())
     })?;
-    println!(
-        "found {} accounts with code and {} with storages",
-        CODE_COUNTER.load(Ordering::Relaxed),
-        STORE_COUNTER.load(Ordering::Relaxed)
-    );
 
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time}");
