@@ -56,9 +56,9 @@ impl LEVM {
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
-                matches!(report.result.clone(), TxResult::Success),
+                matches!(report.result, TxResult::Success),
                 cumulative_gas_used,
-                report.logs.clone(),
+                report.logs,
             );
 
             receipts.push(receipt);
@@ -538,7 +538,7 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: tx.to.clone(),
+            to: tx.to,
             value: tx.value,
             data: tx.input.clone(),
             access_list: tx

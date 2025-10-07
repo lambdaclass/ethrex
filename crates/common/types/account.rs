@@ -27,7 +27,7 @@ pub struct Account {
     pub storage: BTreeMap<H256, U256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Eq)]
 pub struct AccountInfo {
     pub code_hash: H256,
     pub balance: U256,

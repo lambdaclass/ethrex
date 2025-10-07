@@ -9,6 +9,7 @@ use crate::{
     },
     utils::RpcErr,
 };
+use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
@@ -113,7 +114,7 @@ impl RpcHandler for CallRequest {
             context.storage,
             context.blockchain,
         )?;
-        serde_json::to_value(format!("0x{:#x}", result.output()))
+        serde_json::to_value(format!("0x{:#x}", result.output().unwrap_or(&Bytes::new())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

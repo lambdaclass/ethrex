@@ -386,7 +386,7 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let authority_info = self.db.get_account(authority_address)?.info.clone();
+            let authority_info = self.db.get_account(authority_address)?.info;
             let authority_code = self.db.get_code(authority_info.code_hash)?;
             self.substate.add_accessed_address(authority_address);
 

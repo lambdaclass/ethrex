@@ -449,7 +449,7 @@ impl RLPDecode for Transaction {
 }
 
 /// The transaction's kind: call or create.
-#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub enum TxKind {
     Call(#[rkyv(with=crate::rkyv_utils::H160Wrapper)] Address),
     #[default]

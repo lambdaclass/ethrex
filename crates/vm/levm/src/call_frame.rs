@@ -288,9 +288,9 @@ impl CallFrameBackup {
         self.original_accounts_info
             .entry(address)
             .or_insert_with(|| LevmAccount {
-                info: account.info.clone(),
+                info: account.info,
                 storage: BTreeMap::new(),
-                status: account.status.clone(),
+                status: account.status,
             });
 
         Ok(())

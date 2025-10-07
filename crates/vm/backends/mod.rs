@@ -89,7 +89,7 @@ impl Evm {
             tx.tx_type(),
             execution_report.is_success(),
             block_header.gas_limit - *remaining_gas,
-            execution_report.logs.clone(),
+            execution_report.logs,
         );
 
         Ok((receipt, execution_report.gas_used))

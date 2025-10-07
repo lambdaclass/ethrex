@@ -31,10 +31,10 @@ impl ExecutionResult {
             ExecutionResult::Halt { gas_used, .. } => *gas_used,
         }
     }
-    pub fn logs(&self) -> Vec<Log> {
+    pub fn logs(&self) -> Option<&Vec<Log>> {
         match self {
-            ExecutionResult::Success { logs, .. } => logs.clone(),
-            _ => vec![],
+            ExecutionResult::Success { logs, .. } => Some(&logs),
+            _ => None,
         }
     }
     pub fn gas_refunded(&self) -> u64 {
@@ -43,12 +43,11 @@ impl ExecutionResult {
             _ => 0,
         }
     }
-
-    pub fn output(&self) -> Bytes {
+    pub fn output(&self) -> Option<&Bytes> {
         match self {
-            ExecutionResult::Success { output, .. } => output.clone(),
-            ExecutionResult::Revert { output, .. } => output.clone(),
-            ExecutionResult::Halt { .. } => Bytes::new(),
+            ExecutionResult::Success { output, .. } => Some(&output),
+            ExecutionResult::Revert { output, .. } => Some(&output),
+            ExecutionResult::Halt { .. } => None,
         }
     }
 }
