@@ -9,7 +9,7 @@ use std::{
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes, get_item_with_prefix},
+    decode::{RLPDecode, decode_bytes, decode_rlp_item, get_item_with_prefix},
     encode::RLPEncode,
     error::RLPDecodeError,
 };
@@ -223,8 +223,12 @@ impl Node {
 
     /// Decodes the node
     pub fn decode_raw(mut rlp: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut rlp_items = vec![];
+        match decode_rlp_item(rlp)? {
+            (true, payload, _) => rlp = payload,
+            (false, _, _) => return Err(RLPDecodeError::UnexpectedString),
+        }
         // Get encoded fields
+        let mut rlp_items = vec![];
         loop {
             let (item, remaining) = get_item_with_prefix(rlp)?;
             rlp_items.push(item);
