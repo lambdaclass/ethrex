@@ -4,6 +4,9 @@ use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
+// TODO: make this configurable or use safe hash for this
+const COMMIT_THRESHOLD: usize = 10;
+
 #[derive(Debug)]
 struct TrieLayer {
     nodes: HashMap<Vec<u8>, Vec<u8>>,
@@ -12,12 +15,14 @@ struct TrieLayer {
 }
 
 #[derive(Debug, Default)]
-pub struct TrieWrapperInner {
-    counter: usize,
+pub struct TrieLayerCache {
+    /// Monotonically increasing ID for layers, starting at 1.
+    /// TODO: this implementation panics on overflow
+    current_id: usize,
     layers: HashMap<H256, TrieLayer>,
 }
 
-impl TrieWrapperInner {
+impl TrieLayerCache {
     pub fn get(&self, mut state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
         while let Some(layer) = self.layers.get(&state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
@@ -27,17 +32,19 @@ impl TrieWrapperInner {
         }
         None
     }
+
     pub fn get_commitable(&mut self, mut state_root: H256) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
-            if counter > 10 {
+            if counter > COMMIT_THRESHOLD {
                 return Some(state_root);
             }
         }
         None
     }
+
     pub fn put_batch(
         &mut self,
         parent: H256,
@@ -47,11 +54,11 @@ impl TrieWrapperInner {
         self.layers
             .entry(state_root)
             .or_insert_with(|| {
-                self.counter += 1;
+                self.current_id += 1;
                 TrieLayer {
                     nodes: HashMap::new(),
                     parent,
-                    id: self.counter,
+                    id: self.current_id,
                 }
             })
             .nodes
@@ -61,6 +68,7 @@ impl TrieWrapperInner {
                     .map(|(path, node)| (path.as_ref().to_vec(), node)),
             );
     }
+
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut layer = self.layers.remove(&state_root)?;
         // ensure parents are commited
@@ -79,12 +87,14 @@ impl TrieWrapperInner {
 
 pub struct TrieWrapper {
     pub state_root: H256,
-    pub inner: Arc<RwLock<TrieWrapperInner>>,
+    pub inner: Arc<RwLock<TrieLayerCache>>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
 }
 
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
+    // Apply a prefix with an invalid nibble (17) as a separator, to
+    // differentiate between a state trie value and a storage trie root.
     match prefix {
         Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
             .append_new(17)
@@ -98,8 +108,9 @@ impl TrieDB for TrieWrapper {
         let Ok(inner) = self.inner.read() else {
             return false;
         };
-        inner.counter > 100 // heruistic
+        inner.current_id > 100 // heruistic
     }
+
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
         if let Some(value) = self
@@ -112,6 +123,7 @@ impl TrieDB for TrieWrapper {
         }
         self.db.get(key)
     }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
         let new_state_root = match last_pair {

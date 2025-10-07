@@ -1,7 +1,7 @@
 use crate::{
     rlp::AccountCodeHashRLP,
     trie_db::{
-        layering::{TrieWrapper, TrieWrapperInner, apply_prefix},
+        layering::{TrieLayerCache, TrieWrapper, apply_prefix},
         rocksdb_locked::RocksDBLockedTrieDB,
     },
 };
@@ -104,7 +104,7 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 #[derive(Debug)]
 pub struct Store {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    trie_cache: Arc<RwLock<TrieWrapperInner>>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
 }
 
 impl Store {
@@ -395,7 +395,7 @@ impl Store {
         (index as u8).encode_to_vec()
     }
 
-    // Helper method for bulk reads - equivalent to LibMDBX read_bulk
+    // Helper method for bulk reads
     async fn read_bulk_async<K, V, F>(
         &self,
         cf_name: &str,
@@ -840,7 +840,7 @@ impl StoreEngine for Store {
             .await
     }
 
-    // TODO: REVIEW LOGIC AGAINST LIBMDBX
+    // TODO: This function should be removed #4748
     // Check also keys
     async fn add_transaction_locations(
         &self,
@@ -865,7 +865,6 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    // TODO: REVIEW LOGIC AGAINST LIBMDBX
     // Check also keys
     async fn get_transaction_location(
         &self,
@@ -938,7 +937,6 @@ impl StoreEngine for Store {
         self.write_batch_async(batch_ops).await
     }
 
-    // TODO: Check differences with libmdbx
     async fn get_receipt(
         &self,
         block_hash: BlockHash,
@@ -1283,7 +1281,6 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    // TODO: REVIEW LOGIC AGAINST LIBMDBX
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let cf = self.cf_handle(CF_RECEIPTS)?;
         let mut receipts = Vec::new();

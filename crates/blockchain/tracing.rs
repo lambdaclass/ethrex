@@ -121,12 +121,10 @@ impl Blockchain {
 /// We might be missing this state due to using batch execute or other methods while syncing the chain
 /// If we are not able to find a parent block with state after going through the amount of blocks given by `reexec` an error will be returned
 async fn get_missing_state_parents(
-    mut _parent_hash: H256,
-    _store: &Store,
-    _reexec: u32,
+    mut parent_hash: H256,
+    store: &Store,
+    reexec: u32,
 ) -> Result<Vec<Block>, ChainError> {
-    todo!();
-    /*
     let mut missing_state_parents = Vec::new();
     loop {
         if missing_state_parents.len() > reexec as usize {
@@ -137,7 +135,7 @@ async fn get_missing_state_parents(
         let Some(parent_block) = store.get_block_by_hash(parent_hash).await? else {
             return Err(ChainError::Custom("Parent Block not Found".to_string()));
         };
-        if store.contains_state_node(parent_block.header.state_root)? {
+        if store.has_state_root(parent_block.header.state_root)? {
             break;
         }
         parent_hash = parent_block.header.parent_hash;
@@ -145,7 +143,6 @@ async fn get_missing_state_parents(
         missing_state_parents.push(parent_block);
     }
     Ok(missing_state_parents)
-    */
 }
 
 /// Runs the given evm trace operation, aborting if it takes more than the time given by `tiemout`

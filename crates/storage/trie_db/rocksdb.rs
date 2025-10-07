@@ -1,6 +1,6 @@
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
-use rocksdb::{DBWithThreadMode, MultiThreaded, OptimisticTransactionDB};
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
 use crate::trie_db::layering::apply_prefix;

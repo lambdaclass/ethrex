@@ -238,9 +238,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         state_root: H256,
     ) -> Result<Trie, StoreError>;
 
-    /// Obtain a state trie from the given state root
-    /// Doesn't check if the state root is valid
-    /// Used for internal store operations
+    /// Obtain a state trie from the given state root.
+    /// Used for internal store operations.
+    ///
+    /// CAUTION: Doesn't check if the state root is valid.
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
 
     /// Obtain a storage trie from the given address and storage_root

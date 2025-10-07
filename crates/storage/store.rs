@@ -1,7 +1,5 @@
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use crate::{api::StoreEngine, trie_db::layering::apply_prefix};
@@ -45,8 +43,6 @@ pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
@@ -85,12 +81,6 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -1169,6 +1159,16 @@ impl Store {
             .open_locked_storage_trie(account_hash, storage_root, state_root)
     }
 
+    pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
+        let trie = self.engine.open_state_trie(state_root)?;
+        // NOTE: here we hash the root because the trie doesn't check the state root is correct
+        let Some(root) = trie.db().get(Nibbles::default())? else {
+            return Ok(false);
+        };
+        let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash().finalize();
+        Ok(state_root == root_hash)
+    }
+
     /// Sets the hash of the last header downloaded during a snap sync
     pub async fn set_header_download_checkpoint(
         &self,
@@ -1418,12 +1418,6 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_store() {
         test_store_suite(EngineType::InMemory).await;
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[tokio::test]
-    async fn test_libmdbx_store() {
-        test_store_suite(EngineType::Libmdbx).await;
     }
 
     #[cfg(feature = "rocksdb")]

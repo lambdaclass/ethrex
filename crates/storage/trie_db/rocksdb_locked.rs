@@ -1,5 +1,5 @@
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, NodeHash, TrieDB, error::TrieError};
+use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use rocksdb::{DBWithThreadMode, MultiThreaded, OptimisticTransactionDB, SnapshotWithThreadMode};
 use std::sync::Arc;
 

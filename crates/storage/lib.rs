@@ -1,6 +1,6 @@
 mod api;
 
-#[cfg(any(feature = "libmdbx", feature = "rocksdb"))]
+#[cfg(feature = "rocksdb")]
 mod rlp;
 mod store;
 pub mod store_db;

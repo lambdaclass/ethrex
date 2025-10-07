@@ -1,8 +1,9 @@
+use core::fmt;
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU8, AtomicU64, Ordering},
     },
     time::{Duration, SystemTime},
 };
@@ -57,7 +58,7 @@ pub struct Metrics {
     // Common
     pub sync_head_block: AtomicU64,
     pub sync_head_hash: Arc<Mutex<H256>>,
-    pub current_step: Arc<Mutex<String>>,
+    pub current_step: Arc<CurrentStep>,
 
     // Headers
     pub headers_to_download: AtomicU64,
@@ -99,6 +100,89 @@ pub struct Metrics {
     pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     start_time: SystemTime,
+}
+
+#[derive(Debug)]
+pub struct CurrentStep(AtomicU8);
+
+impl CurrentStep {
+    pub fn set(&self, value: CurrentStepValue) {
+        self.0.store(value.into(), Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> CurrentStepValue {
+        self.0.load(Ordering::Relaxed).into()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum CurrentStepValue {
+    None,
+    HealingStorage,
+    HealingState,
+    RequestingBytecodes,
+    RequestingAccountRanges,
+    RequestingStorageRanges,
+    DownloadingHeaders,
+    InsertingStorageRanges,
+    InsertingAccountRanges,
+    InsertingAccountRangesNoDb,
+}
+
+impl From<u8> for CurrentStepValue {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::HealingStorage,
+            2 => Self::HealingState,
+            3 => Self::RequestingBytecodes,
+            4 => Self::RequestingAccountRanges,
+            5 => Self::RequestingStorageRanges,
+            6 => Self::DownloadingHeaders,
+            7 => Self::InsertingStorageRanges,
+            8 => Self::InsertingAccountRanges,
+            9 => Self::InsertingAccountRangesNoDb,
+            _ => Self::None,
+        }
+    }
+}
+
+impl From<CurrentStepValue> for u8 {
+    fn from(value: CurrentStepValue) -> Self {
+        match value {
+            CurrentStepValue::None => 0,
+            CurrentStepValue::HealingStorage => 1,
+            CurrentStepValue::HealingState => 2,
+            CurrentStepValue::RequestingBytecodes => 3,
+            CurrentStepValue::RequestingAccountRanges => 4,
+            CurrentStepValue::RequestingStorageRanges => 5,
+            CurrentStepValue::DownloadingHeaders => 6,
+            CurrentStepValue::InsertingStorageRanges => 7,
+            CurrentStepValue::InsertingAccountRanges => 8,
+            CurrentStepValue::InsertingAccountRangesNoDb => 9,
+        }
+    }
+}
+
+impl fmt::Display for CurrentStepValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CurrentStepValue::None => write!(f, "Unknown"),
+            CurrentStepValue::HealingStorage => write!(f, "Healing Storage"),
+            CurrentStepValue::HealingState => write!(f, "Healing State"),
+            CurrentStepValue::RequestingBytecodes => write!(f, "Requesting Bytecodes"),
+            CurrentStepValue::RequestingAccountRanges => write!(f, "Requesting Account Ranges"),
+            CurrentStepValue::RequestingStorageRanges => write!(f, "Requesting Storage Ranges"),
+            CurrentStepValue::DownloadingHeaders => write!(f, "Downloading Headers"),
+            CurrentStepValue::InsertingStorageRanges => {
+                write!(f, "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m")
+            }
+            CurrentStepValue::InsertingAccountRanges => {
+                write!(f, "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m")
+            }
+            CurrentStepValue::InsertingAccountRangesNoDb => write!(f, "Inserting Account Ranges"),
+        }
+    }
 }
 
 impl Metrics {
@@ -419,6 +503,12 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            RLPxError::PeerTableError(error) => {
+                failures_grouped_by_reason
+                    .entry(format!("InternalError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
         }
     }
 }
@@ -553,7 +643,7 @@ impl Default for Metrics {
             // Common
             sync_head_block: AtomicU64::new(0),
             sync_head_hash: Arc::new(Mutex::new(H256::default())),
-            current_step: Arc::new(Mutex::new("".to_string())),
+            current_step: Arc::new(CurrentStep(AtomicU8::new(0))),
 
             // Headers
             headers_to_download: AtomicU64::new(0),
