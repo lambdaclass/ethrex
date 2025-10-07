@@ -58,7 +58,7 @@ RUN cargo build --release $BUILD_FLAGS
 # --- Final Image ---
 # Copy the ethrex binary into a minimalist image to reduce bloat size.
 # This image must have glibc and libssl
-FROM debian:12-slim
+FROM ubuntu:24.04
 WORKDIR /usr/local/bin
 
 RUN apt-get update && apt-get install -y --no-install-recommends libssl3
