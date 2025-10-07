@@ -20,13 +20,13 @@ pub enum EFTestParseError {
     FailedToParseTestFile(String),
 }
 
-const IGNORED_TESTS: [&str; 11] = [
+const IGNORED_TESTS: &[&str] = &[
     "static_Call50000_sha256.json", // Skip because it takes longer to run than some tests, but not a huge deal.
     "CALLBlake2f_MaxRounds.json",   // Skip because it takes extremely long to run, but passes.
     "ValueOverflow.json",           // Skip because it tries to deserialize number > U256::MAX
     "ValueOverflowParis.json",      // Skip because it tries to deserialize number > U256::MAX
     "loopMul.json",                 // Skip because it takes too long to run
-    "dynamicAccountOverwriteEmpty_Paris.json", // Skipped because the scenario described is extremely unlikely, since it implies doing EXTCODEHASH on an empty account that is then created
+    // "dynamicAccountOverwriteEmpty_Paris.json", // Skipped because the scenario described is extremely unlikely, since it implies doing EXTCODEHASH on an empty account that is then created
     "RevertInCreateInInitCreate2Paris.json", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
     "RevertInCreateInInit_Paris.json", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
     "create2collisionStorageParis.json", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555

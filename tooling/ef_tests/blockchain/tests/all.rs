@@ -10,16 +10,25 @@ const TEST_FOLDER: &str = "vectors/";
 
 // Base skips shared by all runs.
 const SKIPPED_BASE: &[&str] = &[
-    "system_contract_deployment", // We don't want to implement the check being tested, it's unnecessary and impossible in known networks. It checks that withdrawal requests and consolidation requests accounts have code, which is always the case.
-    "HighGasPriceParis", // Gas price higher than u64::MAX; impractical scenario. We don't use 256 bits for gas price for performance reasons, however, it's debatable. See https://github.com/lambdaclass/ethrex/issues/3629
-    "dynamicAccountOverwriteEmpty_Paris", // Scenario is virtually impossible.
-    "create2collisionStorageParis", // Scenario is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
-    "RevertInCreateInInitCreate2Paris", // Scenario is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
-    "test_tx_gas_larger_than_block_gas_limit", // Expected exception mismatch (GasUsedMismatch vs GAS_ALLOWANCE_EXCEEDED).
-    "createBlobhashTx",
-    "RevertInCreateInInit_Paris",
+    // These tests contain accounts without nonce or code but have storage, which is a virtually impossible scenario. That's why we fail, but that's okay.
+    // When creating an account we don't check the storage root but just if it has nonce or code, and that's the right check for real case scenarios.
     "InitCollisionParis",
+    "RevertInCreateInInitCreate2Paris",
+    "create2collisionStorageParis",
+    "dynamicAccountOverwriteEmpty_Paris",
+    "RevertInCreateInInit_Paris",
+    // Skip because they take too long to run, but they pass
+    "static_Call50000_sha256",
+    "CALLBlake2f_MaxRounds",
+    "loopMul",
+    // We don't want to implement the check being tested, it's unnecessary and impossible in known networks. It checks that withdrawal requests and consolidation requests accounts have code, which is always the case, except for this test.
+    "system_contract_deployment",
+    // Gas price higher than u64::MAX; impractical scenario. We don't use 256 bits for gas price for performance reasons, however, it's debatable. See https://github.com/lambdaclass/ethrex/issues/3629
+    "HighGasPriceParis",
+    // Skip because it tries to deserialize number > U256::MAX
     "ValueOverflowParis",
+    // One variant of this test expects RLP Exception and we aren't returning one, see what's happening.
+    "createBlobhashTx",
 ];
 
 // Extra skips added only for prover backends.
