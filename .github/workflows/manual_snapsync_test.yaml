@@ -1,6 +1,9 @@
-name: Sync Ethrex
+name: Snapsync Test
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/manual_snapsync_test.yaml"
   schedule:
     - cron: "0 */2 * * *"
   workflow_dispatch:
