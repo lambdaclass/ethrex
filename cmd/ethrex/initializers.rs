@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
+use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
@@ -15,6 +16,7 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
+    sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -134,10 +136,17 @@ pub async fn init_rpc_api(
     extra_data: String,
 ) {
     init_datadir(&opts.datadir);
+
+    let syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
@@ -433,6 +442,8 @@ pub async fn init_l1(
     if opts.metrics_enabled {
         init_metrics(&opts, tracker.clone());
     }
+
+    raise_fd_limit()?;
 
     if opts.dev {
         #[cfg(feature = "dev")]
