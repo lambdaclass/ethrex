@@ -282,7 +282,6 @@ async fn heal_state_trie(
                 spawned_rt::tasks::block_on(async move {
                     // TODO: replace put batch with the async version
                     let mut encoded_to_write = BTreeMap::new();
-                    let mut ranges_to_delete = Vec::new();
                     for (path, node, previous) in to_write {
                         perform_needed_deletions(
                             &store,
@@ -290,7 +289,6 @@ async fn heal_state_trie(
                             previous,
                             &path,
                             &mut encoded_to_write,
-                            &mut ranges_to_delete,
                         )
                         .await
                         .unwrap();
@@ -307,14 +305,6 @@ async fn heal_state_trie(
                     encoded_to_write.retain(|path, _| path.len() < 32);
                     db.put_batch(encoded_to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
-                    info!(
-                        "Deliting ranges State healing: {:?}",
-                        ranges_to_delete.len()
-                    );
-                    store
-                        .delete_range_batch(ranges_to_delete)
-                        .await
-                        .expect("The range deletions on the store failed");
                     info!("Deleted ranges State healing");
                 })
             });
@@ -392,7 +382,6 @@ async fn perform_needed_deletions(
     previous: Option<Node>,
     node_path: &Nibbles,
     nodes_to_write: &mut BTreeMap<Nibbles, Vec<u8>>,
-    ranges_to_delete: &mut Vec<(Nibbles, Nibbles)>,
 ) -> Result<(), SyncError> {
     // Delete all the parents of this node.
     // Nodes should be in the DB only if their children are also in the DB.

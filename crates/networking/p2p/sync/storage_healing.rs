@@ -214,7 +214,6 @@ pub async fn heal_storage_trie(
             db_joinset.spawn_blocking(|| {
                 spawned_rt::tasks::block_on(async move {
                     let mut encoded_to_write = vec![];
-                    let mut ranges_to_delete = vec![];
                     for (hashed_account, nodes) in to_write {
                         let mut account_nodes = vec![];
                         let mut to_delete = HashSet::new();
@@ -226,7 +225,6 @@ pub async fn heal_storage_trie(
                                 hashed_account,
                                 &path,
                                 &mut to_delete,
-                                &mut ranges_to_delete,
                             )
                             .await
                             .unwrap();
@@ -249,14 +247,6 @@ pub async fn heal_storage_trie(
                         .write_storage_trie_nodes_batch(encoded_to_write)
                         .await
                         .expect("db write failed");
-                    info!(
-                        "Deleting ranges Storage healing: {:?}",
-                        ranges_to_delete.len()
-                    );
-                    store
-                        .delete_range_batch(ranges_to_delete)
-                        .await
-                        .expect("The range deletions on the store failed");
                     info!("Deleted ranges Storage healing");
                 })
             });
@@ -741,7 +731,6 @@ async fn perform_needed_deletions(
     hashed_account: H256,
     node_path: &Nibbles,
     to_delete: &mut HashSet<Nibbles>,
-    ranges_to_delete: &mut Vec<(Nibbles, Nibbles)>,
 ) -> Result<(), SyncError> {
     // Delete all the parents of this node.
     // Nodes should be in the DB only if their children are also in the DB.
