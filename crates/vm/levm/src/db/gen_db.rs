@@ -376,23 +376,6 @@ impl<'a> VM<'a> {
         Ok(value)
     }
 
-    /// Accesses to an account's storage slot and returns the value in it.
-    ///
-    /// Accessed storage slots are stored in the `accessed_storage_slots` set.
-    /// Accessed storage slots take place in some gas cost computation.
-    pub fn access_storage_slot(
-        &mut self,
-        address: Address,
-        key: H256,
-    ) -> Result<(U256, bool), InternalError> {
-        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
-
-        let storage_slot = self.get_storage_value(address, key)?;
-
-        Ok((storage_slot, storage_slot_was_cold))
-    }
-
     /// Gets storage value of an account, caching it if not already cached.
     #[inline(always)]
     pub fn get_storage_value(

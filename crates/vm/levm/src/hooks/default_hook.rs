@@ -214,7 +214,7 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
     let priority_fee_per_gas = vm
         .env
         .gas_price
-        .checked_sub(vm.env.base_fee_per_gas)
+        .checked_sub(vm.env.base_fee_per_gas.into())
         .ok_or(InternalError::Underflow)?;
 
     let coinbase_fee = U256::from(gas_to_pay)
@@ -300,7 +300,7 @@ pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn validate_sufficient_max_fee_per_gas(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
-    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas {
+    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas.into() {
         return Err(TxValidationError::InsufficientMaxFeePerGas);
     }
     Ok(())

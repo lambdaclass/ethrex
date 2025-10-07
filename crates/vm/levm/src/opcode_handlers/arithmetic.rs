@@ -1,295 +1,288 @@
+//! # Arithmetic operations
+//!
+//! Includes the following opcodes:
+//!   - `ADD`
+//!   - `SUB`
+//!   - `MUL`
+//!   - `DIV`
+//!   - `SDIV`
+//!   - `MOD`
+//!   - `SMOD`
+//!   - `ADDMOD`
+//!   - `MULMOD`
+//!   - `EXP`
+//!   - `SIGNEXTEND`
+//!   - `CLZ`
+
 use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
+    opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::{U256, U512};
+use ethrex_common::U256;
+use std::cmp::Ordering;
 
-// Arithmetic Operations (11)
-// Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
+/// Implementation for the `ADD` opcode.
+pub struct OpAddHandler;
+impl OpcodeHandler for OpAddHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
-impl<'a> VM<'a> {
-    // ADD operation
-    pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
-
-        let [augend, addend] = *current_call_frame.stack.pop()?;
-        let sum = augend.overflowing_add(addend).0;
-        current_call_frame.stack.push1(sum)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // SUB operation
-    pub fn op_sub(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
-
-        let [minuend, subtrahend] = *current_call_frame.stack.pop()?;
-        let difference = minuend.overflowing_sub(subtrahend).0;
-        current_call_frame.stack.push1(difference)?;
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        let (res, _) = lhs.overflowing_add(rhs);
+        vm.current_call_frame.stack.push1(res)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // MUL operation
-    pub fn op_mul(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
+/// Implementation for the `SUB` opcode.
+pub struct OpSubHandler;
+impl OpcodeHandler for OpSubHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
 
-        let [multiplicand, multiplier] = *current_call_frame.stack.pop()?;
-        let product = multiplicand.overflowing_mul(multiplier).0;
-        current_call_frame.stack.push1(product)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // DIV operation
-    pub fn op_div(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
-
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
-        let Some(quotient) = dividend.checked_div(divisor) else {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
-        };
-        current_call_frame.stack.push1(quotient)?;
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        let (res, _) = lhs.overflowing_sub(rhs);
+        vm.current_call_frame.stack.push1(res)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // SDIV operation
-    pub fn op_sdiv(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SDIV)?;
+/// Implementation for the `MUL` opcode.
+pub struct OpMulHandler;
+impl OpcodeHandler for OpMulHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
 
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
-        if divisor.is_zero() || dividend.is_zero() {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        let (res, _) = lhs.overflowing_mul(rhs);
+        vm.current_call_frame.stack.push1(res)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `DIV` opcode.
+pub struct OpDivHandler;
+impl OpcodeHandler for OpDivHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
+
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        match lhs.checked_div(rhs) {
+            Some(res) => vm.current_call_frame.stack.push1(res)?,
+            None => vm.current_call_frame.stack.push_zero()?,
         }
 
-        let abs_dividend = abs(dividend);
-        let abs_divisor = abs(divisor);
+        Ok(OpcodeResult::Continue)
+    }
+}
 
-        let quotient = match abs_dividend.checked_div(abs_divisor) {
-            Some(quot) => {
-                let quotient_is_negative = is_negative(dividend) ^ is_negative(divisor);
-                if quotient_is_negative {
-                    negate(quot)
-                } else {
-                    quot
+/// Implementation for the `SDIV` opcode.
+pub struct OpSDivHandler;
+impl OpcodeHandler for OpSDivHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::SDIV)?;
+
+        let [mut lhs, mut rhs] = *vm.current_call_frame.stack.pop()?;
+
+        let mut sign = false;
+        if lhs.bit(255) {
+            lhs = U256::zero().overflowing_sub(lhs).0;
+            sign = !sign;
+        }
+        if rhs.bit(255) {
+            rhs = U256::zero().overflowing_sub(rhs).0;
+            sign = !sign;
+        }
+
+        match lhs.checked_div(rhs) {
+            Some(mut res) => {
+                if sign {
+                    res = U256::zero().overflowing_sub(res).0;
                 }
+
+                vm.current_call_frame.stack.push1(res)?
             }
-            None => U256::zero(),
-        };
-
-        current_call_frame.stack.push1(quotient)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // MOD operation
-    pub fn op_mod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
-
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
-
-        let remainder = dividend.checked_rem(divisor).unwrap_or_default();
-
-        current_call_frame.stack.push1(remainder)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // SMOD operation
-    pub fn op_smod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SMOD)?;
-
-        let [unchecked_dividend, unchecked_divisor] = *current_call_frame.stack.pop()?;
-
-        if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+            None => vm.current_call_frame.stack.push_zero()?,
         }
 
-        let divisor = abs(unchecked_divisor);
-        let dividend = abs(unchecked_dividend);
+        Ok(OpcodeResult::Continue)
+    }
+}
 
-        let unchecked_remainder = match dividend.checked_rem(divisor) {
-            Some(remainder) => remainder,
-            None => {
-                current_call_frame.stack.push_zero()?;
-                return Ok(OpcodeResult::Continue);
+/// Implementation for the `DIV` opcode.
+pub struct OpModHandler;
+impl OpcodeHandler for OpModHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
+
+        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        match lhs.checked_rem(rhs) {
+            Some(res) => vm.current_call_frame.stack.push1(res)?,
+            None => vm.current_call_frame.stack.push_zero()?,
+        }
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SDIV` opcode.
+pub struct OpSModHandler;
+impl OpcodeHandler for OpSModHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::SMOD)?;
+
+        let [mut lhs, mut rhs] = *vm.current_call_frame.stack.pop()?;
+
+        let sign = rhs.bit(255);
+        if lhs.bit(255) {
+            lhs = U256::zero().overflowing_sub(lhs).0;
+        }
+        if sign {
+            rhs = U256::zero().overflowing_sub(rhs).0;
+        }
+
+        match lhs.checked_rem(rhs) {
+            Some(mut res) => {
+                if sign {
+                    res = U256::zero().overflowing_sub(res).0;
+                }
+
+                vm.current_call_frame.stack.push1(res)?
             }
-        };
+            None => vm.current_call_frame.stack.push_zero()?,
+        }
 
-        let remainder = if is_negative(unchecked_dividend) {
-            negate(unchecked_remainder)
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `ADDMOD` opcode.
+pub struct OpAddModHandler;
+impl OpcodeHandler for OpAddModHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::ADDMOD)?;
+
+        let [lhs, rhs, r#mod] = *vm.current_call_frame.stack.pop()?;
+        if r#mod.is_zero() {
+            vm.current_call_frame.stack.push_zero()?;
         } else {
-            unchecked_remainder
-        };
+            let (mut res, carry) = lhs.overflowing_add(rhs);
+            if carry {
+                res = res.overflowing_add(U256::one()).0;
+            }
 
-        current_call_frame.stack.push1(remainder)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // ADDMOD operation
-    pub fn op_addmod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ADDMOD)?;
-
-        let [augend, addend, modulus] = *current_call_frame.stack.pop()?;
-
-        if modulus.is_zero() {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
-        }
-
-        let new_augend: U512 = augend.into();
-        let new_addend: U512 = addend.into();
-
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "both values come from a u256, so the product can fit in a U512"
-        )]
-        let sum = new_augend + new_addend;
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "can't trap because non-zero modulus"
-        )]
-        let sum_mod = sum % modulus;
-
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let sum_mod: U256 = sum_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
-
-        current_call_frame.stack.push1(sum_mod)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // MULMOD operation
-    pub fn op_mulmod(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MULMOD)?;
-
-        let [multiplicand, multiplier, modulus] = *current_call_frame.stack.pop()?;
-
-        if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
-        }
-
-        let multiplicand: U512 = multiplicand.into();
-        let multiplier: U512 = multiplier.into();
-
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "both values come from a u256, so the product can fit in a U512"
-        )]
-        let product = multiplicand * multiplier;
-        #[allow(clippy::arithmetic_side_effects, reason = "can't overflow")]
-        let product_mod = product % modulus;
-
-        #[allow(clippy::expect_used, reason = "can't overflow")]
-        let product_mod: U256 = product_mod
-            .try_into()
-            .expect("can't fail because we applied % mod where mod is a U256 value");
-
-        current_call_frame.stack.push1(product_mod)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // EXP operation
-    pub fn op_exp(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [base, exponent] = *current_call_frame.stack.pop()?;
-
-        let gas_cost = gas_cost::exp(exponent)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost)?;
-
-        let power = base.overflowing_pow(exponent).0;
-        current_call_frame.stack.push1(power)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // SIGNEXTEND operation
-    pub fn op_signextend(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::SIGNEXTEND)?;
-
-        let [byte_size_minus_one, value_to_extend] = *current_call_frame.stack.pop()?;
-
-        if byte_size_minus_one > U256::from(31) {
-            current_call_frame.stack.push1(value_to_extend)?;
-            return Ok(OpcodeResult::Continue);
-        }
-
-        #[allow(
-            clippy::arithmetic_side_effects,
-            reason = "Since byte_size_minus_one ≤ 31, overflow is impossible"
-        )]
-        let sign_bit_index = byte_size_minus_one * 8 + 7;
-
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "sign_bit_index max value is 31 * 8 + 7 = 255, which can't overflow."
-        )]
-        {
-            let sign_bit = (value_to_extend >> sign_bit_index) & U256::one();
-            let mask = (U256::one() << sign_bit_index) - U256::one();
-
-            let result = if sign_bit.is_zero() {
-                value_to_extend & mask
-            } else {
-                value_to_extend | !mask
+            res = match res.cmp(&r#mod) {
+                Ordering::Less => res,
+                Ordering::Equal => U256::zero(),
+                Ordering::Greater => res % r#mod,
             };
 
-            current_call_frame.stack.push1(result)?;
-
-            Ok(OpcodeResult::Continue)
+            vm.current_call_frame.stack.push1(res)?;
         }
-    }
-
-    pub fn op_clz(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::CLZ)?;
-
-        let value = self.current_call_frame.stack.pop1()?;
-
-        self.current_call_frame
-            .stack
-            .push1(U256::from(value.leading_zeros()))?;
 
         Ok(OpcodeResult::Continue)
     }
 }
 
-/// Shifts the value to the right by 255 bits and checks the most significant bit is a 1
-fn is_negative(value: U256) -> bool {
-    value.bit(255)
+/// Implementation for the `MULMOD` opcode.
+pub struct OpMulModHandler;
+impl OpcodeHandler for OpMulModHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::MULMOD)?;
+
+        let [lhs, rhs, r#mod] = *vm.current_call_frame.stack.pop()?;
+        if lhs.is_zero() || rhs.is_zero() || r#mod.is_zero() {
+            vm.current_call_frame.stack.push_zero()?;
+        } else {
+            let res = lhs.full_mul(rhs);
+
+            let r#mod = r#mod.into();
+            #[expect(clippy::unwrap_used, reason = "unreachable")]
+            let res = match res.cmp(&r#mod) {
+                Ordering::Less => res.try_into().unwrap(),
+                Ordering::Equal => U256::zero(),
+                Ordering::Greater => (res % r#mod).try_into().unwrap(),
+            };
+
+            vm.current_call_frame.stack.push1(res)?;
+        }
+
+        Ok(OpcodeResult::Continue)
+    }
 }
 
-/// Negates a number in two's complement
-fn negate(value: U256) -> U256 {
-    let (dividend, _overflowed) = (!value).overflowing_add(U256::one());
-    dividend
+/// Implementation for the `EXP` opcode.
+pub struct OpExpHandler;
+impl OpcodeHandler for OpExpHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [base, exp] = *vm.current_call_frame.stack.pop()?;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::exp(exp)?)?;
+
+        let (res, _) = base.overflowing_pow(exp);
+        vm.current_call_frame.stack.push1(res)?;
+
+        Ok(OpcodeResult::Continue)
+    }
 }
 
-fn abs(value: U256) -> U256 {
-    if is_negative(value) {
-        negate(value)
-    } else {
-        value
+/// Implementation for the `SIGNEXTEND` opcode.
+pub struct OpSignExtendHandler;
+impl OpcodeHandler for OpSignExtendHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::SIGNEXTEND)?;
+
+        let [index, mut value] = *vm.current_call_frame.stack.pop()?;
+        vm.current_call_frame
+            .stack
+            .push1(match usize::try_from(index) {
+                Ok(x) if x < 32 => {
+                    if value.bit(8 * x + 7) {
+                        value |= U256::MAX << 8 * (x + 1);
+                    }
+
+                    value
+                }
+                _ => value,
+            })?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `CLZ` opcode.
+pub struct OpClzHandler;
+impl OpcodeHandler for OpClzHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::CLZ)?;
+
+        let value = vm.current_call_frame.stack.pop1()?;
+        vm.current_call_frame
+            .stack
+            .push1(value.leading_zeros().into())?;
+
+        Ok(OpcodeResult::Continue)
     }
 }

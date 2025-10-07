@@ -1,152 +1,331 @@
+//! # Control flow and memory operations
+//!
+//! Includes the following opcodes:
+//!   - `POP`
+//!   - `GAS`
+//!   - `PC`
+//!   - `MLOAD`
+//!   - `MSTORE`
+//!   - `MSTORE8`
+//!   - `MCOPY`
+//!   - `MSIZE`
+//!   - `TLOAD`
+//!   - `TSTORE`
+//!   - `SLOAD`
+//!   - `SSTORE`
+//!   - `JUMPDEST`
+//!   - `JUMP`
+//!   - `JUMPI`
+
+use std::{mem, slice};
+
 use crate::{
-    call_frame::CallFrame,
-    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
+    constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::calculate_memory_size,
+    opcode_handlers::OpcodeHandler,
     opcodes::Opcode,
-    utils::u256_to_usize,
+    utils::{size_offset_to_usize, u256_to_usize},
     vm::VM,
 };
-use ethrex_common::{
-    U256,
-    utils::{u256_to_big_endian, u256_to_h256},
-};
+use ethrex_common::{H256, U256, utils::u256_to_h256};
 
-// Stack, Memory, Storage and Flow Operations (15)
-// Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
+/// Implementation for the `POP` opcode.
+pub struct OpPopHandler;
+impl OpcodeHandler for OpPopHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::POP)?;
 
-pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
-
-impl<'a> VM<'a> {
-    // POP operation
-    pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::POP)?;
-        current_call_frame.stack.pop1()?;
-        Ok(OpcodeResult::Continue)
-    }
-
-    // TLOAD operation
-    pub fn op_tload(&mut self) -> Result<OpcodeResult, VMError> {
-        let key = self.current_call_frame.stack.pop1()?;
-        let to = self.current_call_frame.to;
-        let value = self.substate.get_transient(&to, &key);
-
-        let current_call_frame = &mut self.current_call_frame;
-
-        current_call_frame.increase_consumed_gas(gas_cost::TLOAD)?;
-
-        current_call_frame.stack.push1(value)?;
-        Ok(OpcodeResult::Continue)
-    }
-
-    // TSTORE operation
-    pub fn op_tstore(&mut self) -> Result<OpcodeResult, VMError> {
-        let (key, value, to) = {
-            let current_call_frame = &mut self.current_call_frame;
-
-            current_call_frame.increase_consumed_gas(gas_cost::TSTORE)?;
-
-            if current_call_frame.is_static {
-                return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
-            }
-
-            let [key, value] = *current_call_frame.stack.pop()?;
-            (key, value, current_call_frame.to)
-        };
-        self.substate.set_transient(&to, &key, value);
+        vm.current_call_frame.stack.pop1()?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // MLOAD operation
-    pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
+/// Implementation for the `GAS` opcode.
+pub struct OpGasHandler;
+impl OpcodeHandler for OpGasHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
 
-        let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::mload(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
-
-        current_call_frame
+        vm.current_call_frame
             .stack
-            .push1(current_call_frame.memory.load_word(offset)?)?;
+            .push1(vm.current_call_frame.gas_remaining.into())?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // MSTORE operation
-    pub fn op_mstore(&mut self) -> Result<OpcodeResult, VMError> {
-        let [offset, value] = *self.current_call_frame.stack.pop()?;
+/// Implementation for the `PC` opcode.
+pub struct OpPcHandler;
+impl OpcodeHandler for OpPcHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::PC)?;
 
-        // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
-        if self.debug_mode.enabled && self.debug_mode.handle_debug(offset, value)? {
+        // Note: Since the PC has been preincremented, subtracting 1 from it to get the operation's
+        //   offset will never cause an underflow condition.
+        vm.current_call_frame
+            .stack
+            .push1(vm.current_call_frame.pc.wrapping_sub(1).into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `MLOAD` opcode.
+pub struct OpMLoadHandler;
+impl OpcodeHandler for OpMLoadHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let offset = u256_to_usize(vm.current_call_frame.stack.pop1()?)?;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::mload(
+                calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?,
+                vm.current_call_frame.memory.len(),
+            )?)?;
+
+        vm.current_call_frame
+            .stack
+            .push1(vm.current_call_frame.memory.load_word(offset)?)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `MSTORE` opcode.
+pub struct OpMStoreHandler;
+impl OpcodeHandler for OpMStoreHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [offset, value] = *vm.current_call_frame.stack.pop()?;
+
+        // Handle debug text printing for solidity contracts that enable it.
+        if vm.debug_mode.enabled && vm.debug_mode.handle_debug(offset, value)? {
             return Ok(OpcodeResult::Continue);
         }
 
         let offset = u256_to_usize(offset)?;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::mstore(
+                calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?,
+                vm.current_call_frame.memory.len(),
+            )?)?;
 
-        let current_call_frame = &mut self.current_call_frame;
-
-        let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::mstore(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
-
-        current_call_frame.memory.store_word(offset, value)?;
+        vm.current_call_frame.memory.store_word(offset, value)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // MSTORE8 operation
-    pub fn op_mstore8(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
+/// Implementation for the `MSTORE8` opcode.
+pub struct OpMStore8Handler;
+impl OpcodeHandler for OpMStore8Handler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [offset, value] = *vm.current_call_frame.stack.pop()?;
+        let offset = u256_to_usize(offset)?;
+        let value = value.byte(0);
 
-        let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::mstore8(
+                calculate_memory_size(offset, size_of::<u8>())?,
+                vm.current_call_frame.memory.len(),
+            )?)?;
 
-        let new_memory_size = calculate_memory_size(offset, 1)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::mstore8(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
-
-        let value = current_call_frame.stack.pop1()?;
-
-        current_call_frame
+        vm.current_call_frame
             .memory
-            .store_data(offset, &u256_to_big_endian(value)[WORD_SIZE - 1..WORD_SIZE])?;
+            .store_data(offset, slice::from_ref(&value))?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // SLOAD operation
-    pub fn op_sload(&mut self) -> Result<OpcodeResult, VMError> {
-        let (storage_slot_key, address) = {
-            let current_call_frame = &mut self.current_call_frame;
-            let storage_slot_key = current_call_frame.stack.pop1()?;
-            let address = current_call_frame.to;
-            (storage_slot_key, address)
+/// Implementation for the `MCOPY` opcode.
+pub struct OpMCopyHandler;
+impl OpcodeHandler for OpMCopyHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
+        let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
+        let src_offset = u256_to_usize(src_offset).unwrap_or(usize::MAX);
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::mcopy(
+                calculate_memory_size(dst_offset, len)?,
+                vm.current_call_frame.memory.len(),
+                len,
+            )?)?;
+
+        vm.current_call_frame
+            .memory
+            .copy_within(src_offset, dst_offset, len)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `MSIZE` opcode.
+pub struct OpMSizeHandler;
+impl OpcodeHandler for OpMSizeHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::MSIZE)?;
+
+        vm.current_call_frame
+            .stack
+            .push1(vm.current_call_frame.memory.len().into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `TLOAD` opcode.
+pub struct OpTLoadHandler;
+impl OpcodeHandler for OpTLoadHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::TLOAD)?;
+
+        let key = vm.current_call_frame.stack.pop1()?;
+        vm.current_call_frame
+            .stack
+            .push1(vm.substate.get_transient(&vm.current_call_frame.to, &key))?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `TSTORE` opcode.
+pub struct OpTStoreHandler;
+impl OpcodeHandler for OpTStoreHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        if vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::TSTORE)?;
+
+        let [key, value] = *vm.current_call_frame.stack.pop()?;
+        vm.substate
+            .set_transient(&vm.current_call_frame.to, &key, value);
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SLOAD` opcode.
+pub struct OpSLoadHandler;
+impl OpcodeHandler for OpSLoadHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let key = {
+            let key = vm.current_call_frame.stack.pop1()?;
+            unsafe { mem::transmute::<U256, H256>(key) }
         };
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::sload(
+                vm.substate.add_accessed_slot(vm.current_call_frame.to, key),
+            )?)?;
 
-        let storage_slot_key = u256_to_h256(storage_slot_key);
+        let value = vm.get_storage_value(vm.current_call_frame.to, key)?;
+        vm.current_call_frame.stack.push1(value)?;
 
-        let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
-
-        let current_call_frame = &mut self.current_call_frame;
-
-        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
-
-        current_call_frame.stack.push1(value)?;
         Ok(OpcodeResult::Continue)
     }
+}
 
+/// Implementation for the `SSTORE` opcode.
+pub struct OpSStoreHandler;
+impl OpcodeHandler for OpSStoreHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        if vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+
+        // EIP-2200
+        if vm.current_call_frame.gas_remaining <= SSTORE_STIPEND {
+            return Err(ExceptionalHalt::OutOfGas.into());
+        }
+
+        // vm.current_call_frame
+        //     .increase_consumed_gas(gas_cost::sstore(
+        //         original_value,
+        //         current_value,
+        //         new_value,
+        //         storage_slot_was_cold,
+        //     )?);
+
+        todo!()
+    }
+}
+
+/// Implementation for the `JUMPDEST` opcode.
+pub struct OpJumpDestHandler;
+impl OpcodeHandler for OpJumpDestHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMPDEST)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `JUMP` opcode.
+pub struct OpJumpHandler;
+impl OpcodeHandler for OpJumpHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMP)?;
+
+        let target = vm.current_call_frame.stack.pop1()?;
+        jump(vm, target.try_into().unwrap_or(usize::MAX))?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `JUMPI` opcode.
+pub struct OpJumpIHandler;
+impl OpcodeHandler for OpJumpIHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMPI)?;
+
+        let [target, condition] = *vm.current_call_frame.stack.pop()?;
+        if !condition.is_zero() {
+            jump(vm, target.try_into().unwrap_or(usize::MAX))?;
+        }
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
+    // Check target address validity.
+    //   - Target bytecode has to be a JUMPDEST.
+    //   - Target address must not be blacklisted (aka. the JUMPDEST must not be part of a literal).
+    if vm
+        .current_call_frame
+        .bytecode
+        .get(target)
+        .is_some_and(|&value| {
+            value == Opcode::JUMPDEST as u8
+                && !vm
+                    .current_call_frame
+                    .jump_target_filter
+                    .is_blacklisted(target)
+        })
+    {
+        // Update PC and skip the JUMPDEST instruction.
+        vm.current_call_frame.pc = target.wrapping_add(1);
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMPDEST)?;
+
+        Ok(())
+    } else {
+        // Target address is invalid.
+        Err(ExceptionalHalt::InvalidJump.into())
+    }
+}
+
+impl<'a> VM<'a> {
     // SSTORE operation
     pub fn op_sstore(&mut self) -> Result<OpcodeResult, VMError> {
         if self.current_call_frame.is_static {
@@ -224,134 +403,6 @@ impl<'a> VM<'a> {
         if new_storage_slot_value != current_value {
             self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
         }
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // MSIZE operation
-    pub fn op_msize(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
-        current_call_frame
-            .stack
-            .push1(current_call_frame.memory.len().into())?;
-        Ok(OpcodeResult::Continue)
-    }
-
-    // GAS operation
-    pub fn op_gas(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
-
-        let remaining_gas = current_call_frame.gas_remaining;
-        // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push1(remaining_gas.into())?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // MCOPY operation
-    pub fn op_mcopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
-        let size: usize = u256_to_usize(size)?;
-
-        let (dest_offset, src_offset) = if size == 0 {
-            (0, 0)
-        } else {
-            (u256_to_usize(dest_offset)?, u256_to_usize(src_offset)?)
-        };
-
-        let new_memory_size = calculate_memory_size(dest_offset.max(src_offset), size)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::mcopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
-
-        current_call_frame
-            .memory
-            .copy_within(src_offset, dest_offset, size)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // JUMP operation
-    pub fn op_jump(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
-
-        let jump_address = current_call_frame.stack.pop1()?;
-        Self::jump(current_call_frame, jump_address)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    /// Check if the jump destination is valid by:
-    ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
-    ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
-    ///     constant associated with a push instruction.
-    fn target_address_is_valid(call_frame: &mut CallFrame, jump_address: usize) -> bool {
-        #[expect(clippy::as_conversions)]
-        call_frame.bytecode.get(jump_address).is_some_and(|value| {
-            // It's a constant, therefore the conversion cannot fail.
-            *value == Opcode::JUMPDEST as u8
-                && !call_frame.jump_target_filter.is_blacklisted(jump_address)
-        })
-    }
-
-    /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
-    /// function.
-    /// This function will change the PC for the specified call frame
-    /// to be equal to the specified address. If the address is not a
-    /// valid JUMPDEST, it will return an error
-    pub fn jump(call_frame: &mut CallFrame, jump_address: U256) -> Result<(), VMError> {
-        let jump_address_usize = jump_address
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
-        #[expect(clippy::arithmetic_side_effects)]
-        if Self::target_address_is_valid(call_frame, jump_address_usize) {
-            call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
-            call_frame.pc = jump_address_usize + 1;
-            Ok(())
-        } else {
-            Err(ExceptionalHalt::InvalidJump.into())
-        }
-    }
-
-    // JUMPI operation
-    pub fn op_jumpi(&mut self) -> Result<OpcodeResult, VMError> {
-        let [jump_address, condition] = *self.current_call_frame.stack.pop()?;
-
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::JUMPI)?;
-
-        if !condition.is_zero() {
-            // Move the PC but don't increment it afterwards
-            Self::jump(&mut self.current_call_frame, jump_address)?;
-        }
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // JUMPDEST operation
-    pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::JUMPDEST)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // PC operation
-    pub fn op_pc(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::PC)?;
-
-        current_call_frame
-            .stack
-            .push1(U256::from(current_call_frame.pc.wrapping_sub(1)))?;
 
         Ok(OpcodeResult::Continue)
     }

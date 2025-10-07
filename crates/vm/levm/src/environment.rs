@@ -20,17 +20,17 @@ pub struct Environment {
     /// Gas limit of the Transaction
     pub gas_limit: u64,
     pub config: EVMConfig,
-    pub block_number: U256,
+    pub block_number: u64,
     /// Coinbase is the block's beneficiary - the address that receives the block rewards and fees.
     pub coinbase: Address,
-    pub timestamp: U256,
+    pub timestamp: u64,
     pub prev_randao: Option<H256>,
     pub difficulty: U256,
-    pub chain_id: U256,
-    pub base_fee_per_gas: U256,
+    pub chain_id: u64,
+    pub base_fee_per_gas: u64,
     pub gas_price: U256, // Effective gas price
-    pub block_excess_blob_gas: Option<U256>,
-    pub block_blob_gas_used: Option<U256>,
+    pub block_excess_blob_gas: Option<u64>,
+    pub block_blob_gas_used: Option<u64>,
     pub tx_blob_hashes: Vec<H256>,
     pub tx_max_priority_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_gas: Option<U256>,

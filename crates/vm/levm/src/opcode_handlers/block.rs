@@ -1,175 +1,225 @@
+//! # Block operations
+//!
+//! Includes the following opcodes:
+//!   - `BLOCKHASH`
+//!   - `COINBASE`
+//!   - `TIMESTAMP`
+//!   - `NUMBER`
+//!   - `PREVRANDAO`
+//!   - `GASLIMIT`
+//!   - `CHAINID`
+//!   - `SELFBALANCE`
+//!   - `BASEFEE`
+//!   - `BLOBHASH`
+//!   - `BLOBBASEFEE`
+
+use std::mem;
+
 use crate::{
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
-    errors::{ExceptionalHalt, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
+    opcode_handlers::OpcodeHandler,
     utils::*,
     vm::VM,
 };
-use ethrex_common::utils::u256_from_big_endian_const;
+use ethrex_common::U256;
 
-// Block Information (11)
-// Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
+/// Implementation for the `BLOCKHASH` opcode.
+pub struct OpBlockHashHandler;
+impl OpcodeHandler for OpBlockHashHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::BLOCKHASH)?;
 
-impl<'a> VM<'a> {
-    // BLOCKHASH operation
-    pub fn op_blockhash(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_block = self.env.block_number;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::BLOCKHASH)?;
-
-        let block_number = current_call_frame.stack.pop1()?;
-
-        // If the block number is not valid, return zero
-        if block_number < current_block.saturating_sub(LAST_AVAILABLE_BLOCK_LIMIT)
-            || block_number >= current_block
+        // Some(_) if
+        //   - is u64
+        //   - current_number - x < LAST_AVAILABLE_BLOCK_LIMIT
+        if let Some(block_number) = u64::try_from(vm.current_call_frame.stack.pop1()?)
+            .ok()
+            .take_if(|&mut block_number| {
+                vm.env
+                    .block_number
+                    .checked_sub(block_number)
+                    .is_some_and(|delta| delta <= LAST_AVAILABLE_BLOCK_LIMIT)
+            })
         {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+            #[expect(unsafe_code, reason = "safe")]
+            vm.current_call_frame.stack.push1(unsafe {
+                let mut bytes = vm.db.store.get_block_hash(block_number)?.0;
+                bytes.reverse();
+                U256(mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes))
+            })?;
+        } else {
+            vm.current_call_frame.stack.push_zero()?;
         }
 
-        let block_number: u64 = block_number
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        Ok(OpcodeResult::Continue)
+    }
+}
 
-        let block_hash = self.db.store.get_block_hash(block_number)?;
-        self.current_call_frame
+/// Implementation for the `COINBASE` opcode.
+pub struct OpCoinbaseHandler;
+impl OpcodeHandler for OpCoinbaseHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::COINBASE)?;
+
+        vm.current_call_frame
             .stack
-            .push1(u256_from_big_endian_const(block_hash.to_fixed_bytes()))?;
+            .push1(address_to_word(vm.env.coinbase))?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // COINBASE operation
-    pub fn op_coinbase(&mut self) -> Result<OpcodeResult, VMError> {
-        let coinbase = self.env.coinbase;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::COINBASE)?;
+/// Implementation for the `TIMESTAMP` opcode.
+pub struct OpTimestampHandler;
+impl OpcodeHandler for OpTimestampHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::TIMESTAMP)?;
 
-        current_call_frame.stack.push1(address_to_word(coinbase))?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // TIMESTAMP operation
-    pub fn op_timestamp(&mut self) -> Result<OpcodeResult, VMError> {
-        let timestamp = self.env.timestamp;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::TIMESTAMP)?;
-
-        current_call_frame.stack.push1(timestamp)?;
+        vm.current_call_frame.stack.push1(vm.env.timestamp.into())?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // NUMBER operation
-    pub fn op_number(&mut self) -> Result<OpcodeResult, VMError> {
-        let block_number = self.env.block_number;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::NUMBER)?;
+/// Implementation for the `NUMBER` opcode.
+pub struct OpNumberHandler;
+impl OpcodeHandler for OpNumberHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::NUMBER)?;
 
-        current_call_frame.stack.push1(block_number)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // PREVRANDAO operation
-    pub fn op_prevrandao(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-4399
-        // After Paris the prev randao is the prev_randao (or current_random) field
-        let randao =
-            u256_from_big_endian_const(self.env.prev_randao.unwrap_or_default().to_fixed_bytes());
-
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
-        current_call_frame.stack.push1(randao)?;
+        vm.current_call_frame
+            .stack
+            .push1(vm.env.block_number.into())?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // GASLIMIT operation
-    pub fn op_gaslimit(&mut self) -> Result<OpcodeResult, VMError> {
-        let block_gas_limit = self.env.block_gas_limit;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
+/// Implementation for the `PREVRANDAO` opcode.
+pub struct OpPrevRandaoHandler;
+impl OpcodeHandler for OpPrevRandaoHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::PREVRANDAO)?;
 
-        current_call_frame.stack.push1(block_gas_limit.into())?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // CHAINID operation
-    pub fn op_chainid(&mut self) -> Result<OpcodeResult, VMError> {
-        let chain_id = self.env.chain_id;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
-
-        current_call_frame.stack.push1(chain_id)?;
+        // After Paris, `PREVRANDAO` is the prev_randao (or current_random) field.
+        // Source: https://eips.ethereum.org/EIPS/eip-4399
+        #[expect(unsafe_code, reason = "safe")]
+        vm.current_call_frame.stack.push1(U256(unsafe {
+            let mut bytes = vm.env.prev_randao.unwrap_or_default().0;
+            bytes.reverse();
+            mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
+        }))?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // SELFBALANCE operation
-    pub fn op_selfbalance(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
+/// Implementation for the `GASLIMIT` opcode.
+pub struct OpGasLimitHandler;
+impl OpcodeHandler for OpGasLimitHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::GASLIMIT)?;
+
+        vm.current_call_frame
+            .stack
+            .push1(vm.env.block_gas_limit.into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `CHAINID` opcode.
+pub struct OpChainIdHandler;
+impl OpcodeHandler for OpChainIdHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::CHAINID)?;
+
+        vm.current_call_frame.stack.push1(vm.env.chain_id.into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SELFBALANCE` opcode.
+pub struct OpSelfBalanceHandler;
+impl OpcodeHandler for OpSelfBalanceHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = self
-            .db
-            .get_account(self.current_call_frame.to)?
-            .info
-            .balance;
+        vm.current_call_frame
+            .stack
+            .push1(vm.db.get_account(vm.current_call_frame.to)?.info.balance)?;
 
-        self.current_call_frame.stack.push1(balance)?;
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // BASEFEE operation
-    pub fn op_basefee(&mut self) -> Result<OpcodeResult, VMError> {
+/// Implementation for the `BASEFEE` opcode.
+pub struct OpBaseFeeHandler;
+impl OpcodeHandler for OpBaseFeeHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::BASEFEE)?;
+
         // https://eips.ethereum.org/EIPS/eip-3198
-        let base_fee_per_gas = self.env.base_fee_per_gas;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
-
-        current_call_frame.stack.push1(base_fee_per_gas)?;
+        vm.current_call_frame
+            .stack
+            .push1(vm.env.base_fee_per_gas.into())?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // BLOBHASH operation
-    /// Currently not tested
-    pub fn op_blobhash(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
+/// Implementation for the `BLOBHASH` opcode.
+pub struct OpBlobHashHandler;
+impl OpcodeHandler for OpBlobHashHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
-        let index = self.current_call_frame.stack.pop1()?;
-        let blob_hashes = &self.env.tx_blob_hashes;
 
-        let index = match u256_to_usize(index) {
-            Ok(index) if index < blob_hashes.len() => index,
-            _ => {
-                self.current_call_frame.stack.push_zero()?;
-                return Ok(OpcodeResult::Continue);
+        match usize::try_from(vm.current_call_frame.stack.pop1()?)
+            .ok()
+            .and_then(|index| vm.env.tx_blob_hashes.get(index))
+        {
+            Some(hash) =>
+            {
+                #[expect(unsafe_code, reason = "safe")]
+                vm.current_call_frame.stack.push1(U256(unsafe {
+                    let mut bytes = hash.0;
+                    bytes.reverse();
+                    mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
+                }))?
             }
-        };
-
-        //This should never fail because we check if the index fits above
-        #[expect(unsafe_code, reason = "bounds checked beforehand already")]
-        let blob_hash = unsafe { blob_hashes.get_unchecked(index) };
-        let hash = u256_from_big_endian_const(blob_hash.to_fixed_bytes());
-
-        self.current_call_frame.stack.push1(hash)?;
+            None => vm.current_call_frame.stack.push_zero()?,
+        }
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // BLOBBASEFEE operation
-    pub fn op_blobbasefee(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
+/// Implementation for the `BLOBBASEFEE` opcode.
+pub struct OpBlobBaseFeeHandler;
+impl OpcodeHandler for OpBlobBaseFeeHandler {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
-        let blob_base_fee =
-            get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?;
-
-        self.current_call_frame.stack.push1(blob_base_fee)?;
+        vm.current_call_frame
+            .stack
+            .push1(get_base_fee_per_blob_gas(
+                vm.env.block_excess_blob_gas,
+                &vm.env.config,
+            )?)?;
 
         Ok(OpcodeResult::Continue)
     }

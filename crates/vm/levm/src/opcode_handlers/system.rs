@@ -2,16 +2,14 @@ use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas},
+    gas_cost,
     memory::calculate_memory_size,
     precompiles,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::tracing::CallType::{
-    self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
-};
+use ethrex_common::tracing::CallType;
 use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
 
 // System Operations (10)
@@ -103,7 +101,8 @@ impl<'a> VM<'a> {
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
-        self.tracer.enter(CALL, from, to, value, gas_limit, &data);
+        self.tracer
+            .enter(CallType::CALL, from, to, value, gas_limit, &data);
 
         self.generic_call(
             gas_limit,
@@ -200,8 +199,14 @@ impl<'a> VM<'a> {
         let is_static = callframe.is_static;
         let data = self.get_calldata(args_offset, args_size)?;
 
-        self.tracer
-            .enter(CALLCODE, from, code_address, value, gas_limit, &data);
+        self.tracer.enter(
+            CallType::CALLCODE,
+            from,
+            code_address,
+            value,
+            gas_limit,
+            &data,
+        );
 
         self.generic_call(
             gas_limit,
@@ -318,8 +323,14 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         // In this trace the `from` is the current contract, we don't want the `from` to be, for example, the EOA that sent the transaction
-        self.tracer
-            .enter(DELEGATECALL, to, code_address, value, gas_limit, &data);
+        self.tracer.enter(
+            CallType::DELEGATECALL,
+            to,
+            code_address,
+            value,
+            gas_limit,
+            &data,
+        );
 
         self.generic_call(
             gas_limit,
@@ -414,7 +425,7 @@ impl<'a> VM<'a> {
         let data = self.get_calldata(args_offset, args_size)?;
 
         self.tracer
-            .enter(STATICCALL, from, to, value, gas_limit, &data);
+            .enter(CallType::STATICCALL, from, to, value, gas_limit, &data);
 
         self.generic_call(
             gas_limit,
@@ -573,8 +584,14 @@ impl<'a> VM<'a> {
             self.substate.add_selfdestruct(to);
         }
 
-        self.tracer
-            .enter(SELFDESTRUCT, to, beneficiary, balance, 0, &Bytes::new());
+        self.tracer.enter(
+            CallType::SELFDESTRUCT,
+            to,
+            beneficiary,
+            balance,
+            0,
+            &Bytes::new(),
+        );
 
         self.tracer.exit_early(0, None)?;
 
@@ -605,7 +622,7 @@ impl<'a> VM<'a> {
         current_call_frame.sub_return_data = Bytes::new();
 
         // Reserve gas for subcall
-        let gas_limit = max_message_call_gas(current_call_frame)?;
+        let gas_limit = gas_cost::max_message_call_gas(current_call_frame)?;
         current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Load code from memory

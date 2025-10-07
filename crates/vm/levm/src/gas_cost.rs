@@ -783,12 +783,12 @@ pub fn staticcall(
 
 /// Approximates factor * e ** (numerator / denominator) using Taylor expansion
 /// https://eips.ethereum.org/EIPS/eip-4844#helpers
-pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Result<U256, VMError> {
+pub fn fake_exponential(factor: U256, numerator: u64, denominator: u64) -> Result<U256, VMError> {
     if denominator == 0 {
         return Err(InternalError::DivisionByZero.into());
     }
 
-    if numerator.is_zero() {
+    if numerator == 0 {
         return Ok(factor);
     }
 
@@ -815,7 +815,7 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: u64) -> Resu
 
             // Safe multiplication and division within loop
             numerator_accum = numerator_accum
-                .checked_mul(numerator)
+                .checked_mul(numerator.into())
                 .ok_or(InternalError::Overflow)?
                 / denominator_by_i;
 
