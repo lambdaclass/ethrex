@@ -35,7 +35,7 @@ pub struct SyncManager {
 impl SyncManager {
     pub async fn new(
         peer_handler: PeerHandler,
-        sync_mode: SyncMode,
+        sync_mode: &SyncMode,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         store: Store,
