@@ -1556,6 +1556,9 @@ async fn insert_accounts(
                 let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
                 for (account_hash, account) in account_states_snapshot {
+                    METRICS
+                        .account_tries_inserted
+                        .fetch_add(1, Ordering::Relaxed);
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                 }
                 info!("Comitting to disk");
