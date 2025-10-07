@@ -16,7 +16,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_trie::{Nibbles, NodeRLP, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::sync::Arc;
 use std::{
@@ -876,57 +876,71 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        self.get_account_state_from_trie(&state_trie, address)
+        get_account_state_from_trie(&state_trie, address)
     }
 
-    pub fn get_account_state_by_hash(
-        &self,
-        block_hash: BlockHash,
-        address: Address,
-    ) -> Result<Option<AccountState>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        self.get_account_state_from_trie(&state_trie, address)
-    }
-
-    pub fn get_account_state_from_trie(
-        &self,
-        state_trie: &Trie,
-        address: Address,
-    ) -> Result<Option<AccountState>, StoreError> {
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        Ok(Some(AccountState::decode(&encoded_state)?))
-    }
-
+    /// Constructs a merkle proof for the given account address against a given state.
+    /// If storage_keys are provided, also constructs the storage proofs for those keys.
+    ///
+    /// Returns `None` if the state trie is missing, otherwise returns the proof.
     pub async fn get_account_proof(
         &self,
-        block_number: BlockNumber,
-        address: &Address,
-    ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
-        };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        Ok(Some(state_trie.get_proof(&hash_address(address))).transpose()?)
-    }
-
-    /// Constructs a merkle proof for the given storage_key in a storage_trie with a known root
-    pub fn get_storage_proof(
-        &self,
+        state_root: H256,
         address: Address,
-        storage_root: H256,
-        storage_key: &H256,
-    ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let trie =
-            self.engine
-                .open_storage_trie(hash_address_fixed(&address), storage_root, todo!())?;
-        Ok(trie.get_proof(&hash_key(storage_key))?)
+        storage_keys: &[H256],
+    ) -> Result<Option<AccountProof>, StoreError> {
+        // TODO: check state root
+        // let Some(state_trie) = self.open_state_trie(state_trie)? else {
+        //     return Ok(None);
+        // };
+        let state_trie = self.open_state_trie(state_root)?;
+        let hashed_address = hash_address_fixed(&address);
+        let address_path = hashed_address.0.to_vec();
+        let proof = state_trie.get_proof(&address_path)?;
+        let account_opt = state_trie
+            .get(&address_path)?
+            .map(|encoded_state| AccountState::decode(&encoded_state))
+            .transpose()?;
+
+        let mut storage_proof = Vec::with_capacity(storage_keys.len());
+
+        if let Some(account) = &account_opt {
+            let storage_trie = self.engine.open_storage_trie(
+                hashed_address,
+                account.storage_root,
+                state_trie.hash_no_commit(),
+            )?;
+
+            for key in storage_keys {
+                let hashed_key = hash_key(key);
+                let proof = storage_trie.get_proof(&hashed_key)?;
+                let value = storage_trie
+                    .get(&hashed_key)?
+                    .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+                    .transpose()?
+                    .unwrap_or_default();
+
+                let slot_proof = StorageSlotProof {
+                    proof,
+                    key: *key,
+                    value,
+                };
+                storage_proof.push(slot_proof);
+            }
+        } else {
+            storage_proof.extend(storage_keys.iter().map(|key| StorageSlotProof {
+                proof: Vec::new(),
+                key: *key,
+                value: U256::zero(),
+            }));
+        }
+        let account = account_opt.unwrap_or_default();
+        let account_proof = AccountProof {
+            proof,
+            account,
+            storage_proof,
+        };
+        Ok(Some(account_proof))
     }
 
     // Returns an iterator across all accounts in the state trie given by the state_root
@@ -1291,6 +1305,29 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine.write_account_code_batch(account_codes).await
     }
+}
+
+pub struct AccountProof {
+    pub proof: Vec<NodeRLP>,
+    pub account: AccountState,
+    pub storage_proof: Vec<StorageSlotProof>,
+}
+
+pub struct StorageSlotProof {
+    pub proof: Vec<NodeRLP>,
+    pub key: H256,
+    pub value: U256,
+}
+
+fn get_account_state_from_trie(
+    state_trie: &Trie,
+    address: Address,
+) -> Result<Option<AccountState>, StoreError> {
+    let hashed_address = hash_address(&address);
+    let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        return Ok(None);
+    };
+    Ok(Some(AccountState::decode(&encoded_state)?))
 }
 
 pub struct AncestorIterator {
