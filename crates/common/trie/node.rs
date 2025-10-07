@@ -41,14 +41,7 @@ impl NodeRef {
                 .get(path.clone())?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => {
-                        if node.compute_hash() == hash {
-                            println!("check failed for {hash:x?} path {path:?}");
-                            Some(Ok(node))
-                        } else {
-                            None
-                        }
-                    }
+                    Ok(node) => (node.compute_hash() == hash).then_some(Ok(node)),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
                 .transpose(),
