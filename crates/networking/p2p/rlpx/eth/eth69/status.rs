@@ -48,7 +48,10 @@ impl RLPxMessage for StatusMessage69 {
         let (eth_version, decoder): (u32, _) = decoder.decode_field("protocolVersion")?;
 
         if eth_version != 69 {
-            return Err(RLPDecodeError::IncompatibleProtocol);
+            return Err(RLPDecodeError::IncompatibleProtocol(format!(
+                "Received message is encoded in eth version {} when negotiated eth version was 69",
+                eth_version
+            )));
         }
 
         let (network_id, decoder): (u64, _) = decoder.decode_field("networkId")?;
