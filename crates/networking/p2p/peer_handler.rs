@@ -806,7 +806,7 @@ impl PeerHandler {
                 }
 
                 let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
-                write_set.spawn(async move {
+                write_set.spawn_blocking(move || {
                     let path = get_account_state_snapshot_file(
                         &account_state_snapshots_dir_cloned,
                         chunk_file,
@@ -871,6 +871,9 @@ impl PeerHandler {
                 .unwrap_or(None)
             else {
                 trace!("We are missing peers in request_account_range_request");
+                // Yield to allow other tasks to make progress.
+                // This avoids busy polling.
+                tokio::task::yield_now().await;
                 continue;
             };
 
