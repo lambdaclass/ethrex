@@ -94,31 +94,43 @@ lazy_static! {
 
 }
 
+/// Most of the fork variants are just for parsing the tests
+/// It's important for the pre-merge forks to befeore Paris because we make a comparison for executing post-merge forks only.
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Fork {
-    Frontier = 0,
-    Homestead = 1,
-    ConstantinopleFix = 2,
-    Istanbul = 3,
-    Byzantium = 4,
-    London = 5,
-    Berlin = 6,
+    Constantinople,
+    EIP150,
+    EIP158,
+    EIP158ToByzantiumAt5,
+    ArrowGlacierToParisAtDiffC0000,
+    BerlinToLondonAt5,
+    ByzantiumToConstantinopleFixAt5,
+    FrontierToHomesteadAt5,
+    HomesteadToDaoAt5,
+    HomesteadToEIP150At5,
+    Frontier,
+    Homestead,
+    ConstantinopleFix,
+    Istanbul,
+    Byzantium,
+    London,
+    Berlin,
     #[serde(alias = "Paris")]
-    Merge = 7,
+    Merge,
     #[serde(alias = "ParisToShanghaiAtTime15k")]
-    MergeToShanghaiAtTime15k = 8,
-    Shanghai = 9,
-    ShanghaiToCancunAtTime15k = 10,
-    Cancun = 11,
-    CancunToPragueAtTime15k = 12,
-    Prague = 13,
-    PragueToOsakaAtTime15k = 14,
-    Osaka = 15,
-    OsakaToBPO1AtTime15k = 16,
-    BPO1ToBPO2AtTime15k = 17,
-    BPO2ToBPO3AtTime15k = 18,
-    BPO3ToBPO4AtTime15k = 19,
-    BPO4ToBPO5AtTime15k = 20,
+    MergeToShanghaiAtTime15k,
+    Shanghai,
+    ShanghaiToCancunAtTime15k,
+    Cancun,
+    CancunToPragueAtTime15k,
+    Prague,
+    PragueToOsakaAtTime15k,
+    Osaka,
+    OsakaToBPO1AtTime15k,
+    BPO1ToBPO2AtTime15k,
+    BPO2ToBPO3AtTime15k,
+    BPO3ToBPO4AtTime15k,
+    BPO4ToBPO5AtTime15k,
 }
 
 impl Fork {
@@ -138,13 +150,7 @@ impl Fork {
             Fork::BPO2ToBPO3AtTime15k => &BPO2_TO_BPO3_AT_15K_CONFIG,
             Fork::BPO3ToBPO4AtTime15k => &BPO3_TO_BPO4_AT_15K_CONFIG,
             Fork::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
-            Fork::Frontier
-            | Fork::Homestead
-            | Fork::ConstantinopleFix
-            | Fork::Istanbul
-            | Fork::Byzantium
-            | Fork::London
-            | Fork::Berlin => {
+            _ => {
                 panic!("Ethrex doesn't support pre-Merge forks: {self:?}")
             }
         }
