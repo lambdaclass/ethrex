@@ -27,7 +27,7 @@ const SKIPPED_BASE: &[&str] = &[
     "HighGasPriceParis",
     // Skip because it tries to deserialize number > U256::MAX
     "ValueOverflowParis",
-    // One variant of this test expects RLP Exception and we aren't returning one, see what's happening.
+    // Skip because it's a "Create" Blob Transaction, which doesn't actually exist. It never reaches the EVM because we can't parse it.
     "createBlobhashTx",
 ];
 
