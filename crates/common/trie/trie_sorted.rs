@@ -6,7 +6,7 @@ use crossbeam::channel::{Receiver, Sender, bounded};
 use ethereum_types::H256;
 use ethrex_threadpool::ThreadPool;
 use std::{sync::Arc, thread::scope};
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Debug, Default, Clone)]
 struct StackElement {
@@ -137,6 +137,7 @@ fn flush_nodes_to_write(
     db: &dyn TrieDB,
     sender: Sender<Vec<(Nibbles, Node)>>,
 ) -> Result<(), TrieGenerationError> {
+    info!("Writing {} nodes to the db", nodes_to_write.len());
     db.put_batch_no_alloc(&nodes_to_write)
         .map_err(TrieGenerationError::FlushToDbError)?;
     nodes_to_write.clear();
