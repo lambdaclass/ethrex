@@ -4,6 +4,7 @@
 
 ### 2025-10-06
 
+- Improve block headers vec handling in syncer [#4771](https://github.com/lambdaclass/ethrex/pull/4771)
 - Refactor current_step sync metric from a `Mutex<String>` to a simple atomic. [#4772](https://github.com/lambdaclass/ethrex/pull/4772)
 
 ### 2025-10-01
