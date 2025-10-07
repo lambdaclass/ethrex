@@ -509,14 +509,16 @@ async fn send_all_pooled_tx_hashes(
 
 async fn send_block_range_update(state: &mut Established) -> Result<(), RLPxError> {
     // BlockRangeUpdate was introduced in eth/69
-    if let Some(eth) = &state.negotiated_eth_capability {
-        if eth.version >= 69 {
-            log_peer_debug(&state.node, "Sending BlockRangeUpdate");
-            let update = BlockRangeUpdate::new(&state.storage).await?;
-            let lastet_block = update.latest_block;
-            send(state, Message::BlockRangeUpdate(update)).await?;
-            state.last_block_range_update_block = lastet_block - (lastet_block % 32);
-        }
+    if state
+        .negotiated_eth_capability
+        .as_ref()
+        .is_some_and(|eth| eth.version >= 69)
+    {
+        log_peer_debug(&state.node, "Sending BlockRangeUpdate");
+        let update = BlockRangeUpdate::new(&state.storage).await?;
+        let lastet_block = update.latest_block;
+        send(state, Message::BlockRangeUpdate(update)).await?;
+        state.last_block_range_update_block = lastet_block - (lastet_block % 32);
     }
     Ok(())
 }

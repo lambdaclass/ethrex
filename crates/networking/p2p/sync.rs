@@ -247,10 +247,10 @@ impl Syncer {
 
             // If we have a pending block from new_payload request
             // attach it to the end if it matches the parent_hash of the latest received header
-            if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_hash {
-                    block_headers.push(block.header.clone());
-                }
+            if let Some(ref block) = pending_block
+                && block.header.parent_hash == last_block_hash
+            {
+                block_headers.push(block.header.clone());
             }
 
             // Filter out everything after the sync_head
@@ -625,13 +625,14 @@ impl FullBlockSyncState {
 
         // If we have the sync_head as a pending block from a new_payload request and its parent_hash matches the hash of the latest received header
         // we set the sync_head as found. Then we add it in current_blocks for execution.
-        if let Some(block) = self.store.get_pending_block(sync_head).await? {
-            if let Some(last_block) = self.current_blocks.last() {
-                if last_block.hash() == block.header.parent_hash {
-                    self.current_blocks.push(block);
-                    sync_head_found = true;
-                }
-            }
+        if let Some(block) = self.store.get_pending_block(sync_head).await?
+            && self
+                .current_blocks
+                .last()
+                .is_some_and(|last_block| last_block.hash() == block.header.parent_hash)
+        {
+            self.current_blocks.push(block);
+            sync_head_found = true;
         }
         // Execute full blocks
         // while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE

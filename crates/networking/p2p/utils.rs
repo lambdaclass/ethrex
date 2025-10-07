@@ -143,10 +143,10 @@ async fn receive_trienodes(
 ) -> Option<TrieNodes> {
     loop {
         let resp = receiver.recv().await?;
-        if let Message::TrieNodes(trie_nodes) = resp {
-            if trie_nodes.id == request_id {
-                return Some(trie_nodes);
-            }
+        if let Message::TrieNodes(trie_nodes) = resp
+            && trie_nodes.id == request_id
+        {
+            return Some(trie_nodes);
         }
     }
 }
