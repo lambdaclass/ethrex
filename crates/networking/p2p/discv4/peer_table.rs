@@ -1,7 +1,7 @@
 use crate::{
     discv4::server::MAX_NODES_IN_NEIGHBORS_PACKET,
     metrics::METRICS,
-    rlpx::{self, connection::server::PeerConnection, p2p::Capability},
+    rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
@@ -10,15 +10,12 @@ use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle},
 };
-use spawned_rt::tasks::mpsc;
 use std::{
     collections::{BTreeMap, HashSet, btree_map::Entry},
     net::IpAddr,
-    sync::Arc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 const MAX_SCORE: i64 = 50;
@@ -87,7 +84,7 @@ pub struct PeerData {
     /// It is only valid as long as is_connected is true
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
-    pub channels: Option<PeerChannels>,
+    pub connection: Option<PeerConnection>,
     /// This tracks if a peer is being used by a task
     /// So we can't use it yet
     in_use: bool,
@@ -99,7 +96,7 @@ impl PeerData {
     pub fn new(
         node: Node,
         record: Option<NodeRecord>,
-        channels: Option<PeerChannels>,
+        connection: Option<PeerConnection>,
         capabilities: Vec<Capability>,
     ) -> Self {
         Self {
@@ -107,34 +104,13 @@ impl PeerData {
             record,
             supported_capabilities: capabilities,
             is_connection_inbound: false,
-            channels,
+            connection,
             in_use: false,
             score: Default::default(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-/// Holds the respective sender and receiver ends of the communication channels between the peer data and its active connection
-pub struct PeerChannels {
-    pub connection: PeerConnection,
-    pub receiver: Arc<Mutex<mpsc::Receiver<rlpx::Message>>>,
-}
-
-impl PeerChannels {
-    /// Sets up the communication channels for the peer
-    /// Returns the channel endpoints to send to the active connection's listen loop
-    pub(crate) fn create(connection: PeerConnection) -> (Self, mpsc::Sender<rlpx::Message>) {
-        let (connection_sender, receiver) = mpsc::channel::<rlpx::Message>();
-        (
-            Self {
-                connection,
-                receiver: Arc::new(Mutex::new(receiver)),
-            },
-            connection_sender,
-        )
-    }
-}
 #[derive(Clone, Debug)]
 pub struct PeerTable {
     handle: GenServerHandle<PeerTableServer>,
@@ -166,13 +142,13 @@ impl PeerTable {
     pub async fn new_connected_peer(
         &mut self,
         node: Node,
-        channels: PeerChannels,
+        connection: PeerConnection,
         capabilities: Vec<Capability>,
     ) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::NewConnectedPeer {
                 node,
-                channels,
+                connection,
                 capabilities,
             })
             .await?;
@@ -397,7 +373,7 @@ impl PeerTable {
     pub async fn get_best_peer(
         &mut self,
         capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerChannels)>, PeerTableError> {
+    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
         match self
             .handle
             .call(CallMessage::GetBestPeer {
@@ -407,8 +383,8 @@ impl PeerTable {
         {
             OutMessage::FoundPeer {
                 node_id,
-                peer_channels,
-            } => Ok(Some((node_id, peer_channels))),
+                connection,
+            } => Ok(Some((node_id, connection))),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -418,7 +394,7 @@ impl PeerTable {
     pub async fn use_best_peer(
         &mut self,
         capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerChannels)>, PeerTableError> {
+    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
         match self
             .handle
             .call(CallMessage::UseBestPeer {
@@ -428,8 +404,8 @@ impl PeerTable {
         {
             OutMessage::FoundPeer {
                 node_id,
-                peer_channels,
-            } => Ok(Some((node_id, peer_channels))),
+                connection,
+            } => Ok(Some((node_id, connection))),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -459,7 +435,7 @@ impl PeerTable {
     /// Get list of connected peers with their capabilities
     pub async fn get_peers_with_capabilities(
         &mut self,
-    ) -> Result<Vec<(H256, PeerChannels, Vec<Capability>)>, PeerTableError> {
+    ) -> Result<Vec<(H256, PeerConnection, Vec<Capability>)>, PeerTableError> {
         match self
             .handle
             .call(CallMessage::GetPeersWithCapabilities)
@@ -473,10 +449,10 @@ impl PeerTable {
     }
 
     /// Get peer channels for communication
-    pub async fn get_peer_channels(
+    pub async fn get_peer_connection(
         &mut self,
         capabilities: &[Capability],
-    ) -> Result<Vec<(H256, PeerChannels)>, PeerTableError> {
+    ) -> Result<Vec<(H256, PeerConnection)>, PeerTableError> {
         match self
             .handle
             .call(CallMessage::GetPeerChannels {
@@ -484,7 +460,7 @@ impl PeerTable {
             })
             .await?
         {
-            OutMessage::PeerChannels(peer_channels) => Ok(peer_channels),
+            OutMessage::PeerConnection(connection) => Ok(connection),
             _ => unreachable!(),
         }
     }
@@ -540,7 +516,7 @@ impl PeerTable {
     pub async fn get_random_peer(
         &mut self,
         capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerChannels)>, PeerTableError> {
+    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
         match self
             .handle
             .call(CallMessage::GetRandomPeer {
@@ -550,8 +526,8 @@ impl PeerTable {
         {
             OutMessage::FoundPeer {
                 node_id,
-                peer_channels,
-            } => Ok(Some((node_id, peer_channels))),
+                connection,
+            } => Ok(Some((node_id, connection))),
             OutMessage::NotFound => Ok(None),
             _ => unreachable!(),
         }
@@ -569,7 +545,7 @@ struct PeerTableServer {
 impl PeerTableServer {
     // Internal functions //
 
-    fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerChannels)> {
+    fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
         self.peers
             .iter()
             // We filter only to those peers which are useful to us
@@ -588,24 +564,24 @@ impl PeerTableServer {
                 }
 
                 // if the peer doesn't have the channel open, we skip it.
-                let peer_channel = peer_data.channels.clone()?;
+                let connection = peer_data.connection.clone()?;
 
                 // We return the id, the score and the channel to connect with.
-                Some((*id, peer_data.score, peer_channel))
+                Some((*id, peer_data.score, connection))
             })
             .max_by_key(|(_, score, _)| *score)
             .map(|(k, _, v)| (k, v))
     }
 
     /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
-    fn use_best_peer(&mut self, capabilities: &[Capability]) -> Option<(H256, PeerChannels)> {
-        let (peer_id, peer_channel) = self.get_best_peer(capabilities)?;
+    fn use_best_peer(&mut self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
+        let (peer_id, connection) = self.get_best_peer(capabilities)?;
 
         self.peers
             .entry(peer_id)
             .and_modify(|peer_data| peer_data.in_use = true);
 
-        Some((peer_id, peer_channel))
+        Some((peer_id, connection))
     }
 
     fn prune(&mut self) {
@@ -734,7 +710,10 @@ impl PeerTableServer {
             .len()
     }
 
-    fn get_peer_channels(&mut self, capabilities: Vec<Capability>) -> Vec<(H256, PeerChannels)> {
+    fn get_peer_connection(
+        &mut self,
+        capabilities: Vec<Capability>,
+    ) -> Vec<(H256, PeerConnection)> {
         self.peers
             .iter()
             .filter_map(|(peer_id, peer_data)| {
@@ -746,15 +725,15 @@ impl PeerTableServer {
                     return None;
                 }
                 peer_data
-                    .channels
+                    .connection
                     .clone()
-                    .map(|peer_channels| (*peer_id, peer_channels))
+                    .map(|connection| (*peer_id, connection))
             })
             .collect()
     }
 
-    fn get_random_peer(&mut self, capabilities: Vec<Capability>) -> Option<(H256, PeerChannels)> {
-        let peers: Vec<(H256, PeerChannels)> = self
+    fn get_random_peer(&mut self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
+        let peers: Vec<(H256, PeerConnection)> = self
             .peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
@@ -766,9 +745,9 @@ impl PeerTableServer {
                     return None;
                 }
                 peer_data
-                    .channels
+                    .connection
                     .clone()
-                    .map(|peer_channels| (*node_id, peer_channels))
+                    .map(|connection| (*node_id, connection))
             })
             .collect();
         peers.choose(&mut rand::rngs::OsRng).cloned()
@@ -806,7 +785,7 @@ enum CastMessage {
     },
     NewConnectedPeer {
         node: Node,
-        channels: PeerChannels,
+        connection: PeerConnection,
         capabilities: Vec<Capability>,
     },
     RemovePeer {
@@ -902,12 +881,12 @@ pub enum OutMessage {
     PeerCount(usize),
     FoundPeer {
         node_id: H256,
-        peer_channels: PeerChannels,
+        connection: PeerConnection,
     },
     NotFound,
     PeerScore(i64),
-    PeersWithCapabilities(Vec<(H256, PeerChannels, Vec<Capability>)>),
-    PeerChannels(Vec<(H256, PeerChannels)>),
+    PeersWithCapabilities(Vec<(H256, PeerConnection, Vec<Capability>)>),
+    PeerConnection(Vec<(H256, PeerConnection)>),
     Contacts(Vec<Contact>),
     TargetReached(bool),
     IsNew(bool),
@@ -975,9 +954,9 @@ impl GenServer for PeerTableServer {
                 let channels = self.get_best_peer(&capabilities);
                 CallResponse::Reply(channels.map_or(
                     Self::OutMsg::NotFound,
-                    |(node_id, peer_channels)| Self::OutMsg::FoundPeer {
+                    |(node_id, connection)| Self::OutMsg::FoundPeer {
                         node_id,
-                        peer_channels,
+                        connection,
                     },
                 ))
             }
@@ -985,9 +964,9 @@ impl GenServer for PeerTableServer {
                 let channels = self.use_best_peer(&capabilities);
                 CallResponse::Reply(channels.map_or(
                     Self::OutMsg::NotFound,
-                    |(node_id, peer_channels)| Self::OutMsg::FoundPeer {
+                    |(node_id, connection)| Self::OutMsg::FoundPeer {
                         node_id,
-                        peer_channels,
+                        connection,
                     },
                 ))
             }
@@ -1008,10 +987,10 @@ impl GenServer for PeerTableServer {
                     self.peers
                         .iter()
                         .filter_map(|(peer_id, peer_data)| {
-                            peer_data.channels.clone().map(|peer_channels| {
+                            peer_data.connection.clone().map(|connection| {
                                 (
                                     *peer_id,
-                                    peer_channels,
+                                    connection,
                                     peer_data.supported_capabilities.clone(),
                                 )
                             })
@@ -1020,7 +999,7 @@ impl GenServer for PeerTableServer {
                 ))
             }
             CallMessage::GetPeerChannels { capabilities } => CallResponse::Reply(
-                OutMessage::PeerChannels(self.get_peer_channels(capabilities)),
+                OutMessage::PeerConnection(self.get_peer_connection(capabilities)),
             ),
             CallMessage::InsertIfNew { node } => CallResponse::Reply(Self::OutMsg::IsNew(
                 match self.contacts.entry(node.node_id()) {
@@ -1041,10 +1020,10 @@ impl GenServer for PeerTableServer {
                 self.peers.values().cloned().collect(),
             )),
             CallMessage::GetRandomPeer { capabilities } => CallResponse::Reply(
-                if let Some((node_id, peer_channels)) = self.get_random_peer(capabilities) {
+                if let Some((node_id, connection)) = self.get_random_peer(capabilities) {
                     OutMessage::FoundPeer {
                         node_id,
-                        peer_channels,
+                        connection,
                     }
                 } else {
                     OutMessage::NotFound
@@ -1067,12 +1046,12 @@ impl GenServer for PeerTableServer {
             }
             CastMessage::NewConnectedPeer {
                 node,
-                channels,
+                connection,
                 capabilities,
             } => {
                 debug!("New peer connected");
                 let new_peer_id = node.node_id();
-                let new_peer = PeerData::new(node, None, Some(channels), capabilities);
+                let new_peer = PeerData::new(node, None, Some(connection), capabilities);
                 self.peers.insert(new_peer_id, new_peer);
             }
             CastMessage::RemovePeer { node_id } => {

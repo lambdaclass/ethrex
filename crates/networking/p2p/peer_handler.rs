@@ -17,9 +17,10 @@ use ethrex_trie::{Node, verify_range};
 use spawned_rt::tasks::oneshot;
 
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableError},
+    discv4::peer_table::{PeerData, PeerTable, PeerTableError},
     metrics::{CurrentStepValue, METRICS},
     rlpx::{
+        connection::server::PeerConnection,
         eth::{
             blocks::{
                 BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
@@ -95,7 +96,7 @@ struct StorageTask {
 
 async fn ask_peer_head_number(
     peer_id: H256,
-    peer_channel: &mut PeerChannels,
+    connection: &mut PeerConnection,
     sync_head: H256,
     retries: i32,
 ) -> Result<u64, PeerHandlerError> {
@@ -112,8 +113,7 @@ async fn ask_peer_head_number(
 
     let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
 
-    peer_channel
-        .connection
+    connection
         .outgoing_request(request, oneshot_tx)
         .await
         .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
@@ -158,7 +158,7 @@ impl PeerHandler {
     async fn get_random_peer(
         &mut self,
         capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerChannels)>, PeerHandlerError> {
+    ) -> Result<Option<(H256, PeerConnection)>, PeerHandlerError> {
         return Ok(self.peer_table.get_random_peer(capabilities).await?);
     }
 
@@ -193,13 +193,13 @@ impl PeerHandler {
                 // sync_head might be invalid
                 return Ok(None);
             }
-            let peer_channels = self
+            let peer_connection = self
                 .peer_table
-                .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                .get_peer_connection(&SUPPORTED_ETH_CAPABILITIES)
                 .await?;
 
-            for (peer_id, mut peer_channel) in peer_channels {
-                match ask_peer_head_number(peer_id, &mut peer_channel, sync_head, retries).await {
+            for (peer_id, mut connection) in peer_connection {
+                match ask_peer_head_number(peer_id, &mut connection, sync_head, retries).await {
                     Ok(number) => {
                         sync_head_number = number;
                         if number != 0 {
@@ -257,7 +257,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerChannels, u64, u64)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64)>(1000);
 
         let mut current_show = 0;
 
@@ -268,7 +268,7 @@ impl PeerHandler {
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
         loop {
-            if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
                 trace!("We received a download chunk from peer");
@@ -321,7 +321,7 @@ impl PeerHandler {
                 self.peer_table.free_peer(&peer_id).await?;
                 debug!("Downloader {peer_id} freed");
             }
-            let Some((peer_id, mut peer_channel)) = self
+            let Some((peer_id, mut connection)) = self
                 .peer_table
                 .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
@@ -357,7 +357,7 @@ impl PeerHandler {
                 );
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
-                    &mut peer_channel,
+                    &mut connection,
                     startblock,
                     chunk_limit,
                 )
@@ -365,7 +365,7 @@ impl PeerHandler {
                 .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
 
-                tx.send((headers, peer_id, peer_channel, startblock, chunk_limit))
+                tx.send((headers, peer_id, connection, startblock, chunk_limit))
                     .await
                     .inspect_err(|err| {
                         error!("Failed to send headers result through channel. Error: {err}")
@@ -436,13 +436,9 @@ impl PeerHandler {
             });
             match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
                 None => return Ok(None),
-                Some((peer_id, mut peer_channel)) => {
+                Some((peer_id, mut connection)) => {
                     let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
-                    if let Err(err) = peer_channel
-                        .connection
-                        .outgoing_request(request, oneshot_tx)
-                        .await
-                    {
+                    if let Err(err) = connection.outgoing_request(request, oneshot_tx).await {
                         debug!("Failed to send message to peer: {err:?}");
                         continue;
                     }
@@ -474,7 +470,7 @@ impl PeerHandler {
     /// If it fails, returns an error message.
     async fn download_chunk_from_peer(
         peer_id: H256,
-        peer_channel: &mut PeerChannels,
+        connection: &mut PeerConnection,
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
@@ -490,8 +486,7 @@ impl PeerHandler {
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
 
         // FIXME! modify the cast and wait for a `call` version
-        peer_channel
-            .connection
+        connection
             .outgoing_request(request, oneshot_tx)
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
@@ -528,13 +523,9 @@ impl PeerHandler {
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
-            Some((peer_id, mut peer_channel)) => {
+            Some((peer_id, mut connection)) => {
                 let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
-                if let Err(err) = peer_channel
-                    .connection
-                    .outgoing_request(request, oneshot_tx)
-                    .await
-                {
+                if let Err(err) = connection.outgoing_request(request, oneshot_tx).await {
                     self.peer_table.record_failure(&peer_id).await?;
                     debug!("Failed to send message to peer: {err:?}");
                     return Ok(None);
@@ -631,13 +622,9 @@ impl PeerHandler {
             });
             match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
                 None => return Ok(None),
-                Some((_, mut peer_channel)) => {
+                Some((_, mut connection)) => {
                     let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
-                    if let Err(err) = peer_channel
-                        .connection
-                        .outgoing_request(request, oneshot_tx)
-                        .await
-                    {
+                    if let Err(err) = connection.outgoing_request(request, oneshot_tx).await {
                         debug!("Failed to send message to peer: {err:?}");
                         continue;
                     }
@@ -838,7 +825,7 @@ impl PeerHandler {
                 });
             }
 
-            let Some((peer_id, peer_channel)) = self
+            let Some((peer_id, connection)) = self
                 .peer_table
                 .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
@@ -877,7 +864,7 @@ impl PeerHandler {
                 chunk_start,
                 chunk_end,
                 pivot_header.state_root,
-                peer_channel,
+                connection,
                 tx,
             ));
         }
@@ -919,7 +906,7 @@ impl PeerHandler {
         chunk_start: H256,
         chunk_end: H256,
         state_root: H256,
-        mut free_downloader_channels_clone: PeerChannels,
+        mut free_downloader_connection_clone: PeerConnection,
         tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
     ) -> Result<(), PeerHandlerError> {
         debug!(
@@ -934,7 +921,7 @@ impl PeerHandler {
             response_bytes: MAX_RESPONSE_BYTES,
         });
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
-        if let Err(err) = (free_downloader_channels_clone.connection)
+        if let Err(err) = free_downloader_connection_clone
             .outgoing_request(request, oneshot_tx)
             .await
         {
@@ -1106,7 +1093,7 @@ impl PeerHandler {
                 }
             }
 
-            let Some((peer_id, mut peer_channel)) = self
+            let Some((peer_id, mut connection)) = self
                 .peer_table
                 .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
@@ -1150,10 +1137,7 @@ impl PeerHandler {
                     bytes: MAX_RESPONSE_BYTES,
                 });
                 let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
-                if let Err(err) = (peer_channel.connection)
-                    .outgoing_request(request, oneshot_tx)
-                    .await
-                {
+                if let Err(err) = connection.outgoing_request(request, oneshot_tx).await {
                     error!("Failed to send message to peer: {err:?}");
                     tx.send(empty_task_result).await.ok();
                     return;
@@ -1449,7 +1433,7 @@ impl PeerHandler {
                 break;
             }
 
-            let Some((peer_id, peer_channel)) = self
+            let Some((peer_id, connection)) = self
                 .peer_table
                 .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
@@ -1488,7 +1472,7 @@ impl PeerHandler {
                 task,
                 peer_id,
                 pivot_header.state_root,
-                peer_channel,
+                connection,
                 chunk_account_hashes,
                 chunk_storage_roots,
                 tx,
@@ -1552,7 +1536,7 @@ impl PeerHandler {
         task: StorageTask,
         free_peer_id: H256,
         state_root: H256,
-        mut free_downloader_channels_clone: PeerChannels,
+        mut free_downloader_connection_clone: PeerConnection,
         chunk_account_hashes: Vec<H256>,
         chunk_storage_roots: Vec<H256>,
         tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
@@ -1579,7 +1563,7 @@ impl PeerHandler {
             response_bytes: MAX_RESPONSE_BYTES,
         });
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
-        if let Err(err) = (free_downloader_channels_clone.connection)
+        if let Err(err) = free_downloader_connection_clone
             .outgoing_request(request, oneshot_tx)
             .await
         {
@@ -1706,7 +1690,7 @@ impl PeerHandler {
     }
 
     pub async fn request_state_trienodes(
-        peer_channel: &mut PeerChannels,
+        connection: &mut PeerConnection,
         state_root: H256,
         paths: Vec<RequestMetadata>,
     ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
@@ -1725,7 +1709,7 @@ impl PeerHandler {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        let nodes = super::utils::send_message_and_wait_for_response(peer_channel, request)
+        let nodes = super::utils::send_message_and_wait_for_response(connection, request)
             .await
             .map_err(RequestStateTrieNodesError::SendMessageError)?;
 
@@ -1752,14 +1736,14 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_trienodes(
-        peer_channel: &mut PeerChannels,
+        connection: &mut PeerConnection,
         get_trie_nodes: GetTrieNodes,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request)
+        super::utils::send_trie_nodes_messages_and_wait_for_reply(connection, request)
             .await
             .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
     }
@@ -1779,7 +1763,7 @@ impl PeerHandler {
 
     pub async fn get_block_header(
         &self,
-        peer_channel: &mut PeerChannels,
+        connection: &mut PeerConnection,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
         let request_id = rand::random();
@@ -1793,9 +1777,7 @@ impl PeerHandler {
         info!("get_block_header: requesting header with number {block_number}");
 
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
-        debug!("locked the receiver for the peer_channel");
-        peer_channel
-            .connection
+        connection
             .outgoing_request(request, oneshot_tx)
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;

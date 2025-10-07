@@ -140,7 +140,6 @@ pub(crate) async fn perform(
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
             peer_table: context.table.clone(),
-            backend_channel: None,
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),

@@ -1,5 +1,5 @@
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerTable},
+    discv4::peer_table::PeerTable,
     metrics::METRICS,
     network::P2PContext,
     rlpx::{
@@ -50,7 +50,7 @@ use spawned_concurrency::{
         send_interval, spawn_listener,
     },
 };
-use spawned_rt::tasks::{BroadcastStream, mpsc};
+use spawned_rt::tasks::BroadcastStream;
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -59,7 +59,7 @@ use std::{
 };
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, broadcast},
+    sync::{Mutex, broadcast, oneshot},
     task::{self, Id},
 };
 use tokio_stream::StreamExt;
@@ -163,7 +163,6 @@ pub struct Established {
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: PeerConnBroadcastSender,
     pub(crate) peer_table: PeerTable,
-    pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
     pub(crate) current_requests: HashMap<u64, tokio::sync::oneshot::Sender<Message>>,
@@ -318,7 +317,7 @@ impl GenServer for PeerConnectionServer {
                     handle_outgoing_request(
                         established_state,
                         message,
-                        Arc::<tokio::sync::oneshot::Sender<Message>>::into_inner(sender)
+                        Arc::<oneshot::Sender<Message>>::into_inner(sender)
                             .expect("Could not obtain sender channel"),
                     )
                     .await
@@ -448,22 +447,17 @@ where
         .write()
         .map_err(|err| PeerConnectionError::InternalError(err.to_string()))? = version;
 
-    // Handshake OK: handle connection
-    // Create channels to communicate directly to the peer
-    let (mut peer_channels, sender) = PeerChannels::create(PeerConnection {
-        handle: handle.clone(),
-    });
-
-    // Updating the state to establish the backend channel
-    state.backend_channel = Some(sender);
-
     init_capabilities(state, &mut stream).await?;
+
+    let mut connection = PeerConnection {
+        handle: handle.clone(),
+    };
 
     state
         .peer_table
         .new_connected_peer(
             state.node.clone(),
-            peer_channels.clone(),
+            connection.clone(),
             state.capabilities.clone(),
         )
         .await?;
@@ -471,7 +465,7 @@ where
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
-    send_all_pooled_tx_hashes(state, &mut peer_channels).await?;
+    send_all_pooled_tx_hashes(state, &mut connection).await?;
 
     // Periodic Pings repeated events.
     send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
@@ -525,7 +519,7 @@ where
 
 async fn send_all_pooled_tx_hashes(
     state: &mut Established,
-    peer_channels: &mut PeerChannels,
+    connection: &mut PeerConnection,
 ) -> Result<(), PeerConnectionError> {
     let txs: Vec<MempoolTransaction> = state
         .blockchain
@@ -546,7 +540,7 @@ async fn send_all_pooled_tx_hashes(
         send_tx_hashes(
             txs,
             state.capabilities.clone(),
-            peer_channels,
+            connection,
             state.node.node_id(),
             &state.blockchain,
         )
@@ -1001,11 +995,7 @@ async fn handle_incoming_message(
                     tx.send(message)
                         .map_err(|e| PeerConnectionError::SendMessage(e.to_string()))?
                 } else {
-                    state
-                        .backend_channel
-                        .as_mut()
-                        .expect("Backend channel is not available")
-                        .send(message)?
+                    return Err(PeerConnectionError::ExpectedRequestId(format!("{message}")));
                 }
             } else {
                 return Err(PeerConnectionError::ExpectedRequestId(format!("{message}")));

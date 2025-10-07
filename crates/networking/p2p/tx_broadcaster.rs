@@ -16,9 +16,10 @@ use spawned_concurrency::{
 use tracing::{debug, error, info};
 
 use crate::{
-    discv4::peer_table::{PeerChannels, PeerTable, PeerTableError},
+    discv4::peer_table::{PeerTable, PeerTableError},
     rlpx::{
         Message,
+        connection::server::PeerConnection,
         eth::transactions::{NewPooledTransactionHashes, Transactions},
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
     },
@@ -206,7 +207,7 @@ impl TxBroadcaster {
         let (peers_to_send_full_txs, peers_to_send_hashes) =
             shuffled_peers.split_at(peer_sqrt.ceil() as usize);
 
-        for (peer_id, mut peer_channels, capabilities) in peers_to_send_full_txs.iter().cloned() {
+        for (peer_id, mut connection, capabilities) in peers_to_send_full_txs.iter().cloned() {
             let peer_idx = self.peer_index(peer_id);
             let txs_to_send = full_txs
                 .iter()
@@ -224,18 +225,18 @@ impl TxBroadcaster {
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
             });
-            peer_channels.connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
+            connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
                 error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
-            self.send_tx_hashes(blob_txs.clone(), capabilities, &mut peer_channels, peer_id)
+            self.send_tx_hashes(blob_txs.clone(), capabilities, &mut connection, peer_id)
                 .await?;
         }
-        for (peer_id, mut peer_channels, capabilities) in peers_to_send_hashes.iter().cloned() {
+        for (peer_id, mut connection, capabilities) in peers_to_send_hashes.iter().cloned() {
             // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
             self.send_tx_hashes(
                 txs_to_broadcast.clone(),
                 capabilities,
-                &mut peer_channels,
+                &mut connection,
                 peer_id,
             )
             .await?;
@@ -248,7 +249,7 @@ impl TxBroadcaster {
         &mut self,
         txs: Vec<MempoolTransaction>,
         capabilities: Vec<Capability>,
-        peer_channels: &mut PeerChannels,
+        connection: &mut PeerConnection,
         peer_id: H256,
     ) -> Result<(), TxBroadcasterError> {
         let peer_idx = self.peer_index(peer_id);
@@ -267,7 +268,7 @@ impl TxBroadcaster {
         send_tx_hashes(
             txs_to_send,
             capabilities,
-            peer_channels,
+            connection,
             peer_id,
             &self.blockchain,
         )
@@ -278,7 +279,7 @@ impl TxBroadcaster {
 pub async fn send_tx_hashes(
     txs: Vec<MempoolTransaction>,
     capabilities: Vec<Capability>,
-    peer_channels: &mut PeerChannels,
+    connection: &mut PeerConnection,
     peer_id: H256,
     blockchain: &Arc<Blockchain>,
 ) -> Result<(), TxBroadcasterError> {
@@ -295,7 +296,7 @@ pub async fn send_tx_hashes(
             let hashes_message = Message::NewPooledTransactionHashes(
                 NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
             );
-            peer_channels.connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
+            connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
                 error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
             });
         }

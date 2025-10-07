@@ -1295,7 +1295,7 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        let (peer_id, mut peer_channel) = peers
+        let (peer_id, mut connection) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await?
@@ -1306,7 +1306,7 @@ pub async fn update_pivot(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
         let Some(pivot) = peers
-            .get_block_header(&mut peer_channel, new_pivot_block_number)
+            .get_block_header(&mut connection, new_pivot_block_number)
             .await
             .map_err(SyncError::PeerHandler)?
         else {
@@ -1402,7 +1402,7 @@ pub enum SyncError {
     CodeHashesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
-    #[error("We aren't finding get_peer_channel_with_retry")]
+    #[error("Cannot find suitable peer")]
     NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,

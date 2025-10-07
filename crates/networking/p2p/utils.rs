@@ -1,6 +1,5 @@
-use crate::{
-    discv4::peer_table::PeerChannels,
-    rlpx::{Message, error::PeerConnectionError, snap::TrieNodes},
+use crate::rlpx::{
+    Message, connection::server::PeerConnection, error::PeerConnectionError, snap::TrieNodes,
 };
 use ethrex_common::utils::keccak;
 use ethrex_common::{H256, H512};
@@ -82,12 +81,11 @@ pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
 
 /// TODO: make it more generic
 pub async fn send_message_and_wait_for_response(
-    peer_channel: &mut PeerChannels,
+    connection: &mut PeerConnection,
     message: Message,
 ) -> Result<Vec<Node>, SendMessageError> {
     let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
-    peer_channel
-        .connection
+    connection
         .outgoing_request(message, oneshot_tx)
         .await
         .map_err(SendMessageError::ConnectionError)?;
@@ -106,12 +104,11 @@ pub async fn send_message_and_wait_for_response(
 
 /// TODO: make it more generic
 pub async fn send_trie_nodes_messages_and_wait_for_reply(
-    peer_channel: &mut PeerChannels,
+    connection: &mut PeerConnection,
     message: Message,
 ) -> Result<TrieNodes, SendMessageError> {
     let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
-    peer_channel
-        .connection
+    connection
         .outgoing_request(message, oneshot_tx)
         .await
         .map_err(SendMessageError::ConnectionError)?;

@@ -222,7 +222,7 @@ async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
-                let Some((peer_id, mut peer_channel)) = peers
+                let Some((peer_id, mut connection)) = peers
                     .peer_table
                     .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                     .await
@@ -242,7 +242,7 @@ async fn heal_state_trie(
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
                     let response = PeerHandler::request_state_trienodes(
-                        &mut peer_channel,
+                        &mut connection,
                         state_root,
                         batch.clone(),
                     )

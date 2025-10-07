@@ -371,12 +371,12 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable)
         let peers: Vec<PeerData> = peer_table.get_peers_data().await.unwrap_or(Vec::new());
         let active_peers = peers
             .iter()
-            .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
+            .filter(|peer| -> bool { peer.connection.as_ref().is_some() })
             .count();
         let snap_active_peers = peers
             .iter()
             .filter(|peer| -> bool {
-                peer.channels.as_ref().is_some()
+                peer.connection.as_ref().is_some()
                     && SUPPORTED_SNAP_CAPABILITIES
                         .iter()
                         .any(|cap| peer.supported_capabilities.contains(cap))
