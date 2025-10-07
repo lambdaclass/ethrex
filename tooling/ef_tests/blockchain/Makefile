@@ -42,13 +42,13 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_ROOT)
 	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT)
 
-test-levm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with LEVM
+test-levm: $(VECTORS_TARGETS) ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-with-debug
 
-test-sp1: $(SPECTEST_VECTORS_DIR)
+test-sp1: $(VECTORS_TARGETS)
 	cargo test --profile release-with-debug --features sp1
 
-test-stateless: $(SPECTEST_VECTORS_DIR)
+test-stateless: $(VECTORS_TARGETS)
 	cargo test --profile release-with-debug --features stateless
 
 test: ## 🧪 Run blockchain tests with both VMs, and also stateless with LEVM
