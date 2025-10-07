@@ -483,8 +483,8 @@ impl Store {
                     };
                     if !matches!(node, Node::Leaf(_)) {
                         nodes_stack.push((nibble, node, child_amount));
+                        batch.put_cf(&cf_trie_nodes_pathbased, nibble_bytes, value);
                     }
-                    batch.put_cf(&cf_trie_nodes_pathbased, nibble_bytes, value);
                     continue;
                 }
                 let (last_node_nibble, last_node, child_amount) = nodes_stack.pop().unwrap();
