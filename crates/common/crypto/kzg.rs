@@ -93,29 +93,28 @@ pub fn verify_cell_kzg_proof_batch(
     commitments: &[Commitment],
     cell_proof: &[Proof],
 ) -> Result<bool, KzgError> {
-        use std::iter::repeat_n;
-        let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
-        let mut cells = Vec::new();
-        for blob in blobs {
-            cells.extend(c_kzg_settings.compute_cells(&(*blob).into())?.into_iter());
-        }
-        c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
-            c_kzg_settings,
-            &commitments
-                .iter()
-                .flat_map(|commitment| repeat_n((*commitment).into(), CELLS_PER_EXT_BLOB))
-                .collect::<Vec<_>>(),
-            &repeat_n(0..CELLS_PER_EXT_BLOB as u64, blobs.len())
-                .flatten()
-                .collect::<Vec<_>>(),
-            &cells,
-            &cell_proof
-                .iter()
-                .map(|proof| (*proof).into())
-                .collect::<Vec<_>>(),
-        )
-        .map_err(KzgError::from)
-    
+    use std::iter::repeat_n;
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
+    let mut cells = Vec::new();
+    for blob in blobs {
+        cells.extend(c_kzg_settings.compute_cells(&(*blob).into())?.into_iter());
+    }
+    c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
+        c_kzg_settings,
+        &commitments
+            .iter()
+            .flat_map(|commitment| repeat_n((*commitment).into(), CELLS_PER_EXT_BLOB))
+            .collect::<Vec<_>>(),
+        &repeat_n(0..CELLS_PER_EXT_BLOB as u64, blobs.len())
+            .flatten()
+            .collect::<Vec<_>>(),
+        &cells,
+        &cell_proof
+            .iter()
+            .map(|proof| (*proof).into())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(KzgError::from)
 }
 
 /// Verifies a KZG proof for blob committed data, using a Fiat-Shamir protocol
