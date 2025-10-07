@@ -289,10 +289,10 @@ async fn heal_state_trie(
                         for i in 0..path.len() {
                             encoded_to_write.insert(path.slice(0, i), vec![]);
                         }
-                        if let Node::Leaf(leaf) = &node {
-                            encoded_to_write
-                                .insert(path.concat(leaf.partial.clone()), leaf.value.clone());
-                        }
+                        // if let Node::Leaf(leaf) = &node {
+                        //     encoded_to_write
+                        //         .insert(path.concat(leaf.partial.clone()), leaf.value.clone());
+                        // }
                         encoded_to_write.insert(path, node.encode_to_vec());
                     }
                     let trie_db = store
