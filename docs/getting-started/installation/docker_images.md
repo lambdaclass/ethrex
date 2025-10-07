@@ -86,10 +86,3 @@ docker logs -f ethrex
 ```sh
 docker stop ethrex
 ```
-
----
-
-**Next steps:**
-
-- [L1 Quickstart](../quickstart-l1.md)
-- [L2 Quickstart](../quickstart-l2.md)
