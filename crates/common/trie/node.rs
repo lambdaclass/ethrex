@@ -67,9 +67,9 @@ impl NodeRef {
             NodeRef::Hash(hash) => db
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
-                .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => Some(Ok((node.compute_hash() == hash, node))),
-                    Err(err) => Some(Err(TrieError::RLPDecode(err))),
+                .map(|rlp| match Node::decode(&rlp) {
+                    Ok(node) => Ok((node.compute_hash() == hash, node)),
+                    Err(err) => Err(TrieError::RLPDecode(err)),
                 })
                 .transpose(),
         }
