@@ -17,7 +17,7 @@ use ethrex_trie::{Node, verify_range};
 
 use crate::{
     discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableError, PeerTableHandle},
-    metrics::METRICS,
+    metrics::{CurrentStepValue, METRICS},
     rlpx::{
         connection::server::CastMessage,
         eth::{
@@ -174,7 +174,9 @@ impl PeerHandler {
         sync_head: H256,
     ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
         let start_time = SystemTime::now();
-        *METRICS.current_step.lock().await = "Downloading Headers".to_string();
+        METRICS
+            .current_step
+            .set(CurrentStepValue::DownloadingHeaders);
 
         let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
 
@@ -543,13 +545,13 @@ impl PeerHandler {
     /// - The requested peer did not return a valid response in the given time limit
     async fn request_block_bodies_inner(
         &mut self,
-        block_hashes: Vec<H256>,
+        block_hashes: &[H256],
     ) -> Result<Option<(Vec<BlockBody>, H256)>, PeerHandlerError> {
         let block_hashes_len = block_hashes.len();
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
             id: request_id,
-            block_hashes: block_hashes.clone(),
+            block_hashes: block_hashes.to_vec(),
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
@@ -607,13 +609,10 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_bodies(
         &mut self,
-        block_hashes: Vec<H256>,
+        block_hashes: &[H256],
     ) -> Result<Option<Vec<BlockBody>>, PeerHandlerError> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            if let Some((block_bodies, _)) = self
-                .request_block_bodies_inner(block_hashes.clone())
-                .await?
-            {
+            if let Some((block_bodies, _)) = self.request_block_bodies_inner(block_hashes).await? {
                 return Ok(Some(block_bodies));
             }
         }
@@ -632,9 +631,8 @@ impl PeerHandler {
         let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
 
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let Some((block_bodies, peer_id)) = self
-                .request_block_bodies_inner(block_hashes.clone())
-                .await?
+            let Some((block_bodies, peer_id)) =
+                self.request_block_bodies_inner(&block_hashes).await?
             else {
                 continue; // Retry on empty response
             };
@@ -740,7 +738,9 @@ impl PeerHandler {
         pivot_header: &mut BlockHeader,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), PeerHandlerError> {
-        *METRICS.current_step.lock().await = "Requesting Account Ranges".to_string();
+        METRICS
+            .current_step
+            .set(CurrentStepValue::RequestingAccountRanges);
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
@@ -1096,7 +1096,9 @@ impl PeerHandler {
         &mut self,
         all_bytecode_hashes: &[H256],
     ) -> Result<Option<Vec<Bytes>>, PeerHandlerError> {
-        *METRICS.current_step.lock().await = "Requesting Bytecodes".to_string();
+        METRICS
+            .current_step
+            .set(CurrentStepValue::RequestingBytecodes);
         const MAX_BYTECODES_REQUEST_SIZE: usize = 100;
         // 1) split the range in chunks of same length
         let chunk_count = 800;
@@ -1295,7 +1297,9 @@ impl PeerHandler {
         mut chunk_index: u64,
         pivot_header: &mut BlockHeader,
     ) -> Result<u64, PeerHandlerError> {
-        *METRICS.current_step.lock().await = "Requesting Storage Ranges".to_string();
+        METRICS
+            .current_step
+            .set(CurrentStepValue::RequestingStorageRanges);
         debug!("Starting request_storage_ranges function");
         // 1) split the range in chunks of same length
         let chunk_size = 300;

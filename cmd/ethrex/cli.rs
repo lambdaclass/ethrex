@@ -70,7 +70,7 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
-    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
+    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(
         long = "metrics.addr",
@@ -211,6 +211,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
@@ -230,6 +231,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
@@ -450,7 +452,7 @@ pub async fn import_blocks(
             .collect::<Vec<_>>();
         // Execute block by block
         let mut last_progress_log = Instant::now();
-        for (index, block) in blocks.iter().enumerate() {
+        for (index, block) in blocks.into_iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
 

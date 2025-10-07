@@ -191,7 +191,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Common metrics
             let elapsed = format_duration(start.elapsed());
             let peer_number = peer_table.peer_count().await.unwrap_or(0);
-            let current_step = METRICS.current_step.lock().await.clone();
+            let current_step = METRICS.current_step.get();
             let current_header_hash = *METRICS.sync_head_hash.lock().await;
 
             // Headers metrics
@@ -360,7 +360,7 @@ Current Header Hash: {current_header_hash:x}
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {headers_downloaded}, remaining: {headers_remaining})
 account leaves download: {account_leaves_downloaded}, elapsed: {account_leaves_time}
 account leaves insertion: {account_leaves_inserted_percentage:.2}%, elapsed: {account_leaves_inserted_time}
-storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed} 
+storage leaves download: {storage_leaves_downloaded}, elapsed: {storage_leaves_time}, initially accounts with storage {storage_accounts}, healed accounts {storage_accounts_healed}
 storage leaves insertion: {storage_leaves_inserted_time}
 healing: global accounts healed {healed_accounts} global storage slots healed {healed_storages}, elapsed: {heal_time}, current throttle {heal_current_throttle}
 bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_download_time})"
