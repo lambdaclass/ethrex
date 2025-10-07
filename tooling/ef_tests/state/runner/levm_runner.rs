@@ -21,6 +21,7 @@ use ethrex_levm::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
+use std::sync::Arc;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
