@@ -791,48 +791,6 @@ impl StoreEngine for Store {
             .transpose()
     }
 
-    async fn add_transaction_location(
-        &self,
-        transaction_hash: H256,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-        index: Index,
-    ) -> Result<(), StoreError> {
-        // Key: tx_hash + block_hash
-        let mut composite_key = Vec::with_capacity(64);
-        composite_key.extend_from_slice(transaction_hash.as_bytes());
-        composite_key.extend_from_slice(block_hash.as_bytes());
-
-        let location_value = (block_number, block_hash, index).encode_to_vec();
-        self.write_async(CF_TRANSACTION_LOCATIONS, composite_key, location_value)
-            .await
-    }
-
-    // TODO: This function should be removed #4748
-    // Check also keys
-    async fn add_transaction_locations(
-        &self,
-        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
-    ) -> Result<(), StoreError> {
-        let mut batch_ops = Vec::new();
-
-        for (tx_hash, block_number, block_hash, index) in locations {
-            // Key: tx_hash + block_hash
-            let mut composite_key = Vec::with_capacity(64);
-            composite_key.extend_from_slice(tx_hash.as_bytes());
-            composite_key.extend_from_slice(block_hash.as_bytes());
-
-            let location_value = (block_number, block_hash, index).encode_to_vec();
-            batch_ops.push((
-                CF_TRANSACTION_LOCATIONS.to_string(),
-                composite_key,
-                location_value,
-            ));
-        }
-
-        self.write_batch_async(batch_ops).await
-    }
-
     // Check also keys
     async fn get_transaction_location(
         &self,
