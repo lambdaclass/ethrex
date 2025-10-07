@@ -344,57 +344,63 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
 /// Tests that previously failed the validation stage shouldn't be executed with this function.
 async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
     let latest_block_number = db.get_latest_block_number().await.unwrap();
-    for (addr, account) in &test.post_state {
-        let expected_account: CoreAccount = account.clone().into();
-        // Check info
-        let db_account_info = db
-            .get_account_info(latest_block_number, *addr)
-            .await
-            .expect("Failed to read from DB")
-            .unwrap_or_else(|| {
-                panic!("Account info for address {addr} not found in DB, test:{test_key}")
-            });
-        assert_eq!(
-            db_account_info, expected_account.info,
-            "Mismatched account info for address {addr} test:{test_key}"
+    if test.post_state.is_none() && test.post_state_hash.is_none() {
+        panic!(
+            "Test {test_key} does not provide post_state or post_state_hash, cannot verify post-state"
         );
-        // Check code
-        let code_hash = expected_account.info.code_hash;
-        if code_hash != *EMPTY_KECCACK_HASH {
-            // We don't want to get account code if there's no code.
-            let db_account_code = db
-                .get_account_code(code_hash)
-                .expect("Failed to read from DB")
-                .unwrap_or_else(|| {
-                    panic!("Account code for code hash {code_hash} not found in DB test:{test_key}")
-                });
-            assert_eq!(
-                db_account_code, expected_account.code,
-                "Mismatched account code for code hash {code_hash} test:{test_key}"
-            );
-        }
-        // Check storage
-        for (key, value) in expected_account.storage {
-            let db_storage_value = db
-                .get_storage_at(latest_block_number, *addr, key)
+    }
+    if let Some(post_state) = &test.post_state {
+        for (addr, account) in post_state {
+            let expected_account: CoreAccount = account.clone().into();
+            // Check info
+            let db_account_info = db
+                .get_account_info(latest_block_number, *addr)
                 .await
                 .expect("Failed to read from DB")
                 .unwrap_or_else(|| {
-                    panic!("Storage missing for address {addr} key {key} in DB test:{test_key}")
+                    panic!("Account info for address {addr} not found in DB, test:{test_key}")
                 });
             assert_eq!(
-                db_storage_value, value,
-                "Mismatched storage value for address {addr}, key {key} test:{test_key}"
+                db_account_info, expected_account.info,
+                "Mismatched account info for address {addr} test:{test_key}"
             );
+            // Check code
+            let code_hash = expected_account.info.code_hash;
+            if code_hash != *EMPTY_KECCACK_HASH {
+                // We don't want to get account code if there's no code.
+                let db_account_code = db
+                    .get_account_code(code_hash)
+                    .expect("Failed to read from DB")
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Account code for code hash {code_hash} not found in DB test:{test_key}"
+                        )
+                    });
+                assert_eq!(
+                    db_account_code, expected_account.code,
+                    "Mismatched account code for code hash {code_hash} test:{test_key}"
+                );
+            }
+            // Check storage
+            for (key, value) in expected_account.storage {
+                let db_storage_value = db
+                    .get_storage_at(latest_block_number, *addr, key)
+                    .await
+                    .expect("Failed to read from DB")
+                    .unwrap_or_else(|| {
+                        panic!("Storage missing for address {addr} key {key} in DB test:{test_key}")
+                    });
+                assert_eq!(
+                    db_storage_value, value,
+                    "Mismatched storage value for address {addr}, key {key} test:{test_key}"
+                );
+            }
         }
     }
     // Check lastblockhash is in store
     let last_block_number = db.get_latest_block_number().await.unwrap();
-    let last_block_hash = db
-        .get_block_header(last_block_number)
-        .unwrap()
-        .unwrap()
-        .hash();
+    let last_block_header = db.get_block_header(last_block_number).unwrap().unwrap();
+    let last_block_hash = last_block_header.hash();
     assert_eq!(
         test.lastblockhash, last_block_hash,
         "Last block number does not match"
@@ -402,6 +408,15 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     // Get block header
     let last_block = db.get_block_header(last_block_number).unwrap();
     assert!(last_block.is_some(), "Block hash is not stored in db");
+
+    // If the test provides an expected post-state hash, validate it against the
+    // computed state root of the last block header.
+    if let Some(expected_post_state_hash) = test.post_state_hash {
+        assert_eq!(
+            expected_post_state_hash, last_block_header.state_root,
+            "Mismatched post-state hash for test: {test_key}"
+        );
+    }
     // State root was alredy validated by `add_block``
 }
 
