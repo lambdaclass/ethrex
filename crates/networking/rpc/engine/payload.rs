@@ -681,8 +681,11 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
-    // Return the valid message directly if we have it.
-    if storage.get_block_by_hash(block_hash).await?.is_some() {
+    // Return the valid message directly if we already have it.
+    // We check for header only as we do not download the block bodies before the pivot during snap sync
+    // The only other cases where we would have a body-less block are during snap sync (in which case we wouldn't be attempting to execute a payload)
+    // or during a fullsync, where the received paylaod matches a soon-to-be-executed block
+    if storage.get_block_header_by_hash(block_hash)?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
