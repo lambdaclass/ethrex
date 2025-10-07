@@ -30,7 +30,7 @@ openssl rand -hex 32 | tr -d "\n" | tee ./secrets/jwt.hex
 On one terminal:
 
 ```sh
-ethrex --authrpc.jwtsecret ./secrets/jwt.hex --authrpc.addr localhost --authrpc.port 8551 --network hoodi
+ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
 ```
 
 and on another one:
@@ -59,7 +59,7 @@ tar -xvf lighthouse-v7.1.0-x86_64-unknown-linux-gnu.tar.gz
 On one terminal:
 
 ```sh
-./ethrex --authrpc.jwtsecret ./secrets/jwt.hex --authrpc.addr localhost --authrpc.port 8551 --network hoodi
+./ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
 ```
 
 and on another one:
