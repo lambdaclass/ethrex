@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test
+.PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := .fixtures_url
@@ -42,13 +42,13 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_ROOT)
 	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT)
 
-test-levm: ## 🧪 Run blockchain tests with LEVM
+test-levm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-with-debug
 
-test-sp1:
+test-sp1: $(SPECTEST_VECTORS_DIR)
 	cargo test --profile release-with-debug --features sp1
 
-test-stateless:
+test-stateless: $(SPECTEST_VECTORS_DIR)
 	cargo test --profile release-with-debug --features stateless
 
 test: ## 🧪 Run blockchain tests with both VMs, and also stateless with LEVM
