@@ -933,16 +933,18 @@ impl PeerHandler {
                 std::fs::create_dir_all(account_state_snapshots_dir)
                     .map_err(|_| PeerHandlerError::CreateStateSnapshotsDir)?;
             }
-
             let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
-            dump_accounts_to_file(&path, account_state_chunk)
-                .inspect_err(|err| {
+            tokio::task::spawn_blocking(move || {
+                dump_accounts_to_file(&path, account_state_chunk).inspect_err(|err| {
                     error!(
                         "We had an error dumping the last accounts to disk {}",
                         err.error
                     )
                 })
-                .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
+            })
+            .await
+            .expect("Shouldn't have a join error")
+            .map_err(|_| PeerHandlerError::WriteStateSnapshotsDir(chunk_file))?;
         }
 
         METRICS
