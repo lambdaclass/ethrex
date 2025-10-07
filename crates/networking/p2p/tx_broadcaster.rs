@@ -13,6 +13,7 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
 };
+use spawned_rt::tasks::oneshot;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -224,7 +225,9 @@ impl TxBroadcaster {
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
             });
-            peer_channels.connection.backend_message(txs_message).await.unwrap_or_else(|err| {
+            // FIX: this is just to make compile it. We have to remove it as NewPooledTransactionHashes does not uses request_id
+            let (oneshot_tx, _oneshot_rx) = oneshot::channel::<Message>();
+            peer_channels.connection.outgoing_message(txs_message, oneshot_tx).await.unwrap_or_else(|err| {
                 error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
             self.send_tx_hashes(blob_txs.clone(), capabilities, &mut peer_channels, peer_id)
@@ -295,7 +298,9 @@ pub async fn send_tx_hashes(
             let hashes_message = Message::NewPooledTransactionHashes(
                 NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
             );
-            peer_channels.connection.backend_message(hashes_message.clone()).await.unwrap_or_else(|err| {
+            // FIX: this is just to make compile it. We have to remove it as NewPooledTransactionHashes does not uses request_id
+            let (oneshot_tx, _oneshot_rx) = oneshot::channel::<Message>();
+            peer_channels.connection.outgoing_message(hashes_message.clone(), oneshot_tx).await.unwrap_or_else(|err| {
                 error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
             });
         }

@@ -145,6 +145,7 @@ pub(crate) async fn perform(
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
             tx_broadcaster: context.tx_broadcaster.clone(),
+            current_requests: HashMap::new(),
         },
         stream,
     ))

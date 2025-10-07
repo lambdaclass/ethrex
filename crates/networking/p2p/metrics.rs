@@ -389,6 +389,12 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            PeerConnectionError::ExpectedRequestId(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("ExpectedRequestId - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
             PeerConnectionError::MessageNotHandled(reason) => {
                 failures_grouped_by_reason
                     .entry(format!("MessageNotHandled - {reason}"))

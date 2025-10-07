@@ -1,35 +1,3 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
-
-use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{MempoolTransaction, Transaction};
-use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::TrieError;
-use futures::{SinkExt as _, Stream, stream::SplitSink};
-use rand::random;
-use secp256k1::{PublicKey, SecretKey};
-use spawned_concurrency::{
-    messages::Unused,
-    tasks::{
-        CastResponse, GenServer, GenServerHandle,
-        InitResult::{self, NoSuccess, Success},
-        send_interval, spawn_listener,
-    },
-};
-use spawned_rt::tasks::{BroadcastStream, mpsc};
-use tokio::{
-    net::TcpStream,
-    sync::{Mutex, broadcast},
-    task::{self, Id},
-};
-use tokio_stream::StreamExt;
-use tokio_util::codec::Framed;
-use tracing::{debug, error};
-
 use crate::{
     discv4::peer_table::{PeerChannels, PeerTable},
     metrics::METRICS,
@@ -67,6 +35,36 @@ use crate::{
     tx_broadcaster::{InMessage, TxBroadcaster, send_tx_hashes},
     types::Node,
 };
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::{MempoolTransaction, Transaction};
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::TrieError;
+use futures::{SinkExt as _, Stream, stream::SplitSink};
+use rand::random;
+use secp256k1::{PublicKey, SecretKey};
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{
+        CastResponse, GenServer, GenServerHandle,
+        InitResult::{self, NoSuccess, Success},
+        send_interval, spawn_listener,
+    },
+};
+use spawned_rt::tasks::{BroadcastStream, mpsc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
+use tokio::{
+    net::TcpStream,
+    sync::{Mutex, broadcast},
+    task::{self, Id},
+};
+use tokio_stream::StreamExt;
+use tokio_util::codec::Framed;
+use tracing::{debug, error};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -106,9 +104,13 @@ impl PeerConnection {
         }
     }
 
-    pub async fn backend_message(&mut self, message: Message) -> Result<(), PeerConnectionError> {
+    pub async fn outgoing_message(
+        &mut self,
+        message: Message,
+        sender: tokio::sync::oneshot::Sender<Message>,
+    ) -> Result<(), PeerConnectionError> {
         self.handle
-            .cast(CastMessage::BackendMessage(message))
+            .cast(CastMessage::OutgoingMessage(message, Arc::new(sender)))
             .await
             .map_err(|err| PeerConnectionError::InternalError(err.to_string()))
     }
@@ -157,6 +159,7 @@ pub struct Established {
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
+    pub(crate) current_requests: HashMap<u64, tokio::sync::oneshot::Sender<Message>>,
 }
 
 impl Established {
@@ -183,9 +186,9 @@ pub enum ConnectionState {
 #[allow(private_interfaces)]
 pub enum CastMessage {
     /// Received a message from the remote peer
-    PeerMessage(Message),
+    IncomingMessage(Message),
     /// This node requests information from the remote peer
-    BackendMessage(Message),
+    OutgoingMessage(Message, Arc<tokio::sync::oneshot::Sender<Message>>),
     SendPing,
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
@@ -280,19 +283,25 @@ impl GenServer for PeerConnectionServer {
         if let ConnectionState::Established(ref mut established_state) = self.state {
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message {
-                Self::CastMsg::PeerMessage(message) => {
+                Self::CastMsg::IncomingMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received peer message: {message}"),
                     );
-                    handle_peer_message(established_state, message).await
+                    handle_incoming_message(established_state, message).await
                 }
-                Self::CastMsg::BackendMessage(message) => {
+                Self::CastMsg::OutgoingMessage(message, sender) => {
                     log_peer_debug(
                         &established_state.node,
                         &format!("Received backend message: {message}"),
                     );
-                    handle_backend_message(established_state, message).await
+                    handle_outgoing_message(
+                        established_state,
+                        message,
+                        Arc::<tokio::sync::oneshot::Sender<Message>>::into_inner(sender)
+                            .expect("Could not obtain sender channel"),
+                    )
+                    .await
                 }
                 Self::CastMsg::SendPing => {
                     send(established_state, Message::Ping(PingMessage {})).await
@@ -471,7 +480,7 @@ where
     spawn_listener(
         handle.clone(),
         stream.filter_map(|result| match result {
-            Ok(msg) => Some(CastMessage::PeerMessage(msg)),
+            Ok(msg) => Some(CastMessage::IncomingMessage(msg)),
             Err(e) => {
                 debug!(error=?e, "Error receiving RLPx message");
                 // Skipping invalid data
@@ -773,7 +782,7 @@ where
     stream.next().await
 }
 
-async fn handle_peer_message(
+async fn handle_incoming_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
@@ -967,12 +976,20 @@ async fn handle_peer_message(
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)
         | message @ Message::Receipts69(_) => {
-            state
-                .backend_channel
-                .as_mut()
-                // TODO: this unwrap() is temporary, until we fix the backend process to use spawned
-                .expect("Backend channel is not available")
-                .send(message)?
+            if let Some(id) = message.request_id() {
+                if let Some(tx) = state.current_requests.remove(&id) {
+                    tx.send(message)
+                        .map_err(|e| PeerConnectionError::SendMessage(e.to_string()))?
+                } else {
+                    state
+                        .backend_channel
+                        .as_mut()
+                        .expect("Backend channel is not available")
+                        .send(message)?
+                }
+            } else {
+                return Err(PeerConnectionError::ExpectedRequestId(format!("{message}")));
+            }
         }
         // TODO: Add new message types and handlers as they are implemented
         message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
@@ -980,10 +997,15 @@ async fn handle_peer_message(
     Ok(())
 }
 
-async fn handle_backend_message(
+async fn handle_outgoing_message(
     state: &mut Established,
     message: Message,
+    sender: tokio::sync::oneshot::Sender<Message>,
 ) -> Result<(), PeerConnectionError> {
+    // Insert the request in the request map if it supports a request id.
+    message
+        .request_id()
+        .and_then(|id| state.current_requests.insert(id, sender));
     log_peer_debug(&state.node, &format!("Sending message {message}"));
     send(state, message).await?;
     Ok(())

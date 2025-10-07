@@ -42,6 +42,8 @@ pub enum PeerConnectionError {
     InvalidRecoveryId(),
     #[error("Invalid message length")]
     InvalidMessageLength(),
+    #[error("Request id not present: {0}")]
+    ExpectedRequestId(String),
     #[error("Cannot handle message: {0}")]
     MessageNotHandled(String),
     #[error("Bad Request: {0}")]

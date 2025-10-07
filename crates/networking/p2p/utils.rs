@@ -7,6 +7,7 @@ use ethrex_common::{H256, H512};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::Node;
 use secp256k1::{PublicKey, SecretKey};
+use spawned_rt::tasks::oneshot;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -83,24 +84,17 @@ pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
 pub async fn send_message_and_wait_for_response(
     peer_channel: &mut PeerChannels,
     message: Message,
-    request_id: u64,
 ) -> Result<Vec<Node>, SendMessageError> {
-    let receiver = peer_channel
-        .receiver
-        .try_lock()
-        .map_err(|_| SendMessageError::PeerBusy)?;
+    let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
     peer_channel
         .connection
-        .backend_message(message)
+        .outgoing_message(message, oneshot_tx)
         .await
         .map_err(SendMessageError::ConnectionError)?;
-    let nodes = tokio::time::timeout(
-        Duration::from_secs(7),
-        receive_trienodes(receiver, request_id),
-    )
-    .await
-    .map_err(|_| SendMessageError::PeerTimeout)?
-    .ok_or(SendMessageError::PeerDisconnected)?;
+    let nodes = tokio::time::timeout(Duration::from_secs(7), receive_trienodes(oneshot_rx))
+        .await
+        .map_err(|_| SendMessageError::PeerTimeout)?
+        .ok_or(SendMessageError::PeerDisconnected)?;
 
     nodes
         .nodes
@@ -114,37 +108,24 @@ pub async fn send_message_and_wait_for_response(
 pub async fn send_trie_nodes_messages_and_wait_for_reply(
     peer_channel: &mut PeerChannels,
     message: Message,
-    request_id: u64,
 ) -> Result<TrieNodes, SendMessageError> {
-    let receiver = peer_channel
-        .receiver
-        .try_lock()
-        .map_err(|_| SendMessageError::PeerBusy)?;
+    let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
     peer_channel
         .connection
-        .backend_message(message)
+        .outgoing_message(message, oneshot_tx)
         .await
         .map_err(SendMessageError::ConnectionError)?;
-    tokio::time::timeout(
-        Duration::from_secs(7),
-        receive_trienodes(receiver, request_id),
-    )
-    .await
-    .map_err(|_| SendMessageError::PeerTimeout)?
-    .ok_or(SendMessageError::PeerDisconnected)
+    tokio::time::timeout(Duration::from_secs(7), receive_trienodes(oneshot_rx))
+        .await
+        .map_err(|_| SendMessageError::PeerTimeout)?
+        .ok_or(SendMessageError::PeerDisconnected)
 }
 
-async fn receive_trienodes(
-    mut receiver: tokio::sync::MutexGuard<'_, spawned_rt::tasks::mpsc::Receiver<Message>>,
-    request_id: u64,
-) -> Option<TrieNodes> {
-    loop {
-        let resp = receiver.recv().await?;
-        if let Message::TrieNodes(trie_nodes) = resp {
-            if trie_nodes.id == request_id {
-                return Some(trie_nodes);
-            }
-        }
+async fn receive_trienodes(receiver: oneshot::Receiver<Message>) -> Option<TrieNodes> {
+    if let Ok(Message::TrieNodes(trie_nodes)) = receiver.await {
+        Some(trie_nodes)
+    } else {
+        None
     }
 }
 

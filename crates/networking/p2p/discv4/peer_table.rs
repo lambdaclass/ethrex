@@ -28,7 +28,7 @@ const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 /// Maximum amount of FindNode messages sent to a single node.
 const MAX_FIND_NODE_PER_PEER: u64 = 20;
 /// Number of concurrent requests that can be made to a single peer.
-const MAX_REQUESTS_PER_PEER: usize = 100;
+//const MAX_REQUESTS_PER_PEER: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Contact {

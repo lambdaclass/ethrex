@@ -14,6 +14,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use spawned_rt::tasks::oneshot;
 
 use crate::{
     discv4::peer_table::{PeerChannels, PeerData, PeerTable, PeerTableError},
@@ -109,20 +110,18 @@ async fn ask_peer_head_number(
         reverse: false,
     });
 
+    let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
+
     peer_channel
         .connection
-        .backend_message(request)
+        .outgoing_message(request, oneshot_tx)
         .await
         .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
     debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
-    match tokio::time::timeout(Duration::from_millis(500), async move {
-        peer_channel.receiver.lock().await.recv().await
-    })
-    .await
-    {
-        Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
+    match tokio::time::timeout(Duration::from_millis(500), oneshot_rx).await {
+        Ok(Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))) => {
             if id == request_id && !block_headers.is_empty() {
                 let sync_head_number = block_headers
                     .last()
@@ -136,7 +135,7 @@ async fn ask_peer_head_number(
                 Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id))
             }
         }
-        Ok(None) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
+        Ok(Err(_err)) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
         Ok(_other_msgs) => Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id)),
         Err(_err) => Err(PeerHandlerError::ReceiveMessageFromPeerTimeout(peer_id)),
     }
@@ -438,31 +437,19 @@ impl PeerHandler {
             match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
                 None => return Ok(None),
                 Some((peer_id, mut peer_channel)) => {
-                    let mut receiver = peer_channel.receiver.lock().await;
-                    if let Err(err) = peer_channel.connection.backend_message(request).await {
+                    let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
+                    if let Err(err) = peer_channel
+                        .connection
+                        .outgoing_message(request, oneshot_tx)
+                        .await
+                    {
                         debug!("Failed to send message to peer: {err:?}");
                         continue;
                     }
-                    if let Some(block_headers) =
-                        tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                            loop {
-                                match receiver.recv().await {
-                                    Some(RLPxMessage::BlockHeaders(BlockHeaders {
-                                        id,
-                                        block_headers,
-                                    })) if id == request_id => {
-                                        return Some(block_headers);
-                                    }
-                                    // Ignore replies that don't match the expected id (such as late responses)
-                                    Some(_) => continue,
-                                    None => return None, // Retry request
-                                }
-                            }
-                        })
-                        .await
-                        .ok()
-                        .flatten()
-                        .and_then(|headers| (!headers.is_empty()).then_some(headers))
+                    if let Ok(Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                        id: _,
+                        block_headers,
+                    }))) = tokio::time::timeout(PEER_REPLY_TIMEOUT, oneshot_rx).await
                     {
                         if are_block_headers_chained(&block_headers, &order) {
                             return Ok(Some(block_headers));
@@ -472,6 +459,7 @@ impl PeerHandler {
                             );
                         }
                     }
+                    // Timeouted
                     warn!(
                         "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                     );
@@ -499,38 +487,28 @@ impl PeerHandler {
             skip: 0,
             reverse: false,
         });
-        let mut receiver = peer_channel.receiver.lock().await;
+        let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
 
         // FIXME! modify the cast and wait for a `call` version
         peer_channel
             .connection
-            .backend_message(request)
+            .outgoing_message(request, oneshot_tx)
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
-        let block_headers = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                match receiver.recv().await {
-                    Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                        if id == request_id =>
-                    {
-                        return Some(block_headers);
-                    }
-                    // Ignore replies that don't match the expected id (such as late responses)
-                    Some(_) => continue,
-                    None => return None, // EOF
-                }
+        if let Ok(Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+            id: _,
+            block_headers,
+        }))) = tokio::time::timeout(Duration::from_secs(2), oneshot_rx).await
+        {
+            if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+                Ok(block_headers)
+            } else {
+                warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
+                Err(PeerHandlerError::InvalidHeaders)
             }
-        })
-        .await
-        .map_err(|_| PeerHandlerError::BlockHeaders)?
-        .ok_or(PeerHandlerError::BlockHeaders)?;
-
-        if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
-            Ok(block_headers)
         } else {
-            warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
-            Err(PeerHandlerError::InvalidHeaders)
+            Err(PeerHandlerError::BlockHeaders)
         }
     }
 
@@ -551,38 +529,26 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut peer_channel)) => {
-                let mut receiver = peer_channel.receiver.lock().await;
-                if let Err(err) = peer_channel.connection.backend_message(request).await {
+                let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
+                if let Err(err) = peer_channel
+                    .connection
+                    .outgoing_message(request, oneshot_tx)
+                    .await
+                {
                     self.peer_table.record_failure(&peer_id).await?;
                     debug!("Failed to send message to peer: {err:?}");
                     return Ok(None);
                 }
-                if let Some(block_bodies) =
-                    tokio::time::timeout(Duration::from_secs(2), async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::BlockBodies(BlockBodies {
-                                    id,
-                                    block_bodies,
-                                })) if id == request_id => {
-                                    return Some(block_bodies);
-                                }
-                                // Ignore replies that don't match the expected id (such as late responses)
-                                Some(_) => continue,
-                                None => return None,
-                            }
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|bodies| {
-                        // Check that the response is not empty and does not contain more bodies than the ones requested
-                        (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
-                    })
+                if let Ok(Ok(RLPxMessage::BlockBodies(BlockBodies {
+                    id: _,
+                    block_bodies,
+                }))) = tokio::time::timeout(Duration::from_secs(2), oneshot_rx).await
                 {
-                    self.peer_table.record_success(&peer_id).await?;
-                    return Ok(Some((block_bodies, peer_id)));
+                    // Check that the response is not empty and does not contain more bodies than the ones requested
+                    if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
+                        self.peer_table.record_success(&peer_id).await?;
+                        return Ok(Some((block_bodies, peer_id)));
+                    }
                 }
 
                 warn!(
@@ -670,35 +636,25 @@ impl PeerHandler {
             match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
                 None => return Ok(None),
                 Some((_, mut peer_channel)) => {
-                    let mut receiver = peer_channel.receiver.lock().await;
-                    if let Err(err) = peer_channel.connection.backend_message(request).await {
+                    let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
+                    if let Err(err) = peer_channel
+                        .connection
+                        .outgoing_message(request, oneshot_tx)
+                        .await
+                    {
                         debug!("Failed to send message to peer: {err:?}");
                         continue;
                     }
-                    if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                        loop {
-                            match receiver.recv().await {
-                                Some(RLPxMessage::Receipts68(res)) => {
-                                    if res.get_id() == request_id {
-                                        return Some(res.get_receipts());
-                                    }
-                                    return None;
-                                }
-                                Some(RLPxMessage::Receipts69(res)) => {
-                                    if res.get_id() == request_id {
-                                        return Some(res.receipts.clone());
-                                    }
-                                    return None;
-                                }
-                                // Ignore replies that don't match the expected id (such as late responses)
-                                Some(_) => continue,
-                                None => return None,
+                    if let Some(receipts) =
+                        match tokio::time::timeout(PEER_REPLY_TIMEOUT, oneshot_rx).await {
+                            Ok(Ok(RLPxMessage::Receipts68(res))) => {
+                                Some(res.get_receipts())
                             }
+                            Ok(Ok(RLPxMessage::Receipts69(res))) => {
+                                Some(res.receipts.clone())
+                            }
+                            _ => None
                         }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
                     .and_then(|receipts|
                         // Check that the response is not empty and does not contain more bodies than the ones requested
                         (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
@@ -981,9 +937,9 @@ impl PeerHandler {
             limit_hash: chunk_end,
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+        let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
         if let Err(err) = (free_downloader_channels_clone.connection)
-            .backend_message(request)
+            .outgoing_message(request, oneshot_tx)
             .await
         {
             error!("Failed to send message to peer: {err:?}");
@@ -992,23 +948,11 @@ impl PeerHandler {
                 .ok();
             return Ok(());
         }
-        if let Some((accounts, proof)) = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                if let RLPxMessage::AccountRange(AccountRange {
-                    id,
-                    accounts,
-                    proof,
-                }) = receiver.recv().await?
-                {
-                    if id == request_id {
-                        return Some((accounts, proof));
-                    }
-                }
-            }
-        })
-        .await
-        .ok()
-        .flatten()
+        if let Ok(Ok(RLPxMessage::AccountRange(AccountRange {
+            id: _,
+            accounts,
+            proof,
+        }))) = tokio::time::timeout(Duration::from_secs(2), oneshot_rx).await
         {
             if accounts.is_empty() {
                 tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
@@ -1209,28 +1153,17 @@ impl PeerHandler {
                     hashes: hashes_to_request.clone(),
                     bytes: MAX_RESPONSE_BYTES,
                 });
-                let mut receiver = peer_channel.receiver.lock().await;
-                if let Err(err) = (peer_channel.connection).backend_message(request).await {
+                let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
+                if let Err(err) = (peer_channel.connection)
+                    .outgoing_message(request, oneshot_tx)
+                    .await
+                {
                     error!("Failed to send message to peer: {err:?}");
                     tx.send(empty_task_result).await.ok();
                     return;
                 }
-                if let Some(codes) = tokio::time::timeout(Duration::from_secs(2), async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
-                                if id == request_id =>
-                            {
-                                return Some(codes);
-                            }
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
+                if let Ok(Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes }))) =
+                    tokio::time::timeout(Duration::from_secs(2), oneshot_rx).await
                 {
                     if codes.is_empty() {
                         tx.send(empty_task_result).await.ok();
@@ -1649,32 +1582,21 @@ impl PeerHandler {
             limit_hash: task.end_hash.unwrap_or(HASH_MAX),
             response_bytes: MAX_RESPONSE_BYTES,
         });
-        let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+        let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
         if let Err(err) = (free_downloader_channels_clone.connection)
-            .backend_message(request)
+            .outgoing_message(request, oneshot_tx)
             .await
         {
             error!("Failed to send message to peer: {err:?}");
             tx.send(empty_task_result).await.ok();
             return Ok(());
         }
-        let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                match receiver.recv().await {
-                    Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
-                        if id == request_id =>
-                    {
-                        return Some((slots, proof));
-                    }
-                    Some(_) => continue,
-                    None => return None,
-                }
-            }
-        })
-        .await
-        .ok()
-        .flatten();
-        let Some((slots, proof)) = request_result else {
+        let Ok(Ok(RLPxMessage::StorageRanges(StorageRanges {
+            id: _,
+            slots,
+            proof,
+        }))) = tokio::time::timeout(Duration::from_secs(2), oneshot_rx).await
+        else {
             tracing::debug!("Failed to get storage range");
             tx.send(empty_task_result).await.ok();
             return Ok(());
@@ -1807,10 +1729,9 @@ impl PeerHandler {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        let nodes =
-            super::utils::send_message_and_wait_for_response(peer_channel, request, request_id)
-                .await
-                .map_err(RequestStateTrieNodesError::SendMessageError)?;
+        let nodes = super::utils::send_message_and_wait_for_response(peer_channel, request)
+            .await
+            .map_err(RequestStateTrieNodesError::SendMessageError)?;
 
         if nodes.is_empty() || nodes.len() > expected_nodes {
             return Err(RequestStateTrieNodesError::InvalidData);
@@ -1842,7 +1763,7 @@ impl PeerHandler {
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
         let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request, id)
+        super::utils::send_trie_nodes_messages_and_wait_for_reply(peer_channel, request)
             .await
             .map_err(|err| RequestStorageTrieNodes::SendMessageError(id, err))
     }
@@ -1875,31 +1796,31 @@ impl PeerHandler {
         });
         info!("get_block_header: requesting header with number {block_number}");
 
-        let mut receiver = peer_channel.receiver.lock().await;
+        let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
         debug!("locked the receiver for the peer_channel");
         peer_channel
             .connection
-            .backend_message(request)
+            .outgoing_message(request, oneshot_tx)
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
-        let response =
-            tokio::time::timeout(Duration::from_secs(5), async move { receiver.recv().await })
-                .await;
+        let response = tokio::time::timeout(Duration::from_secs(5), oneshot_rx).await;
 
         // TODO: we need to check, this seems a scenario where the peer channel does teardown
         // after we sent the backend message
-        let Some(Ok(response)) = response
-            .inspect_err(|_err| info!("Timeout while waiting for sync head from peer"))
-            .transpose()
+        let Ok(Ok(response)) =
+            response.inspect_err(|_err| info!("Timeout while waiting for sync head from peer"))
         else {
             warn!("The RLPxConnection closed the backend channel");
             return Ok(None);
         };
 
         match response {
-            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) => {
-                if id == request_id && !block_headers.is_empty() {
+            RLPxMessage::BlockHeaders(BlockHeaders {
+                id: _,
+                block_headers,
+            }) => {
+                if !block_headers.is_empty() {
                     return Ok(Some(
                         block_headers
                             .last()
