@@ -78,7 +78,7 @@ Follow these steps to quickly launch a local L2 node. For advanced options and r
 
 ```sh
 # install ethrex
-brew install lambdaclass/ethrex
+brew install lambdaclass/tap/ethrex
 ethrex l2 --dev
 ```
 
