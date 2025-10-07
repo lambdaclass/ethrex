@@ -462,7 +462,6 @@ jobs:
       
       - name: Run test
         run: |
-          sudo chmod -R a+rw crates/l2
           cd crates/l2
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
 
@@ -477,9 +476,10 @@ jobs:
         state-diff-test,
         integration-test-based,
         integration-test-tdx,
+        integration-test-l2-dev,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' }}
+    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -495,5 +495,10 @@ jobs:
 
           if [ "${{ needs.integration-test-based.result }}" != "success" ]; then
             echo "Job Integration Tests Based failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.integration-test-l2-dev.result }}" != "success" ]; then
+            echo "Job Integration Tests L2 Dev failed"
             exit 1
           fi
