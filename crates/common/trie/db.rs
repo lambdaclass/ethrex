@@ -11,8 +11,15 @@ pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
-    fn put_batch_no_alloc(&self, key_values: &[(NodeHash, Node)]) -> Result<(), TrieError> {
-        todo!()
+    fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
+        for (k, v) in key_values {
+            if let Node::Leaf(leaf_node) = v {
+                let path = k.concat(leaf_node.partial.clone());
+                self.put(path, leaf_node.value.clone())?;
+            };
+            self.put(k.clone(), v.encode_to_vec())?;
+        }
+        Ok(())
     }
     fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
