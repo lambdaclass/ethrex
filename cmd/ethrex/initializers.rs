@@ -16,6 +16,7 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
+    sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -135,10 +136,17 @@ pub async fn init_rpc_api(
     extra_data: String,
 ) {
     init_datadir(&opts.datadir);
+
+    let syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
