@@ -471,14 +471,10 @@ impl Store {
                 }
                 let nibble_bytes = &key[0..(key.len() - 32)];
                 let nibble = Nibbles::from_bytes(nibble_bytes);
-                if nibble == Nibbles::default() {
-                    info!("Found root in iteration {}", i);
-                }
                 let hash = H256::from_slice(&key[(key.len() - 32) ..]);
                 let node = Node::decode(&value)
                     .map_err(|e| StoreError::Custom(format!("RLP decode error: {}", e)))?;
                 if nodes_stack.is_empty() {
-                    info!("Nodes stack was empty");
                     let child_amount = match &node {
                         Node::Branch(parent) => {
                             parent.choices.iter().filter(|c| c.is_valid()).count()
@@ -495,7 +491,6 @@ impl Store {
                 let (last_node_nibble, last_node, child_amount) = nodes_stack.pop().unwrap();
                 let found = match last_node.clone() {
                     Node::Branch(parent) => {
-                        info!("parent was branch child amount {}", child_amount);
                         let mut found = false;
                         for child in parent.choices.iter() {
                             if child.compute_hash() == NodeHash::Hashed(hash) {
@@ -506,7 +501,6 @@ impl Store {
                         found
                     }
                     Node::Extension(parent) => {
-                        info!("parent was extension");
                         parent.child.compute_hash() == NodeHash::Hashed(hash)
                     }
                     Node::Leaf(_) => {
@@ -515,7 +509,6 @@ impl Store {
                         )));
                     }
                 };
-                info!("found child in parent: {}", found);
                 if child_amount >= 1 {
                     // still has other childs, push it back
                     let new_child_amount = child_amount - (if found { 1 } else { 0 });
@@ -536,7 +529,6 @@ impl Store {
                         Node::Leaf(_) => 0,
                     };
                     if !matches!(node, Node::Leaf(_)) {
-                        info!("pushing node to stack, child amount: {}", child_amount);
                         nodes_stack.push((nibble, node, child_amount));
                     }
                     batch.put_cf(&cf_trie_nodes_pathbased, nibble_bytes, value);
