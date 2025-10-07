@@ -17,4 +17,4 @@ This will start a local L1 and L2 network. A JSON-RPC server compatible with Eth
 For more details and configuration options, see:
 
 - [Installation](./installation)
-- [Advanced options and more details](../l2/introduction.md)
+- [Advanced options and more details](../l2/deploy.md)
