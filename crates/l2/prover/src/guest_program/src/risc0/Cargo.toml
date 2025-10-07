@@ -15,19 +15,9 @@ risc0-zkvm-platform = { version = "=2.2.1", default-features = false, features =
     "sys-getenv",
 ] }
 guest_program = { path = "../../", default-features = false, features = [
-    "c-kzg",
+    "risc0",
 ] }
 rkyv = { version = "0.8.10", features = ["unaligned"] }
-
-
-ethrex-common = { path = "../../../../../../common", default-features = false }
-ethrex-storage = { path = "../../../../../../storage", default-features = false }
-ethrex-rlp = { path = "../../../../../../common/rlp" }
-ethrex-vm = { path = "../../../../../../vm", default-features = false, features = [
-    "c-kzg",
-] }
-ethrex-blockchain = { path = "../../../../../../blockchain", default-features = false }
-ethrex-l2-common = { path = "../../../../../common", default-features = false }
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8-risczero.0" }

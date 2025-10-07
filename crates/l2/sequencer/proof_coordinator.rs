@@ -6,12 +6,8 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::{
-    Address,
-    types::{Block, blobs_bundle},
-};
+use ethrex_common::{Address, types::Block};
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
@@ -45,10 +41,10 @@ pub struct ProverInputData {
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
-    pub blob_commitment: blobs_bundle::Commitment,
+    pub blob_commitment: ethrex_common::types::blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
-    pub blob_proof: blobs_bundle::Proof,
+    pub blob_proof: ethrex_common::types::blobs_bundle::Proof,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -178,6 +174,7 @@ pub struct ProofCoordinator {
     rpc_url: String,
     tdx_private_key: Option<SecretKey>,
     blockchain: Arc<Blockchain>,
+    #[cfg(feature = "l2")]
     validium: bool,
     needed_proof_types: Vec<ProverType>,
     commit_hash: String,
@@ -228,6 +225,7 @@ impl ProofCoordinator {
             rpc_url,
             tdx_private_key: config.tdx_private_key,
             blockchain,
+            #[cfg(feature = "l2")]
             validium: config.validium,
             needed_proof_types,
             commit_hash: get_commit_hash(),
@@ -480,9 +478,11 @@ impl ProofCoordinator {
             .map_err(ProofCoordinatorError::from)?;
 
         // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
+        #[cfg(feature = "l2")]
         let (blob_commitment, blob_proof) = if self.validium {
             ([0; 48], [0; 48])
         } else {
+            use ethrex_common::types::BlobsBundle;
             let blob = self
                 .rollup_store
                 .get_blobs_by_batch(batch_number)

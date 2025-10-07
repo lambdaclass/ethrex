@@ -810,8 +810,8 @@ async fn test_forced_withdrawal(
     rich_wallet_private_key: SecretKey,
 ) -> Result<U256> {
     println!("forced_withdrawal: Testing forced withdrawal");
-    let rich_address =
-        get_address_from_secret_key(&rich_wallet_private_key).expect("Failed to get address");
+    let rich_address = get_address_from_secret_key(&rich_wallet_private_key.secret_bytes())
+        .expect("Failed to get address");
     let l1_initial_balance = l1_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -975,7 +975,7 @@ async fn test_deposit(
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("test_deposit: Fetching initial balances on L1 and L2");
-    let rich_wallet_address = get_address_from_secret_key(rich_wallet_private_key)
+    let rich_wallet_address = get_address_from_secret_key(&rich_wallet_private_key.secret_bytes())
         .expect("Failed to get address from l1 rich wallet pk");
 
     let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
@@ -1106,8 +1106,10 @@ async fn test_transfer(
     returnerer_private_key: SecretKey,
 ) -> Result<U256> {
     println!("test_transfer: Transferring funds on L2");
-    let transferer_address = get_address_from_secret_key(&transferer_private_key).unwrap();
-    let returner_address = get_address_from_secret_key(&returnerer_private_key).unwrap();
+    let transferer_address =
+        get_address_from_secret_key(&transferer_private_key.secret_bytes()).unwrap();
+    let returner_address =
+        get_address_from_secret_key(&returnerer_private_key.secret_bytes()).unwrap();
 
     println!(
         "test_transfer: Performing transfer from {transferer_address:#x} to {returner_address:#x}"
@@ -1149,8 +1151,10 @@ async fn test_transfer_with_privileged_tx(
     receiver_private_key: SecretKey,
 ) -> Result<U256> {
     println!("transfer_with_ptx: Transferring funds on L2 through a deposit");
-    let transferer_address = get_address_from_secret_key(&transferer_private_key).unwrap();
-    let receiver_address = get_address_from_secret_key(&receiver_private_key).unwrap();
+    let transferer_address =
+        get_address_from_secret_key(&transferer_private_key.secret_bytes()).unwrap();
+    let receiver_address =
+        get_address_from_secret_key(&receiver_private_key.secret_bytes()).unwrap();
 
     println!("transfer_with_ptx: Fetching receiver's initial balance on L2");
 
@@ -1206,7 +1210,8 @@ async fn test_gas_burning(
     rich_wallet_private_key: SecretKey,
 ) -> Result<U256> {
     println!("test_gas_burning: Transferring funds on L2 through a deposit");
-    let rich_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
+    let rich_address =
+        get_address_from_secret_key(&rich_wallet_private_key.secret_bytes()).unwrap();
     let l2_gas_limit = 2_000_000;
     let l1_extra_gas_limit = 400_000;
 
@@ -1244,8 +1249,10 @@ async fn test_privileged_tx_not_enough_balance(
     println!(
         "ptx_not_enough_balance: Starting test for privileged transaction with insufficient balance"
     );
-    let rich_address = get_address_from_secret_key(&rich_wallet_private_key).unwrap();
-    let receiver_address = get_address_from_secret_key(&receiver_private_key).unwrap();
+    let rich_address =
+        get_address_from_secret_key(&rich_wallet_private_key.secret_bytes()).unwrap();
+    let receiver_address =
+        get_address_from_secret_key(&receiver_private_key.secret_bytes()).unwrap();
 
     println!("ptx_not_enough_balance: Fetching initial balances on L1 and L2");
 
@@ -1305,7 +1312,8 @@ async fn perform_transfer(
     transfer_recipient_address: Address,
     transfer_value: U256,
 ) -> Result<U256> {
-    let transferer_address = get_address_from_secret_key(transferer_private_key).unwrap();
+    let transferer_address =
+        get_address_from_secret_key(&transferer_private_key.secret_bytes()).unwrap();
 
     let transferer_initial_l2_balance = l2_client
         .get_balance(transferer_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -1380,7 +1388,7 @@ async fn test_n_withdraws(
     n: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("test_n_withdraws: Withdrawing funds from L2 to L1");
-    let withdrawer_address = get_address_from_secret_key(withdrawer_private_key)?;
+    let withdrawer_address = get_address_from_secret_key(&withdrawer_private_key.secret_bytes())?;
     let withdraw_value = std::env::var("INTEGRATION_TEST_WITHDRAW_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid withdraw value"))
         .unwrap_or(U256::from(100000000000000000000u128));
@@ -1687,8 +1695,8 @@ async fn test_call_to_contract_with_deposit(
     caller_private_key: &SecretKey,
     test: &str,
 ) -> Result<()> {
-    let caller_address =
-        get_address_from_secret_key(caller_private_key).expect("Failed to get address");
+    let caller_address = get_address_from_secret_key(&caller_private_key.secret_bytes())
+        .expect("Failed to get address");
 
     println!("{test}: Checking balances before call");
 
@@ -1899,7 +1907,7 @@ async fn get_rich_accounts_balance(
 
     for pk in private_keys.iter() {
         let secret_key = parse_private_key(pk)?;
-        let address = get_address_from_secret_key(&secret_key)?;
+        let address = get_address_from_secret_key(&secret_key.secret_bytes())?;
         let get_balance = l2_client
             .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))
             .await?;

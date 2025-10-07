@@ -10,7 +10,9 @@ documentation.workspace = true
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
-ethrex-crypto.workspace = true
+# This crate cannot import ethrex-crypto with its default features because the
+# users may want specific features.
+ethrex-crypto = { workspace = true, default-features = false }
 
 tracing.workspace = true
 tinyvec = "1.6.0"
@@ -19,11 +21,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
-# TODO(#1102): Move to Lambdaworks in the future
-c-kzg = { version = "2.1.1", optional = true }
-kzg-rs.workspace = true
 sha3.workspace = true
-secp256k1.workspace = true
+secp256k1 = { workspace = true, optional = true }
 once_cell = "1.20.2"
 libc = "0.2"
 crc32fast.workspace = true
@@ -38,9 +37,19 @@ rkyv.workspace = true
 hex-literal.workspace = true
 
 [features]
-default = []
-c-kzg = ["dep:c-kzg", "ethrex-crypto/c-kzg"]
- 
+default = ["l1"]
+
+secp256k1 = ["dep:secp256k1"]
+k256 = []
+
+c-kzg = ["ethrex-crypto/c-kzg"]
+kzg-rs = ["ethrex-crypto/kzg-rs"]
+openvm-kzg = ["ethrex-crypto/kzg-rs"]
+
+l1 = ["ethrex-crypto/l1", "c-kzg", "secp256k1"]
+sp1 = ["ethrex-crypto/sp1", "kzg-rs", "k256"]
+risc0 = ["ethrex-crypto/risc0", "c-kzg", "k256"]
+
 [lib]
 path = "./common.rs"
 

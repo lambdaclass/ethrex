@@ -748,8 +748,8 @@ async fn initialize_contracts(
     let sp1_vk = read_vk(&opts.sp1_vk_path);
     let risc0_vk = read_vk(&opts.risc0_vk_path);
 
-    let deployer_address =
-        get_address_from_secret_key(&opts.private_key).map_err(DeployerError::InternalError)?;
+    let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes()[..])
+        .map_err(DeployerError::InternalError)?;
 
     info!("Initializing OnChainProposer");
 

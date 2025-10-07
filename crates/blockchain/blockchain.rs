@@ -679,7 +679,9 @@ impl Blockchain {
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
-        let sender = transaction.sender()?;
+        let sender = transaction
+            .sender()
+            .map_err(|e| MempoolError::InvalidTxSender(e.to_string()))?;
 
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
@@ -691,6 +693,16 @@ impl Blockchain {
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
+    }
+
+    // FIXME
+    #[cfg(feature = "kzg-rs")]
+    pub async fn add_blob_transaction_to_pool(
+        &self,
+        _transaction: EIP4844Transaction,
+        _blobs_bundle: ethrex_common::types::BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        unimplemented!()
     }
 
     /// Add a transaction to the mempool checking that the transaction is valid
@@ -706,7 +718,9 @@ impl Blockchain {
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
-        let sender = transaction.sender()?;
+        let sender = transaction
+            .sender()
+            .map_err(|e| MempoolError::InvalidTxSender(e.to_string()))?;
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
