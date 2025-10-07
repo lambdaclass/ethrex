@@ -88,7 +88,7 @@ pub async fn send_message_and_wait_for_response(
     let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
     peer_channel
         .connection
-        .outgoing_message(message, oneshot_tx)
+        .outgoing_request(message, oneshot_tx)
         .await
         .map_err(SendMessageError::ConnectionError)?;
     let nodes = tokio::time::timeout(Duration::from_secs(7), receive_trienodes(oneshot_rx))
@@ -112,7 +112,7 @@ pub async fn send_trie_nodes_messages_and_wait_for_reply(
     let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
     peer_channel
         .connection
-        .outgoing_message(message, oneshot_tx)
+        .outgoing_request(message, oneshot_tx)
         .await
         .map_err(SendMessageError::ConnectionError)?;
     tokio::time::timeout(Duration::from_secs(7), receive_trienodes(oneshot_rx))

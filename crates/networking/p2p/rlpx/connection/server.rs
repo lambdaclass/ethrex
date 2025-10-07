@@ -104,13 +104,20 @@ impl PeerConnection {
         }
     }
 
-    pub async fn outgoing_message(
+    pub async fn outgoing_message(&mut self, message: Message) -> Result<(), PeerConnectionError> {
+        self.handle
+            .cast(CastMessage::OutgoingMessage(message))
+            .await
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))
+    }
+
+    pub async fn outgoing_request(
         &mut self,
         message: Message,
         sender: tokio::sync::oneshot::Sender<Message>,
     ) -> Result<(), PeerConnectionError> {
         self.handle
-            .cast(CastMessage::OutgoingMessage(message, Arc::new(sender)))
+            .cast(CastMessage::OutgoingRequest(message, Arc::new(sender)))
             .await
             .map_err(|err| PeerConnectionError::InternalError(err.to_string()))
     }
@@ -187,11 +194,17 @@ pub enum ConnectionState {
 pub enum CastMessage {
     /// Received a message from the remote peer
     IncomingMessage(Message),
-    /// This node requests information from the remote peer
-    OutgoingMessage(Message, Arc<tokio::sync::oneshot::Sender<Message>>),
+    /// We send information to the remote peer
+    OutgoingMessage(Message),
+    /// We request information from the remote peer
+    OutgoingRequest(Message, Arc<tokio::sync::oneshot::Sender<Message>>),
+    /// Periodic message to send ping to remote peer
     SendPing,
+    /// Periodic message to send block range update to remote peer
     BlockRangeUpdate,
+    /// Received a message to broadcast. Used only for L2, we have to move this logic to tx_broadcaster.
     BroadcastMessage(task::Id, Arc<Message>),
+    /// L2 message
     L2(L2Cast),
 }
 
@@ -286,16 +299,23 @@ impl GenServer for PeerConnectionServer {
                 Self::CastMsg::IncomingMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
-                        &format!("Received peer message: {message}"),
+                        &format!("Received incomming message: {message}"),
                     );
                     handle_incoming_message(established_state, message).await
                 }
-                Self::CastMsg::OutgoingMessage(message, sender) => {
+                Self::CastMsg::OutgoingMessage(message) => {
                     log_peer_debug(
                         &established_state.node,
-                        &format!("Received backend message: {message}"),
+                        &format!("Received outgoing request: {message}"),
                     );
-                    handle_outgoing_message(
+                    handle_outgoing_message(established_state, message).await
+                }
+                Self::CastMsg::OutgoingRequest(message, sender) => {
+                    log_peer_debug(
+                        &established_state.node,
+                        &format!("Received outgoing request: {message}"),
+                    );
+                    handle_outgoing_request(
                         established_state,
                         message,
                         Arc::<tokio::sync::oneshot::Sender<Message>>::into_inner(sender)
@@ -1000,13 +1020,22 @@ async fn handle_incoming_message(
 async fn handle_outgoing_message(
     state: &mut Established,
     message: Message,
+) -> Result<(), PeerConnectionError> {
+    log_peer_debug(&state.node, &format!("Sending message {message}"));
+    send(state, message).await?;
+    Ok(())
+}
+
+async fn handle_outgoing_request(
+    state: &mut Established,
+    message: Message,
     sender: tokio::sync::oneshot::Sender<Message>,
 ) -> Result<(), PeerConnectionError> {
     // Insert the request in the request map if it supports a request id.
     message
         .request_id()
         .and_then(|id| state.current_requests.insert(id, sender));
-    log_peer_debug(&state.node, &format!("Sending message {message}"));
+    log_peer_debug(&state.node, &format!("Sending request {message}"));
     send(state, message).await?;
     Ok(())
 }

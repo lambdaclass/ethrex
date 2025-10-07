@@ -114,7 +114,7 @@ async fn ask_peer_head_number(
 
     peer_channel
         .connection
-        .outgoing_message(request, oneshot_tx)
+        .outgoing_request(request, oneshot_tx)
         .await
         .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
@@ -440,7 +440,7 @@ impl PeerHandler {
                     let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
                     if let Err(err) = peer_channel
                         .connection
-                        .outgoing_message(request, oneshot_tx)
+                        .outgoing_request(request, oneshot_tx)
                         .await
                     {
                         debug!("Failed to send message to peer: {err:?}");
@@ -492,7 +492,7 @@ impl PeerHandler {
         // FIXME! modify the cast and wait for a `call` version
         peer_channel
             .connection
-            .outgoing_message(request, oneshot_tx)
+            .outgoing_request(request, oneshot_tx)
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
@@ -532,7 +532,7 @@ impl PeerHandler {
                 let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
                 if let Err(err) = peer_channel
                     .connection
-                    .outgoing_message(request, oneshot_tx)
+                    .outgoing_request(request, oneshot_tx)
                     .await
                 {
                     self.peer_table.record_failure(&peer_id).await?;
@@ -635,7 +635,7 @@ impl PeerHandler {
                     let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
                     if let Err(err) = peer_channel
                         .connection
-                        .outgoing_message(request, oneshot_tx)
+                        .outgoing_request(request, oneshot_tx)
                         .await
                     {
                         debug!("Failed to send message to peer: {err:?}");
@@ -935,7 +935,7 @@ impl PeerHandler {
         });
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
         if let Err(err) = (free_downloader_channels_clone.connection)
-            .outgoing_message(request, oneshot_tx)
+            .outgoing_request(request, oneshot_tx)
             .await
         {
             error!("Failed to send message to peer: {err:?}");
@@ -1151,7 +1151,7 @@ impl PeerHandler {
                 });
                 let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
                 if let Err(err) = (peer_channel.connection)
-                    .outgoing_message(request, oneshot_tx)
+                    .outgoing_request(request, oneshot_tx)
                     .await
                 {
                     error!("Failed to send message to peer: {err:?}");
@@ -1580,7 +1580,7 @@ impl PeerHandler {
         });
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<RLPxMessage>();
         if let Err(err) = (free_downloader_channels_clone.connection)
-            .outgoing_message(request, oneshot_tx)
+            .outgoing_request(request, oneshot_tx)
             .await
         {
             error!("Failed to send message to peer: {err:?}");
@@ -1796,7 +1796,7 @@ impl PeerHandler {
         debug!("locked the receiver for the peer_channel");
         peer_channel
             .connection
-            .outgoing_message(request, oneshot_tx)
+            .outgoing_request(request, oneshot_tx)
             .await
             .map_err(|e| PeerHandlerError::SendMessageToPeer(e.to_string()))?;
 
