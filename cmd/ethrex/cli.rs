@@ -15,10 +15,14 @@ use ethrex_storage::error::StoreError;
 use tracing::{Level, info, warn};
 
 use crate::{
-    constants::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
     initializers::{get_network, init_blockchain, init_store, init_tracing, load_store},
     utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
+
+pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
+
+#[cfg(feature = "l2")]
+pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 use ethrex_config::networks::Network;
 
 #[allow(clippy::upper_case_acronyms)]
@@ -202,6 +206,7 @@ impl Options {
         }
     }
 
+    #[cfg(feature = "l2")]
     pub fn default_l2() -> Self {
         Self {
             network: Some(Network::LocalDevnetL2),
@@ -312,7 +317,7 @@ pub enum Subcommand {
     },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
-    L2(l2::L2Command),
+    L2(crate::l2::L2Command),
 }
 
 impl Subcommand {

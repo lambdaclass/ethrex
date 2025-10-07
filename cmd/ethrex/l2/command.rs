@@ -1,5 +1,5 @@
 use crate::{
-    cli::remove_db,
+    cli::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2, remove_db},
     initializers::{init_l1, init_store, init_tracing},
     l2::{
         self,
