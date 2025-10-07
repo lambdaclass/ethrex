@@ -25,7 +25,7 @@ const SKIPPED_TESTS: &[&str] = &[
 // after the block's execution, it throws InvalidBlock(GasUsedMismatch(0x06000000,0x05000000)) on comparing the receipt's cumulative gas used agains the block's gas limit.
 #[cfg(any(feature = "sp1", feature = "stateless"))]
 const SKIPPED_TESTS: &[&str] = &[
-    // We skip most of these for the same reason we skip them in LEVM; since we need to do a LEVM run before doing one with the stateless backend
+    // We skip most of these for the same reason we skip them in normal runs; since we need to do a normal run before running with the stateless backend
     "system_contract_deployment",
     "test_tx_gas_larger_than_block_gas_limit",
     "HighGasPriceParis",
@@ -41,14 +41,12 @@ const SKIPPED_TESTS: &[&str] = &[
     "test_multiple_withdrawals_same_address",
 ];
 
-// If neither `sp1` nor `stateless` is enabled: run with whichever engine
-// the features imply (LEVM if `levm` is on; otherwise REVM).
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, Some(SKIPPED_TESTS), None)
 }
 
-// If `sp1` or `stateless` is enabled: always use LEVM with the appropriate backend.
+// If `sp1` or `stateless` is enabled
 #[cfg(any(feature = "sp1", feature = "stateless"))]
 fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     #[cfg(feature = "stateless")]
@@ -59,14 +57,7 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, Some(SKIPPED_TESTS), backend)
 }
 
-datatest_stable::harness!(
-    blockchain_runner,
-    TEST_FOLDER,
-    // r"jere/sixteen/BlockchainTests/GeneralStateTests/stTransactionTest/NoSrcAccount.json"
-    // r"static/state_tests/stTransactionTest/NoSrcAccount.json"
-    // r"failures"
-    r"jere/Legacy"
-);
+datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r"");
 
 #[cfg(any(all(feature = "sp1", feature = "stateless"),))]
-compile_error!("Only one of `sp1`, `stateless` can be enabled at a time.");
+compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
