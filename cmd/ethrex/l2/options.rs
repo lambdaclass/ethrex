@@ -405,6 +405,13 @@ pub struct BlockProducerOptions {
     )]
     pub operator_fee_vault_address: Option<Address>,
     #[arg(
+        long = "block-producer.l1-fee-vault-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS",
+        help_heading = "Block producer options"
+    )]
+    pub l1_fee_vault_address: Option<Address>,
+    #[arg(
         long,
         default_value = "2",
         value_name = "UINT64",
@@ -434,6 +441,7 @@ impl Default for BlockProducerOptions {
             ),
             base_fee_vault_address: None,
             operator_fee_vault_address: None,
+            l1_fee_vault_address: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
