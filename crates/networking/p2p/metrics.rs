@@ -473,6 +473,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            #[cfg(feature = "l2")]
             RLPxError::RollupStoreError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("RollupStoreError - {error}"))

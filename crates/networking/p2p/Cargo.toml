@@ -13,7 +13,7 @@ ethrex-blockchain.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-ethrex-storage-rollup.workspace = true
+ethrex-storage-rollup = { workspace = true, optional = true }
 ethereum-types.workspace = true
 
 async-trait.workspace = true
@@ -57,6 +57,7 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
+l2 = []
 
 [lints.clippy]
 unwrap_used = "deny"

@@ -120,7 +120,7 @@ harness = false
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
-ethrex-sdk.workspace = true
+ethrex-sdk = { workspace = true, optional = true }
 hex.workspace = true
 bytes.workspace = true
 ethrex-common.workspace = true
