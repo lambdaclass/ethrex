@@ -43,7 +43,6 @@ impl NodeRef {
                 .and_then(|rlp| match Node::decode(&rlp) {
                     Ok(node) => {
                         if node.compute_hash() == hash {
-                            println!("check failed for {hash:x?} path {path:?}");
                             Some(Ok(node))
                         } else {
                             None
