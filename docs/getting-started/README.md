@@ -18,7 +18,7 @@ Install ethrex and lighthouse:
 
 ```sh
 # install lightouse and ethrex
-brew install lambdaclass/ethrex
+brew install lambdaclass/tap/ethrex
 brew install lighthouse
 
 # create secrets directory and jwt secret
