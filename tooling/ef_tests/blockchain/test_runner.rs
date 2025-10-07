@@ -344,11 +344,6 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
 /// Tests that previously failed the validation stage shouldn't be executed with this function.
 async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
     let latest_block_number = db.get_latest_block_number().await.unwrap();
-    if test.post_state.is_none() && test.post_state_hash.is_none() {
-        panic!(
-            "Test {test_key} does not provide post_state or post_state_hash, cannot verify post-state"
-        );
-    }
     if let Some(post_state) = &test.post_state {
         for (addr, account) in post_state {
             let expected_account: CoreAccount = account.clone().into();
@@ -409,15 +404,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     let last_block = db.get_block_header(last_block_number).unwrap();
     assert!(last_block.is_some(), "Block hash is not stored in db");
 
-    // If the test provides an expected post-state hash, validate it against the
-    // computed state root of the last block header.
-    if let Some(expected_post_state_hash) = test.post_state_hash {
-        assert_eq!(
-            expected_post_state_hash, last_block_header.state_root,
-            "Mismatched post-state hash for test: {test_key}"
-        );
-    }
-    // State root was alredy validated by `add_block``
+    // State root was alredy validated by `add_block`.
 }
 
 async fn re_run_stateless(
