@@ -1134,6 +1134,7 @@ impl Syncer {
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
+        /*
         info!("Adding leaves...");
         let trie = store.open_direct_state_trie(pivot_header.state_root)?;
         let mut nodes_to_write = Vec::new();
@@ -1145,7 +1146,7 @@ impl Syncer {
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
-                
+
                 let account_state = AccountState::decode(&node.value)?;
                 let storage_trie = store.open_direct_storage_trie(
                     H256::from_slice(&path.to_bytes()),
@@ -1164,7 +1165,7 @@ impl Syncer {
                         let Node::Leaf(node) = node else {
                             return Ok(());
                         };
-                        
+
                         storages_to_write.push((path.concat(node.partial.clone()), node.encode_to_vec()));
                         if storages_to_write.len() > 100_000 {
                             storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
@@ -1179,6 +1180,7 @@ impl Syncer {
                 }
                 Ok(())
             })?;
+        */
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
