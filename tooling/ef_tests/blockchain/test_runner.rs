@@ -404,7 +404,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     let last_block = db.get_block_header(last_block_number).unwrap();
     assert!(last_block.is_some(), "Block hash is not stored in db");
 
-    // State root was alredy validated by `add_block`.
+    // State root was already validated by `add_block`.
 }
 
 async fn re_run_stateless(
