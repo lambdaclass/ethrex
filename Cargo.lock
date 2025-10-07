@@ -4564,12 +4564,12 @@ dependencies = [
 name = "geth2ethrex"
 version = "0.1.0"
 dependencies = [
- "clap 4.5.47",
+ "clap 4.5.48",
  "clap_complete",
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
  "eyre",
  "rocksdb",
  "snap",

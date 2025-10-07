@@ -95,24 +95,132 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
 use eyre::OptionExt;
-use rocksdb::{
-    DBWithThreadMode, IngestExternalFileOptions, MultiThreaded, Options, SingleThreaded,
-    SstFileWriter,
-};
-use std::collections::HashMap;
-use std::fs::{File, read};
+use rocksdb::{DBWithThreadMode, MultiThreaded, Options, SingleThreaded, SstFileWriter};
+use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::thread::Scope;
+use std::thread::ScopedJoinHandle;
 use std::thread::scope;
 use std::time::Instant;
-use tempfile::{NamedTempFile, tempfile_in};
-use tracing::{debug, info};
+use tempfile::NamedTempFile;
+use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
+
+pub fn main() -> eyre::Result<()> {
+    let args = Args::parse();
+    tracing::subscriber::set_global_default(FmtSubscriber::new())
+        .expect("setting default subscriber failed");
+    // init_datadir(&args.output_dir);
+    // let store = open_store(&args.output_dir);
+    geth2ethrex(args.block_number, args.output_dir, args.input_dir)
+}
+
+pub fn geth2ethrex(
+    block_number: BlockNumber,
+    output_dir: String,
+    input_dir: String,
+) -> eyre::Result<()> {
+    const N_THREADS: usize = 16;
+    let migration_start: Instant = Instant::now();
+
+    let gethdb = GethDB::open(input_dir)?;
+    let hashes = gethdb.read_hashes_from_gethdb(
+        block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
+        block_number,
+    )?;
+    let block_hash = *hashes.last().ok_or_eyre("missing block hash")?;
+    // TODO: save hashes to ethrex DB and mark canonical
+    let [header, body] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
+    println!("{} {}", header.len(), body.len());
+    // TODO: save header and body to ethrex DB
+    // TODO: extract root hash from header
+    let header: BlockHeader = RLPDecode::decode(&header)?;
+    println!("state root: {}", header.state_root);
+    println!("header block number: {}", header.number);
+    println!("parent hash: {}", header.parent_hash);
+    println!(
+        "last hash: {:32x}{:32x}",
+        u128::from_be_bytes(block_hash[..16].try_into().unwrap()),
+        u128::from_be_bytes(block_hash[16..].try_into().unwrap())
+    );
+
+    scope(|s| {
+        let (account_bucket_senders, account_bucket_receivers): (Vec<_>, Vec<_>) =
+            (0..16).map(|_| sync_channel(1_000)).unzip();
+        let account_bucket_senders: [_; 16] = account_bucket_senders.try_into().unwrap();
+        let gethdbs = (0..16)
+            .map(|_| gethdb.triedb(account_bucket_senders.clone()))
+            .collect::<eyre::Result<Vec<_>>>()?;
+        std::mem::drop(account_bucket_senders);
+        let account_worker_handlers: Vec<_> = account_bucket_receivers
+            .into_iter()
+            .map(|r| {
+                s.spawn(|| {
+                    let named = big_trie_bucket_worker(r).unwrap();
+                    println!(
+                        "sst written to: {} ({} bytes)",
+                        &named.path().to_string_lossy(),
+                        named.as_file().metadata().unwrap().size()
+                    );
+                })
+            })
+            .collect();
+        // TODO: refactor into function, will need similar logic for storage
+        // tries and it's noisy to have here.
+        let Some(root) = gethdbs[0].get(header.state_root.into())? else {
+            return Ok(());
+        };
+        let top_branch = match Node::decode(&root)? {
+            Node::Leaf(_) => {
+                // TODO: extract account data
+                return Ok(());
+            }
+            Node::Extension(ext) => {
+                let child = gethdbs[0].get(ext.child.compute_hash())?.unwrap();
+                match Node::decode_raw(&child)? {
+                    Node::Branch(branch) => branch,
+                    _ => eyre::bail!("bad extension"),
+                }
+            }
+            Node::Branch(branch) => branch,
+        };
+        let (code_handler, code_bucket_senders) = CodeHandler::<N_THREADS>::start(s)?;
+        let (storage_root_bucket_senders, storage_root_bucket_receivers): (Vec<_>, Vec<_>) =
+            (0..16).map(|_| sync_channel(1_000)).unzip();
+        let storage_root_bucket_senders: [_; 16] = storage_root_bucket_senders.try_into().unwrap();
+        gethdbs.into_iter().enumerate().for_each(|(b, db)| {
+            let hash = top_branch.choices[b].compute_hash().finalize();
+            let code_bucket_senders = code_bucket_senders.clone();
+            let storage_root_bucket_senders = storage_root_bucket_senders.clone();
+            s.spawn(move || {
+                let trie = Trie::open(db, hash);
+                for (path, value) in trie.into_iter().content() {
+                    let hash: [u8; 32] = path.try_into().unwrap();
+                    let account_state = AccountState::decode(&value).unwrap();
+                    code_bucket_senders.send(account_state.code_hash.0).unwrap();
+                    // TODO: struct and method to handle the storage trie.
+                    let storage_root = account_state.storage_root;
+                    if storage_root != *EMPTY_TRIE_HASH {
+                        storage_root_bucket_senders[storage_root.0[0] as usize >> 4]
+                            .send((storage_root, hash))
+                            .unwrap();
+                    }
+                }
+            });
+        });
+        let _ = code_handler.wait()?;
+        Ok(())
+    })?;
+
+    let migration_time = migration_start.elapsed().as_secs_f64();
+    info!("Migration complete in {migration_time}");
+    Ok(())
+}
 
 struct GethDB {
     ancient_db_path: PathBuf,
@@ -387,6 +495,28 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
 // - We need to use ingest behind to force data to the bottom level, as this
 //   is the oldest data our node will have, and we don't want unnecessary
 //   compaction to slow us down later.
+//
+// DATA:
+// sqlite> SELECT storages_count, repetition_count FROM stats INNER JOIN repetitions ON stats.account_address = repetitions.account_address WHERE repetition_count > 1 ORDER BY storages_count DESC LIMIT 1;
+// 5104|2
+// This means no trie with over 5104 elements has repetitions.
+//
+// sqlite> SELECT COUNT(*) FROM stats WHERE storages_count > 5104;
+// 24361
+//
+// sqlite> sqlite> SELECT storages_count, repetition_count FROM stats INNER JOIN repetitions ON stats.account_address = repetitions.account_address WHERE storages_count > 10 ORDER BY repetition_count DESC LIMIT 4;
+// 18|1400
+// 14|356
+// 14|241
+// 14|178
+//
+// sqlite> SELECT COUNT(*) FROM stats WHERE storages_count = 1;
+// 13535285
+//
+// This means there's no point in internal parallelism in any trie that has duplicates.
+// However, since only 24361 are bigger than the biggest account with repetitions, it follows
+// many accounts without repetitions are actually smaller as well, so we need to filter those
+// after getting the root node.
 fn big_trie_bucket_worker(
     bucket_receiver: Receiver<([u8; 32], Vec<u8>)>,
 ) -> eyre::Result<NamedTempFile> {
@@ -484,105 +614,6 @@ fn big_trie_bucket_worker(
     Ok(sst_file)
 }
 
-pub fn geth2ethrex(
-    block_number: BlockNumber,
-    output_dir: String,
-    input_dir: String,
-) -> eyre::Result<()> {
-    const N_THREADS: usize = 16;
-    let migration_start: Instant = Instant::now();
-
-    let gethdb = GethDB::open(input_dir)?;
-    let hashes = gethdb.read_hashes_from_gethdb(
-        block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
-        block_number,
-    )?;
-    let block_hash = *hashes.last().ok_or_eyre("missing block hash")?;
-    // TODO: save hashes to ethrex DB and mark canonical
-    let [header, body] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
-    println!("{} {}", header.len(), body.len());
-    // TODO: save header and body to ethrex DB
-    // TODO: extract root hash from header
-    let header: BlockHeader = RLPDecode::decode(&header)?;
-    println!("state root: {}", header.state_root);
-    println!("header block number: {}", header.number);
-    println!("parent hash: {}", header.parent_hash);
-    println!(
-        "last hash: {:32x}{:32x}",
-        u128::from_be_bytes(block_hash[..16].try_into().unwrap()),
-        u128::from_be_bytes(block_hash[16..].try_into().unwrap())
-    );
-
-    scope(|s| {
-        let (account_bucket_senders, account_bucket_receivers): (Vec<_>, Vec<_>) =
-            (0..16).map(|_| sync_channel(1_000)).unzip();
-        let account_bucket_senders: [_; 16] = account_bucket_senders.try_into().unwrap();
-        let gethdbs = (0..16)
-            .map(|_| gethdb.triedb(account_bucket_senders.clone()))
-            .collect::<eyre::Result<Vec<_>>>()?;
-        std::mem::drop(account_bucket_senders);
-        let account_worker_handlers: Vec<_> = account_bucket_receivers
-            .into_iter()
-            .map(|r| {
-                s.spawn(|| {
-                    let named = big_trie_bucket_worker(r).unwrap();
-                    println!(
-                        "sst written to: {} ({} bytes)",
-                        &named.path().to_string_lossy(),
-                        named.as_file().metadata().unwrap().size()
-                    );
-                })
-            })
-            .collect();
-        // TODO: refactor into function, will need similar logic for storage
-        // tries and it's noisy to have here.
-        let Some(root) = gethdbs[0].get(header.state_root.into())? else {
-            return Ok(());
-        };
-        let top_branch = match Node::decode(&root)? {
-            Node::Leaf(_) => {
-                // TODO: extract account data
-                return Ok(());
-            }
-            Node::Extension(ext) => {
-                let child = gethdbs[0].get(ext.child.compute_hash())?.unwrap();
-                match Node::decode_raw(&child)? {
-                    Node::Branch(branch) => branch,
-                    _ => eyre::bail!("bad extension"),
-                }
-            }
-            Node::Branch(branch) => branch,
-        };
-        let (code_bucket_senders, code_bucket_receivers): (Vec<_>, Vec<_>) =
-            (0..16).map(|_| sync_channel(1_000)).unzip();
-        let code_bucket_senders: [_; 16] = code_bucket_senders.try_into().unwrap();
-        gethdbs.into_iter().enumerate().for_each(|(b, db)| {
-            let hash = top_branch.choices[b].compute_hash().finalize();
-            let code_bucket_senders = code_bucket_senders.clone();
-            s.spawn(move || {
-                let trie = Trie::open(db, hash);
-                for (path, value) in trie.into_iter().content() {
-                    let hash: [u8; 32] = path.try_into().unwrap();
-                    let account_state = AccountState::decode(&value).unwrap();
-                    // TODO: extract into struct and method.
-                    let code_hash = account_state.code_hash;
-                    if code_hash != *EMPTY_KECCACK_HASH {
-                        code_bucket_senders[code_hash.0[0] as usize >> 4]
-                            .send(code_hash.0)
-                            .unwrap();
-                    }
-                    // TODO: struct and method to handle the storage trie.
-                }
-            });
-        });
-        Ok(())
-    })?;
-
-    let migration_time = migration_start.elapsed().as_secs_f64();
-    info!("Migration complete in {migration_time}");
-    Ok(())
-}
-
 // store.add_block(block).await?;
 // store
 //     .forkchoice_update(Some(block_hashes), block_number, block_hash, None, None)
@@ -612,11 +643,48 @@ struct Args {
     pub output_dir: String,
 }
 
-pub fn main() -> eyre::Result<()> {
-    let args = Args::parse();
-    tracing::subscriber::set_global_default(FmtSubscriber::new())
-        .expect("setting default subscriber failed");
-    // init_datadir(&args.output_dir);
-    // let store = open_store(&args.output_dir);
-    geth2ethrex(args.block_number, args.output_dir, args.input_dir)
+#[derive(Clone)]
+struct CodeSender<const N_BUCKETS: usize>([SyncSender<[u8; 32]>; N_BUCKETS]);
+impl<const N: usize> CodeSender<N> {
+    pub fn send(&self, code_hash: [u8; 32]) -> eyre::Result<()> {
+        if code_hash != EMPTY_KECCACK_HASH.0 {
+            self.0[code_hash[0] as usize >> 4].send(code_hash)?;
+        }
+        Ok(())
+    }
+}
+struct CodeHandler<'scope, const N_BUCKETS: usize> {
+    handles: [ScopedJoinHandle<'scope, eyre::Result<NamedTempFile>>; N_BUCKETS],
+}
+impl<'scope, const N: usize> CodeHandler<'scope, N> {
+    pub fn start(
+        scope: &'scope Scope<'scope, '_>,
+    ) -> eyre::Result<(CodeHandler<'scope, N>, CodeSender<N>)> {
+        let (mut code_bucket_senders, mut code_bucket_receivers): (Vec<_>, Vec<_>) =
+            (0..N).map(|_| sync_channel(1_000)).unzip();
+        let code_bucket_senders = std::array::from_fn(move |_| code_bucket_senders.pop().unwrap());
+        // RocksDB doesn't currently allow for ingesting blobs.
+        // Code may be too big for efficiently using as a value.
+        // As a workaround to avoid making things too slow, we might create
+        // SST files to ingest behind for code smaller than a threshold and
+        // then manually add via the DB the bigger ones, so it can put them
+        // into blobs.
+        let handles = std::array::from_fn(move |_| {
+            let receiver = code_bucket_receivers.pop().unwrap();
+            scope.spawn(move || Self::run(receiver))
+        });
+        Ok((Self { handles }, CodeSender(code_bucket_senders)))
+    }
+    pub fn wait(self) -> eyre::Result<[NamedTempFile; N]> {
+        let mut results = Vec::with_capacity(N);
+        for h in self.handles {
+            results.push(h.join().map_err(|e| eyre::eyre!("join failed: {e:?}"))??);
+        }
+        let mut results = results.drain(..);
+        let result = std::array::from_fn(move |_| results.next().unwrap());
+        Ok(result)
+    }
+    fn run(receiver: Receiver<[u8; 32]>) -> eyre::Result<NamedTempFile> {
+        todo!()
+    }
 }
