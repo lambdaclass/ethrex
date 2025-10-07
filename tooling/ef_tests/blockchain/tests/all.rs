@@ -6,11 +6,15 @@ const TEST_FOLDER: &str = "vectors/";
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const SKIPPED_TESTS: &[&str] = &[
     "system_contract_deployment",
-    "stTransactionTest/HighGasPriceParis", // Skipped because it sets a gas price higher than u64::MAX, which most clients don't implement and is a virtually impossible scenario
+    "HighGasPriceParis", // Skipped because it sets a gas price higher than u64::MAX, which most clients don't implement and is a virtually impossible scenario
     "dynamicAccountOverwriteEmpty_Paris", // Skipped because the scenario described is virtually impossible
     "create2collisionStorageParis", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
     "RevertInCreateInInitCreate2Paris", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
     "test_tx_gas_larger_than_block_gas_limit",
+    "createBlobhashTx",
+    "RevertInCreateInInit_Paris",
+    "InitCollisionParis",
+    "ValueOverflowParis",
 ];
 // We are skipping test_tx_gas_larger_than_block_gas_limit[fork_Osaka-blockchain_test-exceed_block_gas_limit_True] because of an
 // inconsistency on the expected exception. Exception returned is InvalidBlock(GasUsedMismatch(0x06000000,0x05000000)) while
@@ -24,11 +28,14 @@ const SKIPPED_TESTS: &[&str] = &[
     // We skip most of these for the same reason we skip them in LEVM; since we need to do a LEVM run before doing one with the stateless backend
     "system_contract_deployment",
     "test_tx_gas_larger_than_block_gas_limit",
-    "stTransactionTest/HighGasPriceParis",
+    "HighGasPriceParis",
     "dynamicAccountOverwriteEmpty_Paris",
     "create2collisionStorageParis",
     "RevertInCreateInInitCreate2Paris",
     "createBlobhashTx",
+    "RevertInCreateInInit_Paris",
+    "InitCollisionParis",
+    "ValueOverflowParis",
     // We skip these two tests because they fail with stateless backend specifically. See https://github.com/lambdaclass/ethrex/issues/4502
     "test_large_amount",
     "test_multiple_withdrawals_same_address",
