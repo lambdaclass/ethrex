@@ -100,7 +100,7 @@ impl TrieDB for TrieWrapper {
             return false;
         };
         */
-        return false
+        return false;
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);

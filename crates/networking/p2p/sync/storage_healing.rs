@@ -104,7 +104,7 @@ pub struct NodeRequest {
     /// What node needs this node
     parent: Nibbles,
     /// What hash was requested. We use this for validation
-    hash: H256
+    hash: H256,
 }
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
@@ -566,7 +566,7 @@ fn get_initial_downloads(
                     acc_path: Nibbles::from_bytes(&acc_path.0),
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                     parent: Nibbles::default(),
-                    hash: account.storage_root
+                    hash: account.storage_root,
                 })
             })
             .collect::<VecDeque<_>>(),
@@ -602,7 +602,7 @@ fn get_initial_downloads(
                     acc_path: Nibbles::from_bytes(&acc_path.0),
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                     parent: Nibbles::default(),
-                    hash: *storage_root
+                    hash: *storage_root,
                 })
             })
             .collect::<VecDeque<_>>(),
@@ -656,7 +656,7 @@ pub fn determine_missing_children(
                     acc_path: node_response.node_request.acc_path.clone(),
                     storage_path: child_path,
                     parent: node_response.node_request.storage_path.clone(),
-                    hash: child.compute_hash().finalize()
+                    hash: child.compute_hash().finalize(),
                 }]);
             }
         }
@@ -685,7 +685,7 @@ pub fn determine_missing_children(
                 acc_path: node_response.node_request.acc_path.clone(),
                 storage_path: child_path,
                 parent: node_response.node_request.storage_path.clone(),
-                hash: node.child.compute_hash().finalize()
+                hash: node.child.compute_hash().finalize(),
             }]);
         }
         _ => {}
@@ -702,10 +702,10 @@ async fn commit_node(
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
 
-    to_write.entry(hashed_account).or_default().push((
-        node.node_request.storage_path.clone(),
-        node.node.clone()
-    ));
+    to_write
+        .entry(hashed_account)
+        .or_default()
+        .push((node.node_request.storage_path.clone(), node.node.clone()));
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {
