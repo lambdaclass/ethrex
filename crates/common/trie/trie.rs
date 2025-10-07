@@ -97,15 +97,15 @@ impl Trie {
     pub fn get(&self, pathrlp: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if pathrlp.len() == 32 && !self.pending_removal.contains(&path) {
-            let Some(value_rlp) = self.db.get(path)? else {
-                return Ok(None);
-            };
-            if value_rlp.is_empty() {
-                return Ok(None);
-            }
-            return Ok(Some(value_rlp));
-        }
+        // if pathrlp.len() == 32 && !self.pending_removal.contains(&path) {
+        //     let Some(value_rlp) = self.db.get(path)? else {
+        //         return Ok(None);
+        //     };
+        //     if value_rlp.is_empty() {
+        //         return Ok(None);
+        //     }
+        //     return Ok(Some(value_rlp));
+        // }
 
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
