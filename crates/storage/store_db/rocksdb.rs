@@ -16,8 +16,7 @@ use ethrex_common::{
 use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
-    OptimisticTransactionDB, OptimisticTransactionDB, Options, WriteBatch,
-    WriteBatchWithTransaction,
+    OptimisticTransactionDB, Options, WriteBatch, WriteBatchWithTransaction,
 };
 use std::{
     collections::HashSet,
@@ -1451,39 +1450,6 @@ impl StoreEngine for Store {
 
             db.write(batch)
                 .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    async fn delete_range_batch(&self, ranges: Vec<(Nibbles, Nibbles)>) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut batch = WriteBatch::default();
-            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
-            })?;
-
-            for (from, to) in ranges {
-                batch.delete_range_cf(&cf, from, to);
-            }
-
-            db.write(batch)
-                .map_err(|e| StoreError::Custom(format!("RocksDB batch delete range error: {}", e)))
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    async fn delete_range(&self, from: Nibbles, to: Nibbles) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
-            })?;
-
-            db.delete_range_cf(&cf, from, to)
-                .map_err(|e| StoreError::Custom(format!("RocksDB range delete error: {}", e)))
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
