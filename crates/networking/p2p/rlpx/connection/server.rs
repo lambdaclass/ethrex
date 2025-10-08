@@ -347,7 +347,10 @@ impl GenServer for RLPxConnection {
                     _ => {
                         log_peer_warn(
                             &established_state.node,
-                            &format!("Error handling cast message: {e}"),
+                            &format!(
+                                "Error handling cast message: {e}, for client: {} with capabilities {:?}",
+                                established_state.client_version, established_state.capabilities
+                            ),
                         );
                     }
                 }
