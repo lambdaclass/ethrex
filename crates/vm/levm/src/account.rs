@@ -12,13 +12,24 @@ use std::collections::BTreeMap;
 /// - We'll fetch the code only if we need to, this means less accesses to the database.
 /// - If there's duplicate code between accounts (which is pretty common) we'll store it in memory only once.
 /// - We'll be able to make better decisions without relying on external structures, based on the current status of an Account. e.g. If it was untouched we skip processing it when calculating Account Updates, or if the account has been destroyed and re-created with same address we know that the storage on the Database is not valid and we shouldn't access it, etc.
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LevmAccount {
     pub info: AccountInfo,
     pub storage: BTreeMap<H256, U256>,
     pub storage_root: H256,
     /// Current status of the account.
     pub status: AccountStatus,
+}
+
+impl Default for LevmAccount {
+    fn default() -> Self {
+        LevmAccount {
+            info: AccountInfo::default(),
+            storage: BTreeMap::new(),
+            storage_root: *EMPTY_TRIE_HASH,
+            status: AccountStatus::Unmodified,
+        }
+    }
 }
 
 impl From<AccountState> for LevmAccount {
