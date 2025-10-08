@@ -227,7 +227,11 @@ impl OpcodeHandler for OpSLoadHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let key = {
             let key = vm.current_call_frame.stack.pop1()?;
-            unsafe { mem::transmute::<U256, H256>(key) }
+            unsafe {
+                let mut hash = mem::transmute::<U256, H256>(key);
+                hash.0.reverse();
+                hash
+            }
         };
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::sload(
@@ -256,7 +260,11 @@ impl OpcodeHandler for OpSStoreHandler {
         }
 
         let [key, value] = *vm.current_call_frame.stack.pop()?;
-        let key = unsafe { mem::transmute::<U256, H256>(key) };
+        let key = unsafe {
+            let mut hash = mem::transmute::<U256, H256>(key);
+            hash.0.reverse();
+            hash
+        };
 
         let current_value = vm.get_storage_value(vm.current_call_frame.to, key)?;
         let original_value = vm.get_original_storage(vm.current_call_frame.to, key)?;

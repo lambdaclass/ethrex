@@ -351,11 +351,11 @@ impl OpcodeHandler for OpReturnHandler {
                 vm.current_call_frame.memory.len(),
             )?)?;
 
-        if !len.is_zero() {
+        if len != 0 {
             vm.current_call_frame.output = vm.current_call_frame.memory.load_range(offset, len)?;
         }
 
-        Err(VMError::RevertOpcode)
+        Ok(OpcodeResult::Halt)
     }
 }
 
@@ -418,7 +418,9 @@ impl OpcodeHandler for OpRevertHandler {
                 vm.current_call_frame.memory.len(),
             )?)?;
 
-        vm.current_call_frame.output = vm.current_call_frame.memory.load_range(offset, len)?;
+        if len != 0 {
+            vm.current_call_frame.output = vm.current_call_frame.memory.load_range(offset, len)?;
+        }
 
         Err(VMError::RevertOpcode)
     }

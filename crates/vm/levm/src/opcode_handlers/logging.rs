@@ -25,11 +25,11 @@ impl<const N: usize> OpcodeHandler for OpLogHandler<N> {
         }
 
         let [offset, len] = *vm.current_call_frame.stack.pop()?;
-        let topics = vm
-            .current_call_frame
-            .stack
-            .pop::<N>()?
-            .map(|topic| unsafe { mem::transmute::<U256, H256>(topic) });
+        let topics = vm.current_call_frame.stack.pop::<N>()?.map(|topic| unsafe {
+            let mut hash = mem::transmute::<U256, H256>(topic);
+            hash.0.reverse();
+            hash
+        });
         let (len, offset) = size_offset_to_usize(len, offset)?;
 
         vm.current_call_frame.increase_consumed_gas(gas_cost::log(
