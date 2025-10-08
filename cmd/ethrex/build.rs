@@ -2,6 +2,7 @@
 use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
+#[cfg(feature = "l2")]
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -15,8 +16,10 @@ use vergen_git2::{Emitter, Git2Builder, RustcBuilder};
 
 // This script downloads dependencies and compiles contracts to be embedded as constants in the deployer.
 
+#[cfg(feature = "l2")]
 const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 
+#[cfg(feature = "l2")]
 const DETERMINISTIC_DEPLOYMENT_CODE: [u8; 69] = [
     0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -310,16 +313,21 @@ fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
     fs::write(output_file_path, bytecode).expect("Failed to write bytecode");
 }
 
+#[cfg(feature = "l2")]
+use ethrex_common::{U256, types::GenesisAccount};
+#[cfg(feature = "l2")]
 use std::collections::HashMap;
 
+#[cfg(feature = "l2")]
 use bytes::Bytes;
-use ethrex_common::types::{Genesis, GenesisAccount};
-use ethrex_common::{Address, H160, U256};
+use ethrex_common::types::Genesis;
+use ethrex_common::{Address, H160};
 #[cfg(feature = "l2")]
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, CREATE2DEPLOYER_ADDRESS, DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
     L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
 };
+#[cfg(feature = "l2")]
 use genesis_tool::genesis::write_genesis_as_json;
 
 #[allow(clippy::enum_variant_names)]
@@ -339,23 +347,27 @@ pub enum SystemContractsUpdaterError {
     BytecodeNotFound,
 }
 
+#[cfg(feature = "l2")]
 /// Bytecode of the CommonBridgeL2 contract.
 fn common_bridge_l2_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/CommonBridgeL2.bytecode");
     fs::read(path).expect("Failed to read bytecode file")
 }
 
+#[cfg(feature = "l2")]
 /// Bytecode of the L2ToL1Messenger contract.
 fn l2_to_l1_messenger_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/L2ToL1Messenger.bytecode");
     fs::read(path).expect("Failed to read bytecode file")
 }
+#[cfg(feature = "l2")]
 /// Bytecode of the Create2Deployer contract.
 fn create2deployer_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/Create2Deployer.bytecode");
     fs::read(path).expect("Failedto read bytecode file")
 }
 
+#[cfg(feature = "l2")]
 /// Bytecode of the L2Upgradeable contract.
 fn l2_upgradeable_runtime(out_dir: &Path) -> Vec<u8> {
     let path = out_dir.join("contracts/solc_out/UpgradeableSystemContract.bytecode");

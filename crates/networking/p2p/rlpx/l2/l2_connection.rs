@@ -1,4 +1,4 @@
-use crate::rlpx::connection::server::{broadcast_message, send};
+use crate::rlpx::connection::server::send;
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::utils::log_peer_error;
 use crate::rlpx::{connection::server::Established, error::RLPxError, message::Message};
@@ -40,6 +40,17 @@ pub enum L2ConnState {
     Unsupported,
     Disconnected(P2PBasedContext),
     Connected(L2ConnectedState),
+}
+
+fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
+    match msg {
+        l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
+        msg => {
+            let error_message = format!("Broadcasting for msg: {msg} is not supported");
+            log_peer_error(&state.node, &error_message);
+            Err(RLPxError::BroadcastError(error_message))
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
