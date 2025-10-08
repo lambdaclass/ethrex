@@ -45,7 +45,7 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
             Some(data) => vm
                 .current_call_frame
                 .stack
-                .push1(U256::from_big_endian(&data[..N]))?,
+                .push1(U256::from_big_endian(&data.get(..N).unwrap_or(data)))?,
             None => vm.current_call_frame.stack.push_zero()?,
         }
 

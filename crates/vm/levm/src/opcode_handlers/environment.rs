@@ -150,7 +150,7 @@ impl OpcodeHandler for OpCallDataLoadHandler {
             .ok()
             .and_then(|offset| vm.current_call_frame.calldata.get(offset..));
         vm.current_call_frame.stack.push1(match value_bytes {
-            Some(data) => U256::from_big_endian(&data[..32]),
+            Some(data) => U256::from_big_endian(data.get(..32).unwrap_or(data)),
             None => U256::zero(),
         })?;
 
@@ -191,11 +191,12 @@ impl OpcodeHandler for OpCallDataCopyHandler {
             )?)?;
 
         if len > 0 {
-            let data = &vm
+            let data = vm
                 .current_call_frame
                 .calldata
                 .get(src_offset..)
-                .unwrap_or_default()[..len];
+                .unwrap_or_default();
+            let data = data.get(..len).unwrap_or(data);
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
             if data.len() < len {
@@ -242,11 +243,12 @@ impl OpcodeHandler for OpCodeCopyHandler {
             )?)?;
 
         if len > 0 {
-            let data = &vm
+            let data = vm
                 .current_call_frame
                 .bytecode
                 .get(src_offset..)
-                .unwrap_or_default()[..len];
+                .unwrap_or_default();
+            let data = data.get(..len).unwrap_or(data);
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
             if data.len() < len {
@@ -298,11 +300,12 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
             )?)?;
 
         if len > 0 {
-            let data = &vm
+            let data = vm
                 .db
                 .get_account_code(address)?
                 .get(src_offset..)
-                .unwrap_or_default()[..len];
+                .unwrap_or_default();
+            let data = data.get(..len).unwrap_or(data);
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
             if data.len() < len {
@@ -376,11 +379,12 @@ impl OpcodeHandler for OpReturnDataCopyHandler {
             )?)?;
 
         if len > 0 {
-            let data = &vm
+            let data = vm
                 .current_call_frame
                 .sub_return_data
                 .get(src_offset..)
-                .unwrap_or_default()[..len];
+                .unwrap_or_default();
+            let data = data.get(..len).unwrap_or(data);
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
             if data.len() < len {
