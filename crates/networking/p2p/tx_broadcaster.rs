@@ -34,6 +34,9 @@ const PRUNE_WAIT_TIME_SECS: u64 = 600; // 10 minutes
 // Amount of seconds between each prune
 const PRUNE_INTERVAL_SECS: u64 = 360; // 6 minutes
 
+// Amount of milliseconds between each broadcast
+pub const BROADCAST_INTERVAL_MS: u64 = 1000; // 1 second
+
 #[derive(Debug, Clone, Default)]
 struct PeerMask {
     bits: Vec<u64>,

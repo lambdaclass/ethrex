@@ -8,8 +8,7 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::sync::SyncMode;
-use ethrex_p2p::types::Node;
+use ethrex_p2p::{sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tracing::{Level, info, warn};
@@ -23,9 +22,6 @@ use crate::{
     utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
 use ethrex_config::networks::Network;
-
-// Amount of seconds between each broadcast
-const BROADCAST_INTERVAL_MS: u64 = 1000; // 1 second
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
