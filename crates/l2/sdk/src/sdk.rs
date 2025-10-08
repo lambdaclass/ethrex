@@ -721,15 +721,14 @@ pub async fn send_tx_bump_gas_exponential_backoff(
         }
 
         // Check blob gas fees only for EIP4844 transactions
-        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-            if let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas {
-                if *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
-                    *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
-                    warn!(
-                        "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
-                    );
-                }
-            }
+        if let Some(tx_max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas
+            && let Some(max_fee_per_blob_gas) = client.maximum_allowed_max_fee_per_blob_gas
+            && *tx_max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas)
+        {
+            *tx_max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+            warn!(
+                "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
+            );
         }
         let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer)
             .await
@@ -907,10 +906,10 @@ async fn priority_fee_from_override_or_rpc(
         return Ok(priority_fee);
     }
 
-    if let Ok(priority_fee) = client.get_max_priority_fee().await {
-        if let Ok(priority_fee_u64) = priority_fee.try_into() {
-            return Ok(priority_fee_u64);
-        }
+    if let Ok(priority_fee) = client.get_max_priority_fee().await
+        && let Ok(priority_fee_u64) = priority_fee.try_into()
+    {
+        return Ok(priority_fee_u64);
     }
 
     get_fee_from_override_or_get_gas_price(client, None).await
