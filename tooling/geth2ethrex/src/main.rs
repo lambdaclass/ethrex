@@ -200,7 +200,7 @@ impl GethDB {
         let index_file = File::open(&idx_path)?;
         let size = index_file.metadata()?.size();
         let last = last.min(size / 6);
-        let first = first.min(last - 1);
+        let first = first.min(last);
         // We need one index back to find the start of the entries.
         let to_read = ((last - first + 2) * 6) as usize;
         warn!(
