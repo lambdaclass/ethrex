@@ -104,11 +104,8 @@ use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
-use std::ptr::read;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
-use std::sync::mpsc::Sender;
-use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::Scope;
 use std::thread::ScopedJoinHandle;
@@ -283,9 +280,8 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             Node::Branch(branch) => branch,
         };
         let (code_handler, code_bucket_senders) = CodeHandler::<N_THREADS>::start(s)?;
-        let (storage_root_bucket_senders, storage_root_bucket_receivers): (Vec<_>, Vec<_>) =
-            (0..16).map(|_| channel()).unzip();
-        let storage_root_bucket_senders: [_; 16] = storage_root_bucket_senders.try_into().unwrap();
+        let (storage_root_handler, storage_root_bucket_senders) =
+            AccountStorageHandler::<N_THREADS>::start(s)?;
         gethdbs.into_iter().enumerate().for_each(|(b, db)| {
             let hash = top_branch.choices[b].compute_hash().finalize();
             let code_bucket_senders = code_bucket_senders.clone();
@@ -296,16 +292,13 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
                     let hash: [u8; 32] = path.try_into().unwrap();
                     let account_state = AccountState::decode(&value).unwrap();
                     code_bucket_senders.send(account_state.code_hash.0).unwrap();
-                    // TODO: struct and method to handle the storage trie.
-                    let storage_root = account_state.storage_root;
-                    if storage_root != *EMPTY_TRIE_HASH {
-                        storage_root_bucket_senders[storage_root.0[0] as usize >> 4]
-                            .send((storage_root, hash))
-                            .unwrap();
-                    }
+                    storage_root_bucket_senders
+                        .send(hash, account_state.storage_root.0)
+                        .unwrap();
                 }
             });
         });
+        storage_root_handler.wait()?;
         code_handler.wait()?;
         // All other workers finished, need to send the signal to the EthrexDB worker.
         ETHREX_DB_WRITER_CHANNEL
@@ -502,9 +495,17 @@ impl GethDB {
         )
     }
 
-    // TODO: share a cache between DB instances (or not)
-    pub fn triedb(
+    pub fn account_triedb(
         &self,
+        bucket_senders: [Sender<([u8; 32], Vec<u8>)>; 16],
+    ) -> eyre::Result<Box<dyn TrieDB>> {
+        let trie_db =
+            DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
+        GethTrieDBWithNodeBuckets::new_with_buckets(trie_db, bucket_senders)
+    }
+    pub fn storage_triedb(
+        &self,
+        accounts: &[[u8; 32]],
         bucket_senders: [Sender<([u8; 32], Vec<u8>)>; 16],
     ) -> eyre::Result<Box<dyn TrieDB>> {
         let trie_db =
@@ -826,6 +827,61 @@ impl<'scope, const N: usize> CodeHandler<'scope, N> {
         }
         sst.finish()?;
         write_channel.send(WriteMessage::AccountCodeBulk { sst: sst_file })?;
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct AccountStorageSender<const N_BUCKETS: usize>([Sender<([u8; 32], [u8; 32])>; N_BUCKETS]);
+impl<const N: usize> AccountStorageSender<N> {
+    pub fn send(&self, hashed_address: [u8; 32], storage_root: [u8; 32]) -> eyre::Result<()> {
+        if storage_root != EMPTY_TRIE_HASH.0 {
+            self.0[storage_root[0] as usize >> 4].send((hashed_address, storage_root))?;
+        }
+        Ok(())
+    }
+}
+struct AccountStorageHandler<'scope, const N_BUCKETS: usize> {
+    handles: [ScopedJoinHandle<'scope, eyre::Result<()>>; N_BUCKETS],
+}
+impl<'scope, const N: usize> AccountStorageHandler<'scope, N> {
+    pub fn start(
+        scope: &'scope Scope<'scope, '_>,
+    ) -> eyre::Result<(AccountStorageHandler<'scope, N>, AccountStorageSender<N>)> {
+        let (mut root_bucket_senders, mut root_bucket_receivers): (Vec<_>, Vec<_>) =
+            (0..N).map(|_| channel()).unzip();
+        let root_bucket_senders = std::array::from_fn(move |_| root_bucket_senders.pop().unwrap());
+        let handles = std::array::from_fn(move |_| {
+            let receiver = root_bucket_receivers.pop().unwrap();
+            scope.spawn(move || Self::run(receiver))
+        });
+        Ok((Self { handles }, AccountStorageSender(root_bucket_senders)))
+    }
+    pub fn wait(self) -> eyre::Result<()> {
+        for h in self.handles {
+            h.join().map_err(|e| eyre::eyre!("join failed: {e:?}"))??;
+        }
+        Ok(())
+    }
+    fn run(receiver: Receiver<([u8; 32], [u8; 32])>) -> eyre::Result<()> {
+        // FIXME: just sacrifice memory for now.
+        let mut unique_tries: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        while let Ok((hashed_address, root_hash)) = receiver.recv() {
+            unique_tries
+                .entry(root_hash)
+                .or_default()
+                .push(hashed_address);
+        }
+        let write_channel = ETHREX_DB_WRITER_CHANNEL.get().unwrap().clone();
+        let gethdb = GethDB::open()?;
+        for (root_hash, hashed_addresses) in unique_tries {
+            let triedb = gethdb.storage_triedb(&hashed_addresses, bucket_senders)?;
+            let iterated_nodes = Trie::open(triedb, root_hash.into()).into_iter().count();
+            println!(
+                "Read {iterated_nodes} nodes for {} accounts",
+                hashed_addresses.len()
+            );
+        }
         Ok(())
     }
 }
