@@ -154,7 +154,7 @@ impl OpcodeHandler for OpMCopyHandler {
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::mcopy(
-                calculate_memory_size(dst_offset, len)?,
+                calculate_memory_size(src_offset.max(dst_offset), len)?,
                 vm.current_call_frame.memory.len(),
                 len,
             )?)?;
@@ -297,9 +297,11 @@ impl OpcodeHandler for OpSStoreHandler {
                 }
 
                 if value == original_value {
-                    gas_refunds += RESTORE_EMPTY_SLOT_COST;
-                } else {
-                    gas_refunds += RESTORE_SLOT_COST;
+                    if original_value.is_zero() {
+                        gas_refunds += RESTORE_EMPTY_SLOT_COST;
+                    } else {
+                        gas_refunds += RESTORE_SLOT_COST;
+                    }
                 }
             }
 
