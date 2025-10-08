@@ -110,7 +110,7 @@ impl BlobsBundle {
             blobs: blobs.clone(),
             commitments,
             proofs: total_proofs,
-            version: 0,
+            version: 1,
         })
     }
 
