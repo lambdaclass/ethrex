@@ -85,14 +85,13 @@ impl Hook for DefaultHook {
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             vm.env.tx_max_priority_fee_per_gas,
             vm.env.tx_max_fee_per_gas,
-        ) {
-            if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
-                    priority_fee: tx_max_priority_fee,
-                    max_fee_per_gas: tx_max_fee_per_gas,
-                }
-                .into());
+        ) && tx_max_priority_fee > tx_max_fee_per_gas
+        {
+            return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                priority_fee: tx_max_priority_fee,
+                max_fee_per_gas: tx_max_fee_per_gas,
             }
+            .into());
         }
 
         // (9) SENDER_NOT_EOA
@@ -321,10 +320,11 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
     for blob_hash in blob_hashes {
         let blob_hash = blob_hash.as_bytes();
-        if let Some(first_byte) = blob_hash.first() {
-            if !VALID_BLOB_PREFIXES.contains(first_byte) {
-                return Err(TxValidationError::Type3TxInvalidBlobVersionedHash.into());
-            }
+        if blob_hash
+            .first()
+            .is_some_and(|first_byte| !VALID_BLOB_PREFIXES.contains(first_byte))
+        {
+            return Err(TxValidationError::Type3TxInvalidBlobVersionedHash.into());
         }
     }
 

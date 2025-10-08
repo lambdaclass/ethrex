@@ -171,10 +171,12 @@ impl StoreEngine for Store {
         let store = self.inner()?;
         let mut res = Vec::new();
         for block_number in from..=to {
-            if let Some(hash) = store.canonical_hashes.get(&block_number) {
-                if let Some(block) = store.bodies.get(hash).cloned() {
-                    res.push(block);
-                }
+            if let Some(block) = store
+                .canonical_hashes
+                .get(&block_number)
+                .and_then(|hash| store.bodies.get(hash))
+            {
+                res.push(block.clone())
             }
         }
         Ok(res)
@@ -466,7 +468,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let store = self.inner()?;
         let Some(receipts_for_block) = store.receipts.get(block_hash) else {
             return Ok(vec![]);

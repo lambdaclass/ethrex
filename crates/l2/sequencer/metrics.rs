@@ -94,13 +94,12 @@ impl MetricsGatherer {
             .rollup_store
             .get_block_numbers_by_batch(last_verified_batch)
             .await
+            && let Some(last_block) = last_verified_batch_blocks.last()
         {
-            if let Some(last_block) = last_verified_batch_blocks.last() {
-                METRICS.set_block_type_and_block_number(
-                    MetricsBlockType::LastVerifiedBlock,
-                    *last_block,
-                )?;
-            }
+            METRICS.set_block_type_and_block_number(
+                MetricsBlockType::LastVerifiedBlock,
+                *last_block,
+            )?;
         }
 
         if let Ok(operations_metrics) = self.rollup_store.get_operations_count().await {
