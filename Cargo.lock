@@ -4564,6 +4564,7 @@ dependencies = [
 name = "geth2ethrex"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap 4.5.48",
  "clap_complete",
  "ethrex-common 0.1.0",

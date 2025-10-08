@@ -360,7 +360,7 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         let Some(value) = self
             .db
             .get(hash)
-            .map_err(|e| TrieError::DbError(anyhow!("node get failed: {e}")))?
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("node get failed: {e}")))?
         else {
             warn!(
                 hash = format!(
