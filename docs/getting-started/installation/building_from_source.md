@@ -78,10 +78,3 @@ The built binary will be in `target/release/ethrex`.
 ```sh
 sudo mv ./target/release/ethrex /usr/local/bin/
 ```
-
----
-
-**Next steps:**
-
-- [L1 Quickstart](../quickstart-l1.md)
-- [L2 Quickstart](../quickstart-l2.md)

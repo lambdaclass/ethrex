@@ -1359,6 +1359,7 @@ impl PeerHandler {
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
+
         let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
         for i in 0..task_partition_count {
             let chunk_start = task_span * i;
