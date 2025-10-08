@@ -295,8 +295,6 @@ async fn heal_state_trie(
                         .open_direct_state_trie(*EMPTY_TRIE_HASH)
                         .expect("Store should open");
                     let db = trie_db.db();
-                    // TODO: do we need this?
-                    encoded_to_write.retain(|path, _| path.len() < 32);
                     db.put_batch(encoded_to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
                 })

@@ -1200,9 +1200,7 @@ fn compute_storage_roots(
         }
     }
 
-    let (computed_storage_root, mut changes) = storage_trie.collect_changes_since_last_hash();
-    // TODO: do we need this?
-    changes.retain(|(path, _)| path.len() < 64);
+    let (computed_storage_root, changes) = storage_trie.collect_changes_since_last_hash();
 
     let account_state = store
         .get_account_state_by_acc_hash(pivot_hash, account_hash)?
