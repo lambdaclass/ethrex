@@ -33,6 +33,7 @@ use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
 use eyre::OptionExt;
 use rocksdb::Cache;
 use rocksdb::Env;
+use rocksdb::WaitForCompactOptions;
 use rocksdb::{DBWithThreadMode, Options, SingleThreaded};
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -142,6 +143,10 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             )?;
         }
     }
+    info!("Compacting Ethrex DB");
+    ethrex_db.flush_wal(true)?;
+    ethrex_db.flush()?;
+    ethrex_db.compact_range(Option::<[u8; 0]>::None, Option::<[u8; 0]>::None);
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time} seconds");
     Ok(())
