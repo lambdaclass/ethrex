@@ -114,12 +114,21 @@ impl PeerConnection {
     pub async fn outgoing_request(
         &mut self,
         message: Message,
-        sender: tokio::sync::oneshot::Sender<Message>,
-    ) -> Result<(), PeerConnectionError> {
+        timeout: Duration,
+    ) -> Result<Message, PeerConnectionError> {
+        let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
+
         self.handle
-            .cast(CastMessage::OutgoingRequest(message, Arc::new(sender)))
+            .cast(CastMessage::OutgoingRequest(message, Arc::new(oneshot_tx)))
             .await
-            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
+
+        // Wait for the response or timeout. This blocks the calling task (and not the ConnectionServer task)
+        match tokio::time::timeout(timeout, oneshot_rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(error)) => Err(PeerConnectionError::RecvError(error.to_string())),
+            Err(_timeout) => Err(PeerConnectionError::Timeout),
+        }
     }
 }
 
@@ -354,7 +363,7 @@ impl GenServer for PeerConnectionServer {
 
             if let Err(e) = result {
                 match e {
-                    PeerConnectionError::Disconnected()
+                    PeerConnectionError::Disconnected
                     | PeerConnectionError::DisconnectReceived(_)
                     | PeerConnectionError::DisconnectSent(_)
                     | PeerConnectionError::HandshakeError(_)
@@ -601,7 +610,7 @@ where
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
         let msg = match receive(stream).await {
             Some(msg) => msg?,
-            None => return Err(PeerConnectionError::Disconnected()),
+            None => return Err(PeerConnectionError::Disconnected),
         };
         match msg {
             Message::Status68(msg_data) => {
@@ -702,7 +711,7 @@ where
     // Receive Hello message
     let msg = match receive(stream).await {
         Some(msg) => msg?,
-        None => return Err(PeerConnectionError::Disconnected()),
+        None => return Err(PeerConnectionError::Disconnected),
     };
 
     match msg {
@@ -990,13 +999,12 @@ async fn handle_incoming_message(
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)
         | message @ Message::Receipts69(_) => {
-            if let Some(id) = message.request_id() {
-                if let Some(tx) = state.current_requests.remove(&id) {
-                    tx.send(message)
-                        .map_err(|e| PeerConnectionError::SendMessage(e.to_string()))?
-                } else {
-                    return Err(PeerConnectionError::ExpectedRequestId(format!("{message}")));
-                }
+            if let Some(tx) = message
+                .request_id()
+                .and_then(|id| state.current_requests.remove(&id))
+            {
+                tx.send(message)
+                    .map_err(|e| PeerConnectionError::SendMessage(e.to_string()))?
             } else {
                 return Err(PeerConnectionError::ExpectedRequestId(format!("{message}")));
             }

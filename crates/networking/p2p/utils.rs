@@ -1,12 +1,6 @@
-use crate::rlpx::{
-    Message, connection::server::PeerConnection, error::PeerConnectionError, snap::TrieNodes,
-};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H256, H512};
-use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::Node;
 use secp256k1::{PublicKey, SecretKey};
-use spawned_rt::tasks::oneshot;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -77,66 +71,4 @@ pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
             contents,
             error: err.kind(),
         })
-}
-
-/// TODO: make it more generic
-pub async fn send_message_and_wait_for_response(
-    connection: &mut PeerConnection,
-    message: Message,
-) -> Result<Vec<Node>, SendMessageError> {
-    let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
-    connection
-        .outgoing_request(message, oneshot_tx)
-        .await
-        .map_err(SendMessageError::ConnectionError)?;
-    let nodes = tokio::time::timeout(Duration::from_secs(7), receive_trienodes(oneshot_rx))
-        .await
-        .map_err(|_| SendMessageError::PeerTimeout)?
-        .ok_or(SendMessageError::PeerDisconnected)?;
-
-    nodes
-        .nodes
-        .iter()
-        .map(|node| Node::decode_raw(node))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(SendMessageError::RLPDecodeError)
-}
-
-/// TODO: make it more generic
-pub async fn send_trie_nodes_messages_and_wait_for_reply(
-    connection: &mut PeerConnection,
-    message: Message,
-) -> Result<TrieNodes, SendMessageError> {
-    let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
-    connection
-        .outgoing_request(message, oneshot_tx)
-        .await
-        .map_err(SendMessageError::ConnectionError)?;
-    tokio::time::timeout(Duration::from_secs(7), receive_trienodes(oneshot_rx))
-        .await
-        .map_err(|_| SendMessageError::PeerTimeout)?
-        .ok_or(SendMessageError::PeerDisconnected)
-}
-
-async fn receive_trienodes(receiver: oneshot::Receiver<Message>) -> Option<TrieNodes> {
-    if let Ok(Message::TrieNodes(trie_nodes)) = receiver.await {
-        Some(trie_nodes)
-    } else {
-        None
-    }
-}
-
-// TODO: find a better name for this type
-#[derive(thiserror::Error, Debug)]
-pub enum SendMessageError {
-    #[error("Peer timed out")]
-    PeerTimeout,
-    #[error("ConnectionError")]
-    ConnectionError(PeerConnectionError),
-    #[error("Peer disconnected")]
-    PeerDisconnected,
-    #[error("Peer Busy")]
-    PeerBusy,
-    #[error("RLP decode error")]
-    RLPDecodeError(RLPDecodeError),
 }

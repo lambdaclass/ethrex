@@ -1,13 +1,10 @@
+use super::{message::Message, p2p::DisconnectReason};
+use crate::discv4::peer_table::PeerTableError;
 use ethrex_blockchain::error::{ChainError, MempoolError};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
 use thiserror::Error;
-use tokio::sync::broadcast::error::RecvError;
-
-use crate::discv4::peer_table::PeerTableError;
-
-use super::{message::Message, p2p::DisconnectReason};
 
 #[derive(Debug, Error)]
 pub enum CryptographyError {
@@ -29,7 +26,7 @@ pub enum PeerConnectionError {
     #[error("No matching capabilities")]
     NoMatchingCapabilities(),
     #[error("Peer disconnected")]
-    Disconnected(),
+    Disconnected,
     #[error("Disconnect requested: {0}")]
     DisconnectReceived(DisconnectReason),
     #[error("Disconnect sent: {0}")]
@@ -60,8 +57,8 @@ pub enum PeerConnectionError {
     CryptographyError(String),
     #[error("Failed to broadcast msg: {0}")]
     BroadcastError(String),
-    #[error(transparent)]
-    RecvError(#[from] RecvError),
+    #[error("RecvError: {0}")]
+    RecvError(String),
     #[error("Failed to send msg: {0}")]
     SendMessage(String),
     #[error("Error when inserting transaction in the mempool: {0}")]
@@ -84,6 +81,10 @@ pub enum PeerConnectionError {
     InvalidBlockRangeUpdate,
     #[error(transparent)]
     PeerTableError(#[from] PeerTableError),
+    #[error("Request timeouted")]
+    Timeout,
+    #[error("Unexpected response: Expected {0}, got {1}")]
+    UnexpectedResponse(String, String),
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly
@@ -111,5 +112,17 @@ impl From<sha3::digest::InvalidLength> for PeerConnectionError {
 impl From<aes::cipher::StreamCipherError> for PeerConnectionError {
     fn from(e: aes::cipher::StreamCipherError) -> Self {
         PeerConnectionError::CryptographyError(e.to_string())
+    }
+}
+
+impl From<tokio::sync::broadcast::error::RecvError> for PeerConnectionError {
+    fn from(e: tokio::sync::broadcast::error::RecvError) -> Self {
+        PeerConnectionError::RecvError(e.to_string())
+    }
+}
+
+impl From<tokio::sync::oneshot::error::RecvError> for PeerConnectionError {
+    fn from(e: tokio::sync::oneshot::error::RecvError) -> Self {
+        PeerConnectionError::RecvError(e.to_string())
     }
 }

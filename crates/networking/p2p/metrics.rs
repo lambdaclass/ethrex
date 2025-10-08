@@ -347,7 +347,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            PeerConnectionError::Disconnected() => {
+            PeerConnectionError::Disconnected => {
                 failures_grouped_by_reason
                     .entry("Disconnected".to_owned())
                     .and_modify(|e| *e += 1)
@@ -512,6 +512,18 @@ impl Metrics {
             PeerConnectionError::PeerTableError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("InternalError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::Timeout => {
+                failures_grouped_by_reason
+                    .entry("Timeout".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::UnexpectedResponse(_, _) => {
+                failures_grouped_by_reason
+                    .entry("UnexpectedResponse".to_owned())
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
