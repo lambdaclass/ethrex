@@ -271,9 +271,14 @@ impl GethDB {
     fn try_read_hashes_from_statedb(&self, first: u64, last: u64) -> eyre::Result<Vec<[u8; 32]>> {
         // ['h' || block_num || 'n']
         let keys = (first..=last).map(|i| [&b"h"[..], &i.to_be_bytes(), b"n"].concat());
-        let values = self.state_db.multi_get(keys);
-        println!("{values:?}");
-        Ok(Vec::new())
+        let mut values = Vec::with_capacity((last - first + 1) as usize);
+        for hash in self.state_db.multi_get(keys) {
+            let Some(hash) = hash? else {
+                continue;
+            };
+            values.push(hash.try_into().unwrap())
+        }
+        Ok(values)
     }
 
     // It is valid for the block to not be in the freezer, but if it's not in the statedb either it's an error
