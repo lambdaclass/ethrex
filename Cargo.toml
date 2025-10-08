@@ -32,6 +32,7 @@ members = [
   "tooling/reorgs",
   "crates/concurrency",
   "tooling/migrations",
+  "cmd/snapshooter",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
 resolver = "2"

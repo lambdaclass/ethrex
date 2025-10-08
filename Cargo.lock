@@ -10227,6 +10227,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
+name = "snapshooter"
+version = "0.1.0"
+dependencies = [
+ "ethrex",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
+]
+
+[[package]]
 name = "snowbridge-amcl"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
