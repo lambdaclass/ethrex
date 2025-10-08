@@ -379,7 +379,48 @@ pub struct OpSelfDestructHandler;
 impl OpcodeHandler for OpSelfDestructHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        todo!()
+        if vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+
+        let beneficiary = word_to_address(vm.current_call_frame.stack.pop1()?);
+
+        let balance = vm.db.get_account(vm.current_call_frame.to)?.info.balance;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::selfdestruct(
+                vm.substate.add_accessed_address(beneficiary),
+                vm.db.get_account(beneficiary)?.is_empty(),
+                balance,
+            )?)?;
+
+        // EIP-6780: Self-destruct only in the same transaction (CANCUN).
+        let do_selfdestruct = if vm.env.config.fork >= Fork::Cancun {
+            vm.transfer(vm.current_call_frame.to, beneficiary, balance)?;
+            vm.substate.is_account_created(&vm.current_call_frame.to)
+        } else {
+            vm.increase_account_balance(beneficiary, balance)?;
+            true
+        };
+        if do_selfdestruct {
+            // For `fork >= CANCUN`, if target is the same as caller, ether will be burnt.
+            vm.substate.add_selfdestruct(vm.current_call_frame.to);
+            vm.db
+                .get_account_mut(vm.current_call_frame.to)?
+                .info
+                .balance = U256::zero();
+        }
+
+        vm.tracer.enter(
+            CallType::SELFDESTRUCT,
+            vm.current_call_frame.to,
+            beneficiary,
+            balance,
+            0,
+            &Default::default(),
+        );
+        vm.tracer.exit_early(0, None)?;
+
+        Ok(OpcodeResult::Halt)
     }
 }
 
