@@ -73,6 +73,9 @@ use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::fiel
 use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
 use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
 
+#[cfg(feature = "substrate-bn")]
+extern crate bn;
+
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
 pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
@@ -316,6 +319,38 @@ pub fn execute_precompile(
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64, Fork) -> Result<Bytes, VMError>;
 
+    #[cfg(feature = "substrate-bn")]
+    const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
+        let mut precompiles = [const { None }; 512];
+        precompiles[ECRECOVER.address.0[19] as usize] = Some(ecrecover as PrecompileFn);
+        precompiles[IDENTITY.address.0[19] as usize] = Some(identity as PrecompileFn);
+        precompiles[SHA2_256.address.0[19] as usize] = Some(sha2_256 as PrecompileFn);
+        precompiles[RIPEMD_160.address.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
+        precompiles[MODEXP.address.0[19] as usize] = Some(modexp as PrecompileFn);
+        precompiles[ECADD.address.0[19] as usize] = Some(ecadd as PrecompileFn);
+        precompiles[ECMUL.address.0[19] as usize] = Some(ecmul as PrecompileFn);
+        precompiles[ECPAIRING.address.0[19] as usize] = Some(ecpairing_substrate as PrecompileFn);
+        precompiles[BLAKE2F.address.0[19] as usize] = Some(blake2f as PrecompileFn);
+        precompiles[POINT_EVALUATION.address.0[19] as usize] =
+            Some(point_evaluation as PrecompileFn);
+        precompiles[BLS12_G1ADD.address.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
+        precompiles[BLS12_G1MSM.address.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
+        precompiles[BLS12_G2ADD.address.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
+        precompiles[BLS12_G2MSM.address.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
+        precompiles[BLS12_PAIRING_CHECK.address.0[19] as usize] =
+            Some(bls12_pairing_check as PrecompileFn);
+        precompiles[BLS12_MAP_FP_TO_G1.address.0[19] as usize] =
+            Some(bls12_map_fp_to_g1 as PrecompileFn);
+        precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
+            Some(bls12_map_fp2_tp_g2 as PrecompileFn);
+        precompiles[u16::from_be_bytes([
+            P256_VERIFICATION.address.0[18],
+            P256_VERIFICATION.address.0[19],
+        ]) as usize] = Some(p_256_verify as PrecompileFn);
+        precompiles
+    };
+
+    #[cfg(not(feature = "substrate-bn"))]
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
         precompiles[ECRECOVER.address.0[19] as usize] = Some(ecrecover as PrecompileFn);
@@ -793,6 +828,92 @@ fn parse_first_point_coordinates(input_data: &[u8; 192]) -> Result<FirstPointCoo
     Ok((first_point_x, first_point_y))
 }
 
+#[cfg(feature = "substrate-bn")]
+/// Parses first point coordinates and makes verification of invalid infinite
+#[inline]
+fn parse_first_point_coordinates_substrate(
+    input_data: &[u8; 192],
+) -> Result<(substrate_bn::Fq, substrate_bn::Fq), VMError> {
+    use substrate_bn::{Fq, arith::U256};
+
+    let BN254_PRIME_FIELD_ORDER_SUBSTRATE: U256 = U256::from_slice(&[
+        0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58,
+        0x5d, 0x97, 0x81, 0x6a, 0x91, 0x68, 0x71, 0xca, 0x8d, 0x3c, 0x20, 0x8c, 0x16, 0xd8, 0x7c,
+        0xfd, 0x47,
+    ])
+    .unwrap();
+
+    let first_point_x = U256::from_slice(&input_data[..32])
+        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
+    let first_point_y = U256::from_slice(&input_data[32..64])
+        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (first_point_x == U256::zero()) ^ (first_point_y == U256::zero()) {
+        return Err(PrecompileError::InvalidPoint.into());
+    }
+
+    if first_point_x > BN254_PRIME_FIELD_ORDER_SUBSTRATE
+        || first_point_y > BN254_PRIME_FIELD_ORDER_SUBSTRATE
+    {
+        return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
+    }
+
+    let first_point_x = Fq::from_u256(first_point_x).unwrap();
+    let first_point_y = Fq::from_u256(first_point_y).unwrap();
+
+    Ok((first_point_x, first_point_y))
+}
+
+#[cfg(feature = "substrate-bn")]
+/// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
+///
+/// Slice must have len of 192. This function is only called from ecpairing which ensures that.
+fn parse_second_point_coordinates_substrate(
+    input_data: &[u8; 192],
+) -> Result<(substrate_bn::Fq2, substrate_bn::Fq2), VMError> {
+    let second_point_x_first_part = &input_data[96..128];
+    let second_point_x_second_part = &input_data[64..96];
+
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
+        ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
+    {
+        return Err(PrecompileError::InvalidPoint.into());
+    }
+
+    let second_point_y_first_part = &input_data[160..192];
+    let second_point_y_second_part = &input_data[128..160];
+
+    // Infinite is defined by (0,0). Any other zero-combination is invalid
+    if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
+        ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
+    {
+        return Err(PrecompileError::InvalidPoint.into());
+    }
+
+    // Check if the second point belongs to the curve (this happens if it's lower than the prime)
+    if u256_from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
+    {
+        return Err(PrecompileError::PointNotInTheCurve.into());
+    }
+
+    use substrate_bn::{Fq, Fq2};
+
+    let second_point_x = Fq2::new(
+        Fq::from_slice(second_point_x_first_part).unwrap(),
+        Fq::from_slice(second_point_x_second_part).unwrap(),
+    );
+    let second_point_y = Fq2::new(
+        Fq::from_slice(second_point_y_first_part).unwrap(),
+        Fq::from_slice(second_point_y_second_part).unwrap(),
+    );
+
+    Ok((second_point_x, second_point_y))
+}
+
 /// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
 ///
 /// Slice must have len of 192. This function is only called from ecpairing which ensures that.
@@ -905,6 +1026,59 @@ fn validate_pairing(
     }
 }
 
+#[cfg(feature = "substrate-bn")]
+/// Handles pairing given a certain elements, and depending on if elements represent infinity, then
+/// verifies errors on the other point returning None or returns the pairing
+#[inline(always)] // called only from one place, so inlining always wont increase code size.
+#[expect(clippy::type_complexity)]
+fn validate_pairing_substrate(
+    first_point_x: substrate_bn::Fq,
+    first_point_y: substrate_bn::Fq,
+    second_point_x: substrate_bn::Fq2,
+    second_point_y: substrate_bn::Fq2,
+) -> Result<Option<(substrate_bn::G1, substrate_bn::G2)>, VMError> {
+    use substrate_bn::{AffineG1, AffineG2, Fq2, Fr, G1, G2};
+
+    let first_point_is_infinity = first_point_x.is_zero() && first_point_y.is_zero();
+    let second_point_is_infinity = second_point_x.is_zero() && second_point_y.is_zero();
+
+    match (first_point_is_infinity, second_point_is_infinity) {
+        (true, true) => {
+            // If both points are infinity, then continue to the next input
+            Ok(None)
+        }
+        (true, false) => {
+            // If the first point is infinity, then do the checks for the second
+            G2::from(
+                AffineG2::new(second_point_x, second_point_y)
+                    .map_err(|_| PrecompileError::PointNotInSubgroup)?,
+            );
+            Ok(None)
+        }
+        (false, true) => {
+            // If the second point is infinity, then do the checks for the first
+            G1::from(
+                AffineG1::new(first_point_x, first_point_y)
+                    .map_err(|_| PrecompileError::InvalidPoint)?,
+            );
+            Ok(None)
+        }
+        (false, false) => {
+            // Define the pairing points
+            let first_point = G1::from(
+                AffineG1::new(first_point_x, first_point_y)
+                    .map_err(|_| PrecompileError::InvalidPoint)?,
+            );
+            let second_point = G2::from(
+                AffineG2::new(second_point_x, second_point_y)
+                    .map_err(|_| PrecompileError::PointNotInSubgroup)?,
+            );
+
+            Ok(Some((first_point, second_point)))
+        }
+    }
+}
+
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
@@ -949,6 +1123,67 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     // Generate the result from the variable mul
     let success = mul.eq(&QuadraticExtensionFieldElement::one());
+    let mut result = [0; 32];
+    result[31] = u8::from(success);
+    Ok(Bytes::from(result.to_vec()))
+}
+
+#[cfg(feature = "substrate-bn")]
+/// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
+pub fn ecpairing_substrate(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+) -> Result<Bytes, VMError> {
+    // The input must always be a multiple of 192 (6 32-byte values)
+    if calldata.len() % 192 != 0 {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+
+    let inputs_amount = calldata.len() / 192;
+
+    // Consume gas
+    let gas_cost = gas_cost::ecpairing(inputs_amount)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+
+    let mut valid_pairs = Vec::new();
+
+    ////
+
+    for input in calldata.chunks_exact(192) {
+        #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
+        let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
+
+        let (first_point_x, first_point_y) = parse_first_point_coordinates_substrate(&input)?;
+
+        let (second_point_x, second_point_y) = parse_second_point_coordinates_substrate(&input)?;
+
+        if let Some(pair) = validate_pairing_substrate(
+            first_point_x,
+            first_point_y,
+            second_point_x,
+            second_point_y,
+        )? {
+            valid_pairs.push(pair);
+        }
+    }
+
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "library will not panic on mul overflow"
+    )]
+    let pairing_result = if !valid_pairs.is_empty() {
+        let batch: Vec<_> = valid_pairs.into_iter().map(|(p1, p2)| (p1, p2)).collect();
+        substrate_bn::pairing_batch(&batch)
+    } else {
+        substrate_bn::Gt::one()
+    };
+
+    // Generate the result from the variable mul
+    let success = pairing_result == substrate_bn::Gt::one();
+
+    ////
+
     let mut result = [0; 32];
     result[31] = u8::from(success);
     Ok(Bytes::from(result.to_vec()))
