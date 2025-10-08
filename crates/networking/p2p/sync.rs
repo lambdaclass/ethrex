@@ -1461,7 +1461,6 @@ async fn insert_accounts(
     _: &Path,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    tracing::warn!("Starting insert_accounts without rocksdb");
     let mut computed_state_root = *EMPTY_TRIE_HASH;
     for entry in std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
@@ -1524,7 +1523,6 @@ async fn insert_storages(
     _: &Path,
     pivot_header: &BlockHeader,
 ) -> Result<(), SyncError> {
-    tracing::warn!("Starting insert_storages without rocksdb");
     use rayon::iter::IntoParallelIterator;
 
     for entry in std::fs::read_dir(account_storages_snapshots_dir)
@@ -1592,7 +1590,6 @@ async fn insert_accounts(
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    info!("Starting insert_accounts with rocksdb");
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
@@ -1654,7 +1651,6 @@ async fn insert_storages(
     datadir: &Path,
     _: &BlockHeader,
 ) -> Result<(), SyncError> {
-    info!("Starting insert_storages with rocksdb");
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_threadpool::ThreadPool;
