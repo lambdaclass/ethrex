@@ -324,109 +324,197 @@ impl Syncer {
     /// # Returns
     ///
     /// Returns an error if the sync fails at any given step and aborts all active processes
-    async fn sync_cycle_full(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+    async fn sync_cycle_full(
+        &mut self,
+        mut sync_head: H256,
+        store: Store,
+    ) -> Result<(), SyncError> {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
-        let mut block_sync_state = FullBlockSyncState::new(store.clone());
+        let block_sync_state = FullBlockSyncState::new(store.clone());
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
-        let mut current_head = block_sync_state.get_current_head().await?;
+
+        // Update current fetch head
+        let current_head = block_sync_state.get_current_head().await?;
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
 
+        info!("Starting header download");
+        let mut start_block_number = 0;
+        let mut end_block_number = 0;
         loop {
-            debug!("Sync Log 1: In Full Sync");
-            debug!(
-                "Sync Log 3: State current headers len {}",
-                block_sync_state.current_headers.len()
-            );
-            debug!(
-                "Sync Log 4: State current blocks len {}",
-                block_sync_state.current_blocks.len()
-            );
-
-            debug!("Requesting Block Headers from {current_head}");
-
-            let Some(mut block_headers) = self
+            let Some(block_headers) = self
                 .peers
-                .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
+                .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
                 .await?
             else {
                 warn!("Sync failed to find target block header, aborting");
                 debug!("Sync Log 8: Sync failed to find target block header, aborting");
                 return Ok(());
             };
-
             debug!("Sync Log 9: Received {} block headers", block_headers.len());
+            end_block_number = end_block_number.max(block_headers.first().as_ref().unwrap().number);
 
-            let (first_block_hash, first_block_number, first_block_parent_hash) =
-                match block_headers.first() {
-                    Some(header) => (header.hash(), header.number, header.parent_hash),
-                    None => continue,
-                };
-            let (last_block_hash, last_block_number) = match block_headers.last() {
-                Some(header) => (header.hash(), header.number),
-                None => continue,
-            };
-            // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
-            // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
-            if first_block_hash == last_block_hash
-                && first_block_hash == current_head
-                && current_head != sync_head
-            {
-                // There is no path to the sync head this goes back until it find a common ancerstor
-                warn!("Sync failed to find target block header, going back to the previous parent");
-                current_head = first_block_parent_hash;
-                continue;
-            }
-
-            debug!(
+            info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
-                first_block_number,
-                last_block_number
+                block_headers.first().as_ref().unwrap().number,
+                block_headers.last().as_ref().unwrap().number,
             );
 
-            // Filter out everything after the sync_head
-            let mut sync_head_found = false;
-            if let Some(index) = block_headers
-                .iter()
-                .position(|header| header.hash() == sync_head)
-            {
-                sync_head_found = true;
-                block_headers.drain(index + 1..);
-            }
+            // // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
+            // // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+            // if first_block_hash == last_block_hash
+            //     && first_block_hash == current_head
+            //     && current_head != sync_head
+            // {
+            //     // There is no path to the sync head this goes back until it find a common ancerstor
+            //     warn!("Sync failed to find target block header, going back to the previous parent");
+            //     current_head = first_block_parent_hash;
+            //     continue;
+            // }
 
-            // Update current fetch head
-            current_head = last_block_hash;
-
-            // Discard the first header as we already have it
-            if block_headers.len() > 1 {
-                let mut finished = false;
-                while !finished {
-                    let headers = std::mem::take(&mut block_headers);
-                    let block_headers_iter = headers.into_iter().skip(1);
-                    (finished, sync_head_found) = block_sync_state
-                        .process_incoming_headers(
-                            block_headers_iter,
-                            sync_head,
-                            sync_head_found,
-                            self.blockchain.clone(),
-                            self.peers.clone(),
-                            self.cancel_token.clone(),
-                        )
-                        .await?;
-                }
-            }
-
-            if sync_head_found {
+            sync_head = block_headers.last().as_ref().unwrap().parent_hash;
+            if store.is_canonical_sync(sync_head)? {
+                // Incoming chain merged with current chain
+                start_block_number = block_headers.last().as_ref().unwrap().number;
                 break;
-            };
+            }
+            store.add_fullsync_batch(block_headers).await?;
         }
+
+        info!("Downloading Bodies and executing blocks");
+        for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
+            let batch_size = EXECUTE_BATCH_SIZE.min((end_block_number - start) as usize);
+            let final_batch = end_block_number == start + batch_size as u64;
+            // Retrieve batch from DB
+            info!(
+                "Processing batch from block number {start} to {}",
+                start + *EXECUTE_BATCH_SIZE as u64
+            );
+            let mut headers = store
+                .read_fullsync_batch(start, *EXECUTE_BATCH_SIZE as u64)
+                .await?;
+            let mut blocks = Vec::new();
+            // Request block bodies
+            // Download block bodies
+            while !headers.is_empty() {
+                let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
+                let bodies = self
+                    .peers
+                    .request_and_validate_block_bodies(header_batch)
+                    .await?
+                    .ok_or(SyncError::BodiesNotFound)?;
+                debug!("Obtained: {} block bodies", bodies.len());
+                let block_batch = headers
+                    .drain(..bodies.len())
+                    .zip(bodies)
+                    .map(|(header, body)| Block { header, body });
+                blocks.extend(block_batch);
+            }
+            // Execute blocks
+
+            info!(
+                "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
+                blocks.len(),
+                blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
+                blocks.last().ok_or(SyncError::NoBlocks)?.hash()
+            );
+            let execution_start = Instant::now();
+            // Copy some values for later
+            let blocks_len = blocks.len();
+            let numbers_and_hashes = blocks
+                .iter()
+                .map(|b| (b.header.number, b.hash()))
+                .collect::<Vec<_>>();
+            let (last_block_number, last_block_hash) = numbers_and_hashes
+                .last()
+                .cloned()
+                .ok_or(SyncError::InvalidRangeReceived)?;
+            let (first_block_number, first_block_hash) = numbers_and_hashes
+                .first()
+                .cloned()
+                .ok_or(SyncError::InvalidRangeReceived)?;
+
+            let blocks_hashes = blocks
+                .iter()
+                .map(|block| block.hash())
+                .collect::<Vec<_>>();
+
+            // Run the batch
+            if let Err((err, batch_failure)) = Syncer::add_blocks(
+                self.blockchain.clone(),
+                blocks,
+                final_batch,
+                self.cancel_token.clone(),
+            )
+            .await
+            {
+                if let Some(batch_failure) = batch_failure {
+                    warn!("Failed to add block during FullSync: {err}");
+                    // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
+                    if let ChainError::InvalidBlock(_) = err {
+                        let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
+                        if let Some(index) = blocks_hashes
+                            .iter()
+                            .position(|x| x == &batch_failure.failed_block_hash)
+                        {
+                            block_hashes_with_invalid_ancestor =
+                                blocks_hashes[index..].to_vec();
+                        }
+
+                        for hash in block_hashes_with_invalid_ancestor {
+                            store
+                                .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
+                                .await?;
+                        }
+                        // // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
+                        // for header in &self.current_headers {
+                        //     self.store
+                        //         .set_latest_valid_ancestor(
+                        //             header.hash(),
+                        //             batch_failure.last_valid_hash,
+                        //         )
+                        //         .await?;
+                        // }
+                    }
+                }
+                return Err(err.into());
+            }
+
+            store
+                .forkchoice_update(
+                    Some(numbers_and_hashes),
+                    last_block_number,
+                    last_block_hash,
+                    None,
+                    None,
+                )
+                .await?;
+
+            let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
+            let blocks_per_second = blocks_len as f64 / execution_time;
+
+            info!(
+                "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
+                Started at block with hash {} (number {}).\n\
+                Finished at block with hash {} (number {}).\n\
+                Blocks per second: {:.3}",
+                blocks_len,
+                execution_time,
+                first_block_hash,
+                first_block_number,
+                last_block_hash,
+                last_block_number,
+                blocks_per_second
+            );
+        }
+
         Ok(())
     }
 

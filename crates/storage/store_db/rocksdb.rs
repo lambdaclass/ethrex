@@ -101,6 +101,11 @@ const CF_PENDING_BLOCKS: &str = "pending_blocks";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(latest_valid).bytes().clone()`
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
+/// Block headers downloaded during fullsync column family: [`u8;_`] => [`Vec<u8>`]
+/// - [`u8;_`] = `block_number.to_le_bytes()`
+/// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
+const CF_FULLSYNC_HEADERS: &str = "headers";
+
 #[derive(Debug)]
 pub struct Store {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
@@ -163,6 +168,7 @@ impl Store {
             CF_STORAGE_TRIES_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
+            CF_FULLSYNC_HEADERS,
         ];
 
         // Get existing column families to know which ones to drop later
@@ -1388,6 +1394,36 @@ impl StoreEngine for Store {
         }
 
         self.write_batch_async(batch_ops).await
+    }
+
+    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        let mut batch_ops = Vec::new();
+
+        for header in headers {
+            let number_value = header.number.to_le_bytes().to_vec();
+            let header_value = BlockHeaderRLP::from(header).bytes().clone();
+
+            batch_ops.push((CF_FULLSYNC_HEADERS.to_string(), number_value, header_value));
+        }
+
+        self.write_batch_async(batch_ops).await
+    }
+
+    async fn read_fullsync_batch(
+        &self,
+        start: BlockNumber,
+        limit: u64,
+    ) -> Result<Vec<BlockHeader>, StoreError> {
+        self.read_bulk_async(
+            CF_FULLSYNC_HEADERS,
+            (start..start + limit).map(|n| n.to_le_bytes()).collect(),
+            |bytes| {
+                BlockHeaderRLP::from_bytes(bytes)
+                    .to()
+                    .map_err(StoreError::from)
+            },
+        )
+        .await
     }
 }
 

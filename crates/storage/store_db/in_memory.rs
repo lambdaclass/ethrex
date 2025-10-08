@@ -617,6 +617,18 @@ impl StoreEngine for Store {
 
         Ok(())
     }
+
+    async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    async fn read_fullsync_batch(
+        &self,
+        start: BlockNumber,
+        limit: u64,
+    ) -> Result<Vec<BlockHeader>, StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {
