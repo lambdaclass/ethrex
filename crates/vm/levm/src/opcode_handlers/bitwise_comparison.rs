@@ -247,11 +247,14 @@ impl OpcodeHandler for OpSarHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
 
         let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
-        vm.current_call_frame.stack.push1(if value.bit(255) {
-            !(!value >> shift_amount)
-        } else {
-            value >> shift_amount
-        })?;
+        vm.current_call_frame
+            .stack
+            .push1(match (u8::try_from(shift_amount), value.bit(255)) {
+                (Ok(shift_amount), false) => value >> shift_amount,
+                (Ok(shift_amount), true) => !(!value >> shift_amount),
+                (Err(_), false) => U256::zero(),
+                (Err(_), true) => U256::MAX,
+            })?;
 
         Ok(OpcodeResult::Continue)
     }
