@@ -381,8 +381,10 @@ impl Command {
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
 
-                #[cfg(feature = "rollup_storage_sql")]
+                #[cfg(feature = "l2-sql")]
                 let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::SQL;
+                #[cfg(not(feature = "l2-sql"))]
+                let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::InMemory;
 
                 // Init stores
                 let store = Store::new_from_genesis(

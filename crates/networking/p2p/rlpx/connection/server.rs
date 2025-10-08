@@ -308,10 +308,13 @@ impl GenServer for RLPxConnection {
                             l2_connection::send_sealed_batch(established_state).await
                         }
                         L2Cast::BlockBroadcast => {
-                            l2::l2_connection::send_new_block(established_state).await
+                            l2_connection::send_new_block(established_state).await
                         }
                     }
                 }
+                _ => Err(RLPxError::MessageNotHandled(
+                    "Unknown message or capability not handled".to_string(),
+                )),
             };
 
             if let Err(e) = result {
@@ -650,7 +653,7 @@ where
     .concat();
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
-        supported_capabilities.push(l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+        supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
     }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,

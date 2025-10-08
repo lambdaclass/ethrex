@@ -3,7 +3,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
+use ethrex_common::{U256, types::GenesisAccount};
+
+use std::collections::HashMap;
+
+use bytes::Bytes;
+use ethrex_common::Address;
+use ethrex_common::types::Genesis;
+
+pub const L2_GENESIS_PATH: &str = "../../fixtures/genesis/l2.json";
 
 const DETERMINISTIC_DEPLOYMENT_CODE: [u8; 69] = [
     0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -13,7 +21,7 @@ const DETERMINISTIC_DEPLOYMENT_CODE: [u8; 69] = [
     0x60, 0x14, 0x60, 0x0c, 0xf3,
 ];
 
-fn download_script() {
+pub fn download_script() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let output_contracts_path = Path::new(&out_dir).join("contracts");
     println!(
@@ -260,20 +268,14 @@ fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
     fs::write(output_file_path, bytecode).expect("Failed to write bytecode");
 }
 
-use ethrex_common::{U256, types::GenesisAccount};
-
-use std::collections::HashMap;
-
-use bytes::Bytes;
-use ethrex_common::types::Genesis;
-use ethrex_common::{Address, H160};
-
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, CREATE2DEPLOYER_ADDRESS, DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
     L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
 };
 
 use genesis_tool::genesis::write_genesis_as_json;
+
+use crate::{ADMIN_ADDRESS, IMPL_MASK, SystemContractsUpdaterError, read_genesis_file};
 
 /// Bytecode of the CommonBridgeL2 contract.
 fn common_bridge_l2_runtime(out_dir: &Path) -> Vec<u8> {

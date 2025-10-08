@@ -66,7 +66,7 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "metrics", "jemalloc"]
+default = ["rocksdb", "c-kzg", "l2", "metrics", "jemalloc"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [
   "ethrex-vm/c-kzg",
@@ -90,9 +90,13 @@ l2 = [
   "ethrex-l2-common",
   "ethrex-l2-rpc",
   "ethrex-sdk",
+  "ethrex-p2p/l2",
   "ethrex-prover",
-  "ethrex-storage-rollup/sql",
+  "ethrex-storage-rollup",
   "dep:tui-logger",
+]
+l2-sql = [
+  "ethrex-storage-rollup/sql",
 ]
 sp1 = ["ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]

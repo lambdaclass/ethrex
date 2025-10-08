@@ -4,6 +4,8 @@ use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
 use vergen_git2::{Emitter, Git2Builder, RustcBuilder};
+#[cfg(feature = "l2")]
+mod build_l2;
 // This build code is needed to add some env vars in order to construct the node client version
 // VERGEN_RUSTC_HOST_TRIPLE to get the build OS
 // VERGEN_RUSTC_SEMVER to get the rustc version
@@ -33,6 +35,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     #[cfg(feature = "l2")]
     {
+        use build_l2::download_script;
+        use std::env;
+        use std::path::Path;
+
+        use crate::build_l2::{L2_GENESIS_PATH, update_genesis_file};
+
         download_script();
 
         // If COMPILE_CONTRACTS is not set, skip
