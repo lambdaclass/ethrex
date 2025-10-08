@@ -773,7 +773,7 @@ impl<'scope, const N: usize> CodeHandler<'scope, N> {
         scope: &'scope Scope<'scope, '_>,
     ) -> eyre::Result<(CodeHandler<'scope, N>, CodeSender<N>)> {
         let (mut code_bucket_senders, mut code_bucket_receivers): (Vec<_>, Vec<_>) =
-            (0..N).map(|_| channel(1_000)).unzip();
+            (0..N).map(|_| channel()).unzip();
         let code_bucket_senders = std::array::from_fn(move |_| code_bucket_senders.pop().unwrap());
         // RocksDB doesn't currently allow for ingesting blobs.
         // Code may be too big for efficiently using as a value.
