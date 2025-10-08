@@ -51,6 +51,8 @@ impl OpcodeHandler for OpCallHandler {
         // Check EIP-7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, callee)?;
+        vm.current_call_frame
+            .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
         let (new_memory_size, gas_left, address_is_empty, address_was_cold) = vm
@@ -127,6 +129,8 @@ impl OpcodeHandler for OpCallCodeHandler {
         // Check EIP-7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
+        vm.current_call_frame
+            .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
         let (new_memory_size, gas_left, _, address_was_cold) = vm.get_call_gas_params(
@@ -200,6 +204,8 @@ impl OpcodeHandler for OpDelegateCallHandler {
         // Check EIP-7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
+        vm.current_call_frame
+            .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
         let (new_memory_size, gas_left, _, address_was_cold) = vm.get_call_gas_params(
@@ -272,6 +278,8 @@ impl OpcodeHandler for OpStaticCallHandler {
         // Check EIP-7702
         let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
+        vm.current_call_frame
+            .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
         let (new_memory_size, gas_left, _, address_was_cold) = vm.get_call_gas_params(

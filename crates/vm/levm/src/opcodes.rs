@@ -391,7 +391,7 @@ impl OpCodeFn {
         T: OpcodeHandler,
     {
         T::eval(vm).unwrap_or_else(|err| {
-            error.set(err);
+            _ = error.set(err);
             OpcodeResult::Halt
         })
     }

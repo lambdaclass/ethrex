@@ -254,7 +254,7 @@ impl OpcodeHandler for OpSStoreHandler {
                 current_value,
                 value,
                 vm.substate.add_accessed_slot(vm.current_call_frame.to, key),
-            )?);
+            )?)?;
         if value != current_value {
             // EIP-2929
             const REMOVE_SLOT_COST: u64 = 4800;
