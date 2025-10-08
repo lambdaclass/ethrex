@@ -60,4 +60,4 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, Some(&skips), BACKEND)
 }
 
-datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r"");
+datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");

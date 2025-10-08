@@ -95,7 +95,7 @@ lazy_static! {
 }
 
 /// Most of the fork variants are just for parsing the tests
-/// It's important for the pre-merge forks to befeore Paris because we make a comparison for executing post-merge forks only.
+/// It's important for the pre-merge forks to be before Paris because we make a comparison for executing post-merge forks only.
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Fork {
     Constantinople,
