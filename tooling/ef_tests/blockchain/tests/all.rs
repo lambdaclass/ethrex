@@ -34,6 +34,7 @@ const SKIPPED_BASE: &[&str] = &[
 // Extra skips added only for prover backends.
 #[cfg(feature = "sp1")]
 const EXTRA_SKIPS: &[&str] = &[
+    // I believe these tests fail because of how much stress they put into the zkVM, they probably cause an OOM though this should be checked
     "static_Call50000",
     "Return50000",
     "static_Call1MB1024Calldepth",
