@@ -531,8 +531,8 @@ impl PeerTableServer {
                 // We return the id, the score and the channel to connect with.
                 Some((*id, peer_data.score, peer_data.requests, connection))
             })
-            // TODO: Improve sorting function (currently ignoring score)
-            .max_by_key(|(_, _score, reqs, _)| -reqs)
+            // TODO: Improve sorting function
+            .max_by_key(|(_, score, reqs, _)| score - reqs)
             .map(|(k, _, _, v)| (k, v))
     }
 
