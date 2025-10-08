@@ -48,23 +48,6 @@ const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
 static GETH_DB_PATH: LazyLock<&str> = LazyLock::new(|| Args::parse().input_dir.leak());
 static ETHREX_DB_PATH: LazyLock<&str> = LazyLock::new(|| Args::parse().output_dir.leak());
 
-fn open_ethrexdb() -> eyre::Result<DBWithThreadMode<SingleThreaded>> {
-    // Quick and dirty way to ensure the DB is initialized correctly
-    let _ = ethrex_storage::store_db::rocksdb::Store::new((*ETHREX_DB_PATH).as_ref())?;
-    let (ethrex_opts, ethrex_cfs) = Options::load_latest(
-        *ETHREX_DB_PATH,
-        Env::new()?,
-        true,
-        Cache::new_lru_cache(16 << 20),
-    )?;
-    let ethrex_db = DBWithThreadMode::<SingleThreaded>::open_cf_descriptors(
-        &ethrex_opts,
-        *ETHREX_DB_PATH,
-        ethrex_cfs,
-    )?;
-    Ok(ethrex_db)
-}
-
 pub fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
@@ -77,31 +60,39 @@ pub fn main() -> eyre::Result<()> {
 fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let migration_start: Instant = Instant::now();
 
+    info!("Opening Ethrex DB");
     let ethrex_db = open_ethrexdb()?;
+    info!("Opening Geth DB");
     let gethdb = GethDB::open()?;
+    info!("Query hash table");
     let hashes = gethdb.read_hashes_from_gethdb(
         block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
         block_number,
     )?;
     let block_hash = *hashes.last().ok_or_eyre("missing block hash")?;
+    info!("Query block data");
     let [header_rlp, body_rlp] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
     let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
 
+    info!("Inserting block header");
     let block_hash_rlp = block_hash.encode_to_vec();
     ethrex_db.put_cf(
         ethrex_db.cf_handle("headers").unwrap(),
         block_hash_rlp.clone(),
         header_rlp,
     )?;
+    info!("Inserting block body");
     ethrex_db.put_cf(
         ethrex_db.cf_handle("bodies").unwrap(),
         block_hash_rlp,
         body_rlp,
     )?;
+    info!("Inserting canonical hashes");
     let headers_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
     for (i, hash) in hashes.into_iter().rev().enumerate() {
         ethrex_db.put_cf(headers_cf, (block_number - i as u64).encode_to_vec(), hash)?;
     }
+    info!("Inserting latest block number");
     ethrex_db.put_cf(
         ethrex_db.cf_handle("chain_data").unwrap(),
         4u32.encode_to_vec(),
@@ -113,6 +104,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let account_triedb = gethdb.triedb()?;
     let account_trie = Trie::open(account_triedb, header.state_root);
     let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
+    info!("Iterating account trie");
     for (path, node) in account_trie.into_iter() {
         if let Node::Leaf(leaf) = &node {
             let state = AccountState::decode(&leaf.value)?;
@@ -126,6 +118,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         let hash = node.compute_hash();
         ethrex_db.put_cf(account_trie_cf, hash.encode_to_vec(), node.encode_to_vec())?;
     }
+    info!("Inserting account codes");
     let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
     for code_hash in codes {
         let code = gethdb
@@ -133,6 +126,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             .ok_or_else(|| eyre::eyre!("missing code hash"))?;
         ethrex_db.put_cf(code_cf, code_hash, code)?;
     }
+    info!("Iterating storage tries");
     let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
     for (hashed_address, storage_root) in storages {
         let storage_triedb = gethdb.triedb()?;
@@ -149,6 +143,23 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time}");
     Ok(())
+}
+
+fn open_ethrexdb() -> eyre::Result<DBWithThreadMode<SingleThreaded>> {
+    // Quick and dirty way to ensure the DB is initialized correctly
+    let _ = ethrex_storage::store_db::rocksdb::Store::new((*ETHREX_DB_PATH).as_ref())?;
+    let (ethrex_opts, ethrex_cfs) = Options::load_latest(
+        *ETHREX_DB_PATH,
+        Env::new()?,
+        true,
+        Cache::new_lru_cache(16 << 20),
+    )?;
+    let ethrex_db = DBWithThreadMode::<SingleThreaded>::open_cf_descriptors(
+        &ethrex_opts,
+        *ETHREX_DB_PATH,
+        ethrex_cfs,
+    )?;
+    Ok(ethrex_db)
 }
 
 struct GethDB {
