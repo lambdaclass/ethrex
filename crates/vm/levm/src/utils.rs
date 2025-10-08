@@ -581,12 +581,14 @@ impl<'a> VM<'a> {
 }
 
 /// Converts Account to LevmAccount
+/// The problem with this is that we don't have the storage root.
 pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
     (
         LevmAccount {
             info: account.info,
             storage: account.storage,
             status: AccountStatus::Unmodified,
+            storage_root: H256::default(),
         },
         account.code,
     )

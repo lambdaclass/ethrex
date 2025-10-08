@@ -47,6 +47,7 @@ impl GeneralizedDatabase {
         }
     }
 
+    /// ONLY USED FOR RUNNER
     pub fn new_with_account_state(
         store: Arc<dyn Database>,
         current_accounts_state: BTreeMap<Address, Account>,
@@ -77,8 +78,8 @@ impl GeneralizedDatabase {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let info = self.store.get_account_info(address)?;
-                let account = LevmAccount::from(info);
+                let state = self.store.get_account_state(address)?;
+                let account = LevmAccount::from(state);
                 self.initial_accounts_state.insert(address, account.clone());
                 Ok(entry.insert(account))
             }

@@ -1,9 +1,7 @@
-use ethrex_common::{H256, utils::keccak};
-use ethrex_common::{
-    U256,
-    constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, GenesisAccount},
-};
+use ethrex_common::H256;
+use ethrex_common::constants::EMPTY_TRIE_HASH;
+use ethrex_common::types::AccountState;
+use ethrex_common::{U256, constants::EMPTY_KECCACK_HASH, types::AccountInfo};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -18,36 +16,22 @@ use std::collections::BTreeMap;
 pub struct LevmAccount {
     pub info: AccountInfo,
     pub storage: BTreeMap<H256, U256>,
+    pub storage_root: H256,
     /// Current status of the account.
     pub status: AccountStatus,
 }
 
-impl From<AccountInfo> for LevmAccount {
-    fn from(info: AccountInfo) -> Self {
-        LevmAccount {
-            info,
-            storage: BTreeMap::new(),
-            status: AccountStatus::Unmodified,
-        }
-    }
-}
-
-impl From<GenesisAccount> for LevmAccount {
-    fn from(genesis: GenesisAccount) -> Self {
-        let storage = genesis
-            .storage
-            .into_iter()
-            .map(|(key, value)| (H256::from(key.to_big_endian()), value))
-            .collect();
-
+impl From<AccountState> for LevmAccount {
+    fn from(state: AccountState) -> Self {
         LevmAccount {
             info: AccountInfo {
-                balance: genesis.balance,
-                nonce: genesis.nonce,
-                code_hash: keccak(&genesis.code),
+                code_hash: state.code_hash,
+                balance: state.balance,
+                nonce: state.nonce,
             },
-            storage,
+            storage: BTreeMap::new(),
             status: AccountStatus::Unmodified,
+            storage_root: state.storage_root,
         }
     }
 }
@@ -61,8 +45,8 @@ impl LevmAccount {
         self.info.code_hash != *EMPTY_KECCACK_HASH
     }
 
-    pub fn has_code_or_nonce(&self) -> bool {
-        self.has_code() || self.has_nonce()
+    pub fn create_would_collide(&self) -> bool {
+        self.has_code() || self.has_nonce() || self.storage_root != *EMPTY_TRIE_HASH
     }
 
     pub fn is_empty(&self) -> bool {
