@@ -73,9 +73,6 @@ use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::fiel
 use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
 use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
 
-#[cfg(feature = "substrate-bn")]
-extern crate bn;
-
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
 pub const SIZE_PRECOMPILES_PRE_CANCUN: u64 = 9;
@@ -1048,31 +1045,26 @@ fn validate_pairing_substrate(
             Ok(None)
         }
         (true, false) => {
+            let affine = AffineG2::new(second_point_x, second_point_y)
+                .map_err(|_| PrecompileError::PointNotInSubgroup)?;
             // If the first point is infinity, then do the checks for the second
-            G2::from(
-                AffineG2::new(second_point_x, second_point_y)
-                    .map_err(|_| PrecompileError::PointNotInSubgroup)?,
-            );
             Ok(None)
         }
         (false, true) => {
             // If the second point is infinity, then do the checks for the first
-            G1::from(
-                AffineG1::new(first_point_x, first_point_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?,
-            );
+            let affine = AffineG1::new(first_point_x, first_point_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?;
             Ok(None)
         }
         (false, false) => {
             // Define the pairing points
-            let first_point = G1::from(
-                AffineG1::new(first_point_x, first_point_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?,
-            );
-            let second_point = G2::from(
-                AffineG2::new(second_point_x, second_point_y)
-                    .map_err(|_| PrecompileError::PointNotInSubgroup)?,
-            );
+            let affine1 = AffineG1::new(first_point_x, first_point_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?;
+            let affine2 = AffineG2::new(second_point_x, second_point_y)
+                .map_err(|_| PrecompileError::PointNotInSubgroup)?;
+
+            let first_point = affine1.into();
+            let second_point = affine2.into();
 
             Ok(Some((first_point, second_point)))
         }
