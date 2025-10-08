@@ -36,7 +36,7 @@ use tracing::{debug, error};
 use crate::rlpx::l2::{
     PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
     l2_connection::{
-        self, L2Cast, L2ConnState, broadcast_l2_message, handle_based_capability_message,
+        self, L2Cast, L2ConnState, handle_based_capability_message,
         handle_l2_broadcast,
     },
 };

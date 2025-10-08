@@ -327,7 +327,7 @@ impl L1Committer {
         #[cfg(feature = "metrics")]
         let mut batch_gas_used = 0_u64;
 
-        info!("Preparing state diff from block {first_block_of_batch}");
+        info!("Preparing state diff from block {first_block_of_batch}, {batch_number}");
 
         loop {
             let block_to_commit_number = last_added_block_number + 1;
@@ -453,7 +453,7 @@ impl L1Committer {
                 Ok((BlobsBundle::default(), 0_usize))
             };
 
-            let Ok((bundle, latest_blob_size)) = result else {
+            let Ok((bundle, _latest_blob_size)) = result else {
                 if block_to_commit_number == first_block_of_batch {
                     return Err(CommitterError::Unreachable(
                         "Not enough blob space for a single block batch. This means a block was incorrectly produced.".to_string(),
