@@ -105,7 +105,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     ethrex_db.put_cf(
         ethrex_db.cf_handle("chain_data").unwrap(),
         4u32.encode_to_vec(),
-        block_number.to_be_bytes(),
+        block_number.to_le_bytes(),
     )?;
 
     let mut codes = BTreeSet::new();
