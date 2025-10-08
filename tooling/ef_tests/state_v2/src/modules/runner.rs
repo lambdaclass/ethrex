@@ -1,11 +1,6 @@
 use colored::Colorize;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use secp256k1::SecretKey;
-use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-    path::PathBuf,
-};
 
 use ethrex_common::{
     U256,
@@ -18,7 +13,7 @@ use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::V
 
 use crate::modules::{
     error::RunnerError,
-    report::add_test_to_report,
+    report::{add_test_to_report, ensure_reports_dir},
     result_check::check_test_case_results,
     types::{Env, Test, TestCase},
     utils::{effective_gas_price, load_initial_state},
@@ -26,19 +21,8 @@ use crate::modules::{
 
 /// Runs all the tests that have been parsed.
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
-    // Remove previous report if it exists.
-    let successful_report_path = PathBuf::from("./success_report.txt");
-    let _ = fs::remove_file(&successful_report_path);
-    let _ = fs::remove_file("./failure_report.txt");
-
-    let mut success_report = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(successful_report_path)
-        .unwrap();
-    success_report
-        .write_all("Successful tests: \n".as_bytes())
-        .unwrap();
+    // Ensure reports directory exists
+    ensure_reports_dir()?;
     let mut passing_tests = 0;
     let mut failing_tests = 0;
     let mut total_run = 0;

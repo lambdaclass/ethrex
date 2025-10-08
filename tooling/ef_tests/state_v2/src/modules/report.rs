@@ -3,6 +3,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::PathBuf,
+    sync::OnceLock,
 };
 
 use chrono::Local;
@@ -10,8 +11,11 @@ use prettytable::{Cell, Row, Table};
 
 use crate::modules::{error::RunnerError, result_check::PostCheckResult, types::Test};
 
+/// Static storage for report paths that are initialized once per program run
+static REPORT_PATHS: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
+
 /// Ensures the reports directory exists, creating it if necessary
-fn ensure_reports_dir() -> Result<(), RunnerError> {
+pub fn ensure_reports_dir() -> Result<(), RunnerError> {
     let reports_dir = PathBuf::from("./reports");
     if !reports_dir.exists() {
         fs::create_dir_all(&reports_dir).map_err(|e| {
@@ -21,12 +25,14 @@ fn ensure_reports_dir() -> Result<(), RunnerError> {
     Ok(())
 }
 
-/// Generates timestamped report paths
-fn get_report_paths() -> (PathBuf, PathBuf) {
-    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
-    let success_path = PathBuf::from(format!("./reports/success_report_{}.txt", timestamp));
-    let failure_path = PathBuf::from(format!("./reports/failure_report_{}.txt", timestamp));
-    (success_path, failure_path)
+/// Generates timestamped report paths (called only once per run)
+fn get_report_paths() -> &'static (PathBuf, PathBuf) {
+    REPORT_PATHS.get_or_init(|| {
+        let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
+        let success_path = PathBuf::from(format!("./reports/success_report_{}.txt", timestamp));
+        let failure_path = PathBuf::from(format!("./reports/failure_report_{}.txt", timestamp));
+        (success_path, failure_path)
+    })
 }
 
 pub fn add_test_to_report(test_result: (&Test, Vec<PostCheckResult>)) -> Result<(), RunnerError> {
