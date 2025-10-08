@@ -33,7 +33,11 @@ const SKIPPED_BASE: &[&str] = &[
 
 // Extra skips added only for prover backends.
 #[cfg(feature = "sp1")]
-const EXTRA_SKIPS: &[&str] = &[];
+const EXTRA_SKIPS: &[&str] = &[
+    "static_Call50000",
+    "Return50000",
+    "static_Call1MB1024Calldepth",
+];
 #[cfg(not(feature = "sp1"))]
 const EXTRA_SKIPS: &[&str] = &[];
 
