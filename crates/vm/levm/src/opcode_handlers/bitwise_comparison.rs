@@ -219,7 +219,12 @@ impl OpcodeHandler for OpShlHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
 
         let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
-        vm.current_call_frame.stack.push1(value << shift_amount)?;
+        vm.current_call_frame
+            .stack
+            .push1(match u8::try_from(shift_amount) {
+                Ok(shift_amount) => value << shift_amount,
+                Err(_) => U256::zero(),
+            })?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -233,7 +238,12 @@ impl OpcodeHandler for OpShrHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
 
         let [shift_amount, value] = *vm.current_call_frame.stack.pop()?;
-        vm.current_call_frame.stack.push1(value >> shift_amount)?;
+        vm.current_call_frame
+            .stack
+            .push1(match u8::try_from(shift_amount) {
+                Ok(shift_amount) => value >> shift_amount,
+                Err(_) => U256::zero(),
+            })?;
 
         Ok(OpcodeResult::Continue)
     }
