@@ -31,7 +31,9 @@ pub enum Error {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
-    let env = ExecutorEnv::builder().write(&bytes.as_slice())?.build()?;
+    let env = ExecutorEnv::builder()
+        .write_slice(bytes.as_slice())
+        .build()?;
 
     let executor = default_executor();
 
@@ -52,7 +54,7 @@ pub fn prove(
     let bytes = rkyv::to_bytes::<RkyvError>(&input)?;
     let env = ExecutorEnv::builder()
         .stdout(&mut stdout)
-        .write(&bytes.as_slice())?
+        .write_slice(bytes.as_slice())
         .build()?;
 
     let prover = default_prover();

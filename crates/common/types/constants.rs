@@ -22,3 +22,8 @@ pub const BYTES_PER_BLOB_F64: f64 = BYTES_PER_BLOB as f64;
 /// The maximum number of bytes that can be "safely" stored in a blob. This is, prepend
 /// a zero byte for every 32 bytes of data to ensure they not exceed the field modulus.
 pub const SAFE_BYTES_PER_BLOB: usize = BYTES_PER_BLOB * 31 / 32;
+// Defined in [EIP-7594](https://eips.ethereum.org/EIPS/eip-7594)
+pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
+pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
+pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
+pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::LazyLock};
+use std::{fmt::Debug, sync::OnceLock};
 
 use ethrex_l2_common::{
     calldata::Value,
@@ -6,12 +6,18 @@ use ethrex_l2_common::{
 };
 use guest_program::input::ProgramInput;
 use rkyv::rancor::Error;
+use sp1_prover::components::CpuProverComponents;
+#[cfg(not(feature = "gpu"))]
+use sp1_sdk::CpuProver;
+#[cfg(feature = "gpu")]
+use sp1_sdk::cuda::builder::CudaProverBuilder;
 use sp1_sdk::{
-    EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
 use std::time::Instant;
 use tracing::info;
+use url::Url;
 
 #[cfg(not(clippy))]
 static PROGRAM_ELF: &[u8] =
@@ -22,18 +28,40 @@ static PROGRAM_ELF: &[u8] =
 #[cfg(clippy)]
 static PROGRAM_ELF: &[u8] = &[];
 
-struct ProverSetup {
-    client: EnvProver,
+pub struct ProverSetup {
+    client: Box<dyn Prover<CpuProverComponents>>,
     pk: SP1ProvingKey,
     vk: SP1VerifyingKey,
 }
 
-static PROVER_SETUP: LazyLock<ProverSetup> = LazyLock::new(|| {
-    let client = ProverClient::from_env();
-    let (pk, vk) = client.setup(PROGRAM_ELF);
-    ProverSetup { client, pk, vk }
-});
+pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
 
+pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
+    #[cfg(feature = "gpu")]
+    let client = {
+        if let Some(endpoint) = _endpoint {
+            CudaProverBuilder::default()
+                .server(
+                    &endpoint
+                        .join("/twirp/")
+                        .expect("Failed to parse moongate server url")
+                        .to_string(),
+                )
+                .build()
+        } else {
+            CudaProverBuilder::default().local().build()
+        }
+    };
+    #[cfg(not(feature = "gpu"))]
+    let client = { CpuProver::new() };
+    let (pk, vk) = client.setup(PROGRAM_ELF);
+
+    ProverSetup {
+        client: Box::new(client),
+        pk,
+        vk,
+    }
+}
 pub struct ProveOutput {
     pub proof: SP1ProofWithPublicValues,
     pub vk: SP1VerifyingKey,
@@ -64,10 +92,10 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let setup = &*PROVER_SETUP;
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
     let now = Instant::now();
-    setup.client.execute(PROGRAM_ELF, &stdin).run()?;
+    setup.client.execute(PROGRAM_ELF, &stdin)?;
     let elapsed = now.elapsed();
 
     info!("Successfully executed SP1 program in {:.2?}", elapsed);
@@ -82,13 +110,17 @@ pub fn prove(
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let setup = &*PROVER_SETUP;
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
 
     // contains the receipt along with statistics about execution of the guest
     let proof = if aligned_mode {
-        setup.client.prove(&setup.pk, &stdin).compressed().run()?
+        setup
+            .client
+            .prove(&setup.pk, &stdin, SP1ProofMode::Compressed)?
     } else {
-        setup.client.prove(&setup.pk, &stdin).groth16().run()?
+        setup
+            .client
+            .prove(&setup.pk, &stdin, SP1ProofMode::Groth16)?
     };
 
     info!("Successfully generated SP1Proof.");
@@ -96,7 +128,7 @@ pub fn prove(
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
-    let setup = &*PROVER_SETUP;
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
     setup.client.verify(&output.proof, &output.vk)?;
 
     Ok(())

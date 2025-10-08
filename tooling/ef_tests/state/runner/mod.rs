@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::report::EFTestsReport;
-#[cfg(feature = "revm")]
-use crate::runner::revm_runner::SpecId;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
     report::{self, EFTestReport, TestReRunReport, format_duration_as_mm_ss},
@@ -13,10 +11,13 @@ use colored::Colorize;
 use ethrex_common::Address;
 use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, VMError};
+pub use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
+use std::str::FromStr;
 
 pub mod levm_runner;
+pub mod revm_db;
 pub mod revm_runner;
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
@@ -62,6 +63,7 @@ pub struct EFTestRunnerOptions {
         long,
         value_name = "FORK",
         value_delimiter = ',',
+        value_parser=parse_fork,
         default_value = "Merge,Shanghai,Cancun,Prague,Osaka"
     )]
     pub forks: Option<Vec<SpecId>>,
@@ -85,6 +87,10 @@ pub struct EFTestRunnerOptions {
     /// For running particular tests that have their specified paths listed with the tests flag.
     #[arg(long, value_name = "PATHS", default_value = "false")]
     pub paths: bool,
+}
+
+fn parse_fork(value: &str) -> Result<SpecId, String> {
+    SpecId::from_str(value).map_err(|_| format!("Unknown fork: {value}"))
 }
 
 pub async fn run_ef_tests(

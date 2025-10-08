@@ -219,11 +219,12 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                             &l2_state.committer_key,
                         )
                         .serialize_compact();
-                    let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
-                        RLPxError::InternalError(format!(
-                            "Failed to convert recovery id to u8: {e}. This is a bug."
-                        ))
-                    })?;
+                    let recovery_id: u8 =
+                        Into::<i32>::into(recovery_id).try_into().map_err(|e| {
+                            RLPxError::InternalError(format!(
+                                "Failed to convert recovery id to u8: {e}. This is a bug."
+                            ))
+                        })?;
                     let mut sig = [0u8; 65];
                     sig[..64].copy_from_slice(&signature);
                     sig[64] = recovery_id;
@@ -362,29 +363,31 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
             next_block_to_add += 1;
             continue;
         }
+        let block_hash = block.hash();
+        let block_number = block.header.number;
+        let block = Arc::<Block>::try_unwrap(block).map_err(|_| {
+            RLPxError::InternalError("Failed to take ownership of block".to_string())
+        })?;
         established
             .blockchain
-            .add_block(&block)
+            .add_block(block)
             .await
             .inspect_err(|e| {
                 log_peer_error(
                     &established.node,
                     &format!(
                         "Error adding new block {} with hash {:?}, error: {e}",
-                        block.header.number,
-                        block.hash()
+                        block_number, block_hash
                     ),
                 );
             })?;
-        let block_hash = block.hash();
 
         apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
             .await
             .map_err(|e| {
                 RLPxError::BlockchainError(ChainError::Custom(format!(
                     "Error adding new block {} with hash {:?}, error: {e}",
-                    block.header.number,
-                    block.hash()
+                    block_number, block_hash
                 )))
             })?;
         info!(
