@@ -1,33 +1,9 @@
 use crate::{
     errors::{OpcodeResult, VMError},
     opcode_handlers::{
-        OpInvalidHandler, OpStopHandler, OpcodeHandler,
-        arithmetic::{
-            OpAddHandler, OpAddModHandler, OpClzHandler, OpDivHandler, OpExpHandler, OpModHandler,
-            OpMulHandler, OpMulModHandler, OpSDivHandler, OpSModHandler, OpSignExtendHandler,
-            OpSubHandler,
-        },
-        bitwise_comparison::{
-            OpAndHandler, OpByteHandler, OpEqHandler, OpGtHandler, OpIsZeroHandler, OpLtHandler,
-            OpNotHandler, OpOrHandler, OpSGtHandler, OpSLtHandler, OpSarHandler, OpShlHandler,
-            OpShrHandler, OpXorHandler,
-        },
-        block::{
-            OpBaseFeeHandler, OpBlobBaseFeeHandler, OpBlobHashHandler, OpBlockHashHandler,
-            OpChainIdHandler, OpCoinbaseHandler, OpGasLimitHandler, OpNumberHandler,
-            OpPrevRandaoHandler, OpSelfBalanceHandler, OpTimestampHandler,
-        },
-        dup::OpDupHandler,
-        environment::{
-            OpAddressHandler, OpBalanceHandler, OpCallDataCopyHandler, OpCallDataLoadHandler,
-            OpCallDataSizeHandler, OpCallValueHandler, OpCallerHandler, OpCodeCopyHandler,
-            OpCodeSizeHandler, OpExtCodeCopyHandler, OpExtCodeHashHandler, OpExtCodeSizeHandler,
-            OpGasPriceHandler, OpOriginHandler, OpReturnDataCopyHandler, OpReturnDataSizeHandler,
-        },
-        exchange::OpSwapHandler,
-        keccak::OpKeccak256Handler,
-        logging::OpLogHandler,
-        push::{OpPush0Handler, OpPushHandler},
+        OpInvalidHandler, OpStopHandler, OpcodeHandler, arithmetic::*, bitwise_comparison::*,
+        block::*, dup::*, environment::*, exchange::*, keccak::*, logging::*, push::*,
+        stack_memory_storage_flow::*, system::*,
     },
     vm::VM,
 };
@@ -443,14 +419,14 @@ impl<'a> VM<'a> {
         let mut opcode_table: [OpCodeFn; 256] = [OpCodeFn::new::<OpInvalidHandler>(); 256];
 
         opcode_table[Opcode::STOP as usize] = OpCodeFn::new::<OpStopHandler>();
-        opcode_table[Opcode::MLOAD as usize] = OpCodeFn(VM::op_mload);
-        opcode_table[Opcode::MSTORE as usize] = OpCodeFn(VM::op_mstore);
-        opcode_table[Opcode::MSTORE8 as usize] = OpCodeFn(VM::op_mstore8);
-        opcode_table[Opcode::JUMP as usize] = OpCodeFn(VM::op_jump);
-        opcode_table[Opcode::SLOAD as usize] = OpCodeFn(VM::op_sload);
-        opcode_table[Opcode::SSTORE as usize] = OpCodeFn(VM::op_sstore);
-        opcode_table[Opcode::MSIZE as usize] = OpCodeFn(VM::op_msize);
-        opcode_table[Opcode::GAS as usize] = OpCodeFn(VM::op_gas);
+        opcode_table[Opcode::MLOAD as usize] = OpCodeFn::new::<OpMLoadHandler>();
+        opcode_table[Opcode::MSTORE as usize] = OpCodeFn::new::<OpMStoreHandler>();
+        opcode_table[Opcode::MSTORE8 as usize] = OpCodeFn::new::<OpMStore8Handler>();
+        opcode_table[Opcode::JUMP as usize] = OpCodeFn::new::<OpJumpHandler>();
+        opcode_table[Opcode::SLOAD as usize] = OpCodeFn::new::<OpSLoadHandler>();
+        opcode_table[Opcode::SSTORE as usize] = OpCodeFn::new::<OpSStoreHandler>();
+        opcode_table[Opcode::MSIZE as usize] = OpCodeFn::new::<OpMSizeHandler>();
+        opcode_table[Opcode::GAS as usize] = OpCodeFn::new::<OpGasHandler>();
         opcode_table[Opcode::PUSH1 as usize] = OpCodeFn::new::<OpPushHandler<1>>();
         opcode_table[Opcode::PUSH2 as usize] = OpCodeFn::new::<OpPushHandler<2>>();
         opcode_table[Opcode::PUSH3 as usize] = OpCodeFn::new::<OpPushHandler<3>>();
@@ -518,7 +494,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::SWAP14 as usize] = OpCodeFn::new::<OpSwapHandler<14>>();
         opcode_table[Opcode::SWAP15 as usize] = OpCodeFn::new::<OpSwapHandler<15>>();
         opcode_table[Opcode::SWAP16 as usize] = OpCodeFn::new::<OpSwapHandler<16>>();
-        opcode_table[Opcode::POP as usize] = OpCodeFn(VM::op_pop);
+        opcode_table[Opcode::POP as usize] = OpCodeFn::new::<OpPopHandler>();
         opcode_table[Opcode::ADD as usize] = OpCodeFn::new::<OpAddHandler>();
         opcode_table[Opcode::MUL as usize] = OpCodeFn::new::<OpMulHandler>();
         opcode_table[Opcode::SUB as usize] = OpCodeFn::new::<OpSubHandler>();
@@ -529,15 +505,15 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::ADDMOD as usize] = OpCodeFn::new::<OpAddModHandler>();
         opcode_table[Opcode::MULMOD as usize] = OpCodeFn::new::<OpMulModHandler>();
         opcode_table[Opcode::EXP as usize] = OpCodeFn::new::<OpExpHandler>();
-        opcode_table[Opcode::CALL as usize] = OpCodeFn(VM::op_call);
-        opcode_table[Opcode::CALLCODE as usize] = OpCodeFn(VM::op_callcode);
-        opcode_table[Opcode::RETURN as usize] = OpCodeFn(VM::op_return);
-        opcode_table[Opcode::DELEGATECALL as usize] = OpCodeFn(VM::op_delegatecall);
-        opcode_table[Opcode::STATICCALL as usize] = OpCodeFn(VM::op_staticcall);
-        opcode_table[Opcode::CREATE as usize] = OpCodeFn(VM::op_create);
-        opcode_table[Opcode::CREATE2 as usize] = OpCodeFn(VM::op_create2);
-        opcode_table[Opcode::JUMPI as usize] = OpCodeFn(VM::op_jumpi);
-        opcode_table[Opcode::JUMPDEST as usize] = OpCodeFn(VM::op_jumpdest);
+        opcode_table[Opcode::CALL as usize] = OpCodeFn::new::<OpCallHandler>();
+        opcode_table[Opcode::CALLCODE as usize] = OpCodeFn::new::<OpCallCodeHandler>();
+        opcode_table[Opcode::RETURN as usize] = OpCodeFn::new::<OpReturnHandler>();
+        opcode_table[Opcode::DELEGATECALL as usize] = OpCodeFn::new::<OpDelegateCallHandler>();
+        opcode_table[Opcode::STATICCALL as usize] = OpCodeFn::new::<OpStaticCallHandler>();
+        opcode_table[Opcode::CREATE as usize] = OpCodeFn::new::<OpCreateHandler>();
+        opcode_table[Opcode::CREATE2 as usize] = OpCodeFn::new::<OpCreate2Handler>();
+        opcode_table[Opcode::JUMPI as usize] = OpCodeFn::new::<OpJumpIHandler>();
+        opcode_table[Opcode::JUMPDEST as usize] = OpCodeFn::new::<OpJumpDestHandler>();
         opcode_table[Opcode::ADDRESS as usize] = OpCodeFn::new::<OpAddressHandler>();
         opcode_table[Opcode::ORIGIN as usize] = OpCodeFn::new::<OpOriginHandler>();
         opcode_table[Opcode::BALANCE as usize] = OpCodeFn::new::<OpBalanceHandler>();
@@ -557,7 +533,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::CALLDATACOPY as usize] = OpCodeFn::new::<OpCallDataCopyHandler>();
         opcode_table[Opcode::RETURNDATASIZE as usize] = OpCodeFn::new::<OpReturnDataSizeHandler>();
         opcode_table[Opcode::RETURNDATACOPY as usize] = OpCodeFn::new::<OpReturnDataCopyHandler>();
-        opcode_table[Opcode::PC as usize] = OpCodeFn(VM::op_pc);
+        opcode_table[Opcode::PC as usize] = OpCodeFn::new::<OpPcHandler>();
         opcode_table[Opcode::BLOCKHASH as usize] = OpCodeFn::new::<OpBlockHashHandler>();
         opcode_table[Opcode::COINBASE as usize] = OpCodeFn::new::<OpCoinbaseHandler>();
         opcode_table[Opcode::TIMESTAMP as usize] = OpCodeFn::new::<OpTimestampHandler>();
@@ -580,9 +556,9 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::EXTCODESIZE as usize] = OpCodeFn::new::<OpExtCodeSizeHandler>();
         opcode_table[Opcode::EXTCODECOPY as usize] = OpCodeFn::new::<OpExtCodeCopyHandler>();
         opcode_table[Opcode::EXTCODEHASH as usize] = OpCodeFn::new::<OpExtCodeHashHandler>();
-        opcode_table[Opcode::REVERT as usize] = OpCodeFn(VM::op_revert);
+        opcode_table[Opcode::REVERT as usize] = OpCodeFn::new::<OpRevertHandler>();
         opcode_table[Opcode::INVALID as usize] = OpCodeFn::new::<OpInvalidHandler>();
-        opcode_table[Opcode::SELFDESTRUCT as usize] = OpCodeFn(VM::op_selfdestruct);
+        opcode_table[Opcode::SELFDESTRUCT as usize] = OpCodeFn::new::<OpSelfDestructHandler>();
 
         opcode_table[Opcode::LOG0 as usize] = OpCodeFn::new::<OpLogHandler<0>>();
         opcode_table[Opcode::LOG1 as usize] = OpCodeFn::new::<OpLogHandler<1>>();
@@ -609,11 +585,11 @@ impl<'a> VM<'a> {
             let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_pre_cancun();
 
             // [EIP-5656] - MCOPY is only available from CANCUN
-            opcode_table[Opcode::MCOPY as usize] = OpCodeFn(VM::op_mcopy);
+            opcode_table[Opcode::MCOPY as usize] = OpCodeFn::new::<OpMCopyHandler>();
 
             // [EIP-1153] - TLOAD is only available from CANCUN
-            opcode_table[Opcode::TLOAD as usize] = OpCodeFn(VM::op_tload);
-            opcode_table[Opcode::TSTORE as usize] = OpCodeFn(VM::op_tstore);
+            opcode_table[Opcode::TLOAD as usize] = OpCodeFn::new::<OpTLoadHandler>();
+            opcode_table[Opcode::TSTORE as usize] = OpCodeFn::new::<OpTStoreHandler>();
 
             // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
             opcode_table[Opcode::BLOBBASEFEE as usize] = OpCodeFn::new::<OpBlobBaseFeeHandler>();

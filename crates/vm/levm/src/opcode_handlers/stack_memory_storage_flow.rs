@@ -17,8 +17,6 @@
 //!   - `JUMP`
 //!   - `JUMPI`
 
-use std::{mem, slice};
-
 use crate::{
     constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
@@ -29,7 +27,8 @@ use crate::{
     utils::{size_offset_to_usize, u256_to_usize},
     vm::VM,
 };
-use ethrex_common::{H256, U256, utils::u256_to_h256};
+use ethrex_common::{H256, U256};
+use std::{mem, num::Wrapping, slice};
 
 /// Implementation for the `POP` opcode.
 pub struct OpPopHandler;
@@ -244,15 +243,59 @@ impl OpcodeHandler for OpSStoreHandler {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
-        // vm.current_call_frame
-        //     .increase_consumed_gas(gas_cost::sstore(
-        //         original_value,
-        //         current_value,
-        //         new_value,
-        //         storage_slot_was_cold,
-        //     )?);
+        let [key, value] = *vm.current_call_frame.stack.pop()?;
+        let key = unsafe { mem::transmute::<U256, H256>(key) };
 
-        todo!()
+        let current_value = vm.get_storage_value(vm.current_call_frame.to, key)?;
+        let original_value = vm.get_original_storage(vm.current_call_frame.to, key)?;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::sstore(
+                original_value,
+                current_value,
+                value,
+                vm.substate.add_accessed_slot(vm.current_call_frame.to, key),
+            )?);
+        if value != current_value {
+            // EIP-2929
+            const REMOVE_SLOT_COST: u64 = 4800;
+            const RESTORE_EMPTY_SLOT_COST: u64 = 19900;
+            const RESTORE_SLOT_COST: u64 = 2800;
+
+            // The arithmetic is checked later on.
+            let mut gas_refunds = Wrapping(vm.substate.refunded_gas);
+            if current_value == original_value {
+                if !original_value.is_zero() && value.is_zero() {
+                    gas_refunds += REMOVE_SLOT_COST;
+                }
+            } else {
+                if !original_value.is_zero() {
+                    if current_value.is_zero() {
+                        gas_refunds += REMOVE_SLOT_COST;
+                    } else if value.is_zero() {
+                        gas_refunds -= REMOVE_SLOT_COST;
+                    }
+                }
+
+                if value == original_value {
+                    gas_refunds += RESTORE_EMPTY_SLOT_COST;
+                } else {
+                    gas_refunds += RESTORE_SLOT_COST;
+                }
+            }
+
+            // Check overflow from previous operations.
+            if gas_refunds.0 < vm.substate.refunded_gas {
+                return Err(InternalError::Overflow.into());
+            }
+
+            vm.substate.refunded_gas = gas_refunds.0;
+        }
+
+        if value != current_value {
+            vm.update_account_storage(vm.current_call_frame.to, key, value, current_value)?;
+        }
+
+        Ok(OpcodeResult::Continue)
     }
 }
 
@@ -322,88 +365,5 @@ fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
     } else {
         // Target address is invalid.
         Err(ExceptionalHalt::InvalidJump.into())
-    }
-}
-
-impl<'a> VM<'a> {
-    // SSTORE operation
-    pub fn op_sstore(&mut self) -> Result<OpcodeResult, VMError> {
-        if self.current_call_frame.is_static {
-            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
-        }
-
-        let (storage_slot_key, new_storage_slot_value, to) = {
-            let current_call_frame = &mut self.current_call_frame;
-            let [storage_slot_key, new_storage_slot_value] = *current_call_frame.stack.pop()?;
-            let to = current_call_frame.to;
-            (storage_slot_key, new_storage_slot_value, to)
-        };
-
-        // EIP-2200
-        let gas_left = self.current_call_frame.gas_remaining;
-        if gas_left <= SSTORE_STIPEND {
-            return Err(ExceptionalHalt::OutOfGas.into());
-        }
-
-        // Get current and original (pre-tx) values.
-        let key = u256_to_h256(storage_slot_key);
-        let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
-        let original_value = self.get_original_storage(to, key)?;
-
-        // Gas Refunds
-        // Sync gas refund with global env, ensuring consistency accross contexts.
-        let mut gas_refunds = self.substate.refunded_gas;
-
-        // https://eips.ethereum.org/EIPS/eip-2929
-        let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
-
-        if new_storage_slot_value != current_value {
-            if current_value == original_value {
-                if !original_value.is_zero() && new_storage_slot_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_add(remove_slot_cost)
-                        .ok_or(InternalError::Overflow)?;
-                }
-            } else {
-                if original_value != U256::zero() {
-                    if current_value == U256::zero() {
-                        gas_refunds = gas_refunds
-                            .checked_sub(remove_slot_cost)
-                            .ok_or(InternalError::Underflow)?;
-                    } else if new_storage_slot_value.is_zero() {
-                        gas_refunds = gas_refunds
-                            .checked_add(remove_slot_cost)
-                            .ok_or(InternalError::Overflow)?;
-                    }
-                }
-                if new_storage_slot_value == original_value {
-                    if original_value == U256::zero() {
-                        gas_refunds = gas_refunds
-                            .checked_add(restore_empty_slot_cost)
-                            .ok_or(InternalError::Overflow)?;
-                    } else {
-                        gas_refunds = gas_refunds
-                            .checked_add(restore_slot_cost)
-                            .ok_or(InternalError::Overflow)?;
-                    }
-                }
-            }
-        }
-
-        self.substate.refunded_gas = gas_refunds;
-
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::sstore(
-                original_value,
-                current_value,
-                new_storage_slot_value,
-                storage_slot_was_cold,
-            )?)?;
-
-        if new_storage_slot_value != current_value {
-            self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
-        }
-
-        Ok(OpcodeResult::Continue)
     }
 }
