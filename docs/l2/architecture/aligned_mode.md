@@ -193,7 +193,7 @@ make init-prover G=true PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```bash
 cd ethrex/crates/l2
 COMPILE_CONTRACTS=true \
-cargo run --release --bin ethrex --manifest-path  ../../Cargo.toml -- l2 deploy \
+cargo run --release --bin ethrex --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url http://localhost:8545 \
 	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
