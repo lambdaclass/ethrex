@@ -159,6 +159,7 @@ where
     let Some(initial_value) = data_iter.next() else {
         return Ok(*EMPTY_TRIE_HASH);
     };
+    // TODO: check
     let _ = db.put(
         Nibbles::from_bytes(initial_value.0.0.as_ref()),
         initial_value.1.clone(),
