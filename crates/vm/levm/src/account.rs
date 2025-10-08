@@ -47,7 +47,7 @@ impl From<GenesisAccount> for LevmAccount {
                 balance: genesis.balance,
                 nonce: genesis.nonce,
             },
-            storage_collision: storage.len() > 0,
+            storage_collision: !storage.is_empty(),
             storage,
             status: AccountStatus::Unmodified,
         }
