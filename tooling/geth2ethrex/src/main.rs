@@ -285,7 +285,6 @@ impl GethDB {
     fn try_read_block_from_freezer(&self, block_num: u64) -> eyre::Result<[Option<Vec<u8>>; 2]> {
         let mut header = self.read_from_freezer_table("headers", true, block_num, block_num)?;
         let mut body = self.read_from_freezer_table("bodies", true, block_num, block_num)?;
-        assert_eq!(header.len(), 1);
         Ok([header.drain(..).next(), body.drain(..).next()])
     }
     fn try_read_block_from_statedb(
