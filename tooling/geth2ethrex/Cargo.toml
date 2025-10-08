@@ -11,6 +11,7 @@ ethrex-storage = { workspace = true, features = ["rocksdb"] }
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 
+anyhow.workspace = true
 clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
 eyre.workspace = true

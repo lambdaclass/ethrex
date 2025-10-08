@@ -42,6 +42,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Instant;
 use tracing::info;
+use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
 
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
@@ -356,7 +357,21 @@ impl GethTrieDBWithNodeBuckets {
 impl TrieDB for GethTrieDBWithNodeBuckets {
     fn get(&self, hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let hash = hash.finalize().0;
-        let value = self.db.get(hash).unwrap().unwrap();
+        let Some(value) = self
+            .db
+            .get(hash)
+            .map_err(|e| TrieError::DbError(anyhow!("node get failed: {e}")))?
+        else {
+            warn!(
+                hash = format!(
+                    "{:032x}{:032x}",
+                    u128::from_be_bytes(hash[..16].try_into().unwrap()),
+                    u128::from_be_bytes(hash[16..].try_into().unwrap())
+                ),
+                "MISSING TRIE NODE"
+            );
+            return Ok(None);
+        };
         debug_assert!(value.len() <= u16::MAX as usize);
         debug_assert_eq!(keccak(&value).0, hash);
 
