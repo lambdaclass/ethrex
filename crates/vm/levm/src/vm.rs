@@ -192,7 +192,7 @@ impl Substate {
             .collect()
     }
 
-    /// Mark an address as accessed and return whether is was cold.
+    /// Mark an address as accessed and return whether the slot was cold.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
         let is_present = self
             .parent

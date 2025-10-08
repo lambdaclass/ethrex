@@ -251,7 +251,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             vm.current_call_frame.msg_sender,
             vm.current_call_frame.to,
             code_address,
-            true,
+            false,
             vm.current_call_frame.is_static,
             data,
             return_offset,
