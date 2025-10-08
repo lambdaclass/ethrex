@@ -85,19 +85,31 @@ impl BlobsBundle {
     pub fn create_from_blobs(blobs: &Vec<Blob>, fork: Fork) -> Result<Self, BlobsBundleError> {
         use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
         let mut commitments = Vec::new();
-        let mut proofs = Vec::new();
+        // let mut proofs = Vec::new();
 
         // Populate the commitments and proofs
         for blob in blobs {
-            let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
+            let (commitment, _proof) = blob_to_kzg_commitment_and_proof(blob)?;
             commitments.push(commitment);
-            proofs.push(proof);
+            // proofs.push(proof);
+        }
+
+        // Osaka
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
+        let mut total_proofs = Vec::new();
+        for blob in blobs {
+            let blob: c_kzg::Blob = (*blob).into();
+            let (_cells, proofs) = c_kzg_settings
+                .compute_cells_and_kzg_proofs(&blob)
+                .map_err(|e| BlobsBundleError::Kzg(ethrex_crypto::kzg::KzgError::CKzg(e)))?;
+            let proofs = proofs.map(|p| p.to_bytes().into_inner());
+            total_proofs.extend(proofs);
         }
 
         Ok(Self {
             blobs: blobs.clone(),
             commitments,
-            proofs,
+            proofs: total_proofs,
             version: 0,
         })
     }
