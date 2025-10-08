@@ -19,7 +19,7 @@
 //!   - `RETURNDATACOPY`
 
 use crate::{
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost::{self},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
@@ -374,7 +374,7 @@ impl OpcodeHandler for OpReturnDataCopyHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
         let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
-        let src_offset = u256_to_usize(src_offset).unwrap_or(usize::MAX);
+        let src_offset = u256_to_usize(src_offset)?;
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::returndatacopy(
@@ -382,6 +382,10 @@ impl OpcodeHandler for OpReturnDataCopyHandler {
                 vm.current_call_frame.memory.len(),
                 len,
             )?)?;
+
+        if src_offset + len > vm.current_call_frame.sub_return_data.len() {
+            return Err(ExceptionalHalt::OutOfBounds.into());
+        }
 
         if len > 0 {
             let data = vm

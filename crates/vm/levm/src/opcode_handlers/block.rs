@@ -35,14 +35,12 @@ impl OpcodeHandler for OpBlockHashHandler {
 
         // Some(_) if
         //   - is u64
-        //   - current_number - x < LAST_AVAILABLE_BLOCK_LIMIT
+        //   - 0 < current_number - block_number <= LAST_AVAILABLE_BLOCK_LIMIT
         if let Some(block_number) = u64::try_from(vm.current_call_frame.stack.pop1()?)
             .ok()
             .take_if(|&mut block_number| {
-                vm.env
-                    .block_number
-                    .checked_sub(block_number)
-                    .is_some_and(|delta| delta <= LAST_AVAILABLE_BLOCK_LIMIT)
+                block_number < vm.env.block_number
+                    && vm.env.block_number - block_number <= LAST_AVAILABLE_BLOCK_LIMIT
             })
         {
             #[expect(unsafe_code, reason = "safe")]

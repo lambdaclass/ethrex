@@ -20,7 +20,7 @@ use crate::{
     opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::U256;
+use ethrex_common::{U256, U512};
 use std::cmp::Ordering;
 
 /// Implementation for the `ADD` opcode.
@@ -182,23 +182,10 @@ impl OpcodeHandler for OpAddModHandler {
         if r#mod.is_zero() || r#mod == U256::one() {
             vm.current_call_frame.stack.push_zero()?;
         } else {
-            let (mut res, carry) = lhs.overflowing_add(rhs);
-
-            // Increment the wrapped result only if the previous addition overflowed, and the modulo
-            // is not a power of two.
-            let is_mod_power_of_two = r#mod.0.into_iter().map(u64::count_ones).sum::<u32>() == 1;
-            if carry && !is_mod_power_of_two {
-                (res, _) = res.overflowing_add(U256::one());
-            }
-
-            res = match res.cmp(&r#mod) {
-                Ordering::Less => res,
-                Ordering::Equal => U256::zero(),
-                Ordering::Greater if is_mod_power_of_two => res & (r#mod - 1),
-                Ordering::Greater => res % r#mod,
-            };
-
-            vm.current_call_frame.stack.push1(res)?;
+            let res = U512::from(lhs).overflowing_add(rhs.into()).0 % r#mod;
+            vm.current_call_frame
+                .stack
+                .push1(U256([res.0[0], res.0[1], res.0[2], res.0[3]]))?;
         }
 
         Ok(OpcodeResult::Continue)

@@ -48,22 +48,16 @@ impl OpcodeHandler for OpCallHandler {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        // Check EIP-7702
+        // Check and subtract EIP-7702.
+        // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, callee)?;
         vm.current_call_frame
             .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
-        let (new_memory_size, gas_left, address_is_empty, address_was_cold) = vm
-            .get_call_gas_params(
-                args_offset,
-                args_len,
-                return_offset,
-                return_len,
-                eip7702_gas_consumed,
-                callee,
-            )?;
+        let (new_memory_size, address_is_empty, address_was_cold) =
+            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, callee)?;
         let (gas_cost, gas_limit) = gas_cost::call(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -71,7 +65,7 @@ impl OpcodeHandler for OpCallHandler {
             address_is_empty,
             value,
             gas,
-            gas_left,
+            vm.current_call_frame.gas_remaining as u64,
         )?;
         vm.current_call_frame.increase_consumed_gas(gas_cost)?;
 
@@ -127,28 +121,23 @@ impl OpcodeHandler for OpCallCodeHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702
+        // Check and subtract EIP-7702.
+        // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
         vm.current_call_frame
             .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
-        let (new_memory_size, gas_left, _, address_was_cold) = vm.get_call_gas_params(
-            args_offset,
-            args_len,
-            return_offset,
-            return_len,
-            eip7702_gas_consumed,
-            address,
-        )?;
+        let (new_memory_size, _, address_was_cold) =
+            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
         let (gas_cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
             vm.current_call_frame.memory.len(),
             address_was_cold,
             value,
             gas,
-            gas_left,
+            vm.current_call_frame.gas_remaining as u64,
         )?;
         vm.current_call_frame.increase_consumed_gas(gas_cost)?;
 
@@ -203,27 +192,22 @@ impl OpcodeHandler for OpDelegateCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702
+        // Check and subtract EIP-7702.
+        // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
         vm.current_call_frame
             .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
-        let (new_memory_size, gas_left, _, address_was_cold) = vm.get_call_gas_params(
-            args_offset,
-            args_len,
-            return_offset,
-            return_len,
-            eip7702_gas_consumed,
-            address,
-        )?;
+        let (new_memory_size, _, address_was_cold) =
+            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
         let (gas_cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
             vm.current_call_frame.memory.len(),
             address_was_cold,
             gas,
-            gas_left,
+            vm.current_call_frame.gas_remaining as u64,
         )?;
         vm.current_call_frame.increase_consumed_gas(gas_cost)?;
 
@@ -278,27 +262,22 @@ impl OpcodeHandler for OpStaticCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702
+        // Check and subtract EIP-7702.
+        // Note: Do not reorder the gas increase after the `get_call_gas_params()`.
         let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
         vm.current_call_frame
             .increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Process gas usage.
-        let (new_memory_size, gas_left, _, address_was_cold) = vm.get_call_gas_params(
-            args_offset,
-            args_len,
-            return_offset,
-            return_len,
-            eip7702_gas_consumed,
-            address,
-        )?;
+        let (new_memory_size, _, address_was_cold) =
+            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
         let (gas_cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
             vm.current_call_frame.memory.len(),
             address_was_cold,
             gas,
-            gas_left,
+            vm.current_call_frame.gas_remaining as u64,
         )?;
         vm.current_call_frame.increase_consumed_gas(gas_cost)?;
 
@@ -385,7 +364,7 @@ impl OpcodeHandler for OpCreate2Handler {
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
         vm.current_call_frame
-            .increase_consumed_gas(gas_cost::create(
+            .increase_consumed_gas(gas_cost::create_2(
                 calculate_memory_size(code_offset, code_len)?,
                 vm.current_call_frame.memory.len(),
                 code_len,
@@ -904,9 +883,8 @@ impl<'a> VM<'a> {
         args_size: usize,
         return_data_offset: usize,
         return_data_size: usize,
-        eip7702_gas_consumed: u64,
         address: Address,
-    ) -> Result<(usize, u64, bool, bool), VMError> {
+    ) -> Result<(usize, bool, bool), VMError> {
         // Creation of previously empty accounts and cold addresses have higher gas cost
         let address_was_cold = self.substate.add_accessed_address(address);
         let account_is_empty = self.db.get_account(address)?.is_empty();
@@ -916,19 +894,8 @@ impl<'a> VM<'a> {
         let new_memory_size_for_return_data =
             calculate_memory_size(return_data_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
-        // Calculate remaining gas after EIP7702 consumption
-        let gas_left = self
-            .current_call_frame
-            .gas_remaining
-            .checked_sub(eip7702_gas_consumed as i64)
-            .ok_or(ExceptionalHalt::OutOfGas)?;
 
-        Ok((
-            new_memory_size,
-            gas_left as u64,
-            account_is_empty,
-            address_was_cold,
-        ))
+        Ok((new_memory_size, account_is_empty, address_was_cold))
     }
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {

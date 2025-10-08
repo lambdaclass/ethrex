@@ -28,7 +28,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::{H256, U256};
-use std::{mem, num::Wrapping, slice};
+use std::{mem, slice};
 
 /// Implementation for the `POP` opcode.
 pub struct OpPopHandler;
