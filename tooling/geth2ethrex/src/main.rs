@@ -97,7 +97,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         let hash_rlp = hash.encode_to_vec();
         ethrex_db.put_cf(
             headers_cf,
-            (block_number - i as u64).encode_to_vec(),
+            (block_number - i as u64).to_le_bytes(),
             hash_rlp.clone(),
         )?;
         ethrex_db.put_cf(
