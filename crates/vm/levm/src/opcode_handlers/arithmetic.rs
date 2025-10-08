@@ -147,18 +147,18 @@ impl OpcodeHandler for OpSModHandler {
 
         let [mut lhs, mut rhs] = *vm.current_call_frame.stack.pop()?;
 
-        let sign = rhs.bit(255);
-        if lhs.bit(255) {
-            lhs = U256::zero().overflowing_sub(lhs).0;
-        }
+        let sign = lhs.bit(255);
         if sign {
-            rhs = U256::zero().overflowing_sub(rhs).0;
+            (lhs, _) = (!lhs).overflowing_add(U256::one());
+        }
+        if rhs.bit(255) {
+            (rhs, _) = (!rhs).overflowing_add(U256::one());
         }
 
         match lhs.checked_rem(rhs) {
             Some(mut res) => {
                 if sign {
-                    res = U256::zero().overflowing_sub(res).0;
+                    (res, _) = (!res).overflowing_add(U256::one());
                 }
 
                 vm.current_call_frame.stack.push1(res)?
@@ -179,17 +179,22 @@ impl OpcodeHandler for OpAddModHandler {
             .increase_consumed_gas(gas_cost::ADDMOD)?;
 
         let [lhs, rhs, r#mod] = *vm.current_call_frame.stack.pop()?;
-        if r#mod.is_zero() {
+        if r#mod.is_zero() || r#mod == U256::one() {
             vm.current_call_frame.stack.push_zero()?;
         } else {
             let (mut res, carry) = lhs.overflowing_add(rhs);
-            if carry {
-                res = res.overflowing_add(U256::one()).0;
+
+            // Increment the wrapped result only if the previous addition overflowed, and the modulo
+            // is not a power of two.
+            let is_mod_power_of_two = r#mod.0.into_iter().map(u64::count_ones).sum::<u32>() == 1;
+            if carry && !is_mod_power_of_two {
+                (res, _) = res.overflowing_add(U256::one());
             }
 
             res = match res.cmp(&r#mod) {
                 Ordering::Less => res,
                 Ordering::Equal => U256::zero(),
+                Ordering::Greater if is_mod_power_of_two => res & (r#mod - 1),
                 Ordering::Greater => res % r#mod,
             };
 
@@ -260,6 +265,8 @@ impl OpcodeHandler for OpSignExtendHandler {
                 Ok(x) if x < 32 => {
                     if value.bit(8 * x + 7) {
                         value |= U256::MAX << 8 * (x + 1);
+                    } else if x != 31 {
+                        value &= (U256::one() << 8 * (x + 1)) - 1;
                     }
 
                     value

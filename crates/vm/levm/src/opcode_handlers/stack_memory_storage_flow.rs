@@ -277,40 +277,40 @@ impl OpcodeHandler for OpSStoreHandler {
             )?)?;
         if value != current_value {
             // EIP-2929
-            const REMOVE_SLOT_COST: u64 = 4800;
-            const RESTORE_EMPTY_SLOT_COST: u64 = 19900;
-            const RESTORE_SLOT_COST: u64 = 2800;
+            const REMOVE_SLOT_COST: i64 = 4800;
+            const RESTORE_EMPTY_SLOT_COST: i64 = 19900;
+            const RESTORE_SLOT_COST: i64 = 2800;
 
-            // The arithmetic is checked later on.
-            let mut gas_refunds = Wrapping(vm.substate.refunded_gas);
+            // The operations on `delta` cannot overflow.
+            let mut delta = 0i64;
             if current_value == original_value {
                 if !original_value.is_zero() && value.is_zero() {
-                    gas_refunds += REMOVE_SLOT_COST;
+                    delta += REMOVE_SLOT_COST;
                 }
             } else {
                 if !original_value.is_zero() {
                     if current_value.is_zero() {
-                        gas_refunds -= REMOVE_SLOT_COST;
+                        delta -= REMOVE_SLOT_COST;
                     } else if value.is_zero() {
-                        gas_refunds += REMOVE_SLOT_COST;
+                        delta += REMOVE_SLOT_COST;
                     }
                 }
 
                 if value == original_value {
                     if original_value.is_zero() {
-                        gas_refunds += RESTORE_EMPTY_SLOT_COST;
+                        delta += RESTORE_EMPTY_SLOT_COST;
                     } else {
-                        gas_refunds += RESTORE_SLOT_COST;
+                        delta += RESTORE_SLOT_COST;
                     }
                 }
             }
 
-            // Check overflow from previous operations.
-            if gas_refunds.0 < vm.substate.refunded_gas {
-                return Err(InternalError::Overflow.into());
+            // Update refunded gas after checking for overflow or underflow.
+            match vm.substate.refunded_gas.checked_add_signed(delta) {
+                Some(refunded_gas) => vm.substate.refunded_gas = refunded_gas,
+                None if delta < 0 => return Err(InternalError::Underflow.into()),
+                None => return Err(InternalError::Overflow.into()),
             }
-
-            vm.substate.refunded_gas = gas_refunds.0;
         }
 
         if value != current_value {

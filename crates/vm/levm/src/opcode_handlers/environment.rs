@@ -150,7 +150,7 @@ impl OpcodeHandler for OpCallDataLoadHandler {
             .ok()
             .and_then(|offset| vm.current_call_frame.calldata.get(offset..));
         vm.current_call_frame.stack.push1(match value_bytes {
-            Some(data) if data.len() >= 32 => U256::from_big_endian(data),
+            Some(data) if data.len() >= 32 => U256::from_big_endian(&data[..32]),
             Some(data) => {
                 let mut bytes = [0; 32];
                 bytes[..data.len()].copy_from_slice(data);

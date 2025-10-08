@@ -203,7 +203,7 @@ impl OpcodeHandler for OpByteHandler {
         vm.current_call_frame
             .stack
             .push1(match usize::try_from(index) {
-                Ok(x) if x < 32 => value.byte(x).into(),
+                Ok(x) if x < 32 => value.byte(31 - x).into(),
                 _ => U256::zero(),
             })?;
 
