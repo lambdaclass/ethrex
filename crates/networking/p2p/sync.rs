@@ -1033,9 +1033,6 @@ impl Syncer {
             );
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
-            let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-                Arc::new(Mutex::new(HashMap::new()));
-
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
             METRICS
                 .current_step
@@ -1058,8 +1055,6 @@ impl Syncer {
                     RLPDecode::decode(&snapshot_contents)
                         .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-                let maybe_big_account_storage_state_roots_clone =
-                    maybe_big_account_storage_state_roots.clone();
                 let store_clone = store.clone();
                 let pivot_hash_moved = pivot_header.hash();
                 info!("Starting compute of account_storages_snapshot");
@@ -1073,7 +1068,6 @@ impl Syncer {
                         .filter(|(_account_hash, storage)| !storage.is_empty())
                         .map(|(account_hash, key_value_pairs)| {
                             compute_storage_roots(
-                                maybe_big_account_storage_state_roots_clone.clone(),
                                 store.clone(),
                                 account_hash,
                                 key_value_pairs,
@@ -1246,22 +1240,17 @@ impl Syncer {
 type StorageRoots = (H256, Vec<(Nibbles, Vec<u8>)>);
 
 fn compute_storage_roots(
-    maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
     account_hash: H256,
     key_value_pairs: Vec<(H256, U256)>,
     pivot_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
-    let account_storage_root = match maybe_big_account_storage_state_roots
-        .lock()
-        .map_err(|_| SyncError::MaybeBigAccount)?
-        .entry(account_hash)
-    {
-        Entry::Occupied(occupied_entry) => *occupied_entry.get(),
-        Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
+    let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    let trie_hash = match storage_trie.db().get(Nibbles::default())? {
+        Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
+        None => *EMPTY_TRIE_HASH,
     };
-
-    let mut storage_trie = store.open_direct_storage_trie(account_hash, account_storage_root)?;
+    let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
 
     for (hashed_key, value) in key_value_pairs {
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
@@ -1280,14 +1269,6 @@ fn compute_storage_roots(
         .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
     if computed_storage_root == account_state.storage_root {
         METRICS.storage_tries_state_roots_computed.inc();
-    }
-    if account_storage_root != *EMPTY_TRIE_HASH
-        || computed_storage_root != account_state.storage_root
-    {
-        maybe_big_account_storage_state_roots
-            .lock()
-            .map_err(|_| SyncError::MaybeBigAccount)?
-            .insert(account_hash, computed_storage_root);
     }
     Ok((account_hash, changes))
 }
