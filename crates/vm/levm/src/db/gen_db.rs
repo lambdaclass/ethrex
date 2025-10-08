@@ -47,7 +47,7 @@ impl GeneralizedDatabase {
         }
     }
 
-    /// ONLY USED FOR RUNNER
+    /// Only used within Levm Runner, where the accounts already have all the storage pre-loaded, not used in real case scenarios.
     pub fn new_with_account_state(
         store: Arc<dyn Database>,
         current_accounts_state: BTreeMap<Address, Account>,

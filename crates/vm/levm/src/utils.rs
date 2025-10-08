@@ -586,9 +586,9 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
     (
         LevmAccount {
             info: account.info,
+            storage_collision: account.storage.len() > 0, // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
             storage: account.storage,
             status: AccountStatus::Unmodified,
-            storage_root: H256::default(),
         },
         account.code,
     )
