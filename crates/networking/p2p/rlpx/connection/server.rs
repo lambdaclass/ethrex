@@ -312,6 +312,7 @@ impl GenServer for RLPxConnection {
                         }
                     }
                 }
+                #[cfg(feature = "l2")]
                 _ => Err(RLPxError::MessageNotHandled(
                     "Unknown message or capability not handled".to_string(),
                 )),
