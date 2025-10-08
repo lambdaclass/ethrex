@@ -4,8 +4,8 @@ use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
-// TODO: make this configurable or use safe hash for this
-const COMMIT_THRESHOLD: usize = 10;
+// TODO: make this configurable or use finalized hash for this
+const COMMIT_THRESHOLD: usize = 128;
 
 #[derive(Debug)]
 struct TrieLayer {

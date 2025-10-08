@@ -420,7 +420,7 @@ impl StoreEngine for Store {
     fn open_storage_trie(
         &self,
         hashed_address: H256,
-        storage_root: H256,
+        _storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
         let store = self.inner()?;
