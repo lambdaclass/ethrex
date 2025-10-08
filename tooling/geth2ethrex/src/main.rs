@@ -113,40 +113,14 @@ use std::thread::scope;
 use std::time::Instant;
 use tempfile::NamedTempFile;
 use tracing::info;
+use tracing::instrument::WithSubscriber;
 use tracing_subscriber::FmtSubscriber;
 
-const N_THREADS: usize = 16;
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
 static GETH_DB_PATH: LazyLock<&str> = LazyLock::new(|| Args::parse().input_dir.leak());
 static ETHREX_DB_PATH: LazyLock<&str> = LazyLock::new(|| Args::parse().output_dir.leak());
-static ETHREX_DB_WRITER_CHANNEL: OnceLock<Sender<WriteMessage>> = OnceLock::new();
 
-enum WriteMessage {
-    ChainState {
-        block_number: BlockNumber,
-        block_hash: [u8; 32],
-        header_rlp: Vec<u8>,
-        body_rlp: Vec<u8>,
-        hashes: Vec<[u8; 32]>,
-    },
-    AccountTrieNodes {
-        sst: NamedTempFile,
-    },
-    StorageTrieNodes {
-        sst: NamedTempFile,
-    },
-    AccountCodeBulk {
-        sst: NamedTempFile,
-    },
-    AccountCodeSingle {
-        code_hash: [u8; 32],
-        code_bytes: Vec<u8>,
-    },
-    Finish,
-}
-
-fn ethrex_writer_worker(receiver: Receiver<WriteMessage>) -> eyre::Result<()> {
-    use WriteMessage::*;
+fn open_ethrexdb() -> eyre::Result<DBWithThreadMode<SingleThreaded>> {
     // Quick and dirty way to ensure the DB is initialized correctly
     let _ = ethrex_storage::store_db::rocksdb::Store::new((*ETHREX_DB_PATH).as_ref())?;
     let (ethrex_opts, ethrex_cfs) = Options::load_latest(
@@ -160,57 +134,7 @@ fn ethrex_writer_worker(receiver: Receiver<WriteMessage>) -> eyre::Result<()> {
         *ETHREX_DB_PATH,
         ethrex_cfs,
     )?;
-    let cf_by_name: BTreeMap<_, _> = ["state_trie_nodes", "storage_tries_nodes", "account_codes"]
-        .into_iter()
-        .map(|name| (name, ethrex_db.cf_handle(name).unwrap()))
-        .collect();
-    let mut account_trie_ssts = Vec::with_capacity(N_THREADS);
-    let mut storage_tries_ssts = Vec::with_capacity(2 * N_THREADS);
-    let mut code_ssts = Vec::with_capacity(N_THREADS);
-    loop {
-        match receiver.recv()? {
-            Finish => {
-                ethrex_db
-                    .ingest_external_file_cf(cf_by_name["state_trie_nodes"], account_trie_ssts)?;
-                ethrex_db.ingest_external_file_cf(
-                    cf_by_name["storage_tries_nodes"],
-                    storage_tries_ssts,
-                )?;
-                ethrex_db.ingest_external_file_cf(cf_by_name["account_codes"], code_ssts)?;
-                ethrex_db.flush()?;
-                break;
-            }
-            AccountTrieNodes { sst } => {
-                account_trie_ssts.push(sst);
-            }
-            StorageTrieNodes { sst } => {
-                storage_tries_ssts.push(sst);
-            }
-            AccountCodeBulk { sst } => {
-                code_ssts.push(sst);
-            }
-            AccountCodeSingle {
-                code_hash,
-                code_bytes,
-            } => {
-                ethrex_db.put_cf(cf_by_name["account_codes"], code_hash, code_bytes)?;
-            }
-            ChainState {
-                block_number,
-                block_hash,
-                header_rlp,
-                body_rlp,
-                hashes,
-            } => {
-                let block_hash_rlp = block_hash.encode_to_vec();
-                ethrex_db.put_cf(cf_by_name["headers"], block_hash_rlp.clone(), header_rlp)?;
-                ethrex_db.put_cf(cf_by_name["bodies"], block_hash_rlp, body_rlp)?;
-                // TODO:
-                // missing tables: 'canonical_block_hashes' 'block_numbers' 'chain_data' 'snap_state'
-            }
-        }
-    }
-    Ok(())
+    Ok(ethrex_db)
 }
 
 pub fn main() -> eyre::Result<()> {
@@ -225,89 +149,75 @@ pub fn main() -> eyre::Result<()> {
 fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let migration_start: Instant = Instant::now();
 
-    scope(|s| {
-        let (ethrexdb_sender, ethrexdb_receiver) = channel();
-        ETHREX_DB_WRITER_CHANNEL
-            .set(ethrexdb_sender.clone())
-            .unwrap();
-        s.spawn(move || ethrex_writer_worker(ethrexdb_receiver));
+    let ethrex_db = open_ethrexdb()?;
+    let gethdb = GethDB::open()?;
+    let mut hashes = gethdb.read_hashes_from_gethdb(
+        block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
+        block_number,
+    )?;
+    let block_hash = *hashes.last().ok_or_eyre("missing block hash")?;
+    let [header_rlp, body_rlp] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
+    let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
 
-        let gethdb = GethDB::open()?;
-        let hashes = gethdb.read_hashes_from_gethdb(
-            block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
-            block_number,
-        )?;
-        let block_hash = *hashes.last().ok_or_eyre("missing block hash")?;
-        let [header_rlp, body_rlp] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
-        let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
-        ethrexdb_sender.send(WriteMessage::ChainState {
-            block_number,
-            block_hash,
-            header_rlp,
-            body_rlp,
-            hashes,
-        })?;
+    let block_hash_rlp = block_hash.encode_to_vec();
+    ethrex_db.put_cf(
+        ethrex_db.cf_handle("headers").unwrap(),
+        block_hash_rlp.clone(),
+        header_rlp,
+    )?;
+    ethrex_db.put_cf(
+        ethrex_db.cf_handle("bodies").unwrap(),
+        block_hash_rlp,
+        body_rlp,
+    )?;
+    let headers_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
+    for (i, hash) in hashes.into_iter().rev().enumerate() {
+        ethrex_db.put_cf(headers_cf, (block_number - i as u64).encode_to_vec(), hash)?;
+    }
+    ethrex_db.put_cf(
+        ethrex_db.cf_handle("chain_data").unwrap(),
+        4u32.encode_to_vec(),
+        block_number.to_be_bytes(),
+    )?;
 
-        let (account_bucket_senders, account_bucket_receivers): (Vec<_>, Vec<_>) =
-            (0..16).map(|_| channel()).unzip();
-        let account_bucket_senders: [_; 16] = account_bucket_senders.try_into().unwrap();
-        let gethdbs = (0..16)
-            .map(|_| gethdb.triedb(account_bucket_senders.clone()))
-            .collect::<eyre::Result<Vec<_>>>()?;
-        std::mem::drop(account_bucket_senders);
-        account_bucket_receivers.into_iter().for_each(|r| {
-            s.spawn(|| {
-                big_trie_bucket_worker(r).unwrap();
-            });
-        });
-        // TODO: refactor into function, will need similar logic for storage
-        // tries and it's noisy to have here.
-        let Some(root) = gethdbs[0].get(header.state_root.into())? else {
-            return Ok(());
-        };
-        let top_branch = match Node::decode(&root)? {
-            Node::Leaf(_) => {
-                // TODO: extract account data
-                return Ok(());
+    let mut codes = BTreeSet::new();
+    let mut storages = Vec::new();
+    let account_triedb = gethdb.triedb()?;
+    let account_trie = Trie::open(account_triedb, header.state_root);
+    let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
+    for (path, node) in account_trie.into_iter() {
+        if let Node::Leaf(leaf) = &node {
+            let state = AccountState::decode(&leaf.value)?;
+            if state.code_hash != *EMPTY_KECCACK_HASH {
+                codes.insert(state.code_hash);
             }
-            Node::Extension(ext) => {
-                let child = gethdbs[0].get(ext.child.compute_hash())?.unwrap();
-                match Node::decode_raw(&child)? {
-                    Node::Branch(branch) => branch,
-                    _ => eyre::bail!("bad extension"),
-                }
+            if state.storage_root != *EMPTY_TRIE_HASH {
+                storages.push((path.to_bytes(), state.storage_root));
             }
-            Node::Branch(branch) => branch,
-        };
-        let (code_handler, code_bucket_senders) = CodeHandler::<N_THREADS>::start(s)?;
-        let (storage_root_handler, storage_root_bucket_senders) =
-            AccountStorageHandler::<N_THREADS>::start(s)?;
-        gethdbs.into_iter().enumerate().for_each(|(b, db)| {
-            let hash = top_branch.choices[b].compute_hash().finalize();
-            let code_bucket_senders = code_bucket_senders.clone();
-            let storage_root_bucket_senders = storage_root_bucket_senders.clone();
-            s.spawn(move || {
-                let trie = Trie::open(db, hash);
-                for (path, value) in trie.into_iter().content() {
-                    let hash: [u8; 32] = path.try_into().unwrap();
-                    let account_state = AccountState::decode(&value).unwrap();
-                    code_bucket_senders.send(account_state.code_hash.0).unwrap();
-                    storage_root_bucket_senders
-                        .send(hash, account_state.storage_root.0)
-                        .unwrap();
-                }
-            });
-        });
-        storage_root_handler.wait()?;
-        code_handler.wait()?;
-        // All other workers finished, need to send the signal to the EthrexDB worker.
-        ETHREX_DB_WRITER_CHANNEL
-            .get()
-            .unwrap()
-            .send(WriteMessage::Finish)?;
-        Ok(())
-    })?;
-
+        }
+        let hash = node.compute_hash();
+        ethrex_db.put_cf(account_trie_cf, hash.encode_to_vec(), node.encode_to_vec())?;
+    }
+    let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
+    for code_hash in codes {
+        let code = gethdb
+            .read_code(code_hash.0)?
+            .ok_or_else(|| eyre::eyre!("missing code hash"))?;
+        ethrex_db.put_cf(code_cf, code_hash, code)?;
+    }
+    let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
+    for (hashed_address, storage_root) in storages {
+        let storage_triedb = gethdb.triedb()?;
+        let storage_trie = Trie::open(storage_triedb, storage_root);
+        for (path, node) in storage_trie.into_iter() {
+            let hash = node.compute_hash();
+            ethrex_db.put_cf(
+                storages_cf,
+                [&hashed_address[..], &hash.finalize().0].concat(),
+                node.encode_to_vec(),
+            )?;
+        }
+    }
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time}");
     Ok(())
@@ -484,80 +394,23 @@ impl GethDB {
         }
     }
 
-    pub fn read_code_batch(
-        &self,
-        code_hashes: &[[u8; 32]],
-    ) -> Vec<Result<Option<Vec<u8>>, rocksdb::Error>> {
-        self.state_db.multi_get(
-            code_hashes
-                .into_iter()
-                .map(|hash| [&b"c"[..], hash].concat()),
-        )
+    pub fn read_code(&self, code_hash: [u8; 32]) -> Result<Option<Vec<u8>>, rocksdb::Error> {
+        self.state_db.get([&b"c"[..], &code_hash].concat())
     }
 
-    pub fn account_triedb(
-        &self,
-        bucket_senders: [Sender<([u8; 32], Vec<u8>)>; 16],
-    ) -> eyre::Result<Box<dyn TrieDB>> {
+    pub fn triedb(&self) -> eyre::Result<Box<dyn TrieDB>> {
         let trie_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
-        GethTrieDBWithNodeBuckets::new_with_buckets(trie_db, bucket_senders)
-    }
-    pub fn storage_triedb(
-        &self,
-        accounts: &[[u8; 32]],
-        bucket_senders: [Sender<([u8; 32], Vec<u8>)>; 16],
-    ) -> eyre::Result<Box<dyn TrieDB>> {
-        let trie_db =
-            DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
-        GethTrieDBWithNodeBuckets::new_with_buckets(trie_db, bucket_senders)
+        Ok(GethTrieDBWithNodeBuckets::new(trie_db))
     }
 }
 
-// Our iterator performs two separate but related tasks:
-// 1. On one hand, we use it to iterate the key-values of accounts/storages tries,
-//    so we can externally classify what we need to ask next;
-// 2. On the other hand, we use it to internally save all the nodes to file buckets,
-//    based on hash, so we can later sort them and insert them to the SST.
-//    For accounts this is direct. For storages we have to do it in steps:
-//    1. We get all the tries once, by grouping accounts that share the same trie;
-//    2. We prepend to the tries the root (actually, we can do this in the iterator
-//       adding a prefix field);
-//    3. We sort the nodes by key, meaning (storage_root, storage_slot_hash);
-//    4. We convert the back the accounts to be sorted by address_hash and be followed
-//       by storage_root;
-//    5. We iterate the accounts, locating the storage root by binary search, and
-//       replacing the storage root part with the current account hashed address before
-//       inserting.
-//    We also pre-classify big and small accounts based on the observation that small
-//    accounts tend to have more repetitions. Storage roots with fewer than 100 repetitions
-//    are partitioned and iterated in parallel internally, while the others don't use
-//    use external parallelism (i.e. we choose whether to iterate a single trie in chunks
-//    or many tries at the same time).
-//    The internal parallelism is easy to achieve by just setting the root_hash to the
-//    subtrie I want to iterate. I.e., if I want 16 threads, I extract separately the
-//    root node, and then create 16 trie instances with root_hash corresponding to each
-//    child, then iterate those in parallel.
-//    The buckets need to be reused by thread to simplify and accelerate work.
-//    Really big accounts probably need to be bucketed internally as well, taking the node
-//    hash instead of the address.
-//    Another plausible way to classify the tries by size is to always iterate to the first
-//    leaf and extraplote from theri depths: given keys get randomized by keccak, the
-//    cardinality of a trie is approximately 16 ^ H, where H is height measured in branch nodes.
-//
-//    If absolutely necessary, we might implement our own lightweight iterator.
-struct GethTrieIterator {}
 struct GethTrieDBWithNodeBuckets {
     db: DBWithThreadMode<SingleThreaded>,
-    // No love for trait TrieDB
-    bucket_senders: [Sender<([u8; 32], Vec<u8>)>; 16],
 }
 impl GethTrieDBWithNodeBuckets {
-    pub fn new_with_buckets(
-        db: DBWithThreadMode<SingleThreaded>,
-        bucket_senders: [Sender<([u8; 32], Vec<u8>)>; 16],
-    ) -> eyre::Result<Box<dyn TrieDB>> {
-        Ok(Box::new(Self { db, bucket_senders }))
+    pub fn new(db: DBWithThreadMode<SingleThreaded>) -> Box<dyn TrieDB> {
+        Box::new(Self { db })
     }
 }
 
@@ -572,165 +425,12 @@ impl TrieDB for GethTrieDBWithNodeBuckets {
         // For now, decode and then encode.
         let node = Node::decode_raw(&value)?;
         let encoded = node.encode_to_vec();
-        // TODO: if contention seems to be a problem, buffer some entries here
-        // before sending. Would need a flush at the end and be a bit more code.
-        self.bucket_senders[(hash[0] >> 4) as usize]
-            .send((hash, encoded.clone()))
-            .unwrap();
         Ok(Some(encoded))
     }
     fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         unimplemented!()
     }
 }
-
-// Trie handling:
-// - State trie is always computed in parallel. The root is processed first,
-//   as well as its child if it's an extension, then one worker per choice
-//   for the top level branch.
-// - Storage tries are first deduplicated by storage root, so we only need
-//   to iterate each trie once.
-// - Tries with more than ten repetitions are considered small, and we use
-//   only external parallelism for those.
-// - Tries with no repetitions are assumed big, and are processed sequentially
-//   of one another, with internal parallelism like the state trie, and use
-//   separate SSTs.
-// - In the middle, it's medium tries, they have internal parallelism but
-//   share SST files with small tries.
-// - We track big tries in memory, as we need to make sure to insert splits
-//   between SSTs before and after each of them. Other than that, everything
-//   is buffered to disk, and SSTs get split by size target.
-// - SST config should match our DB bottom level, which in turn shouldn't be
-//   far from Geth's.
-// - We need to use ingest behind to force data to the bottom level, as this
-//   is the oldest data our node will have, and we don't want unnecessary
-//   compaction to slow us down later.
-//
-// DATA:
-// sqlite> SELECT storages_count, repetition_count FROM stats INNER JOIN repetitions ON stats.account_address = repetitions.account_address WHERE repetition_count > 1 ORDER BY storages_count DESC LIMIT 1;
-// 5104|2
-// This means no trie with over 5104 elements has repetitions.
-//
-// sqlite> SELECT COUNT(*) FROM stats WHERE storages_count > 5104;
-// 24361
-//
-// sqlite> sqlite> SELECT storages_count, repetition_count FROM stats INNER JOIN repetitions ON stats.account_address = repetitions.account_address WHERE storages_count > 10 ORDER BY repetition_count DESC LIMIT 4;
-// 18|1400
-// 14|356
-// 14|241
-// 14|178
-//
-// sqlite> SELECT COUNT(*) FROM stats WHERE storages_count = 1;
-// 13535285
-//
-// This means there's no point in internal parallelism in any trie that has duplicates.
-// However, since only 24361 are bigger than the biggest account with repetitions, it follows
-// many accounts without repetitions are actually smaller as well, so we need to filter those
-// after getting the root node.
-fn big_trie_bucket_worker(bucket_receiver: Receiver<([u8; 32], Vec<u8>)>) -> eyre::Result<()> {
-    // TODO: change return to option internally, empty files can't be added
-    // Internally we use extra buckets based on the second nibble to avoid
-    // memory use blowing up during sorting in step 2.
-    let lvl2_buckets: Vec<_> = (0..16)
-        .filter_map(|_| tempfile::tempfile_in(*ETHREX_DB_PATH).ok())
-        .collect();
-    let mut entries = 0;
-    let sst_file = NamedTempFile::new_in(*ETHREX_DB_PATH)?;
-    let opts = Options::default();
-    let mut sst = SstFileWriter::create(&opts);
-    sst.open(&sst_file)?;
-    {
-        // Step 1: accumulate all incoming nodes into files.
-        let mut writers: Vec<_> = lvl2_buckets.iter().map(BufWriter::new).collect();
-        while let Ok((hash, encoded)) = bucket_receiver.recv() {
-            let writer = &mut writers[hash[0] as usize & 0xf];
-            writer.write_all(&hash)?;
-            writer.write_all(&(encoded.len() as u16).to_ne_bytes())?;
-            writer.write_all(&encoded)?;
-            entries += 1;
-        }
-        if entries == 0 {
-            return Ok(());
-        }
-        writers.iter_mut().try_for_each(BufWriter::flush)?;
-    }
-    {
-        // Step 2: sort the data and write to SST file.
-        let mut sort_buffer = Vec::with_capacity(64 << 20);
-        let mut meta_buffer = [0u8; 34];
-        for mut bucket in lvl2_buckets {
-            bucket.seek(SeekFrom::Start(0))?;
-            let mut reader = BufReader::new(bucket);
-            // TODO: use two vecs, keep the number of entries.
-            // With this I can do just two allocs here:
-            // 1. Vec for [[u8;32] || offset || len], by N entries;
-            // 2. Vec for file size - vec #1 len bytes.
-            // Then we sort only the descriptors by hash.
-            // We can actually do that for the files to keep memory usage lower,
-            // we can read the data after sorting, when we need it.
-            // We risk too much IO though.
-            // In any case, we could at lest mmap and use or `read_to_end` the
-            // second file.
-            // TODO: I could reuse this for big storage tries, but it would need
-            // at least one of the following changes:
-            // 1. Avoid SST creation, as I don't have all the prefixes for this trie yet;
-            // 2. Receive one prefix and assume big tries don't have duplicates, stats support this approach;
-            // 3. Parameterize the receiver so it can receive the node with its prefix;
-            // 4. Ditto, but with all its prefixes.
-            // It might be sensible to split phase 1 and 2 so we can change phase 2
-            // when needed.
-            loop {
-                match reader.read_exact(&mut meta_buffer) {
-                    Ok(_) => (),
-                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                    Err(e) => {
-                        eyre::bail!("read error {e}")
-                    }
-                }
-                let hash: [u8; 32] = meta_buffer[..32].try_into().unwrap();
-                let len = u16::from_ne_bytes(meta_buffer[32..].try_into().unwrap()) as usize;
-                let mut encoded = vec![0; len];
-                reader.read_exact(&mut encoded)?;
-                sort_buffer.push((hash, encoded));
-            }
-            sort_buffer.sort_unstable_by_key(|(hash, _)| *hash);
-            sort_buffer.dedup_by_key(|(hash, _)| *hash);
-            assert!(sort_buffer.is_sorted_by(|a, b| a < b));
-            entries += sort_buffer.len();
-
-            let mut last = [0u8; 32];
-            for (hash, encoded) in sort_buffer.drain(..) {
-                // println!(
-                //     "inserting hash: {:032x}{:032x}",
-                //     u128::from_be_bytes(hash[..16].try_into().unwrap()),
-                //     u128::from_be_bytes(hash[16..].try_into().unwrap())
-                // );
-                sst.put(hash, encoded).inspect_err(|_| {
-                    println!(
-                        "failed to insert: {:032x}{:032x} (prev: {:032x}{:032x})",
-                        u128::from_be_bytes(hash[..16].try_into().unwrap()),
-                        u128::from_be_bytes(hash[16..].try_into().unwrap()),
-                        u128::from_be_bytes(last[..16].try_into().unwrap()),
-                        u128::from_be_bytes(last[16..].try_into().unwrap()),
-                    );
-                })?;
-                last = hash;
-            }
-            sort_buffer.clear();
-        }
-        sst.finish()?;
-    }
-    ETHREX_DB_WRITER_CHANNEL
-        .get()
-        .unwrap()
-        .send(WriteMessage::AccountTrieNodes { sst: sst_file })?;
-    Ok(())
-}
-
-// store.add_block(block).await?;
-// store
-//     .forkchoice_update(Some(block_hashes), block_number, block_hash, None, None)
-//     .await?;
 
 #[derive(Parser)]
 struct Args {
@@ -754,134 +454,4 @@ struct Args {
         help = "Receives the name of the directory where the State Dump will be written to."
     )]
     pub output_dir: String,
-}
-
-#[derive(Clone)]
-struct CodeSender<const N_BUCKETS: usize>([Sender<[u8; 32]>; N_BUCKETS]);
-impl<const N: usize> CodeSender<N> {
-    pub fn send(&self, code_hash: [u8; 32]) -> eyre::Result<()> {
-        if code_hash != EMPTY_KECCACK_HASH.0 {
-            self.0[code_hash[0] as usize >> 4].send(code_hash)?;
-        }
-        Ok(())
-    }
-}
-struct CodeHandler<'scope, const N_BUCKETS: usize> {
-    handles: [ScopedJoinHandle<'scope, eyre::Result<()>>; N_BUCKETS],
-}
-impl<'scope, const N: usize> CodeHandler<'scope, N> {
-    pub fn start(
-        scope: &'scope Scope<'scope, '_>,
-    ) -> eyre::Result<(CodeHandler<'scope, N>, CodeSender<N>)> {
-        let (mut code_bucket_senders, mut code_bucket_receivers): (Vec<_>, Vec<_>) =
-            (0..N).map(|_| channel()).unzip();
-        let code_bucket_senders = std::array::from_fn(move |_| code_bucket_senders.pop().unwrap());
-        // RocksDB doesn't currently allow for ingesting blobs.
-        // Code may be too big for efficiently using as a value.
-        // As a workaround to avoid making things too slow, we might create
-        // SST files to ingest behind for code smaller than a threshold and
-        // then manually add via the DB the bigger ones, so it can put them
-        // into blobs.
-        let handles = std::array::from_fn(move |_| {
-            let receiver = code_bucket_receivers.pop().unwrap();
-            scope.spawn(move || Self::run(receiver))
-        });
-        Ok((Self { handles }, CodeSender(code_bucket_senders)))
-    }
-    pub fn wait(self) -> eyre::Result<()> {
-        for h in self.handles {
-            h.join().map_err(|e| eyre::eyre!("join failed: {e:?}"))??;
-        }
-        Ok(())
-    }
-    fn run(receiver: Receiver<[u8; 32]>) -> eyre::Result<()> {
-        // FIXME: just sacrifice memory for now.
-        let mut unique_codes = BTreeSet::new();
-        while let Ok(code_hash) = receiver.recv() {
-            unique_codes.insert(code_hash);
-        }
-        let write_channel = ETHREX_DB_WRITER_CHANNEL.get().unwrap().clone();
-        let gethdb = GethDB::open()?;
-        let unique_codes = Vec::from_iter(unique_codes);
-        let sst_file = NamedTempFile::new_in(*ETHREX_DB_PATH)?;
-        let opts = Options::default();
-        let mut sst = SstFileWriter::create(&opts);
-        sst.open(&sst_file)?;
-        // Batch 100 per DB request < 2.5MB
-        for batch in unique_codes.chunks(100) {
-            let codes = gethdb.read_code_batch(batch);
-            for (code_hash, code_bytes) in batch.iter().zip(codes.into_iter()) {
-                let code_hash = *code_hash;
-                let code_bytes = code_bytes?.ok_or_else(|| eyre::eyre!("missing code"))?;
-                if code_bytes.len() <= 1000 {
-                    sst.put(code_hash, code_bytes)?;
-                } else {
-                    // If code is big we might want the BlobDB to store it, which currently
-                    // does not provide an ingestion mechanism.
-                    write_channel.send(WriteMessage::AccountCodeSingle {
-                        code_hash,
-                        code_bytes,
-                    })?;
-                }
-            }
-        }
-        sst.finish()?;
-        write_channel.send(WriteMessage::AccountCodeBulk { sst: sst_file })?;
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct AccountStorageSender<const N_BUCKETS: usize>([Sender<([u8; 32], [u8; 32])>; N_BUCKETS]);
-impl<const N: usize> AccountStorageSender<N> {
-    pub fn send(&self, hashed_address: [u8; 32], storage_root: [u8; 32]) -> eyre::Result<()> {
-        if storage_root != EMPTY_TRIE_HASH.0 {
-            self.0[storage_root[0] as usize >> 4].send((hashed_address, storage_root))?;
-        }
-        Ok(())
-    }
-}
-struct AccountStorageHandler<'scope, const N_BUCKETS: usize> {
-    handles: [ScopedJoinHandle<'scope, eyre::Result<()>>; N_BUCKETS],
-}
-impl<'scope, const N: usize> AccountStorageHandler<'scope, N> {
-    pub fn start(
-        scope: &'scope Scope<'scope, '_>,
-    ) -> eyre::Result<(AccountStorageHandler<'scope, N>, AccountStorageSender<N>)> {
-        let (mut root_bucket_senders, mut root_bucket_receivers): (Vec<_>, Vec<_>) =
-            (0..N).map(|_| channel()).unzip();
-        let root_bucket_senders = std::array::from_fn(move |_| root_bucket_senders.pop().unwrap());
-        let handles = std::array::from_fn(move |_| {
-            let receiver = root_bucket_receivers.pop().unwrap();
-            scope.spawn(move || Self::run(receiver))
-        });
-        Ok((Self { handles }, AccountStorageSender(root_bucket_senders)))
-    }
-    pub fn wait(self) -> eyre::Result<()> {
-        for h in self.handles {
-            h.join().map_err(|e| eyre::eyre!("join failed: {e:?}"))??;
-        }
-        Ok(())
-    }
-    fn run(receiver: Receiver<([u8; 32], [u8; 32])>) -> eyre::Result<()> {
-        // FIXME: just sacrifice memory for now.
-        let mut unique_tries: BTreeMap<_, Vec<_>> = BTreeMap::new();
-        while let Ok((hashed_address, root_hash)) = receiver.recv() {
-            unique_tries
-                .entry(root_hash)
-                .or_default()
-                .push(hashed_address);
-        }
-        let write_channel = ETHREX_DB_WRITER_CHANNEL.get().unwrap().clone();
-        let gethdb = GethDB::open()?;
-        for (root_hash, hashed_addresses) in unique_tries {
-            let triedb = gethdb.storage_triedb(&hashed_addresses, bucket_senders)?;
-            let iterated_nodes = Trie::open(triedb, root_hash.into()).into_iter().count();
-            println!(
-                "Read {iterated_nodes} nodes for {} accounts",
-                hashed_addresses.len()
-            );
-        }
-        Ok(())
-    }
 }
