@@ -1519,6 +1519,8 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
+    std::fs::remove_dir_all(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     info!("computed_state_root {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
@@ -1597,6 +1599,10 @@ async fn insert_storages(
             .write_storage_trie_nodes_batch(storage_trie_node_changes)
             .await?;
     }
+
+    std::fs::remove_dir_all(account_storages_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+
     Ok(())
 }
 
@@ -1655,6 +1661,11 @@ async fn insert_accounts(
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
+
+    std::fs::remove_dir_all(account_state_snapshots_dir)
+        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
+    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
+        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
@@ -1791,5 +1802,11 @@ async fn insert_storages(
             pool.execute(task);
         }
     });
+
+    std::fs::remove_dir_all(account_storages_snapshots_dir)
+        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir))
+        .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
+
     Ok(())
 }
