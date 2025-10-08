@@ -1165,7 +1165,7 @@ impl Syncer {
                             return Ok(());
                         };
 
-                        storages_to_write.push((path.concat(node.partial.clone()), node.value));
+                        storages_to_write.push((path, node.value));
                         if storages_to_write.len() > 100_000 {
                             storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
                         }
@@ -1173,7 +1173,7 @@ impl Syncer {
                     })?;
                 storage_db.put_batch(storages_to_write)?;
 
-                nodes_to_write.push((path.concat(node.partial.clone()), node.value));
+                nodes_to_write.push((path, node.value));
                 if nodes_to_write.len() > 100_000 {
                     db.put_batch(std::mem::take(&mut nodes_to_write))?;
                 }
