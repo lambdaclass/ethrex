@@ -1,66 +1,11 @@
-// GOAL: be ready for full sync from post-merge block in <1h.
-// RATIONALE: this roughly correlates to a precomputed version
-// of accounts and storages insertions in snap sync, which takes
-// ~1.5hs while having to compute all hashes and actually construct
-// the trie.
-// PLAN:
-// The geth2ethrex program takes a sync'd geth archive node and
-// initializes an ethrex instance with enough state to full sync
-// starting from the provided block number.
-// To do that, it loads the LevelDB or PebbleDB as a RocksDB.
-// Most of the work can be done with strictly that, but some parts
-// require accessing the ancients database, which uses a custom
-// format. Specifically, the block body and header and the necessary
-// previous hashes are supposedly stored there.
-// Once we have the state root we start iterating the account
-// trie and getting the nodes for our DB.
-// In archive node, Geth stores all trie nodes, both for the world
-// state and for each account, as a single mapping with key-value:
-// NodeHash => RLP(Node)
-// Because of this, we should be able to use our RocksDBTrieDB.
-// We would be able to also migrate without decoding, but we need
-// to iterate the trie anyway to filter useless nodes, as the state
-// can be massive. However, we can do the actual work inside the
-// TrieDB if we use a custom one that saves to file buckets the right
-// data. That would save us hashing and encoding at least.
-// Iteration can be done in parallel by partitioning the keys.
-// Results will be constructed to SST files for our RocksDB to ingest.
-// Some care is needed to make sure there is no overlap in the final
-// SST files, and that they are internally sorted. This allows us to
-// import as L1 for maximum performance.
-// Storage tries should be processed only once and produced for all
-// of the accounts.
-// The same is essentially true for bytecode. Bytcode might end up in
-// blob files.
-//
-// To write to the WAL:
+// EthrexDB Data:
 // 1. CF_CANONICAL_BLOCK_HASHES: [u8; 8] => [u8; 32]
 // 2. CF_BLOCK_NUMBERS:          [u8; 32] => [u8; 8]
 // 3. CF_HEADERS:                [u8; 32] => BlockHeaderRLP
 // 4. CF_BODIES:                 [u8; 32] => BlockBodyRLP
-// To ingest as SST:
 // 5. CF_ACCOUNT_CODES:          [u8; 32] => AccountCodeRLP
 // 6. CF_STATE_TRIE_NODES:       [u8; 32] => Vec<u8>
 // 7. CF_STORAGE_TRIE_NODES:     [u8; 64] => Vec<u8>
-//
-// 1 and 2 come from a single query to the canonical header hashes,
-// most likely in the ancient files.
-// 3 and 4 has a single element here, matching the requested block
-// number, that must be marked canonical. It also comes most likely
-// from ancient.
-// 6 comes from iterating the accounts trie for the state root of the
-// provided block number, taken from the state DB, and produces the
-// inputs to extract 5 and 7, which are deduplicated storage roots
-// and bytecode hashes. Bytecode hashes are then simply read and
-// re-exported in order, while storage tries need to get the actual
-// nodes and then produce the right prefixed keys for our DB for each
-// account.
-// The choice of whether to produce SSTs or write to WAL comes from
-// the observation that 1-4 are very little data, not worth producing
-// more immutable files, and faster to load by processing the WAL
-// into memtables, while 5-7 is a lot more data and producing it
-// already optimized will help full sync proceed faster, with less
-// read amplification.
 //
 // GethDB Data:
 // Hashes: either ancient/chain/hashes.{meta,cidx,cdat} or by querying
@@ -74,15 +19,6 @@
 // actually reusing the computed hash.
 // Trie Nodes: only in statedb, with only the hash as key.
 // Bytecodes: in statedb, ['c' || code_hash ].
-//
-// Due to the age of the blocks this is expected to be used with, we
-// always try the ancients first, and only go thorugh the statedb when
-// the data is not in the freezer.
-//
-// AFTER AN INITIAL WORKING VERSION:
-// Migrate to use either Era archives or path-based archive as base,
-// as they are friendlier both with sync time and disk usage.
-// For now I was working on already synced hash-based archives.
 use clap::Parser;
 use ethrex_common::types::BlockHeader;
 use ethrex_common::types::BlockNumber;
@@ -97,23 +33,15 @@ use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
 use eyre::OptionExt;
 use rocksdb::Cache;
 use rocksdb::Env;
-use rocksdb::{DBWithThreadMode, Options, SingleThreaded, SstFileWriter};
-use std::collections::BTreeMap;
+use rocksdb::{DBWithThreadMode, Options, SingleThreaded};
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::sync::OnceLock;
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread::Scope;
-use std::thread::ScopedJoinHandle;
-use std::thread::scope;
 use std::time::Instant;
-use tempfile::NamedTempFile;
 use tracing::info;
-use tracing::instrument::WithSubscriber;
 use tracing_subscriber::FmtSubscriber;
 
 const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
@@ -151,7 +79,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
 
     let ethrex_db = open_ethrexdb()?;
     let gethdb = GethDB::open()?;
-    let mut hashes = gethdb.read_hashes_from_gethdb(
+    let hashes = gethdb.read_hashes_from_gethdb(
         block_number.saturating_sub(BLOCK_HASH_LOOKUP_DEPTH),
         block_number,
     )?;
@@ -209,7 +137,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     for (hashed_address, storage_root) in storages {
         let storage_triedb = gethdb.triedb()?;
         let storage_trie = Trie::open(storage_triedb, storage_root);
-        for (path, node) in storage_trie.into_iter() {
+        for (_path, node) in storage_trie.into_iter() {
             let hash = node.compute_hash();
             ethrex_db.put_cf(
                 storages_cf,
@@ -401,7 +329,7 @@ impl GethDB {
     pub fn triedb(&self) -> eyre::Result<Box<dyn TrieDB>> {
         let trie_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
-        Ok(GethTrieDBWithNodeBuckets::new(trie_db))
+        Ok(GethTrieDBWithNodeBuckets::with_db(trie_db))
     }
 }
 
@@ -409,7 +337,7 @@ struct GethTrieDBWithNodeBuckets {
     db: DBWithThreadMode<SingleThreaded>,
 }
 impl GethTrieDBWithNodeBuckets {
-    pub fn new(db: DBWithThreadMode<SingleThreaded>) -> Box<dyn TrieDB> {
+    pub fn with_db(db: DBWithThreadMode<SingleThreaded>) -> Box<dyn TrieDB> {
         Box::new(Self { db })
     }
 }
