@@ -40,7 +40,7 @@ where
                     .with_label_values(&[name])
                     .start_timer();
                 let mut timers = self.function_timers.lock().unwrap();
-                timers.insert(id.clone(), timer);
+                timers.insert(id.clone(), timer); // ok-clone: clone is needed due to function signature; plus ID is a wrapper for a non-zero u64 so clone is cheap
             }
         }
     }

@@ -2548,6 +2548,10 @@ mod mempool {
         pub fn transaction(&self) -> &Transaction {
             &self.inner
         }
+
+        pub fn into_transaction(self) -> Transaction {
+            Arc::unwrap_or_clone(self.inner)
+        }
     }
 
     impl RLPEncode for MempoolTransaction {

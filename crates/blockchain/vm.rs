@@ -6,12 +6,12 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use tracing::instrument;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
-    pub store: Store,
+    pub store: Arc<Store>,
     pub block_hash: BlockHash,
     // Used to store known block hashes
     // We use this when executing blocks in batches, as we will only add the blocks at the end
@@ -20,7 +20,7 @@ pub struct StoreVmDatabase {
 }
 
 impl StoreVmDatabase {
-    pub fn new(store: Store, block_hash: BlockHash) -> Self {
+    pub fn new(store: Arc<Store>, block_hash: BlockHash) -> Self {
         StoreVmDatabase {
             store,
             block_hash,
@@ -29,7 +29,7 @@ impl StoreVmDatabase {
     }
 
     pub fn new_with_block_hash_cache(
-        store: Store,
+        store: Arc<Store>,
         block_hash: BlockHash,
         block_hash_cache: HashMap<BlockNumber, BlockHash>,
     ) -> Self {

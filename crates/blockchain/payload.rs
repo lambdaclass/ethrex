@@ -119,7 +119,7 @@ impl BuildPayloadArgs {
 // Basic payload block building, can and should be improved
 pub fn create_payload(
     args: &BuildPayloadArgs,
-    storage: &Store,
+    storage: Arc<Store>,
     extra_data: Bytes,
 ) -> Result<Block, ChainError> {
     let parent_block = storage
@@ -211,7 +211,7 @@ pub struct PayloadBuildContext {
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
-    pub store: Store,
+    pub store: Arc<Store>,
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
 }
@@ -219,7 +219,7 @@ pub struct PayloadBuildContext {
 impl PayloadBuildContext {
     pub fn new(
         payload: Block,
-        storage: &Store,
+        storage: Arc<Store>,
         blockchain_type: BlockchainType,
     ) -> Result<Self, EvmError> {
         let config = storage
@@ -249,7 +249,7 @@ impl PayloadBuildContext {
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
             blobs_bundle: BlobsBundle::default(),
-            store: storage.clone(),
+            store: storage.clone(), // ok-clone: increasing arc reference count
             vm,
             account_updates: Vec::new(),
         })
@@ -390,7 +390,7 @@ impl Blockchain {
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
         let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
+            PayloadBuildContext::new(payload, self.storage.clone(), self.options.r#type.clone())?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
@@ -706,7 +706,7 @@ impl std::ops::Deref for HeadTransaction {
 
 impl From<HeadTransaction> for Transaction {
     fn from(val: HeadTransaction) -> Self {
-        val.tx.transaction().clone()
+        val.tx.into_transaction()
     }
 }
 

@@ -120,6 +120,7 @@ impl MetricsTx {
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
+        // ok-clone: The clones for prometheus Counter, Gauge etc are cheap since only a pointer is cloned, and we need the handle to the metric after
         r.register(Box::new(self.transactions_total.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.transactions_tracker.clone()))

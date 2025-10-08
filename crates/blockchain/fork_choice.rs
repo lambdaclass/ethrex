@@ -62,7 +62,8 @@ pub async fn apply_fork_choice(
     }
 
     // Find blocks that will be part of the new canonical chain.
-    let Some(new_canonical_blocks) = find_link_with_canonical_chain(store, &head).await? else {
+    let Some(new_canonical_blocks) = find_link_with_canonical_chain(store, head.clone()).await?
+    else {
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
@@ -146,7 +147,7 @@ fn check_order(
 //   descendant.
 async fn find_link_with_canonical_chain(
     store: &Store,
-    block_header: &BlockHeader,
+    block_header: BlockHeader,
 ) -> Result<Option<Vec<(BlockNumber, BlockHash)>>, StoreError> {
     let mut block_number = block_header.number;
     let block_hash = block_header.hash();
@@ -157,7 +158,7 @@ async fn find_link_with_canonical_chain(
     }
 
     let genesis_number = store.get_earliest_block_number().await?;
-    let mut header = block_header.clone();
+    let mut header = block_header;
 
     while block_number > genesis_number {
         block_number -= 1;

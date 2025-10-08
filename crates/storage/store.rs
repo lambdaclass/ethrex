@@ -18,10 +18,9 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
-use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::RwLock,
+    sync::{Arc, RwLock},
 };
 use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, instrument};

@@ -564,10 +564,10 @@ async fn recap_with_account_balances(
 fn simulate_tx(
     transaction: &GenericTransaction,
     block_header: &BlockHeader,
-    storage: Store,
+    storage: Arc<Store>,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash());
+    let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash()); // ok-clone: increase arc reference count
     let mut vm = blockchain.new_evm(vm_db)?;
 
     match vm.simulate_tx_from_generic(transaction, block_header)? {

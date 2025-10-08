@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod blockchain_integration_test {
-    use std::{fs::File, io::BufReader};
+    use std::{fs::File, io::BufReader, sync::Arc};
 
     use crate::{
         Blockchain,
@@ -20,15 +20,15 @@ mod blockchain_integration_test {
     #[tokio::test]
     async fn test_small_to_long_reorg() {
         // Store and genesis
-        let store = test_store().await;
+        let store = Arc::new(test_store().await);
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: increase arc reference count
 
         // Add first block. We'll make it canonical.
-        let block_1a = new_block(&store, &genesis_header).await;
+        let block_1a = new_block(store.clone(), &genesis_header).await; // ok-clone: increase arc reference count
         let hash_1a = block_1a.hash();
         blockchain.add_block(block_1a.clone()).await.unwrap();
         store
@@ -41,10 +41,10 @@ mod blockchain_integration_test {
         assert!(is_canonical(&store, 1, hash_1a).await.unwrap());
 
         // Add second block at height 1. Will not be canonical.
-        let block_1b = new_block(&store, &genesis_header).await;
+        let block_1b = new_block(store.clone(), &genesis_header).await; // ok-clone: increase arc reference count
         let hash_1b = block_1b.hash();
         blockchain
-            .add_block(block_1b.clone())
+            .add_block(block_1b.clone()) // ok-clone: value used later in test
             .await
             .expect("Could not add block 1b.");
         let retrieved_1b = store.get_block_header_by_hash(hash_1b).unwrap().unwrap();
@@ -53,10 +53,10 @@ mod blockchain_integration_test {
         assert!(!is_canonical(&store, 1, hash_1b).await.unwrap());
 
         // Add a third block at height 2, child to the non canonical block.
-        let block_2 = new_block(&store, &block_1b.header).await;
+        let block_2 = new_block(store.clone(), &block_1b.header).await; // ok-clone: increase arc reference count
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2.clone())
+            .add_block(block_2.clone()) // ok-clone: value used later in test
             .await
             .expect("Could not add block 2.");
         let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
@@ -83,14 +83,14 @@ mod blockchain_integration_test {
 
     #[tokio::test]
     async fn test_sync_not_supported_yet() {
-        let store = test_store().await;
+        let store = Arc::new(test_store().await);
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: increase arc reference count
 
         // Build a single valid block.
-        let block_1 = new_block(&store, &genesis_header).await;
+        let block_1 = new_block(store.clone(), &genesis_header).await; // ok-clone: increase arc reference count
         let hash_1 = block_1.hash();
         blockchain.add_block(block_1.clone()).await.unwrap();
         apply_fork_choice(&store, hash_1, H256::zero(), H256::zero())
@@ -98,7 +98,7 @@ mod blockchain_integration_test {
             .unwrap();
 
         // Build a child, then change its parent, making it effectively a pending block.
-        let mut block_2 = new_block(&store, &block_1.header).await;
+        let mut block_2 = new_block(store.clone(), &block_1.header).await; // ok-clone: increase arc reference count
         block_2.header.parent_hash = H256::random();
         let hash_2 = block_2.hash();
         let result = blockchain.add_block(block_2.clone()).await;
@@ -117,26 +117,26 @@ mod blockchain_integration_test {
     #[tokio::test]
     async fn test_reorg_from_long_to_short_chain() {
         // Store and genesis
-        let store = test_store().await;
+        let store = Arc::new(test_store().await);
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: increase arc reference count
 
         // Add first block. Not canonical.
-        let block_1a = new_block(&store, &genesis_header).await;
+        let block_1a = new_block(store.clone(), &genesis_header).await; // ok-clone: increase arc reference count
         let hash_1a = block_1a.hash();
-        blockchain.add_block(block_1a.clone()).await.unwrap();
+        blockchain.add_block(block_1a.clone()).await.unwrap(); // ok-clone: value used later in test
         let retrieved_1a = store.get_block_header_by_hash(hash_1a).unwrap().unwrap();
 
         assert!(!is_canonical(&store, 1, hash_1a).await.unwrap());
 
         // Add second block at height 1. Canonical.
-        let block_1b = new_block(&store, &genesis_header).await;
+        let block_1b = new_block(store.clone(), &genesis_header).await; // ok-clone: increase arc reference count
         let hash_1b = block_1b.hash();
         blockchain
-            .add_block(block_1b.clone())
+            .add_block(block_1b.clone()) // ok-clone: value used later in test
             .await
             .expect("Could not add block 1b.");
         apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash)
@@ -150,10 +150,10 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_1b);
 
         // Add a third block at height 2, child to the canonical one.
-        let block_2 = new_block(&store, &block_1b.header).await;
+        let block_2 = new_block(store.clone(), &block_1b.header).await; // ok-clone: increase arc reference count
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2.clone())
+            .add_block(block_2)
             .await
             .expect("Could not add block 2.");
         apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
@@ -189,26 +189,26 @@ mod blockchain_integration_test {
     #[tokio::test]
     async fn new_head_with_canonical_ancestor_should_skip() {
         // Store and genesis
-        let store = test_store().await;
+        let store = Arc::new(test_store().await);
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: increase arc reference count
 
         // Add block at height 1.
-        let block_1 = new_block(&store, &genesis_header).await;
+        let block_1 = new_block(store.clone(), &genesis_header).await; // ok-clone: increase arc reference count
         let hash_1 = block_1.hash();
         blockchain
-            .add_block(block_1.clone())
+            .add_block(block_1.clone()) // ok-clone: value used later in test
             .await
             .expect("Could not add block 1b.");
 
         // Add child at height 2.
-        let block_2 = new_block(&store, &block_1.header).await;
+        let block_2 = new_block(store.clone(), &block_1.header).await; // ok-clone: increase arc reference count
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2.clone())
+            .add_block(block_2)
             .await
             .expect("Could not add block 2.");
 
@@ -242,25 +242,25 @@ mod blockchain_integration_test {
         // Then add one in a different branch. Check that the last one is still the same.
 
         // Store and genesis
-        let store = test_store().await;
+        let store = Arc::new(test_store().await);
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: increase arc reference count
 
         // Add block at height 1.
-        let block_1 = new_block(&store, &genesis_header).await;
+        let block_1 = new_block(store.clone(), &genesis_header).await; // ok-clone: increase arc reference count
         blockchain
-            .add_block(block_1.clone())
+            .add_block(block_1.clone()) // ok-clone: value used later in test
             .await
             .expect("Could not add block 1b.");
 
         // Add child at height 2.
-        let block_2 = new_block(&store, &block_1.header).await;
+        let block_2 = new_block(store.clone(), &block_1.header).await; // ok-clone: increase arc reference count
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2.clone())
+            .add_block(block_2)
             .await
             .expect("Could not add block 2.");
 
@@ -277,10 +277,10 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
 
         // Add a new, non canonical block, starting from genesis.
-        let block_1b = new_block(&store, &genesis_header).await;
+        let block_1b = new_block(store.clone(), &genesis_header).await; // ok-clone: increase arc reference count
         let hash_b = block_1b.hash();
         blockchain
-            .add_block(block_1b.clone())
+            .add_block(block_1b)
             .await
             .expect("Could not add block b.");
 
@@ -296,7 +296,7 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_b);
     }
 
-    async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
+    async fn new_block(store: Arc<Store>, parent: &BlockHeader) -> Block {
         let args = BuildPayloadArgs {
             parent: parent.hash(),
             timestamp: parent.timestamp + 12,
@@ -310,9 +310,9 @@ mod blockchain_integration_test {
         };
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone().clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: increase arc reference count
 
-        let block = create_payload(&args, store, Bytes::new()).unwrap();
+        let block = create_payload(&args, store.clone(), Bytes::new()).unwrap(); // ok-clone: increase arc reference count
         let result = blockchain.build_payload(block).await.unwrap();
         result.payload
     }
