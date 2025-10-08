@@ -266,13 +266,19 @@ pub fn check_accounts_state(
         // First we check if the address appears in the `current_accounts_state`, which stores accounts modified by the tx.
         let account: &mut LevmAccount =
             if let Some(account) = db.current_accounts_state.get_mut(&addr) {
-                if account.storage.is_empty() && acc_genesis_state.is_some() {
-                    account.storage = acc_genesis_state
+                // Include missing original storage slots from Genesis that haven't changed
+                if acc_genesis_state.is_some() {
+                    let genesis_storage = acc_genesis_state
                         .unwrap()
                         .storage
                         .iter()
                         .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
-                        .collect();
+                        .collect::<BTreeMap<H256, U256>>();
+                    
+                    // Add any storage slots from Genesis that are not in the current account
+                    for (key, value) in genesis_storage {
+                        account.storage.entry(key).or_insert(value);
+                    }
                 }
                 account
             } else {
@@ -312,11 +318,21 @@ fn verify_matching_accounts(
         let formatted_key = H256::from(key.to_big_endian());
         formatted_expected_storage.insert(formatted_key, *value);
     }
+    
+    // Filter out storage slots with value 0 from actual storage for comparison
+    // This matches the behavior of .json files which don't include zero-value slots
+    let mut filtered_actual_storage = BTreeMap::new();
+    for (key, value) in &actual_account.storage {
+        if *value != U256::zero() {
+            filtered_actual_storage.insert(*key, *value);
+        }
+    }
+    
     let mut account_mismatch = AccountMismatch::default();
     let code_matches = actual_account.info.code_hash == keccak(&expected_account.code);
     let balance_matches = actual_account.info.balance == expected_account.balance;
     let nonce_matches = actual_account.info.nonce == expected_account.nonce;
-    let storage_matches = formatted_expected_storage == actual_account.storage;
+    let storage_matches = formatted_expected_storage == filtered_actual_storage;
 
     if !code_matches {
         account_mismatch.code_diff = Some((
@@ -333,7 +349,7 @@ fn verify_matching_accounts(
     }
     if !storage_matches {
         account_mismatch.storage_diff =
-            Some((formatted_expected_storage, actual_account.storage.clone()));
+            Some((formatted_expected_storage, filtered_actual_storage));
     }
 
     if account_mismatch != AccountMismatch::default() {
