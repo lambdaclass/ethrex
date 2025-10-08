@@ -7,7 +7,7 @@ documentation.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
-ethrex-storage.workspace = true
+ethrex-storage = { workspace = true, features = ["rocksdb"] }
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 
