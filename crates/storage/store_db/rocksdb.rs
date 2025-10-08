@@ -306,7 +306,10 @@ impl Store {
     }
 
     // Helper method to get column family handle
-    fn cf_handle(&self, cf_name: &str) -> Result<std::sync::Arc<BoundColumnFamily>, StoreError> {
+    fn cf_handle(
+        &self,
+        cf_name: &str,
+    ) -> Result<std::sync::Arc<BoundColumnFamily<'_>>, StoreError> {
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))

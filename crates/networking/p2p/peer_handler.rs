@@ -251,7 +251,7 @@ impl PeerHandler {
         }
 
         // Push the reminder
-        if block_count % chunk_count != 0 {
+        if !block_count.is_multiple_of(chunk_count) {
             tasks_queue_not_started
                 .push_back((chunk_count * chunk_limit + start, block_count % chunk_count));
         }
@@ -984,10 +984,9 @@ impl PeerHandler {
                     accounts,
                     proof,
                 }) = receiver.recv().await?
+                    && id == request_id
                 {
-                    if id == request_id {
-                        return Some((accounts, proof));
-                    }
+                    return Some((accounts, proof));
                 }
             }
         })
