@@ -13,7 +13,7 @@ Run:
 
 ```bash
 cd ethrex/crates/l2
-SP1_PROVER=cuda make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
+make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true G=true
 ```
 
 This will generate the SP1 ELF program and verification key under:
@@ -116,7 +116,7 @@ SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```bash
 git clone git@github.com:yetanotherco/aligned_layer.git
 cd aligned_layer
-git checkout tags/v0.16.1
+git checkout tags/v0.17.0
 ```
 
 2. Edit the `aligned_layer/network_params.rs` file to send some funds to the `committer` and `integration_test` addresses:
@@ -175,15 +175,21 @@ let ws_stream_future =
 
 ### Initialize L2 node
 
-1. In another terminal, let's deploy the L1 contracts specifying the `AlignedProofAggregatorService` contract address:
+1. Start prover:
+
+```
+cd ethrex/crates/l2
+make init-prover G=true PROVER=sp1 PROVER_CLIENT_ALIGNED=true
+```
+
+2. In another terminal, let's deploy the L1 contracts specifying the `AlignedProofAggregatorService` contract address:
 
 ```bash
 cd ethrex/crates/l2
 COMPILE_CONTRACTS=true \
-cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+cargo run --release --bin ethrex --manifest-path  ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url http://localhost:8545 \
 	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-	--contracts-path contracts \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -207,21 +213,21 @@ You will see that some deposits fail with the following error:
 
 This is because not all the accounts are pre-funded from the genesis.
 
-2. Send some funds to the Aligned batcher payment service contract from the proof sender:
+3. Send some funds to the Aligned batcher payment service contract from the proof sender:
 
 ```
-cd aligned_layer/batcher/aligned
+cd aligned_layer/crates/cli
 cargo run deposit-to-batcher \
 --network devnet \
 --private_key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 --amount 1ether
 ```
 
-3. Start our l2 node:
+4. Start our l2 node:
 
 ```
 cd ethrex/crates/l2
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 ```
 
 > [!IMPORTANT]  
@@ -232,13 +238,6 @@ When running the integration test, consider increasing the `--committer.commit-t
 
 ```
 --committer.commit-time 120000
-```
-
-4. Start prover:
-
-```
-cd ethrex/crates/l2
-SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```
 
 ### Aggregate proofs:
@@ -253,7 +252,7 @@ You can aggregate them by running:
 
 ```
 cd aligned_layer
-make start_proof_aggregator AGGREGATOR=sp1
+make proof_aggregator_start AGGREGATOR=sp1
 ```
 
 If successful, the `l1_proof_verifier` will print the following logs:
