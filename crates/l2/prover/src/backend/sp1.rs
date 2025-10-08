@@ -42,10 +42,11 @@ pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
         if let Some(endpoint) = _endpoint {
             CudaProverBuilder::default()
                 .server(
+                    #[expect(clippy::expect_used)]
                     &endpoint
                         .join("/twirp/")
                         .expect("Failed to parse moongate server url")
-                        .to_string(),
+                        .as_ref(),
                 )
                 .build()
         } else {
