@@ -27,7 +27,9 @@ fn main() {
     let mut nodes_to_write = Vec::new();
 
     let start = SystemTime::now();
-    println!("Traversing account state trie...");
+
+    println!("Building the snapshot...");
+
     // Traverse account state trie
     store
         .open_direct_state_trie(pivot_header.state_root)
@@ -102,16 +104,15 @@ fn main() {
                     .expect("failed to store account state nodes 100k batch");
             }
         });
-    let elapsed = start.elapsed().expect("failed to get elapsed time");
-    println!(
-        "Traversed account state trie in: {}",
-        format_duration(elapsed)
-    );
 
     // Store the remaining account state nodes
     account_state_db
         .put_batch(nodes_to_write)
         .expect("failed to store the remaining account state nodes");
+
+    let elapsed = start.elapsed().expect("failed to get elapsed time");
+
+    println!("Snapshot built in: {}", format_duration(elapsed));
 }
 
 fn format_duration(duration: Duration) -> String {
