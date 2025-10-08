@@ -199,10 +199,12 @@ impl GethDB {
         ));
         let index_file = File::open(&idx_path)?;
         let size = index_file.metadata()?.size();
-        let last = last.min(size / 6);
-        let first = first.min(last.saturating_sub(2));
         // We need one index back to find the start of the entries.
-        let to_read = ((last - first + 2) * 6) as usize;
+        let to_read = if last * 6 >= size {
+            (size - first * 6) as usize
+        } else {
+            ((last - first + 2) * 6) as usize
+        };
         warn!(
             path = idx_path.to_string_lossy().to_string(),
             size, first, last, to_read, "About to read index file"
