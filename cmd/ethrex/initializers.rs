@@ -29,6 +29,7 @@ use secp256k1::SecretKey;
 use std::env;
 use std::{
     fs,
+    io::IsTerminal,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -54,7 +55,14 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let fmt_layer = fmt::layer().with_filter(filter);
+    let mut layer = fmt::layer();
+
+    if !std::io::stdout().is_terminal() {
+        layer = layer.with_ansi(false);
+    }
+
+    let fmt_layer = layer.with_filter(filter);
+
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
