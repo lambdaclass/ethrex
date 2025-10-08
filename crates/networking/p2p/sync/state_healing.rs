@@ -272,7 +272,8 @@ async fn heal_state_trie(
         if nodes_to_write.len() > 100_000 || is_done || is_stale {
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
-            if db_joinset.len() > 0 {
+            // NOTE: we keep only a single task in the background to avoid out of order deletes
+            if !db_joinset.is_empty() {
                 db_joinset.join_next().await;
             }
             db_joinset.spawn_blocking(|| {
