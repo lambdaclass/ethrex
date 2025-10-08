@@ -92,21 +92,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError>;
 
-    /// Store transaction location (block number and index of the transaction within the block)
-    async fn add_transaction_location(
-        &self,
-        transaction_hash: H256,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-        index: Index,
-    ) -> Result<(), StoreError>;
-
-    /// Store transaction locations in batch (one db transaction for all)
-    async fn add_transaction_locations(
-        &self,
-        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
-    ) -> Result<(), StoreError>;
-
     /// Obtain transaction location (block hash and index)
     async fn get_transaction_location(
         &self,
@@ -269,7 +254,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError>;
 
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError>;
 
     // Snap State methods
 

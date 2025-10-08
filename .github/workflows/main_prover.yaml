@@ -81,9 +81,16 @@ jobs:
           ETHREX_WATCHER_WATCH_INTERVAL=1000 \
           docker compose up --build --detach --no-deps ethrex_l2
 
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
+
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
+          cd crates/l2
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-sp1 GPU=true &
           docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover-sp1 GPU=true &

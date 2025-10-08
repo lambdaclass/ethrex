@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "cmd/ethrex",
-  "cmd/ethrex_replay",
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
@@ -21,19 +20,20 @@ members = [
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
-  "crates/vm/levm/bench/revm_comparison",
   "crates/vm/levm/runner",
   "tooling/ef_tests/blockchain",
-  "tooling/ef_tests/state",
   "tooling/ef_tests/state_v2",
   "tooling/genesis",
   "tooling/hive_report",
   "tooling/load_test",
   "tooling/loc",
   "tooling/archive_sync",
-  "tooling/replayer",
   "crates/common/config",
+  "tooling/reorgs",
+  "crates/concurrency",
+  "tooling/migrations",
 ]
+exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
@@ -75,6 +75,7 @@ ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
+ethrex-threadpool = { path = "./crates/concurrency" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -86,7 +87,6 @@ serde = { version = "<1.0.220", features = ["derive"] }
 # https://github.com/alloy-rs/alloy/issues/2876
 serde_with = "3.11.0"
 serde_json = "1.0.117"
-libmdbx = { version = "=0.5.3", features = ["orm"] }
 bytes = { version = "1.6.0", features = ["serde"] }
 tokio = { version = "1.41.1", default-features = false }
 thiserror = "2.0.9"
@@ -99,15 +99,13 @@ sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
-cfg-if = "1.0.0"
 reqwest = { version = "0.12.7", features = ["socks", "json"] }
 snap = "1.1.1"
-secp256k1 = { version = "0.29.1", default-features = false, features = [
+secp256k1 = { version = "0.30.0", default-features = false, features = [
   "global-context",
   "recovery",
   "rand",
 ] }
-keccak-hash = "0.11.0"
 axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
@@ -122,6 +120,7 @@ spawned-concurrency = "0.4.0"
 spawned-rt = "0.4.0"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
+crossbeam = "0.8.4"
 rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
@@ -131,4 +130,4 @@ tower-http = { version = "0.6.2", features = ["cors"] }
 rocksdb = "0.24.0"
 
 [patch.crates-io]
-secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
+secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }

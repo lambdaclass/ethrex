@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainType, error::ChainError};
+use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_p2p::types::Node;
@@ -20,7 +20,7 @@ use crate::{
         self,
         command::{DB_ETHREX_DEV_L1, DB_ETHREX_DEV_L2},
     },
-    utils::{self, default_datadir, get_client_version, init_datadir},
+    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
 };
 use ethrex_config::networks::Network;
 
@@ -34,7 +34,7 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
-#[derive(ClapParser, Debug)]
+#[derive(ClapParser, Debug, Clone)]
 pub struct Options {
     #[arg(
         long = "network",
@@ -67,7 +67,7 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
-    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
+    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(
         long = "metrics.addr",
@@ -107,6 +107,14 @@ pub struct Options {
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Node options")]
     pub log_level: Level,
+    #[arg(
+        help = "Maximum size of the mempool in number of transactions",
+        long = "mempool.maxsize",
+        default_value_t = 10_000,
+        value_name = "MEMPOOL_MAX_SIZE",
+        help_heading = "Node options"
+    )]
+    pub mempool_max_size: usize,
     #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
@@ -167,6 +175,14 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
+    #[arg(
+        long = "block-producer.extra-data",
+        default_value = get_minimal_client_version(),
+        value_name = "EXTRA_DATA",
+        help = "Block extra data message.",
+        help_heading = "Block producer options"
+    )]
+    pub extra_data: String,
 }
 
 impl Options {
@@ -184,6 +200,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
@@ -203,6 +220,7 @@ impl Options {
             p2p_enabled: true,
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            mempool_max_size: 10_000,
             ..Default::default()
         }
     }
@@ -229,6 +247,8 @@ impl Default for Options {
             metrics_enabled: Default::default(),
             dev: Default::default(),
             force: false,
+            mempool_max_size: Default::default(),
+            extra_data: get_minimal_client_version(),
         }
     }
 }
@@ -322,7 +342,17 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, blockchain_type).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    BlockchainOptions {
+                        max_mempool_size: opts.mempool_max_size,
+                        r#type: blockchain_type,
+                        ..Default::default()
+                    },
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -369,12 +399,12 @@ pub async fn import_blocks(
     path: &str,
     datadir: &Path,
     genesis: Genesis,
-    blockchain_type: BlockchainType,
+    blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await;
-    let blockchain = init_blockchain(store.clone(), blockchain_type, false);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -410,7 +440,7 @@ pub async fn import_blocks(
             .collect::<Vec<_>>();
         // Execute block by block
         let mut last_progress_log = Instant::now();
-        for (index, block) in blocks.iter().enumerate() {
+        for (index, block) in blocks.into_iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
 

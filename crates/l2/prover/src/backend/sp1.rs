@@ -1,16 +1,21 @@
-use std::fmt::Debug;
-
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
 use guest_program::input::ProgramInput;
 use rkyv::rancor::Error;
+use sp1_prover::components::CpuProverComponents;
+#[cfg(not(feature = "gpu"))]
+use sp1_sdk::CpuProver;
+#[cfg(feature = "gpu")]
+use sp1_sdk::cuda::builder::CudaProverBuilder;
 use sp1_sdk::{
-    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
+    HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    SP1VerifyingKey,
 };
-use std::time::Instant;
+use std::{fmt::Debug, sync::OnceLock, time::Instant};
 use tracing::info;
+use url::Url;
 
 #[cfg(not(clippy))]
 static PROGRAM_ELF: &[u8] =
@@ -21,6 +26,40 @@ static PROGRAM_ELF: &[u8] =
 #[cfg(clippy)]
 static PROGRAM_ELF: &[u8] = &[];
 
+pub struct ProverSetup {
+    client: Box<dyn Prover<CpuProverComponents>>,
+    pk: SP1ProvingKey,
+    vk: SP1VerifyingKey,
+}
+
+pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
+
+pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
+    #[cfg(feature = "gpu")]
+    let client = {
+        if let Some(endpoint) = _endpoint {
+            CudaProverBuilder::default()
+                .server(
+                    &endpoint
+                        .join("/twirp/")
+                        .expect("Failed to parse moongate server url")
+                        .to_string(),
+                )
+                .build()
+        } else {
+            CudaProverBuilder::default().local().build()
+        }
+    };
+    #[cfg(not(feature = "gpu"))]
+    let client = { CpuProver::new() };
+    let (pk, vk) = client.setup(PROGRAM_ELF);
+
+    ProverSetup {
+        client: Box::new(client),
+        pk,
+        vk,
+    }
+}
 pub struct ProveOutput {
     pub proof: SP1ProofWithPublicValues,
     pub vk: SP1VerifyingKey,
@@ -51,17 +90,11 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let elapsed = if cfg!(feature = "gpu") {
-        let client = ProverClient::builder().cuda().build();
-        let now = Instant::now();
-        client.execute(PROGRAM_ELF, &stdin).run()?;
-        now.elapsed()
-    } else {
-        let client = ProverClient::builder().cpu().build();
-        let now = Instant::now();
-        client.execute(PROGRAM_ELF, &stdin).run()?;
-        now.elapsed()
-    };
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+
+    let now = Instant::now();
+    setup.client.execute(PROGRAM_ELF, &stdin)?;
+    let elapsed = now.elapsed();
 
     info!("Successfully executed SP1 program in {:.2?}", elapsed);
     Ok(())
@@ -75,36 +108,22 @@ pub fn prove(
     let bytes = rkyv::to_bytes::<Error>(&input)?;
     stdin.write_slice(bytes.as_slice());
 
-    let (proof, vk) = if cfg!(feature = "gpu") {
-        let client = ProverClient::builder().cuda().build();
-        let (pk, vk) = client.setup(PROGRAM_ELF);
-        let proof = match format {
-            ProofFormat::Compressed => client.prove(&pk, &stdin).compressed().run()?,
-            ProofFormat::Groth16 => client.prove(&pk, &stdin).groth16().run()?,
-        };
-        (proof, vk)
-    } else {
-        let client = ProverClient::builder().cpu().build();
-        let (pk, vk) = client.setup(PROGRAM_ELF);
-        let proof = match format {
-            ProofFormat::Compressed => client.prove(&pk, &stdin).compressed().run()?,
-            ProofFormat::Groth16 => client.prove(&pk, &stdin).groth16().run()?,
-        };
-        (proof, vk)
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+
+    // contains the receipt along with statistics about execution of the guest
+    let format = match format {
+        ProofFormat::Compressed => SP1ProofMode::Compressed,
+        ProofFormat::Groth16 => SP1ProofMode::Groth16,
     };
+    let proof = setup.client.prove(&setup.pk, &stdin, format)?;
 
     info!("Successfully generated SP1Proof.");
-    Ok(ProveOutput::new(proof, vk))
+    Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
-    if cfg!(feature = "gpu") {
-        let client = ProverClient::builder().cuda().build();
-        client.verify(&output.proof, &output.vk)?;
-    } else {
-        let client = ProverClient::builder().cpu().build();
-        client.verify(&output.proof, &output.vk)?;
-    };
+    let setup = PROVER_SETUP.get_or_init(|| init_prover_setup(None));
+    setup.client.verify(&output.proof, &output.vk)?;
 
     Ok(())
 }

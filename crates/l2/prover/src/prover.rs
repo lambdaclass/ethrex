@@ -27,6 +27,8 @@ struct Prover {
     proof_coordinator_endpoints: Vec<Url>,
     proving_time_ms: u64,
     commit_hash: String,
+    #[cfg(all(feature = "sp1", feature = "gpu"))]
+    sp1_server: Option<Url>,
 }
 
 impl Prover {
@@ -36,10 +38,18 @@ impl Prover {
             proof_coordinator_endpoints: cfg.proof_coordinators,
             proving_time_ms: cfg.proving_time_ms,
             commit_hash: get_commit_hash(),
+            #[cfg(all(feature = "sp1", feature = "gpu"))]
+            sp1_server: cfg.sp1_server,
         }
     }
 
     pub async fn start(&self) {
+        #[cfg(all(feature = "sp1", feature = "gpu"))]
+        {
+            use crate::backend::sp1::{PROVER_SETUP, init_prover_setup};
+            PROVER_SETUP.get_or_init(|| init_prover_setup(self.sp1_server.clone()));
+        }
+
         info!(
             "Prover started for {:?}",
             self.proof_coordinator_endpoints

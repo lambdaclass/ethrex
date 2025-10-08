@@ -166,13 +166,13 @@ else
 endif
 
 build-prover-sp1:
-	cargo build --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml
+	cargo build --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml --bin ethrex
 
 build-prover-risc0:
-	cargo build --release --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml;
+	cargo build --release --features "$(GPU?),risc0" --manifest-path ../../Cargo.toml --bin ethrex
 
 build-prover-exec:
-	cargo build --release --features "$(GPU?)" --manifest-path ../../Cargo.toml;
+	cargo build --release --features "$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
 
 init-prover-sp1:
 	cargo run --release --features "$(GPU?),sp1" --manifest-path ../../Cargo.toml -- \
@@ -191,6 +191,7 @@ init-prover-exec:
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend exec
+
 
 # ==============================================================================
 # TEE

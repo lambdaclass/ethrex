@@ -1,6 +1,7 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
@@ -17,7 +18,6 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
-use keccak_hash::keccak;
 use spawned_concurrency::{
     error::GenServerError,
     messages::Unused,
@@ -269,7 +269,7 @@ impl BlockFetcher {
 
     async fn store_batch(&mut self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
-            self.blockchain.add_block(block).await?;
+            self.blockchain.add_block(block.clone()).await?;
 
             let block_hash = block.hash();
 
