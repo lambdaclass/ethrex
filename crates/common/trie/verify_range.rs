@@ -142,7 +142,7 @@ impl<'a> From<&'a [Vec<u8>]> for RangeProof<'a> {
         let node_refs = proof
             .iter()
             .map(|node| {
-                let hash = H256::from_slice(&Keccak256::new_with_prefix(node).finalize());
+                let hash = H256::from_slice(&Keccak256::digest(node));
                 let encoded_data = node.as_slice();
                 (hash, encoded_data)
             })

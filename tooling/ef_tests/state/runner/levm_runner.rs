@@ -4,6 +4,7 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, U256,
     types::{
@@ -20,7 +21,6 @@ use ethrex_levm::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
-use keccak_hash::keccak;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -40,7 +40,8 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
     //Test with the Fusaka tests that should pass. TODO: Once we've implemented all the Fusaka EIPs this should be removed
     //EIPs should be added as strings in the format 'eip-XXXX'
     let fusaka_eips_to_test: Vec<&str> = vec![
-        "eip-7883", "eip-7892", "eip-7918", "eip-7934", "eip-7939", "eip-7951", "eip-7594",
+        "eip-7594", "eip-7883", "eip-7918", "eip-7934", "eip-7892", "eip-7939", "eip-7951",
+        "eip-7594", "eip-7825",
     ];
 
     //Names of any other tests to run, that don't correspond to an especific EIP (for examples, some integration tests)
@@ -198,6 +199,7 @@ pub fn prepare_vm_for_tx<'a>(
             data: test_tx.data.clone(),
             access_list,
             authorization_list: list,
+            gas_limit: test_tx.gas_limit,
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -205,6 +207,7 @@ pub fn prepare_vm_for_tx<'a>(
             value: test_tx.value,
             data: test_tx.data.clone(),
             access_list,
+            gas_limit: test_tx.gas_limit,
             ..Default::default()
         }),
     };
@@ -307,6 +310,9 @@ fn exception_is_expected(
                 TransactionExpectedException::IntrinsicGasTooLow,
                 VMError::TxValidation(TxValidationError::IntrinsicGasTooLow)
             ) | (
+                TransactionExpectedException::IntrinsicGasBelowFloorGasCost,
+                VMError::TxValidation(TxValidationError::IntrinsicGasBelowFloorGasCost)
+            ) | (
                 TransactionExpectedException::InsufficientAccountFunds,
                 VMError::TxValidation(TxValidationError::InsufficientAccountFunds)
             ) | (
@@ -366,6 +372,12 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::Type4TxContractCreation,
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
+            ) | (
+                TransactionExpectedException::TxMaxGasLimitExceeded,
+                VMError::TxValidation(TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: _,
+                    tx_gas_limit: _
+                })
             ) | (
                 TransactionExpectedException::Other,
                 VMError::TxValidation(_) //TODO: Decide whether to support more specific errors, I think this is enough.
@@ -477,7 +489,7 @@ pub async fn ensure_post_state(
 }
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
+    let (_initial_state, block_hash, store) = utils::load_initial_state_revm(test).await;
     let ret_account_updates_batch = store
         .apply_account_updates_batch(block_hash, account_updates)
         .await

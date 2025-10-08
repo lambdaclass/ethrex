@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use ethrex_common::H256;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, U256,
     types::{AccountUpdate, Fork, Genesis, code_hash},
@@ -13,7 +15,6 @@ use ethrex_levm::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_vm::backends;
-use keccak_hash::{H256, keccak};
 
 use crate::modules::{
     error::RunnerError,
@@ -159,6 +160,9 @@ fn exception_matches_expected(
             (
                 TransactionExpectedException::IntrinsicGasTooLow,
                 VMError::TxValidation(TxValidationError::IntrinsicGasTooLow)
+            ) | (
+                TransactionExpectedException::IntrinsicGasBelowFloorGasCost,
+                VMError::TxValidation(TxValidationError::IntrinsicGasBelowFloorGasCost)
             ) | (
                 TransactionExpectedException::InsufficientAccountFunds,
                 VMError::TxValidation(TxValidationError::InsufficientAccountFunds)

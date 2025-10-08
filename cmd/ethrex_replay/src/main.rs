@@ -4,7 +4,7 @@ use std::str::FromStr;
 use tracing_subscriber::filter::Directive;
 
 #[cfg(feature = "jemalloc")]
-use jemallocator::Jemalloc;
+use tikv_jemallocator::Jemalloc;
 
 #[cfg(feature = "jemalloc")]
 #[global_allocator]

@@ -1,7 +1,9 @@
 [package]
 name = "ethrex-l2-rpc"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -25,7 +27,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
 secp256k1.workspace = true
-keccak-hash.workspace = true
 reqwest.workspace = true
 ethereum-types.workspace = true
 hex.workspace = true

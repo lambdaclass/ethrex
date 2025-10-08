@@ -1,7 +1,9 @@
 [package]
 name = "hive_report"
-edition.workspace = true
 version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 serde.workspace = true

@@ -2,6 +2,8 @@
 name = "ef_tests-statev2"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-blockchain.workspace = true
@@ -17,7 +19,6 @@ serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
 hex.workspace = true
-keccak-hash.workspace = true
 thiserror.workspace = true
 clap.workspace = true
 clap_complete.workspace = true

@@ -1,4 +1,4 @@
-.PHONY = help create_data_dir gen_jwt sync start_geth_holesky flamegraph-main  flamegraph \
+.PHONY = help create_datadir gen_jwt sync start_geth_holesky flamegraph-main  flamegraph \
 flamegraph-branch flamegraph-inner flamegraph-mainnet flamegraph-sepolia flamegraph-holesky \
 flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-docker \
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
@@ -14,9 +14,9 @@ CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 OS = $(shell uname)
 ifeq ($(OS), Darwin)
-	DATA_PATH = ~/Library/Application\ Support
-else 
-	DATA_PATH = ~/.local/share
+	DATA_PATH = $(HOME)/Library/Application\ Support
+else
+	DATA_PATH = $(HOME)/.local/share
 endif
 
 # Set checkpoint sync url based on network
@@ -46,13 +46,13 @@ default: help
 help: ## Display help for the makefile.
 	@grep -E '^[%a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-create_data_dir: ## Create the data folder for the network. If NETWORK environment variable is not provided, mainnet will be used as default.
+create_datadir: ## Create the data folder for the network. If NETWORK environment variable is not provided, mainnet will be used as default.
 	mkdir -p $(DATA_PATH)/$(NETWORK)_data
 
-gen-jwt: create_data_dir ## Create the jwt for a given network. NETWORK environment variable required.
+gen-jwt: create_datadir ## Create the jwt for a given network. NETWORK environment variable required.
 	openssl rand -hex 32 | tr -d "\n" | tee $(DATA_PATH)/$(NETWORK)_data/jwt.hex
 
-sync: create_data_dir ## Run the sync for a given network. SYNC_BLOCK_NUM environment variable required (for block to start from).  If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use.
+sync: create_datadir ## Run the sync for a given network. SYNC_BLOCK_NUM environment variable required (for block to start from).  If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
 endif	
@@ -89,7 +89,7 @@ endif
 
 
 flamegraph-inner: # Inner target used for flamegraph-related targets. Runs flamegraph on the network given by NETWORK.
-	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "rocksdb sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
@@ -172,7 +172,7 @@ start-lighthouse: ## Start lighthouse for the network given by NETWORK.
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT)
 
 start-ethrex: ## Start ethrex for the network given by NETWORK.
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "rocksdb sync-test metrics" --bin ethrex -- \
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \
@@ -209,7 +209,7 @@ server-sync:
 
 	git pull
 
-	tmux kill-server || true
+	tmux kill-session -t sync || true
 
 	sleep 5
 

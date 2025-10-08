@@ -115,10 +115,10 @@ impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
             blob_schedule.osaka = osaka_schedule.into()
         }
         if let Some(bpo1_schedule) = val.bpo1 {
-            blob_schedule.bpo1 = Some(bpo1_schedule.into())
+            blob_schedule.bpo1 = bpo1_schedule.into()
         }
         if let Some(bpo2_schedule) = val.bpo2 {
-            blob_schedule.bpo2 = Some(bpo2_schedule.into())
+            blob_schedule.bpo2 = bpo2_schedule.into()
         }
         if let Some(bpo3_schedule) = val.bpo3 {
             blob_schedule.bpo3 = Some(bpo3_schedule.into())
