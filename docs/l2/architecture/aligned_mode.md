@@ -122,7 +122,7 @@ SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```bash
 git clone git@github.com:yetanotherco/aligned_layer.git
 cd aligned_layer
-git checkout tags/v0.17.0
+git checkout tags/v0.16.1
 ```
 
 2. Edit the `aligned_layer/network_params.rs` file to send some funds to the `committer` and `integration_test` addresses:
@@ -222,7 +222,7 @@ This is because not all the accounts are pre-funded from the genesis.
 3. Send some funds to the Aligned batcher payment service contract from the proof sender:
 
 ```
-cd aligned_layer/crates/cli
+cd aligned_layer/batcher/aligned
 cargo run deposit-to-batcher \
 --network devnet \
 --private_key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
@@ -258,7 +258,14 @@ You can aggregate them by running:
 
 ```
 cd aligned_layer
-make proof_aggregator_start AGGREGATOR=sp1
+make start_proof_aggregator AGGREGATOR=sp1
+```
+
+or 
+
+```
+cd aligned_layer
+make start_proof_aggregator_gpu AGGREGATOR=sp1
 ```
 
 If successful, the `l1_proof_verifier` will print the following logs:
