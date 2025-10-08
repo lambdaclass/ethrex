@@ -16,7 +16,7 @@ use ethrex_common::{
 use ethrex_trie::{Nibbles, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
-    OptimisticTransactionDB, Options, WriteBatch, WriteBatchWithTransaction,
+    OptimisticTransactionDB, Options, WriteBatchWithTransaction,
 };
 use std::{
     collections::HashSet,

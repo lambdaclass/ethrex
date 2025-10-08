@@ -6,6 +6,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+// Nibbles -> encoded node
+pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
+
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
@@ -17,16 +20,29 @@ pub trait TrieDB: Send + Sync {
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 #[derive(Default)]
 pub struct InMemoryTrieDB {
-    pub inner: Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>,
+    inner: NodeMap,
+    prefix: Option<Nibbles>,
 }
 
 impl InMemoryTrieDB {
-    pub const fn new(map: Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>) -> Self {
-        Self { inner: map }
+    pub const fn new(map: NodeMap) -> Self {
+        Self {
+            inner: map,
+            prefix: None,
+        }
     }
+
+    pub const fn new_with_prefix(map: NodeMap, prefix: Nibbles) -> Self {
+        Self {
+            inner: map,
+            prefix: Some(prefix),
+        }
+    }
+
     pub fn new_empty() -> Self {
         Self {
             inner: Default::default(),
+            prefix: None,
         }
     }
 
@@ -40,11 +56,18 @@ impl InMemoryTrieDB {
 
         let hashed_nodes = hashed_nodes
             .into_iter()
-            .map(|(k, v)| (nibbles_to_fixed_size(k), v))
+            .map(|(k, v)| (k.into_vec(), v))
             .collect();
 
         let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
         Ok(Self::new(in_memory_trie))
+    }
+
+    fn apply_prefix(&self, path: Nibbles) -> Nibbles {
+        match &self.prefix {
+            Some(prefix) => prefix.concat(&path),
+            None => path,
+        }
     }
 }
 
@@ -54,7 +77,7 @@ impl TrieDB for InMemoryTrieDB {
             .inner
             .lock()
             .map_err(|_| TrieError::LockError)?
-            .get(&nibbles_to_fixed_size(key))
+            .get(self.apply_prefix(key).as_ref())
             .cloned())
     }
 
@@ -62,7 +85,8 @@ impl TrieDB for InMemoryTrieDB {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
         for (key, value) in key_values {
-            db.insert(nibbles_to_fixed_size(key), value);
+            let prefixed_key = self.apply_prefix(key);
+            db.insert(prefixed_key.into_vec(), value);
         }
 
         Ok(())
@@ -75,7 +99,7 @@ pub fn nibbles_to_fixed_size(nibbles: Nibbles) -> [u8; 33] {
 
     let mut buffer = [0u8; 33];
 
-    // Encode the node as [original_len, node_hash...]
+    // Encode the node as [node_path..., original_len]
     buffer[32] = nibbles.len() as u8;
     buffer[..original_len].copy_from_slice(&node_hash_ref);
     buffer

@@ -449,13 +449,7 @@ impl Trie {
 
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
-        use std::collections::BTreeMap;
-        use std::sync::Arc;
-        use std::sync::Mutex;
-
-        let hmap: BTreeMap<[u8; 33], Vec<u8>> = BTreeMap::new();
-        let map = Arc::new(Mutex::new(hmap));
-        let db = InMemoryTrieDB::new(map);
+        let db = InMemoryTrieDB::new(Default::default());
         Trie::new(Box::new(db))
     }
 }

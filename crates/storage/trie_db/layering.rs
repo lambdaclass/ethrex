@@ -63,7 +63,7 @@ impl TrieLayerCache {
             .extend(
                 key_values
                     .into_iter()
-                    .map(|(path, node)| (path.as_ref().to_vec(), node)),
+                    .map(|(path, node)| (path.into_vec(), node)),
             );
     }
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -95,7 +95,7 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
     match prefix {
         Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
             .append_new(17)
-            .concat(path),
+            .concat(&path),
         None => path,
     }
 }

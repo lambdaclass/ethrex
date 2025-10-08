@@ -665,10 +665,7 @@ pub fn determine_missing_children(
             }
         }
         Node::Extension(node) => {
-            let child_path = node_response
-                .node_request
-                .storage_path
-                .concat(node.prefix.clone());
+            let child_path = node_response.node_request.storage_path.concat(&node.prefix);
             if !node.child.is_valid() {
                 return Ok((vec![], 0));
             }

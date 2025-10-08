@@ -74,6 +74,10 @@ impl Nibbles {
         }
     }
 
+    pub fn into_vec(self) -> Vec<u8> {
+        self.data
+    }
+
     /// Returns the amount of nibbles
     pub fn len(&self) -> usize {
         self.data.len()
@@ -224,9 +228,9 @@ impl Nibbles {
     }
 
     /// Concatenates self and another Nibbles returning a new Nibbles
-    pub fn concat(&self, other: Nibbles) -> Nibbles {
+    pub fn concat(&self, other: &Nibbles) -> Nibbles {
         Nibbles {
-            data: [self.data.clone(), other.data].concat(),
+            data: [&self.data[..], &other.data[..]].concat(),
             already_consumed: self.already_consumed.clone(),
         }
     }

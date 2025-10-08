@@ -165,9 +165,8 @@ async fn heal_state_trie(
                     for (node, meta) in nodes.iter().zip(batch.iter()) {
                         if let Node::Leaf(node) = node {
                             let account = AccountState::decode(&node.value)?;
-                            let account_hash = H256::from_slice(
-                                &meta.path.concat(node.partial.clone()).to_bytes(),
-                            );
+                            let account_hash =
+                                H256::from_slice(&meta.path.concat(&node.partial).to_bytes());
 
                             // // Collect valid code hash
                             if account.code_hash != *EMPTY_KECCACK_HASH {
@@ -287,8 +286,7 @@ async fn heal_state_trie(
                             encoded_to_write.insert(path.slice(0, i), vec![]);
                         }
                         if let Node::Leaf(leaf) = &node {
-                            encoded_to_write
-                                .insert(path.concat(leaf.partial.clone()), leaf.value.clone());
+                            encoded_to_write.insert(path.concat(&leaf.partial), leaf.value.clone());
                         }
                         encoded_to_write.insert(path, node.encode_to_vec());
                     }
@@ -440,7 +438,7 @@ pub fn node_missing_children(
             }
         }
         Node::Extension(node) => {
-            let child_path = path.concat(node.prefix.clone());
+            let child_path = path.concat(&node.prefix);
             if !node.child.is_valid() {
                 return Ok((0, vec![]));
             }
