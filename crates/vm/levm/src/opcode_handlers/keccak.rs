@@ -16,6 +16,7 @@ use sha3::{Digest, Keccak256};
 
 pub struct OpKeccak256Handler;
 impl OpcodeHandler for OpKeccak256Handler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [offset, len] = *vm.current_call_frame.stack.pop()?;
         let (len, offset) = size_offset_to_usize(len, offset)?;

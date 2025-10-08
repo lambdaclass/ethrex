@@ -27,6 +27,7 @@ use ethrex_common::U256;
 /// Implementation for the `LT` opcode.
 pub struct OpLtHandler;
 impl OpcodeHandler for OpLtHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::LT)?;
 
@@ -42,6 +43,7 @@ impl OpcodeHandler for OpLtHandler {
 /// Implementation for the `GT` opcode.
 pub struct OpGtHandler;
 impl OpcodeHandler for OpGtHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::GT)?;
 
@@ -57,6 +59,7 @@ impl OpcodeHandler for OpGtHandler {
 /// Implementation for the `SLT` opcode.
 pub struct OpSLtHandler;
 impl OpcodeHandler for OpSLtHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
 
@@ -79,6 +82,7 @@ impl OpcodeHandler for OpSLtHandler {
 /// Implementation for the `SGT` opcode.
 pub struct OpSGtHandler;
 impl OpcodeHandler for OpSGtHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
 
@@ -101,6 +105,7 @@ impl OpcodeHandler for OpSGtHandler {
 /// Implementation for the `EQ` opcode.
 pub struct OpEqHandler;
 impl OpcodeHandler for OpEqHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
 
@@ -116,6 +121,7 @@ impl OpcodeHandler for OpEqHandler {
 /// Implementation for the `ISZERO` opcode.
 pub struct OpIsZeroHandler;
 impl OpcodeHandler for OpIsZeroHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::ISZERO)?;
@@ -132,6 +138,7 @@ impl OpcodeHandler for OpIsZeroHandler {
 /// Implementation for the `AND` opcode.
 pub struct OpAndHandler;
 impl OpcodeHandler for OpAndHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::AND)?;
 
@@ -145,6 +152,7 @@ impl OpcodeHandler for OpAndHandler {
 /// Implementation for the `OR` opcode.
 pub struct OpOrHandler;
 impl OpcodeHandler for OpOrHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::OR)?;
 
@@ -158,6 +166,7 @@ impl OpcodeHandler for OpOrHandler {
 /// Implementation for the `XOR` opcode.
 pub struct OpXorHandler;
 impl OpcodeHandler for OpXorHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
 
@@ -171,6 +180,7 @@ impl OpcodeHandler for OpXorHandler {
 /// Implementation for the `NOT` opcode.
 pub struct OpNotHandler;
 impl OpcodeHandler for OpNotHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
 
@@ -184,6 +194,7 @@ impl OpcodeHandler for OpNotHandler {
 /// Implementation for the `BYTE` opcode.
 pub struct OpByteHandler;
 impl OpcodeHandler for OpByteHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BYTE)?;
@@ -203,6 +214,7 @@ impl OpcodeHandler for OpByteHandler {
 /// Implementation for the `SHL` opcode.
 pub struct OpShlHandler;
 impl OpcodeHandler for OpShlHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
 
@@ -216,6 +228,7 @@ impl OpcodeHandler for OpShlHandler {
 /// Implementation for the `SHR` opcode.
 pub struct OpShrHandler;
 impl OpcodeHandler for OpShrHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
 
@@ -229,6 +242,7 @@ impl OpcodeHandler for OpShrHandler {
 /// Implementation for the `SAR` opcode.
 pub struct OpSarHandler;
 impl OpcodeHandler for OpSarHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
 

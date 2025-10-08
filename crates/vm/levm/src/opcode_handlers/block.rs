@@ -28,6 +28,7 @@ use ethrex_common::U256;
 /// Implementation for the `BLOCKHASH` opcode.
 pub struct OpBlockHashHandler;
 impl OpcodeHandler for OpBlockHashHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BLOCKHASH)?;
@@ -61,6 +62,7 @@ impl OpcodeHandler for OpBlockHashHandler {
 /// Implementation for the `COINBASE` opcode.
 pub struct OpCoinbaseHandler;
 impl OpcodeHandler for OpCoinbaseHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::COINBASE)?;
@@ -76,6 +78,7 @@ impl OpcodeHandler for OpCoinbaseHandler {
 /// Implementation for the `TIMESTAMP` opcode.
 pub struct OpTimestampHandler;
 impl OpcodeHandler for OpTimestampHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::TIMESTAMP)?;
@@ -89,6 +92,7 @@ impl OpcodeHandler for OpTimestampHandler {
 /// Implementation for the `NUMBER` opcode.
 pub struct OpNumberHandler;
 impl OpcodeHandler for OpNumberHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::NUMBER)?;
@@ -104,6 +108,7 @@ impl OpcodeHandler for OpNumberHandler {
 /// Implementation for the `PREVRANDAO` opcode.
 pub struct OpPrevRandaoHandler;
 impl OpcodeHandler for OpPrevRandaoHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PREVRANDAO)?;
@@ -124,6 +129,7 @@ impl OpcodeHandler for OpPrevRandaoHandler {
 /// Implementation for the `GASLIMIT` opcode.
 pub struct OpGasLimitHandler;
 impl OpcodeHandler for OpGasLimitHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::GASLIMIT)?;
@@ -139,6 +145,7 @@ impl OpcodeHandler for OpGasLimitHandler {
 /// Implementation for the `CHAINID` opcode.
 pub struct OpChainIdHandler;
 impl OpcodeHandler for OpChainIdHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CHAINID)?;
@@ -152,6 +159,7 @@ impl OpcodeHandler for OpChainIdHandler {
 /// Implementation for the `SELFBALANCE` opcode.
 pub struct OpSelfBalanceHandler;
 impl OpcodeHandler for OpSelfBalanceHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
@@ -167,6 +175,7 @@ impl OpcodeHandler for OpSelfBalanceHandler {
 /// Implementation for the `BASEFEE` opcode.
 pub struct OpBaseFeeHandler;
 impl OpcodeHandler for OpBaseFeeHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BASEFEE)?;
@@ -183,6 +192,7 @@ impl OpcodeHandler for OpBaseFeeHandler {
 /// Implementation for the `BLOBHASH` opcode.
 pub struct OpBlobHashHandler;
 impl OpcodeHandler for OpBlobHashHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
@@ -210,6 +220,7 @@ impl OpcodeHandler for OpBlobHashHandler {
 /// Implementation for the `BLOBBASEFEE` opcode.
 pub struct OpBlobBaseFeeHandler;
 impl OpcodeHandler for OpBlobBaseFeeHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;

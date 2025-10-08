@@ -32,6 +32,7 @@ use std::{mem, usize};
 /// Implementation for the `ADDRESS` opcode.
 pub struct OpAddressHandler;
 impl OpcodeHandler for OpAddressHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::ADDRESS)?;
@@ -51,6 +52,7 @@ impl OpcodeHandler for OpAddressHandler {
 /// Implementation for the `BALANCE` opcode.
 pub struct OpBalanceHandler;
 impl OpcodeHandler for OpBalanceHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(vm.current_call_frame.stack.pop1()?);
         vm.current_call_frame
@@ -69,6 +71,7 @@ impl OpcodeHandler for OpBalanceHandler {
 /// Implementation for the `ORIGIN` opcode.
 pub struct OpOriginHandler;
 impl OpcodeHandler for OpOriginHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::ORIGIN)?;
@@ -88,6 +91,7 @@ impl OpcodeHandler for OpOriginHandler {
 /// Implementation for the `GASPRICE` opcode.
 pub struct OpGasPriceHandler;
 impl OpcodeHandler for OpGasPriceHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::GASPRICE)?;
@@ -101,6 +105,7 @@ impl OpcodeHandler for OpGasPriceHandler {
 /// Implementation for the `CALLER` opcode.
 pub struct OpCallerHandler;
 impl OpcodeHandler for OpCallerHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CALLER)?;
@@ -120,6 +125,7 @@ impl OpcodeHandler for OpCallerHandler {
 /// Implementation for the `CALLVALUE` opcode.
 pub struct OpCallValueHandler;
 impl OpcodeHandler for OpCallValueHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CALLVALUE)?;
@@ -135,6 +141,7 @@ impl OpcodeHandler for OpCallValueHandler {
 /// Implementation for the `CALLDATALOAD` opcode.
 pub struct OpCallDataLoadHandler;
 impl OpcodeHandler for OpCallDataLoadHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CALLDATALOAD)?;
@@ -154,6 +161,7 @@ impl OpcodeHandler for OpCallDataLoadHandler {
 /// Implementation for the `CALLDATASIZE` opcode.
 pub struct OpCallDataSizeHandler;
 impl OpcodeHandler for OpCallDataSizeHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CALLDATASIZE)?;
@@ -169,6 +177,7 @@ impl OpcodeHandler for OpCallDataSizeHandler {
 /// Implementation for the `CALLDATACOPY` opcode.
 pub struct OpCallDataCopyHandler;
 impl OpcodeHandler for OpCallDataCopyHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
         let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
@@ -203,6 +212,7 @@ impl OpcodeHandler for OpCallDataCopyHandler {
 /// Implementation for the `CODESIZE` opcode.
 pub struct OpCodeSizeHandler;
 impl OpcodeHandler for OpCodeSizeHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CODESIZE)?;
@@ -218,6 +228,7 @@ impl OpcodeHandler for OpCodeSizeHandler {
 /// Implementation for the `CODECOPY` opcode.
 pub struct OpCodeCopyHandler;
 impl OpcodeHandler for OpCodeCopyHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
         let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
@@ -252,6 +263,7 @@ impl OpcodeHandler for OpCodeCopyHandler {
 /// Implementation for the `EXTCODESIZE` opcode.
 pub struct OpExtCodeSizeHandler;
 impl OpcodeHandler for OpExtCodeSizeHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(vm.current_call_frame.stack.pop1()?);
         vm.current_call_frame
@@ -270,6 +282,7 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
 /// Implementation for the `EXTCODECOPY` opcode.
 pub struct OpExtCodeCopyHandler;
 impl OpcodeHandler for OpExtCodeCopyHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [address, dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
         let address = word_to_address(address);
@@ -306,6 +319,7 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
 /// Implementation for the `EXTCODEHASH` opcode.
 pub struct OpExtCodeHashHandler;
 impl OpcodeHandler for OpExtCodeHashHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(vm.current_call_frame.stack.pop1()?);
         vm.current_call_frame
@@ -332,6 +346,7 @@ impl OpcodeHandler for OpExtCodeHashHandler {
 /// Implementation for the `RETURNDATASIZE` opcode.
 pub struct OpReturnDataSizeHandler;
 impl OpcodeHandler for OpReturnDataSizeHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
@@ -347,6 +362,7 @@ impl OpcodeHandler for OpReturnDataSizeHandler {
 /// Implementation for the `RETURNDATACOPY` opcode.
 pub struct OpReturnDataCopyHandler;
 impl OpcodeHandler for OpReturnDataCopyHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
         let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;

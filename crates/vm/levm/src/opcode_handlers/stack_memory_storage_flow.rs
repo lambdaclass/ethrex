@@ -33,6 +33,7 @@ use std::{mem, num::Wrapping, slice};
 /// Implementation for the `POP` opcode.
 pub struct OpPopHandler;
 impl OpcodeHandler for OpPopHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::POP)?;
 
@@ -45,6 +46,7 @@ impl OpcodeHandler for OpPopHandler {
 /// Implementation for the `GAS` opcode.
 pub struct OpGasHandler;
 impl OpcodeHandler for OpGasHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
 
@@ -59,6 +61,7 @@ impl OpcodeHandler for OpGasHandler {
 /// Implementation for the `PC` opcode.
 pub struct OpPcHandler;
 impl OpcodeHandler for OpPcHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::PC)?;
 
@@ -75,6 +78,7 @@ impl OpcodeHandler for OpPcHandler {
 /// Implementation for the `MLOAD` opcode.
 pub struct OpMLoadHandler;
 impl OpcodeHandler for OpMLoadHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let offset = u256_to_usize(vm.current_call_frame.stack.pop1()?)?;
         vm.current_call_frame
@@ -94,6 +98,7 @@ impl OpcodeHandler for OpMLoadHandler {
 /// Implementation for the `MSTORE` opcode.
 pub struct OpMStoreHandler;
 impl OpcodeHandler for OpMStoreHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [offset, value] = *vm.current_call_frame.stack.pop()?;
 
@@ -118,6 +123,7 @@ impl OpcodeHandler for OpMStoreHandler {
 /// Implementation for the `MSTORE8` opcode.
 pub struct OpMStore8Handler;
 impl OpcodeHandler for OpMStore8Handler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [offset, value] = *vm.current_call_frame.stack.pop()?;
         let offset = u256_to_usize(offset)?;
@@ -140,6 +146,7 @@ impl OpcodeHandler for OpMStore8Handler {
 /// Implementation for the `MCOPY` opcode.
 pub struct OpMCopyHandler;
 impl OpcodeHandler for OpMCopyHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
         let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
@@ -163,6 +170,7 @@ impl OpcodeHandler for OpMCopyHandler {
 /// Implementation for the `MSIZE` opcode.
 pub struct OpMSizeHandler;
 impl OpcodeHandler for OpMSizeHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::MSIZE)?;
@@ -178,6 +186,7 @@ impl OpcodeHandler for OpMSizeHandler {
 /// Implementation for the `TLOAD` opcode.
 pub struct OpTLoadHandler;
 impl OpcodeHandler for OpTLoadHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::TLOAD)?;
@@ -194,6 +203,7 @@ impl OpcodeHandler for OpTLoadHandler {
 /// Implementation for the `TSTORE` opcode.
 pub struct OpTStoreHandler;
 impl OpcodeHandler for OpTStoreHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         if vm.current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
@@ -213,6 +223,7 @@ impl OpcodeHandler for OpTStoreHandler {
 /// Implementation for the `SLOAD` opcode.
 pub struct OpSLoadHandler;
 impl OpcodeHandler for OpSLoadHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let key = {
             let key = vm.current_call_frame.stack.pop1()?;
@@ -233,6 +244,7 @@ impl OpcodeHandler for OpSLoadHandler {
 /// Implementation for the `SSTORE` opcode.
 pub struct OpSStoreHandler;
 impl OpcodeHandler for OpSStoreHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         if vm.current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
@@ -302,6 +314,7 @@ impl OpcodeHandler for OpSStoreHandler {
 /// Implementation for the `JUMPDEST` opcode.
 pub struct OpJumpDestHandler;
 impl OpcodeHandler for OpJumpDestHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::JUMPDEST)?;
@@ -313,6 +326,7 @@ impl OpcodeHandler for OpJumpDestHandler {
 /// Implementation for the `JUMP` opcode.
 pub struct OpJumpHandler;
 impl OpcodeHandler for OpJumpHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::JUMP)?;
@@ -327,6 +341,7 @@ impl OpcodeHandler for OpJumpHandler {
 /// Implementation for the `JUMPI` opcode.
 pub struct OpJumpIHandler;
 impl OpcodeHandler for OpJumpIHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::JUMPI)?;

@@ -15,6 +15,7 @@ use ethrex_common::U256;
 /// Implementation for the `PUSH0` opcode.
 pub struct OpPush0Handler;
 impl OpcodeHandler for OpPush0Handler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PUSH0)?;
@@ -28,6 +29,7 @@ impl OpcodeHandler for OpPush0Handler {
 /// Implementation for the `PUSHn` opcode.
 pub struct OpPushHandler<const N: usize>;
 impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let literal_offset = vm.current_call_frame.pc;
         vm.current_call_frame.pc = vm

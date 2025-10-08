@@ -29,6 +29,7 @@ use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
 
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [
             gas,
@@ -112,6 +113,7 @@ impl OpcodeHandler for OpCallHandler {
 
 pub struct OpCallCodeHandler;
 impl OpcodeHandler for OpCallCodeHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [
             gas,
@@ -188,6 +190,7 @@ impl OpcodeHandler for OpCallCodeHandler {
 
 pub struct OpDelegateCallHandler;
 impl OpcodeHandler for OpDelegateCallHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [
             gas,
@@ -262,6 +265,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
 
 pub struct OpStaticCallHandler;
 impl OpcodeHandler for OpStaticCallHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [
             gas,
@@ -336,6 +340,7 @@ impl OpcodeHandler for OpStaticCallHandler {
 
 pub struct OpReturnHandler;
 impl OpcodeHandler for OpReturnHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [offset, len] = *vm.current_call_frame.stack.pop()?;
         let (len, offset) = size_offset_to_usize(len, offset)?;
@@ -356,6 +361,7 @@ impl OpcodeHandler for OpReturnHandler {
 
 pub struct OpCreateHandler;
 impl OpcodeHandler for OpCreateHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [value_in_wei, code_offset, code_len] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
@@ -374,6 +380,7 @@ impl OpcodeHandler for OpCreateHandler {
 
 pub struct OpCreate2Handler;
 impl OpcodeHandler for OpCreate2Handler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [value_in_wei, code_offset, code_len, salt] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
@@ -392,6 +399,7 @@ impl OpcodeHandler for OpCreate2Handler {
 
 pub struct OpSelfDestructHandler;
 impl OpcodeHandler for OpSelfDestructHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         todo!()
     }
@@ -399,6 +407,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
 
 pub struct OpRevertHandler;
 impl OpcodeHandler for OpRevertHandler {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [offset, len] = *vm.current_call_frame.stack.pop()?;
         let (len, offset) = size_offset_to_usize(len, offset)?;

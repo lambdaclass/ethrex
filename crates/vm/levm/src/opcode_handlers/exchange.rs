@@ -13,6 +13,7 @@ use crate::{
 /// Implementation for the `SWAPn` opcodes.
 pub struct OpSwapHandler<const N: usize>;
 impl<const N: usize> OpcodeHandler for OpSwapHandler<N> {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::DUPN)?;

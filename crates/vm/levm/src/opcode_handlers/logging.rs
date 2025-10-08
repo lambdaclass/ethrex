@@ -18,6 +18,7 @@ use ethrex_common::{H256, U256, types::Log};
 /// Implementation for the `LOGn` opcodes.
 pub struct OpLogHandler<const N: usize>;
 impl<const N: usize> OpcodeHandler for OpLogHandler<N> {
+    #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         if vm.current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
