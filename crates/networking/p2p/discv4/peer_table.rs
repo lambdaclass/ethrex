@@ -709,12 +709,13 @@ impl PeerTableServer {
     async fn new_contacts(&mut self, nodes: Vec<Node>, local_node_id: H256) {
         for node in nodes {
             let node_id = node.node_id();
-            if let Entry::Vacant(vacant_entry) = self.contacts.entry(node_id) {
-                if !self.discarded_contacts.contains(&node_id) && node_id != local_node_id {
-                    vacant_entry.insert(Contact::from(node));
-                    METRICS.record_new_discovery().await;
-                }
-            };
+            if let Entry::Vacant(vacant_entry) = self.contacts.entry(node_id)
+                && !self.discarded_contacts.contains(&node_id)
+                && node_id != local_node_id
+            {
+                vacant_entry.insert(Contact::from(node));
+                METRICS.record_new_discovery().await;
+            }
         }
     }
 
