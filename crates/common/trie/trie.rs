@@ -372,9 +372,7 @@ impl Trie {
 
     /// Obtain the encoded node given its path.
     /// Allows usage of full paths (byte slice of 32 bytes) or compact-encoded nibble slices (with length lower than 32)
-    pub fn get_node(&self, _partial_path: &PathRLP) -> Result<Vec<u8>, TrieError> {
-        todo!();
-        /*
+    pub fn get_node(&self, partial_path: &PathRLP) -> Result<Vec<u8>, TrieError> {
         // Convert compact-encoded nibbles into a byte slice if necessary
         let partial_path = match partial_path.len() {
             // Compact-encoded nibbles
@@ -387,6 +385,7 @@ impl Trie {
 
         fn get_node_inner(
             db: &dyn TrieDB,
+            current_path: Nibbles,
             node: Node,
             mut partial_path: Nibbles,
         ) -> Result<Vec<u8>, TrieError> {
@@ -399,9 +398,11 @@ impl Trie {
                     Some(idx) => {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
-                            let child_node =
-                                child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
-                            get_node_inner(db, child_node, partial_path)
+                            let child_path = current_path.append_new(idx as u8);
+                            let child_node = child_ref
+                                .get_node(db, child_path.clone())?
+                                .ok_or(TrieError::InconsistentTree)?;
+                            get_node_inner(db, child_path, child_node, partial_path)
                         } else {
                             Ok(vec![])
                         }
@@ -412,11 +413,12 @@ impl Trie {
                     if partial_path.skip_prefix(&extension_node.prefix)
                         && extension_node.child.is_valid()
                     {
+                        let child_path = partial_path.concat(&extension_node.prefix);
                         let child_node = extension_node
                             .child
-                            .get_node(db)?
+                            .get_node(db, child_path.clone())?
                             .ok_or(TrieError::InconsistentTree)?;
-                        get_node_inner(db, child_node, partial_path)
+                        get_node_inner(db, child_path, child_node, partial_path)
                     } else {
                         Ok(vec![])
                     }
@@ -429,15 +431,15 @@ impl Trie {
         if self.root.is_valid() {
             get_node_inner(
                 self.db.as_ref(),
+                Default::default(),
                 self.root
-                    .get_node(self.db.as_ref())?
+                    .get_node(self.db.as_ref(), Default::default())?
                     .ok_or(TrieError::InconsistentTree)?,
                 partial_path,
             )
         } else {
             Ok(Vec::new())
         }
-        */
     }
 
     pub fn root_node(&self) -> Result<Option<Node>, TrieError> {

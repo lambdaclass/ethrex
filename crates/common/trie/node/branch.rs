@@ -101,7 +101,6 @@ impl BranchNode {
             }
         } else if let ValueOrHash::Value(value) = value {
             // Insert into self
-
             self.update(value);
         } else {
             todo!("handle override case (error?)")
