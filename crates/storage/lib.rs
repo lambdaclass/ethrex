@@ -5,6 +5,7 @@ mod rlp;
 mod store;
 pub mod store_db;
 mod trie_db;
+#[cfg(feature = "rocksdb")]
 mod utils;
 
 pub mod error;

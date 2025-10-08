@@ -247,15 +247,14 @@ impl L1ProofVerifier {
 
         if let Err(EthClientError::EstimateGasError(EstimateGasError::RPCError(error))) =
             send_verify_tx_result.as_ref()
+            && error.contains("Invalid ALIGNED proof")
         {
-            if error.contains("Invalid ALIGNED proof") {
-                warn!("Deleting invalid Aligned proofs");
-                for batch_number in first_batch_number..=last_batch_number {
-                    for proof_type in &self.needed_proof_types {
-                        self.rollup_store
-                            .delete_proof_by_batch_and_type(batch_number, *proof_type)
-                            .await?;
-                    }
+            warn!("Deleting invalid ALIGNED proof");
+            for batch_number in first_batch_number..=last_batch_number {
+                for proof_type in &self.needed_proof_types {
+                    self.rollup_store
+                        .delete_proof_by_batch_and_type(batch_number, *proof_type)
+                        .await?;
                 }
             }
         }

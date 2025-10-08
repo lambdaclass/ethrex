@@ -46,10 +46,10 @@ fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value
         // we're reading a genesis file that simply does not support
         // a certain configuration from the genesis block,
         // so we simply ignore it.
-        if let Some(value) = config.get(key) {
-            if *value != Value::Null {
-                ordered_config.insert(key.to_owned(), value.clone());
-            }
+        if let Some(value) = config.get(key)
+            && *value != Value::Null
+        {
+            ordered_config.insert(key.to_owned(), value.clone());
         };
     }
     // Check we're not missing any keys before returning
@@ -109,10 +109,10 @@ pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String
         }
     }
     for k in optional_keys {
-        if let Some(v) = genesis_as_map.get(k) {
-            if *v != Value::Null {
-                ordered_map.insert(k.to_owned(), v.clone().take());
-            }
+        if let Some(v) = genesis_as_map.get(k)
+            && *v != Value::Null
+        {
+            ordered_map.insert(k.to_owned(), v.clone().take());
         }
     }
     // Check 1: check we're not missing any keys.
