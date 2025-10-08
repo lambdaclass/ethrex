@@ -207,7 +207,6 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_TDX",
         help_heading = "Deployer options",
-        requires = "tdx_verifier_address",
         help = "If true, L2 will require TDX proofs to validate batch proofs and settle state."
     )]
     pub tdx: bool,
@@ -225,7 +224,6 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_ALIGNED",
         help_heading = "Deployer options",
-        requires = "aligned_aggregator_address",
         help = "If true, L2 will verify proofs using Aligned Layer instead of smart contract verifiers."
     )]
     pub aligned: bool,
