@@ -315,6 +315,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethrex_common::types::{Genesis, GenesisAccount};
 use ethrex_common::{Address, H160, U256};
+#[cfg(feature = "l2")]
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, CREATE2DEPLOYER_ADDRESS, DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
     L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
@@ -375,6 +376,7 @@ pub const IMPL_MASK: Address = H160([
     0x00, 0x00, 0x10, 0x00,
 ]);
 
+#[cfg(feature = "l2")]
 fn add_with_proxy(
     genesis: &mut Genesis,
     address: Address,
@@ -398,10 +400,12 @@ fn add_with_proxy(
     );
 
     let mut storage = HashMap::new();
+    #[cfg(feature = "l2")]
     storage.insert(
         get_erc1967_slot("eip1967.proxy.implementation"),
         address_to_word(impl_address),
     );
+    #[cfg(feature = "l2")]
     storage.insert(
         get_erc1967_slot("eip1967.proxy.admin"),
         address_to_word(ADMIN_ADDRESS),
@@ -418,6 +422,7 @@ fn add_with_proxy(
     Ok(())
 }
 
+#[cfg(feature = "l2")]
 pub fn update_genesis_file(
     l2_genesis_path: &Path,
     out_dir: &Path,
@@ -449,6 +454,7 @@ pub fn update_genesis_file(
     Ok(())
 }
 
+#[cfg(feature = "l2")]
 fn add_deterministic_deployers(genesis: &mut Genesis, out_dir: &Path) {
     genesis.alloc.insert(
         DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
