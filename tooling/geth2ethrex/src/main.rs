@@ -199,6 +199,9 @@ impl GethDB {
         ));
         let index_file = File::open(&idx_path)?;
         let size = index_file.metadata()?.size();
+        if first * 6 >= size {
+            return Ok(Vec::new());
+        }
         // We need one index back to find the start of the entries.
         let to_read = if last * 6 >= size {
             (size - first * 6) as usize
