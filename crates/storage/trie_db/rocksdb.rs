@@ -82,7 +82,6 @@ impl TrieDB for RocksDBTrieDB {
     }
 
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
-        info!("Putting {} nodes to RocksDB", key_values.len());
         let cf = self.cf_handle()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
         // 532 is the maximum size of an encoded branch node.
