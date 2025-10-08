@@ -92,8 +92,14 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     )?;
     info!("Inserting canonical hashes");
     let headers_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
+    let numbers_cf = ethrex_db.cf_handle("block_numbers").unwrap();
     for (i, hash) in hashes.into_iter().rev().enumerate() {
         ethrex_db.put_cf(headers_cf, (block_number - i as u64).encode_to_vec(), hash)?;
+        ethrex_db.put_cf(
+            numbers_cf,
+            hash.encode_to_vec(),
+            (block_number - i as u64).to_be_bytes(),
+        )?;
     }
     info!("Inserting latest block number");
     ethrex_db.put_cf(
