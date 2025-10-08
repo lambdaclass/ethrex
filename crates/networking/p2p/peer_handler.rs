@@ -1354,7 +1354,7 @@ impl PeerHandler {
         let total_roots = accounts_by_root_hash.len();
         let task_span = STORAGE_ROOTS_PER_TASK.min(STORAGE_ROOTS_PER_CHUNK);
         // how many fully-populated task_span slices fit in
-        let task_partition_count = (total_roots + task_span - 1) / task_span;
+        let task_partition_count = total_roots.div_ceil(task_span);
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
@@ -1446,7 +1446,7 @@ impl PeerHandler {
 
                 for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                     for account in accounts {
-                        accounts_done.entry(*account).or_insert_with(Vec::new);
+                        accounts_done.entry(*account).or_default();
                     }
                 }
 
@@ -1526,7 +1526,7 @@ impl PeerHandler {
                             );
                             if old_intervals.is_empty() {
                                 for account in accounts_by_root_hash[remaining_start].1.iter() {
-                                    accounts_done.entry(*account).or_insert_with(Vec::new);
+                                    accounts_done.entry(*account).or_default();
                                     account_storage_roots.healed_accounts.insert(*account);
                                 }
                             }
@@ -1773,10 +1773,8 @@ impl PeerHandler {
                     .map_err(|_| PeerHandlerError::CreateStorageSnapshotsDir)?;
             }
 
-            let path = get_account_storages_snapshot_file(
-                account_storages_snapshots_dir,
-                *chunk_index,
-            );
+            let path =
+                get_account_storages_snapshot_file(account_storages_snapshots_dir, *chunk_index);
             dump_storages_to_file(&path, snapshot)
                 .map_err(|_| PeerHandlerError::WriteStorageSnapshotsDir(*chunk_index))?;
             *chunk_index += 1;
