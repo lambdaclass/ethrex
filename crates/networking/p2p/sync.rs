@@ -51,7 +51,10 @@ const SECONDS_PER_BLOCK: u64 = 12;
 /// Bytecodes to downloader per batch
 const BYTECODE_CHUNK_SIZE: usize = 50_000;
 
-const MISSING_SLOTS_PERCENTAGE: f64 = 0.9;
+/// We assume this amount of slots are missing a block to adjust our timestamp
+/// based update pivot algorithm. This is also used to try to find "safe" blocks in the chain
+/// that are unlikely to be re-orged.
+const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
@@ -146,7 +149,8 @@ impl Syncer {
                     start_time.elapsed().as_secs()
                 );
             }
-            Err(error) => warn!(
+            // TODO #2767: If the error is irrecoverable, we should exit ethrex
+            Err(error) => error!(
                 "Sync cycle failed due to {error}, time elapsed: {} secs ",
                 start_time.elapsed().as_secs()
             ),
@@ -304,10 +308,10 @@ impl Syncer {
         }
 
         if let SyncMode::Snap = sync_mode {
-            self.snap_sync(store, &mut block_sync_state).await?;
+            self.snap_sync(&store, &mut block_sync_state).await?;
 
-            // Next sync will be full-sync
-            block_sync_state.into_fullsync().await?;
+            store.clear_snap_state().await?;
+
             self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -335,7 +339,7 @@ impl Syncer {
         loop {
             debug!("Sync Log 1: In Full Sync");
             debug!(
-                "Sync Log 3: State current headears len {}",
+                "Sync Log 3: State current headers len {}",
                 block_sync_state.current_headers.len()
             );
             debug!(
@@ -813,7 +817,7 @@ async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
 impl Syncer {
     async fn snap_sync(
         &mut self,
-        store: Store,
+        store: &Store,
         block_sync_state: &mut BlockSyncState,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
@@ -1322,6 +1326,7 @@ pub async fn update_pivot(
         } else {
             return Err(SyncError::NotInSnapSync);
         }
+        *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
     }
 }

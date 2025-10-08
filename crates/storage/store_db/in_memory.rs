@@ -16,7 +16,7 @@ pub type NodeMap = Arc<Mutex<BTreeMap<NodeHash, Vec<u8>>>>;
 pub struct Store(Arc<Mutex<StoreInner>>);
 
 #[derive(Default, Debug)]
-struct StoreInner {
+pub struct StoreInner {
     chain_data: ChainData,
     block_numbers: HashMap<BlockHash, BlockNumber>,
     canonical_hashes: HashMap<BlockNumber, BlockHash>,
@@ -27,9 +27,9 @@ struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    state_trie_nodes: NodeMap,
+    pub state_trie_nodes: NodeMap,
     // A storage trie for each hashed account address
-    storage_trie_nodes: HashMap<H256, NodeMap>,
+    pub storage_trie_nodes: HashMap<H256, NodeMap>,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores invalid blocks and their latest valid ancestor
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
@@ -66,7 +66,7 @@ impl Store {
     pub fn new() -> Self {
         Self::default()
     }
-    fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
+    pub fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
         self.0.lock().map_err(|_| StoreError::LockError)
     }
 }

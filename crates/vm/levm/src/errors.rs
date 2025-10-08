@@ -96,8 +96,10 @@ pub enum TxValidationError {
         priority_fee: U256,
         max_fee_per_gas: U256,
     },
-    #[error("Intrinsic gas too low")]
+    #[error("Transaction gas limit lower than the minimum gas cost to execute the transaction")]
     IntrinsicGasTooLow,
+    #[error("Transaction gas limit lower than the gas cost floor for calldata tokens")]
+    IntrinsicGasBelowFloorGasCost,
     #[error(
         "Gas allowance exceeded. Block gas limit: {block_gas_limit}, transaction gas limit: {tx_gas_limit}"
     )]
@@ -218,12 +220,9 @@ pub enum DatabaseError {
     Custom(String),
 }
 
-#[derive(Debug, Clone)]
-/// Note: "Halt" does not mean "Error during execution" it simply
-/// means that the execution stopped. It's not called "Stop" because
-/// "Stop" is an Opcode
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OpcodeResult {
-    Continue { pc_increment: usize },
+    Continue,
     Halt,
 }
 

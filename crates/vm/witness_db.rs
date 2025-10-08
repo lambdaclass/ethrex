@@ -21,7 +21,7 @@ impl GuestProgramStateWrapper {
         }
     }
 
-    fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, GuestProgramStateError> {
+    pub fn lock_mutex(&self) -> Result<MutexGuard<GuestProgramState>, GuestProgramStateError> {
         self.inner
             .lock()
             .map_err(|_| GuestProgramStateError::Database("Failed to lock DB".to_string()))

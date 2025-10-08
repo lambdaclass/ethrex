@@ -5,9 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use bytes::BytesMut;
+use ethrex_common::H256;
 use ethrex_common::{H512, U256};
-use futures::{SinkExt as _, StreamExt, stream::SplitSink};
-use keccak_hash::H256;
+use futures::StreamExt;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
@@ -35,7 +36,6 @@ use crate::{
     types::{Endpoint, Node, NodeRecord},
     utils::{
         get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
-        unmap_ipv4in6_address,
     },
 };
 
@@ -81,17 +81,12 @@ pub enum OutMessage {
     Done,
 }
 
-type UdpFramedSplitSink =
-    SplitSink<UdpFramed<Discv4Codec, Arc<UdpSocket>>, (Message, std::net::SocketAddr)>;
-
 #[derive(Debug)]
 pub struct DiscoveryServer {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
-    /// Sink end of the UdpFramed stream to send messages to peers
-    sink: Option<Arc<Mutex<UdpFramedSplitSink>>>,
     kademlia: Kademlia,
 }
 
@@ -114,7 +109,6 @@ impl DiscoveryServer {
             local_node_record,
             signer,
             udp_socket,
-            sink: None,
             kademlia: kademlia.clone(),
         };
 
@@ -156,7 +150,7 @@ impl DiscoveryServer {
                 }
 
                 let node = Node::new(
-                    unmap_ipv4in6_address(from.ip()),
+                    from.ip().to_canonical(),
                     from.port(),
                     ping_message.from.tcp_port,
                     sender_public_key,
@@ -246,8 +240,7 @@ impl DiscoveryServer {
                 continue;
             }
 
-            if let Err(err) = self.send_find_node(&contact.node).await {
-                error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err, "Error sending message");
+            if self.send_find_node(&contact.node).await.is_err() {
                 contact.disposable = true;
                 METRICS.record_new_discarded_node().await;
             }
@@ -319,7 +312,7 @@ impl DiscoveryServer {
         let ping_hash: [u8; 32] = buf[..32]
             .try_into()
             .expect("first 32 bytes are the message hash");
-        // We do not use the Sink/Codec here, as we already encoded the message to calculate hash.
+        // We do not use self.send() here, as we already encoded the message to calculate hash.
         self.udp_socket.send_to(&buf, node.udp_addr()).await?;
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
         Ok(H256::from(ping_hash))
@@ -353,9 +346,7 @@ impl DiscoveryServer {
         let random_pub_key = public_key_from_signing_key(&random_priv_key);
 
         let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
-        self.send(msg, node.udp_addr()).await.inspect_err(|e| {
-            error!(sent = "FindNode", to = ?node, err = ?e, "Error sending message");
-        })?;
+        self.send(msg, node.udp_addr()).await?;
 
         debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
@@ -447,26 +438,35 @@ impl DiscoveryServer {
         // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
         // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
         // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-        if from.ip() != node.ip {
+        if from.ip().to_canonical() != node.ip {
             debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
             return;
         }
 
-        let neighbors = get_closest_nodes(node_id, table.clone());
+        let cloned_table = table.clone();
 
         drop(table);
 
+        let Ok(neighbors) =
+            tokio::task::spawn_blocking(move || get_closest_nodes(node_id, cloned_table))
+                .await
+                .inspect_err(|err| {
+                    debug!(
+                        received = "FindNode",
+                        to = %format!("{sender_public_key:#x}"),
+                        err = ?err,
+                        "Error getting closest nodes"
+                    )
+                })
+        else {
+            return;
+        };
         // A single node encodes to at most 89B, so 8 of them are at most 712B plus
         // recursive length and expiration time, well within bound of 1280B per packet.
         // Sending all in one packet would exceed bounds with the nodes only, weighing
         // up to 1424B.
         for chunk in neighbors.chunks(8) {
-            let _ = self
-                .send_neighbors(chunk.to_vec(), &node)
-                .await
-                .inspect_err(|e| {
-                    error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e, "Error sending message");
-                });
+            let _ = self.send_neighbors(chunk.to_vec(), &node).await;
         }
     }
 
@@ -509,22 +509,16 @@ impl DiscoveryServer {
         table.entry(node_id).and_modify(|c| c.knows_us = true);
     }
 
-    async fn send(&self, message: Message, addr: SocketAddr) -> Result<(), DiscoveryServerError> {
-        if let Some(s) = &self.sink {
-            s.lock()
-                .await
-                .send((message.clone(), addr))
-                .await
-                // Logging extra info to solve https://github.com/lambdaclass/ethrex/issues/4492
-                // Remove next line once the cause of the error is found
-                .inspect_err(
-                    |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
-                )
-                .map_err(DiscoveryServerError::MessageSendFailure)
-        } else {
-            error!("Trying to send a message through a non-initialized UdpSocket");
-            Ok(())
-        }
+    async fn send(
+        &self,
+        message: Message,
+        addr: SocketAddr,
+    ) -> Result<usize, DiscoveryServerError> {
+        let mut buf = BytesMut::new();
+        message.encode_with_header(&mut buf, &self.signer);
+        Ok(self.udp_socket.send_to(&buf, addr).await.inspect_err(
+            |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
+        )?)
     }
 }
 
@@ -535,12 +529,10 @@ impl GenServer for DiscoveryServer {
     type Error = DiscoveryServerError;
 
     async fn init(
-        mut self,
+        self,
         handle: &GenServerHandle<Self>,
     ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        let framed = UdpFramed::new(self.udp_socket.clone(), Discv4Codec::new(self.signer));
-        let (sink, stream) = framed.split();
-        self.sink = Some(Arc::new(Mutex::new(sink)));
+        let stream = UdpFramed::new(self.udp_socket.clone(), Discv4Codec::new(self.signer));
 
         spawn_listener(
             handle.clone(),

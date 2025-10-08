@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::report::Report;
+
 #[derive(Serialize)]
 pub struct SlackWebHookRequest {
     pub blocks: Vec<SlackWebHookBlock>,
@@ -34,4 +36,21 @@ pub enum SlackWebHookActionElement {
         text: SlackWebHookBlock,
         url: String,
     },
+}
+
+pub async fn try_send_report_to_slack(
+    report: &Report,
+    slack_webhook_url: Option<reqwest::Url>,
+) -> Result<(), reqwest::Error> {
+    let Some(webhook_url) = slack_webhook_url else {
+        return Ok(());
+    };
+
+    let client = reqwest::Client::new();
+
+    let payload = report.to_slack_message();
+
+    client.post(webhook_url).json(&payload).send().await?;
+
+    Ok(())
 }

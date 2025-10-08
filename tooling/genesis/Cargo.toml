@@ -1,7 +1,9 @@
 [package]
 name = "genesis-tool"
-edition.workspace = true
 version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true

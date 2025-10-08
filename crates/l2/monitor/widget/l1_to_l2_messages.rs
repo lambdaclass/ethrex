@@ -1,10 +1,10 @@
 use std::fmt::Display;
 
+use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, get_pending_privileged_transactions};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
-use keccak_hash::keccak;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},

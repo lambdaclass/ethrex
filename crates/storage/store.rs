@@ -1,8 +1,6 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
 use bytes::Bytes;
@@ -35,9 +33,9 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<dyn StoreEngine>,
-    chain_config: Arc<RwLock<ChainConfig>>,
-    latest_block_header: Arc<RwLock<BlockHeader>>,
+    pub engine: Arc<dyn StoreEngine>,
+    pub chain_config: Arc<RwLock<ChainConfig>>,
+    pub latest_block_header: Arc<RwLock<BlockHeader>>,
 }
 
 pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -45,8 +43,6 @@ pub type StorageTrieNodes = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
-    Libmdbx,
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
@@ -85,12 +81,6 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
-                chain_config: Default::default(),
-                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
-            },
-            #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
@@ -139,9 +129,11 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
+
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
+
         let account_state = AccountState::decode(&encoded_state)?;
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
@@ -1331,6 +1323,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
+
 fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
@@ -1362,12 +1355,6 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_store() {
         test_store_suite(EngineType::InMemory).await;
-    }
-
-    #[cfg(feature = "libmdbx")]
-    #[tokio::test]
-    async fn test_libmdbx_store() {
-        test_store_suite(EngineType::Libmdbx).await;
     }
 
     #[cfg(feature = "rocksdb")]
