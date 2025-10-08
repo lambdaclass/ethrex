@@ -202,7 +202,7 @@ impl GethDB {
         let last = last.min(size / 6);
         // We need one index back to find the start of the entries.
         let to_read = ((last - first + 2) * 6) as usize;
-        debug!(
+        warn!(
             path = idx_path.to_string_lossy().to_string(),
             size, first, last, to_read, "About to read index file"
         );
