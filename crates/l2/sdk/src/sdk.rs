@@ -671,7 +671,7 @@ pub async fn send_generic_transaction(
         }
         TxType::EIP4844 => {
             // TODO: see how to check for fork
-            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, Fork::Prague)?;
+            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, Fork::Osaka)?;
             tx.tx
                 .sign_inplace(signer)
                 .await
