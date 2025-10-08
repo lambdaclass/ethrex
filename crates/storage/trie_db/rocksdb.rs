@@ -3,7 +3,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
-use tracing::info;
 
 use crate::trie_db::layering::apply_prefix;
 
