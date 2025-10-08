@@ -153,8 +153,8 @@ jobs:
             # AccountRange and GetTrieNodes don't pass anymore.
             # Findnode/BasicFindnode fails due to packets being processed out of order
             # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
-            hive_repository: lambdaclass/hive
-            hive_version: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
+            hive_repository: ethereum/hive
+            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
