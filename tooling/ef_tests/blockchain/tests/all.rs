@@ -32,13 +32,9 @@ const SKIPPED_BASE: &[&str] = &[
 ];
 
 // Extra skips added only for prover backends.
-#[cfg(any(feature = "sp1", feature = "stateless"))]
-const EXTRA_SKIPS: &[&str] = &[
-    // These tests fail to rebuild tries in the execution witness, see why
-    "test_large_amount",
-    "test_multiple_withdrawals_same_address",
-];
-#[cfg(not(any(feature = "sp1", feature = "stateless")))]
+#[cfg(feature = "sp1")]
+const EXTRA_SKIPS: &[&str] = &[];
+#[cfg(not(feature = "sp1"))]
 const EXTRA_SKIPS: &[&str] = &[];
 
 // Select backend
