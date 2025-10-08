@@ -696,7 +696,7 @@ impl PeerHandler {
                                 }
                                 Some(RLPxMessage::Receipts69(res)) => {
                                     if res.get_id() == request_id {
-                                        return Some(res.into_receipts());
+                                        return Some(res.receipts);
                                     }
                                     return None;
                                 }
