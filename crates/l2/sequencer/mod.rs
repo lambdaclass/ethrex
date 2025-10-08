@@ -17,6 +17,8 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
+#[cfg(feature = "metrics")]
+use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -42,7 +44,7 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     cancellation_token: CancellationToken,
-    #[cfg(feature = "metrics")] l2_url: String,
+    #[cfg(feature = "metrics")] l2_url: Url,
 ) -> Result<(), errors::SequencerError> {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
@@ -65,7 +67,7 @@ pub async fn start_l2(
     let shared_state = SequencerState::from(initial_status);
 
     let Ok(needed_proof_types) = get_needed_proof_types(
-        cfg.eth.rpc_url.clone(),
+        cfg.eth.urls.clone(),
         cfg.l1_committer.on_chain_proposer_address,
     )
     .await

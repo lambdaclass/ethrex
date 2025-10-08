@@ -32,6 +32,7 @@ use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
+use url::Url;
 
 pub struct Simulator {
     cmd_path: PathBuf,
@@ -170,22 +171,27 @@ impl Simulator {
         }
     }
 
-    fn get_http_url(&self, index: usize) -> String {
+    fn get_http_url(&self, index: usize) -> Url {
         let opts = &self.configs[index];
-        format!("http://{}:{}", opts.http_addr, opts.http_port)
+        Url::parse(&format!("http://{}:{}", opts.http_addr, opts.http_port))
+            .expect("Failed to parse HTTP URL")
     }
 
-    fn get_auth_url(&self, index: usize) -> String {
+    fn get_auth_url(&self, index: usize) -> Url {
         let opts = &self.configs[index];
-        format!("http://{}:{}", opts.authrpc_addr, opts.authrpc_port)
+        Url::parse(&format!(
+            "http://{}:{}",
+            opts.authrpc_addr, opts.authrpc_port
+        ))
+        .expect("Failed to parse Auth URL")
     }
 
     fn get_node(&self, index: usize) -> Node {
         let auth_url = self.get_auth_url(index);
-        let engine_client = EngineClient::new(&auth_url, self.jwt_secret.clone());
+        let engine_client = EngineClient::new(auth_url, self.jwt_secret.clone());
 
         let http_url = self.get_http_url(index);
-        let rpc_client = EthClient::new(&http_url).unwrap();
+        let rpc_client = EthClient::new(http_url).unwrap();
 
         Node {
             index,

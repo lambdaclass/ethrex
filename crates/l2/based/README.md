@@ -131,7 +131,7 @@ Running a based stack locally is essentially the same as running an ethrex stack
 In a console with `crates/l2` as the current directory, run the following command to deploy the L1 contracts for a based L2:
 
 ```bash
-COMPILE_CONTRACTS=true \ 
+COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -156,7 +156,7 @@ This command will:
 2. Deposit funds in the accounts from `../../fixtures/keys/private_keys_l1.txt`.
 3. Skip deploying the verifier contracts by specifying `0x00000000000000000000000000000000000000aa` as their address. This means that the node will run in "dev mode" and that the proof verification will not be performed. This is useful for local development and testing, but should not be used in production environments.
 
-> [!NOTE]  
+> [!NOTE]
 > This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
@@ -173,7 +173,7 @@ export $(cat .env | xargs)
 In a console inside the same directory (`crates/l2`), run the following command to start a based L2 node:
 ```bash
 cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 \
-  --watcher.block-delay 0 \
+  --eth.safe-block-delay 0 \
   --eth.rpc-url http://localhost:8545 \
   --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
   --committer.l1-private-key <SEQUENCER_PRIVATE_KEY> \

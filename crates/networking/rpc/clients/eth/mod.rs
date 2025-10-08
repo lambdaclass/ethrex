@@ -39,8 +39,7 @@ pub enum RpcResponse {
 }
 
 #[derive(Debug, Clone)]
-pub struct EthClient {
-    client: Client,
+pub struct EthConfig {
     pub urls: Vec<Url>,
     pub max_number_of_retries: u64,
     pub backoff_factor: u64,
@@ -48,6 +47,13 @@ pub struct EthClient {
     pub max_retry_delay: u64,
     pub maximum_allowed_max_fee_per_gas: Option<u64>,
     pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
+    pub safe_block_delay: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EthClient {
+    client: Client,
+    pub config: EthConfig,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -76,64 +82,35 @@ pub const MAX_RETRY_DELAY: u64 = 1800;
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
 impl EthClient {
-    pub fn new(url: &str) -> Result<EthClient, EthClientError> {
-        Self::new_with_config(
-            vec![url],
-            MAX_NUMBER_OF_RETRIES,
-            BACKOFF_FACTOR,
-            MIN_RETRY_DELAY,
-            MAX_RETRY_DELAY,
-            None,
-            None,
-        )
+    pub fn new(url: Url) -> Result<EthClient, EthClientError> {
+        Self::new_with_multiple_urls(vec![url])
     }
 
-    pub fn new_with_config(
-        urls: Vec<&str>,
-        max_number_of_retries: u64,
-        backoff_factor: u64,
-        min_retry_delay: u64,
-        max_retry_delay: u64,
-        maximum_allowed_max_fee_per_gas: Option<u64>,
-        maximum_allowed_max_fee_per_blob_gas: Option<u64>,
-    ) -> Result<Self, EthClientError> {
-        let urls = urls
-            .iter()
-            .map(|url| {
-                Url::parse(url)
-                    .map_err(|_| EthClientError::ParseUrlError("Failed to parse urls".to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
+    pub fn new_with_config(config: EthConfig) -> Result<Self, EthClientError> {
         Ok(Self {
             client: Client::new(),
-            urls,
-            max_number_of_retries,
-            backoff_factor,
-            min_retry_delay,
-            max_retry_delay,
-            maximum_allowed_max_fee_per_gas,
-            maximum_allowed_max_fee_per_blob_gas,
+            config,
         })
     }
 
-    pub fn new_with_multiple_urls(urls: Vec<String>) -> Result<EthClient, EthClientError> {
-        Self::new_with_config(
-            urls.iter().map(AsRef::as_ref).collect(),
-            MAX_NUMBER_OF_RETRIES,
-            BACKOFF_FACTOR,
-            MIN_RETRY_DELAY,
-            MAX_RETRY_DELAY,
-            None,
-            None,
-        )
+    pub fn new_with_multiple_urls(urls: Vec<Url>) -> Result<EthClient, EthClientError> {
+        Self::new_with_config(EthConfig {
+            urls,
+            max_number_of_retries: MAX_NUMBER_OF_RETRIES,
+            backoff_factor: BACKOFF_FACTOR,
+            min_retry_delay: MIN_RETRY_DELAY,
+            max_retry_delay: MAX_RETRY_DELAY,
+            maximum_allowed_max_fee_per_gas: None,
+            maximum_allowed_max_fee_per_blob_gas: None,
+            safe_block_delay: 0,
+        })
     }
 
     /// Send a request to the RPC. Tries each URL until one succeeds.
     pub async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
         let mut response = Err(EthClientError::FailedAllRPC);
 
-        for url in self.urls.iter() {
+        for url in self.config.urls.iter() {
             response = self.send_request_to_url(url, &request).await;
             // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
             // so if the server returns Ok(RpcResponse::Error) we retry with the others
@@ -163,7 +140,7 @@ impl EthClient {
     ) -> Result<RpcResponse, EthClientError> {
         let mut response = Err(EthClientError::FailedAllRPC);
 
-        for url in self.urls.iter() {
+        for url in self.config.urls.iter() {
             let maybe_response = self.send_request_to_url(url, &request).await;
 
             match &maybe_response {
@@ -666,7 +643,7 @@ impl EthClient {
     /// Smoke test the all the urls by calling eth_blockNumber
     pub async fn test_urls(&self) -> BTreeMap<String, serde_json::Value> {
         let mut map = BTreeMap::new();
-        for url in self.urls.iter() {
+        for url in self.config.urls.iter() {
             let response = match self
                 .send_request_to_url(url, &RpcRequest::new("eth_blockNumber", None))
                 .await

@@ -13,6 +13,7 @@ use ethrex_rpc::{
 };
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use rand::Rng;
+use reqwest::Url;
 use std::time::{Duration, SystemTime};
 use std::{str::FromStr, time::UNIX_EPOCH};
 use tokio::time::sleep;
@@ -72,14 +73,16 @@ pub async fn send_verify_tx(
     )
     .await?;
 
-    let verify_tx_hash =
-        send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, l1_signer).await?;
+    let verify_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, verify_tx, l1_signer)
+        .await?
+        .tx_info
+        .transaction_hash;
 
     Ok(verify_tx_hash)
 }
 
 pub async fn get_needed_proof_types(
-    rpc_urls: Vec<String>,
+    rpc_urls: Vec<Url>,
     on_chain_proposer_address: Address,
 ) -> Result<Vec<ProverType>, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;

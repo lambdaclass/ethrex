@@ -121,7 +121,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
 	l2 \
-	--watcher.block-delay 0 \
+	--eth.safe-block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \
@@ -249,7 +249,7 @@ state-diff-test:
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
-	ETHREX_WATCHER_BLOCK_DELAY=0 \
+	ETHREX_SAFE_BLOCK_DELAY=0 \
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
 
 	cargo test state_reconstruct --release

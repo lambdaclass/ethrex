@@ -1,6 +1,6 @@
 use super::utils::random_duration;
 use crate::based::sequencer_state::{SequencerState, SequencerStatus};
-use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
+use crate::{L1WatcherConfig, SequencerConfig};
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
@@ -12,12 +12,14 @@ use ethrex_l2_sdk::{
     build_generic_tx, get_last_fetched_l1_block, get_pending_privileged_transactions,
 };
 use ethrex_rpc::clients::EthClientError;
+use ethrex_rpc::clients::eth::EthConfig;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
+use reqwest::Url;
 use serde::Serialize;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
@@ -52,7 +54,6 @@ pub struct L1Watcher {
     pub max_block_step: U256,
     pub last_block_fetched: U256,
     pub check_interval: u64,
-    pub l1_block_delay: u64,
     pub sequencer_state: SequencerState,
 }
 
@@ -63,7 +64,6 @@ pub struct L1WatcherHealth {
     pub max_block_step: String,
     pub last_block_fetched: String,
     pub check_interval: u64,
-    pub l1_block_delay: u64,
     pub sequencer_state: String,
     pub bridge_address: Address,
 }
@@ -76,8 +76,12 @@ impl L1Watcher {
         watcher_config: &L1WatcherConfig,
         sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
-        let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
-        let l2_client = EthClient::new("http://localhost:1729")?;
+        let eth_client = EthClient::new_with_multiple_urls(eth_config.urls.clone())?;
+        let l2_client = EthClient::new(Url::parse("http://localhost:1729").map_err(|_| {
+            L1WatcherError::EthClientError(EthClientError::ParseUrlError(
+                "http://localhost:1729".to_string(),
+            ))
+        })?)?;
         let last_block_fetched = U256::zero();
         Ok(Self {
             store,
@@ -88,7 +92,6 @@ impl L1Watcher {
             max_block_step: watcher_config.max_block_step,
             last_block_fetched,
             check_interval: watcher_config.check_interval_ms,
-            l1_block_delay: watcher_config.watcher_block_delay,
             sequencer_state,
         })
     }
@@ -138,7 +141,7 @@ impl L1Watcher {
             .eth_client
             .get_block_number()
             .await?
-            .checked_sub(self.l1_block_delay.into())
+            .checked_sub(self.eth_client.config.safe_block_delay.into())
         else {
             warn!("Too close to genesis to request privileged transactions");
             return Ok(vec![]);
@@ -146,12 +149,12 @@ impl L1Watcher {
 
         debug!(
             "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
-            self.l1_block_delay,
+            self.eth_client.config.safe_block_delay,
         );
 
         // last_block_fetched could be greater than latest_block_to_check:
         // - Right after deploying the contract as latest_block_fetched is set to the block where the contract is deployed
-        // - If the node is stopped and l1_block_delay is changed
+        // - If the node is stopped and safe_block_delay is changed
         if self.last_block_fetched > latest_block_to_check {
             warn!("Last block fetched is greater than latest safe block");
             return Ok(vec![]);
@@ -290,7 +293,6 @@ impl L1Watcher {
             max_block_step: self.max_block_step.to_string(),
             last_block_fetched: self.last_block_fetched.to_string(),
             check_interval: self.check_interval,
-            l1_block_delay: self.l1_block_delay,
             sequencer_state: format!("{:?}", self.sequencer_state.status().await),
             bridge_address: self.address,
         }))

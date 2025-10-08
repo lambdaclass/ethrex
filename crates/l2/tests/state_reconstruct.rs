@@ -7,6 +7,7 @@ use ethrex_common::{Address, U256};
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
+use reqwest::Url;
 use secp256k1::SecretKey;
 
 const ETH_RPC_URL: &str = "http://localhost:1729";
@@ -77,7 +78,8 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
 }
 
 async fn connect() -> EthClient {
-    let client = EthClient::new(ETH_RPC_URL).unwrap();
+    let url = Url::parse(ETH_RPC_URL).unwrap();
+    let client = EthClient::new(url).unwrap();
 
     let mut retries = 0;
     while retries < 20 {

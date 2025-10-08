@@ -5,8 +5,8 @@ use crate::{
 use clap::Parser;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::{
-    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
-    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
+    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, L1WatcherConfig,
+    ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::{
         configs::{AdminConfig, AlignedConfig, MonitorConfig},
         utils::resolve_aligned_network,
@@ -15,7 +15,7 @@ use ethrex_l2::{
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
 use ethrex_prover_lib::{backend::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
-    BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
+    BACKOFF_FACTOR, EthConfig, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
@@ -176,15 +176,18 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 validium: opts.validium,
             },
             eth: EthConfig {
-                rpc_url: opts.eth_opts.rpc_url,
+                urls: opts.eth_opts.rpc_url,
                 max_number_of_retries: opts.eth_opts.max_number_of_retries,
                 backoff_factor: opts.eth_opts.backoff_factor,
                 min_retry_delay: opts.eth_opts.min_retry_delay,
                 max_retry_delay: opts.eth_opts.max_retry_delay,
-                maximum_allowed_max_fee_per_gas: opts.eth_opts.maximum_allowed_max_fee_per_gas,
-                maximum_allowed_max_fee_per_blob_gas: opts
-                    .eth_opts
-                    .maximum_allowed_max_fee_per_blob_gas,
+                maximum_allowed_max_fee_per_gas: Some(
+                    opts.eth_opts.maximum_allowed_max_fee_per_gas,
+                ),
+                maximum_allowed_max_fee_per_blob_gas: Some(
+                    opts.eth_opts.maximum_allowed_max_fee_per_blob_gas,
+                ),
+                safe_block_delay: opts.eth_opts.safe_block_delay,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts
@@ -193,7 +196,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .ok_or(SequencerOptionsError::NoBridgeAddress)?,
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
-                watcher_block_delay: opts.watcher_opts.watcher_block_delay,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
@@ -254,7 +256,7 @@ pub struct EthOptions {
         help_heading = "Eth options",
         num_args = 1..
     )]
-    pub rpc_url: Vec<String>,
+    pub rpc_url: Vec<Url>,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -303,18 +305,28 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub max_retry_delay: u64,
+    #[arg(
+        long = "eth.safe-block-delay",
+        default_value = "10",
+        value_name = "BLOCKS",
+        env = "ETHREX_SAFE_BLOCK_DELAY",
+        help_heading = "Eth options",
+        help = "Number of blocks to wait before considering an L1 block safe."
+    )]
+    pub safe_block_delay: u64,
 }
 
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
-            rpc_url: vec!["http://localhost:8545".to_string()],
+            rpc_url: vec![Url::parse("http://localhost:8545").expect("Failed to parse L1 RPC URL")],
             maximum_allowed_max_fee_per_gas: 10000000000,
             maximum_allowed_max_fee_per_blob_gas: 10000000000,
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
             max_retry_delay: MAX_RETRY_DELAY,
+            safe_block_delay: 0,
         }
     }
 }
@@ -346,15 +358,6 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub max_block_step: u64,
-    #[arg(
-        long = "watcher.block-delay",
-        default_value_t = 10, // Reasonably safe value to account for reorgs
-        value_name = "UINT64",
-        env = "ETHREX_WATCHER_BLOCK_DELAY",
-        help = "Number of blocks the L1 watcher waits before trusting an L1 block.",
-        help_heading = "L1 Watcher options"
-    )]
-    pub watcher_block_delay: u64,
 }
 
 impl Default for WatcherOptions {
@@ -363,7 +366,6 @@ impl Default for WatcherOptions {
             bridge_address: None,
             watch_interval_ms: 1000,
             max_block_step: 5000,
-            watcher_block_delay: 0,
         }
     }
 }
