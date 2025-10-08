@@ -270,9 +270,9 @@ impl OpcodeHandler for OpSStoreHandler {
             } else {
                 if !original_value.is_zero() {
                     if current_value.is_zero() {
-                        gas_refunds += REMOVE_SLOT_COST;
-                    } else if value.is_zero() {
                         gas_refunds -= REMOVE_SLOT_COST;
+                    } else if value.is_zero() {
+                        gas_refunds += REMOVE_SLOT_COST;
                     }
                 }
 
