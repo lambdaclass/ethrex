@@ -42,7 +42,7 @@ pub enum TrieGenerationError {
 }
 
 pub const SIZE_TO_WRITE_DB: u64 = 20_000;
-pub const BUFFER_COUNT: u64 = 100;
+pub const BUFFER_COUNT: u64 = 32;
 
 impl CenterSide {
     fn from_value(tuple: (H256, Vec<u8>)) -> CenterSide {
@@ -148,28 +148,17 @@ pub fn trie_from_sorted_accounts<'scope, T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
+    let Some(initial_value) = data_iter.next() else {
+        return Ok(*EMPTY_TRIE_HASH);
+    };
     let mut nodes_to_write: Vec<(NodeHash, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64); // Optimized for H256
 
     let mut left_side = StackElement::default();
-    let Some(initial_value) = data_iter.next() else {
-        return Ok(*EMPTY_TRIE_HASH);
-    };
     let mut center_side: CenterSide = CenterSide::from_value(initial_value.clone());
     let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
-
-    // Edge Case
-    if right_side_opt.is_none() {
-        let node = LeafNode {
-            partial: center_side.path,
-            value: initial_value.1,
-        };
-        let hash = node.compute_hash();
-        flush_nodes_to_write(vec![(hash, node.into())], db, buffer_sender)?;
-        return Ok(hash.finalize());
-    }
 
     while let Some(right_side) = right_side_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
@@ -250,7 +239,7 @@ where
             .unwrap();
 
         debug_assert!(nodes_to_write.last().unwrap().0 == child.compute_hash());
-        let (_, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
+        let (node_hash, node_hash_ref) = nodes_to_write.iter_mut().last().unwrap();
         match node_hash_ref {
             Node::Branch(_) => {
                 let node: Node = ExtensionNode {
@@ -267,9 +256,14 @@ where
             }
             Node::Extension(extension_node) => {
                 extension_node.prefix.data.insert(0, index as u8);
-                extension_node.compute_hash().finalize()
+                *node_hash = extension_node.compute_hash();
+                node_hash.finalize()
             }
-            Node::Leaf(leaf_node) => leaf_node.compute_hash().finalize(),
+            Node::Leaf(leaf_node) => {
+                leaf_node.partial.data.insert(0, index as u8);
+                *node_hash = leaf_node.compute_hash();
+                node_hash.finalize()
+            }
         }
     } else {
         let node: Node = left_side.element.into();
@@ -313,10 +307,10 @@ mod test {
     use ethereum_types::U256;
     use ethrex_rlp::encode::RLPEncode;
 
-    use crate::Trie;
+    use crate::{InMemoryTrieDB, Trie};
 
     use super::*;
-    use std::{collections::BTreeMap, str::FromStr};
+    use std::{collections::BTreeMap, str::FromStr, sync::Mutex};
 
     fn generate_input_1() -> BTreeMap<H256, Vec<u8>> {
         let mut accounts: BTreeMap<H256, Vec<u8>> = BTreeMap::new();
@@ -368,6 +362,23 @@ mod test {
         accounts
     }
 
+    fn generate_input_5() -> BTreeMap<H256, Vec<u8>> {
+        let mut accounts: BTreeMap<H256, Vec<u8>> = BTreeMap::new();
+        for (string, value) in [
+            (
+                "290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563",
+                U256::from_str("1191240792495687806002885977912460542139236513636").unwrap(),
+            ),
+            (
+                "295841a49a1089f4b560f91cfbb0133326654dcbb1041861fc5dde96c724a22f",
+                U256::from(480),
+            ),
+        ] {
+            accounts.insert(H256::from_str(string).unwrap(), value.encode_to_vec());
+        }
+        accounts
+    }
+
     fn generate_input_slots_1() -> BTreeMap<H256, U256> {
         let mut slots: BTreeMap<H256, U256> = BTreeMap::new();
         for string in [
@@ -381,7 +392,8 @@ mod test {
     }
 
     pub fn run_test_account_state(accounts: BTreeMap<H256, Vec<u8>>) {
-        let trie = Trie::stateless();
+        let computed_data = Arc::new(Mutex::new(BTreeMap::new()));
+        let trie = Trie::new(Box::new(InMemoryTrieDB::new(computed_data.clone())));
         let db = trie.db();
         let tested_trie_hash: H256 = trie_from_sorted_accounts_wrap(
             db,
@@ -392,13 +404,21 @@ mod test {
         )
         .expect("Shouldn't have errors");
 
-        let mut trie: Trie = Trie::empty_in_memory();
+        let expected_data = Arc::new(Mutex::new(BTreeMap::new()));
+        let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(expected_data.clone())));
         for account in accounts.iter() {
             trie.insert(account.0.as_bytes().to_vec(), account.1.encode_to_vec())
                 .unwrap();
         }
 
-        assert!(tested_trie_hash == trie.hash_no_commit())
+        assert_eq!(tested_trie_hash, trie.hash().unwrap());
+
+        let computed_data = computed_data.lock().unwrap();
+        let expected_data = expected_data.lock().unwrap();
+        for (k, v) in computed_data.iter() {
+            assert!(expected_data.contains_key(k));
+            assert_eq!(*v, expected_data[k]);
+        }
     }
 
     pub fn run_test_storage_slots(slots: BTreeMap<H256, U256>) {
@@ -442,6 +462,11 @@ mod test {
     #[test]
     fn test_4() {
         run_test_account_state(generate_input_4());
+    }
+
+    #[test]
+    fn test_5() {
+        run_test_account_state(generate_input_5());
     }
 
     #[test]

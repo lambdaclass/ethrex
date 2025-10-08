@@ -2,6 +2,7 @@ mod code_collector;
 mod state_healing;
 mod storage_healing;
 
+use crate::discv4::peer_table::PeerTableError;
 use crate::peer_handler::{BlockRequestOrder, PeerHandlerError, SNAP_LIMIT};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::sync::code_collector::CodeHashCollector;
@@ -154,7 +155,8 @@ impl Syncer {
                     start_time.elapsed().as_secs()
                 );
             }
-            Err(error) => warn!(
+            // TODO #2767: If the error is irrecoverable, we should exit ethrex
+            Err(error) => error!(
                 "Sync cycle failed due to {error}, time elapsed: {} secs ",
                 start_time.elapsed().as_secs()
             ),
@@ -214,7 +216,7 @@ impl Syncer {
             let Some(mut block_headers) = self
                 .peers
                 .request_block_headers(current_head_number, sync_head)
-                .await
+                .await?
             else {
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
@@ -285,13 +287,14 @@ impl Syncer {
             }
 
             // Discard the first header as we already have it
-            block_headers.remove(0);
-            if !block_headers.is_empty() {
+            if block_headers.len() > 1 {
+                let block_headers_iter = block_headers.into_iter().skip(1);
+
                 match block_sync_state {
                     BlockSyncState::Full(ref mut state) => {
                         state
                             .process_incoming_headers(
-                                block_headers,
+                                block_headers_iter,
                                 sync_head,
                                 sync_head_found,
                                 self.blockchain.clone(),
@@ -301,7 +304,7 @@ impl Syncer {
                             .await?;
                     }
                     BlockSyncState::Snap(ref mut state) => {
-                        state.process_incoming_headers(block_headers).await?
+                        state.process_incoming_headers(block_headers_iter).await?
                     }
                 }
             }
@@ -356,7 +359,7 @@ impl Syncer {
             let Some(mut block_headers) = self
                 .peers
                 .request_block_headers_from_hash(current_head, BlockRequestOrder::OldToNew)
-                .await
+                .await?
             else {
                 warn!("Sync failed to find target block header, aborting");
                 debug!("Sync Log 8: Sync failed to find target block header, aborting");
@@ -407,13 +410,14 @@ impl Syncer {
             current_head = last_block_hash;
 
             // Discard the first header as we already have it
-            block_headers.remove(0);
-            if !block_headers.is_empty() {
+            if block_headers.len() > 1 {
                 let mut finished = false;
                 while !finished {
+                    let headers = std::mem::take(&mut block_headers);
+                    let block_headers_iter = headers.into_iter().skip(1);
                     (finished, sync_head_found) = block_sync_state
                         .process_incoming_headers(
-                            block_headers.clone(),
+                            block_headers_iter,
                             sync_head,
                             sync_head_found,
                             self.blockchain.clone(),
@@ -421,7 +425,6 @@ impl Syncer {
                             self.cancel_token.clone(),
                         )
                         .await?;
-                    block_headers.clear();
                 }
             }
 
@@ -445,16 +448,17 @@ impl Syncer {
         if sync_head_found {
             let mut last_valid_hash = H256::default();
             for block in blocks {
-                blockchain.add_block(&block).await.map_err(|e| {
+                let block_hash = block.hash();
+                blockchain.add_block(block).await.map_err(|e| {
                     (
                         e,
                         Some(BatchBlockProcessingFailure {
                             last_valid_hash,
-                            failed_block_hash: block.hash(),
+                            failed_block_hash: block_hash,
                         }),
                     )
                 })?;
-                last_valid_hash = block.hash();
+                last_valid_hash = block_hash;
             }
             Ok(())
         } else {
@@ -471,7 +475,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
+        if let Some(block_bodies) = peers.request_block_bodies(&block_hashes).await? {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
@@ -494,12 +498,12 @@ async fn store_block_bodies(
 #[allow(unused)]
 async fn store_receipts(
     mut block_hashes: Vec<BlockHash>,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Receipts ");
-        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await {
+        if let Some(receipts) = peers.request_receipts(block_hashes.clone()).await? {
             debug!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
             for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
@@ -588,7 +592,7 @@ impl FullBlockSyncState {
     /// Returns bool sync_head_found to know whether full sync was completed.
     async fn process_incoming_headers(
         &mut self,
-        block_headers: Vec<BlockHeader>,
+        block_headers: impl Iterator<Item = BlockHeader>,
         sync_head: H256,
         sync_head_found_in_block_headers: bool,
         blockchain: Arc<Blockchain>,
@@ -613,7 +617,7 @@ impl FullBlockSyncState {
             &self.current_headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, self.current_headers.len())];
         let bodies = peers
             .request_and_validate_block_bodies(headers)
-            .await
+            .await?
             .ok_or(SyncError::BodiesNotFound)?;
         debug!("Obtained: {} block bodies", bodies.len());
         let blocks = self
@@ -768,16 +772,21 @@ impl SnapBlockSyncState {
     /// Stores incoming headers to the Store and saves their hashes
     async fn process_incoming_headers(
         &mut self,
-        block_headers: Vec<BlockHeader>,
+        block_headers: impl Iterator<Item = BlockHeader>,
     ) -> Result<(), SyncError> {
-        let block_hashes = block_headers.iter().map(|h| h.hash()).collect::<Vec<_>>();
+        let mut block_headers_vec = Vec::with_capacity(block_headers.size_hint().1.unwrap_or(0));
+        let mut block_hashes = Vec::with_capacity(block_headers.size_hint().1.unwrap_or(0));
+        for header in block_headers {
+            block_hashes.push(header.hash());
+            block_headers_vec.push(header);
+        }
         self.store
             .set_header_download_checkpoint(
                 *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
             )
             .await?;
         self.block_hashes.extend_from_slice(&block_hashes);
-        self.store.add_block_headers(block_headers).await?;
+        self.store.add_block_headers(block_headers_vec).await?;
         Ok(())
     }
 
@@ -808,14 +817,12 @@ impl SnapBlockSyncState {
 /// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
 /// Logs with where the function was when it found this error
 /// TODO: remove this function once peer table has moved to spawned implementation
-async fn free_peers_and_log_if_not_empty(peer_handler: &PeerHandler) {
-    if peer_handler.peer_table.free_peers().await != 0 {
-        let step = METRICS.current_step.lock().await.clone();
-        error!(
-            step = step,
-            "Found peers marked as used even though we just finished this step"
-        );
-    }
+async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) -> Result<(), SyncError> {
+    if peer_handler.peer_table.free_peers().await? != 0 {
+        let step = METRICS.current_step.get();
+        error!("Found peers marked as used even though we just finished this step: step = {step}");
+    };
+    Ok(())
 }
 
 impl Syncer {
@@ -880,7 +887,7 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-            free_peers_and_log_if_not_empty(&self.peers).await;
+            free_peers_and_log_if_not_empty(&mut self.peers).await?;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -915,6 +922,7 @@ impl Syncer {
             // is correct. To do so, we always heal the state trie before requesting storage rates
             let mut chunk_index = 0_u64;
             let mut state_leafs_healed = 0_u64;
+            let mut storage_range_request_attempts = 0;
             loop {
                 while block_is_stale(&pivot_header) {
                     pivot_header = update_pivot(
@@ -940,24 +948,46 @@ impl Syncer {
                 {
                     continue;
                 };
-                free_peers_and_log_if_not_empty(&self.peers).await;
+                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
                     storage_accounts.accounts_with_storage_root.len()
                 );
-                chunk_index = self
-                    .peers
-                    .request_storage_ranges(
-                        &mut storage_accounts,
-                        account_storages_snapshots_dir.as_ref(),
-                        chunk_index,
-                        &mut pivot_header,
-                        store.clone(),
-                    )
-                    .await
-                    .map_err(SyncError::PeerHandler)?;
-                free_peers_and_log_if_not_empty(&self.peers).await;
+                storage_range_request_attempts += 1;
+                if storage_range_request_attempts < 3 {
+                    chunk_index = self
+                        .peers
+                        .request_storage_ranges(
+                            &mut storage_accounts,
+                            account_storages_snapshots_dir.as_ref(),
+                            chunk_index,
+                            &mut pivot_header,
+                            store.clone(),
+                        )
+                        .await
+                        .map_err(SyncError::PeerHandler)?;
+                } else {
+                    for (acc_hash, (maybe_root, old_intervals)) in
+                        storage_accounts.accounts_with_storage_root.iter()
+                    {
+                        // When we fall into this case what happened is there are certain accounts for which
+                        // the storage root went back to a previous value we already had, and thus could not download
+                        // their storage leaves because we were using an old value for their storage root.
+                        // The fallback is to ensure we mark it for storage healing.
+                        storage_accounts.healed_accounts.insert(*acc_hash);
+                        debug!(
+                            "We couldn't download these accounts on request_storage_ranges. Falling back to storage healing for it.
+                            Account hash: {:x?}, {:x?}. Number of intervals {}",
+                            acc_hash,
+                            maybe_root,
+                            old_intervals.len()
+                        );
+                    }
+
+                    storage_accounts.accounts_with_storage_root.clear();
+                }
+                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -979,8 +1009,9 @@ impl Syncer {
             *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
-            *METRICS.current_step.lock().await =
-                "Inserting Storage Ranges - \x1b[31mWriting to DB\x1b[0m".to_string();
+            METRICS
+                .current_step
+                .set(crate::metrics::CurrentStepValue::InsertingStorageRanges);
             let account_storages_snapshots_dir = get_account_storages_snapshots_dir(&self.datadir);
 
             insert_storages(
@@ -1035,9 +1066,9 @@ impl Syncer {
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut global_storage_leafs_healed,
             )
-            .await;
+            .await?;
 
-            free_peers_and_log_if_not_empty(&self.peers).await;
+            free_peers_and_log_if_not_empty(&mut self.peers).await?;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1207,11 +1238,11 @@ pub async fn update_pivot(
     loop {
         let (peer_id, mut peer_channel) = peers
             .peer_table
-            .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES)
-            .await
+            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+            .await?
             .ok_or(SyncError::NoPeers)?;
 
-        let peer_score = peers.peer_table.get_score(&peer_id).await;
+        let peer_score = peers.peer_table.get_score(&peer_id).await?;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -1221,8 +1252,8 @@ pub async fn update_pivot(
             .map_err(SyncError::PeerHandler)?
         else {
             // Penalize peer
-            peers.peer_table.record_failure(peer_id).await;
-            let peer_score = peers.peer_table.get_score(&peer_id).await;
+            peers.peer_table.record_failure(&peer_id).await?;
+            let peer_score = peers.peer_table.get_score(&peer_id).await?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
@@ -1230,14 +1261,16 @@ pub async fn update_pivot(
         };
 
         // Reward peer
-        peers.peer_table.record_success(peer_id).await;
+        peers.peer_table.record_success(&peer_id).await?;
         info!("Succesfully updated pivot");
         if let BlockSyncState::Snap(sync_state) = block_sync_state {
             let block_headers = peers
                 .request_block_headers(block_number + 1, pivot.hash())
-                .await
+                .await?
                 .ok_or(SyncError::NoBlockHeaders)?;
-            sync_state.process_incoming_headers(block_headers).await?;
+            sync_state
+                .process_incoming_headers(block_headers.into_iter())
+                .await?;
         } else {
             return Err(SyncError::NotInSnapSync);
         }
@@ -1333,6 +1366,8 @@ pub enum SyncError {
     RocksDBError(String),
     #[error("Bytecode file error")]
     BytecodeFileError,
+    #[error("Error in Peer Table: {0}")]
+    PeerTableError(#[from] PeerTableError),
 }
 
 impl<T> From<SendError<T>> for SyncError {
@@ -1484,8 +1519,6 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     info!("computed_state_root {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
@@ -1564,9 +1597,6 @@ async fn insert_storages(
             .write_storage_trie_nodes_batch(storage_trie_node_changes)
             .await?;
     }
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-
     Ok(())
 }
 
@@ -1625,11 +1655,6 @@ async fn insert_accounts(
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
-
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|_| SyncError::AccountTempDBDirNotFound)?;
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
@@ -1766,11 +1791,5 @@ async fn insert_storages(
             pool.execute(task);
         }
     });
-
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir))
-        .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
-
     Ok(())
 }

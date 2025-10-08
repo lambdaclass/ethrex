@@ -59,7 +59,7 @@ Node options:
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
-        
+
           [default: 10000]
 
 P2P options:
@@ -67,9 +67,9 @@ P2P options:
           Comma separated enode URLs for P2P discovery bootstrap.
 
       --syncmode <SYNC_MODE>
-          Can be either "full" or "snap" with "full" as default value.
+          Can be either "full" or "snap" with "snap" as default value.
 
-          [default: full]
+          [default: snap]
 
       --p2p.enabled
 
@@ -438,7 +438,7 @@ Monitor options:
 ```
 Initialize an ethrex prover
 
-Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>
+Usage: ethrex l2 prover [OPTIONS] --proof-coordinators <URL>...
 
 Options:
   -h, --help
@@ -448,10 +448,10 @@ Prover client options:
       --backend <BACKEND>
           [env: PROVER_CLIENT_BACKEND=]
           [default: exec]
-          [possible values: exec]
+          [possible values: exec, sp1, risc0]
 
-      --proof-coordinators <URL>
-          URL of the sequencer's proof coordinator
+      --proof-coordinators <URL>...
+          URLs of all the sequencers' proof coordinator
 
           [env: PROVER_CLIENT_PROOF_COORDINATOR_URL=]
 
@@ -470,4 +470,9 @@ Prover client options:
           Activate aligned proving system
 
           [env: PROVER_CLIENT_ALIGNED=]
+
+      --sp1-server <URL>
+          Url to the moongate server to use when using sp1 backend
+
+          [env: ETHREX_SP1_SERVER=]
 ```
