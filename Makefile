@@ -17,6 +17,11 @@ lint-l2:
 		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
 		--release -- -D warnings
 
+lint-gpu:
+	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
+		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
+		--release -- -D warnings
+
 lint: lint-l1 lint-l2 ## 🧹 Linter check
 
 CRATE ?= *
