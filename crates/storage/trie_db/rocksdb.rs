@@ -1,5 +1,6 @@
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::{Nibbles, Node, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
 
@@ -72,6 +73,24 @@ impl TrieDB for RocksDBTrieDB {
             } else {
                 batch.put_cf(&cf, db_key, value);
             }
+        }
+
+        self.db
+            .write(batch)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
+    }
+
+    fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
+        let cf = self.cf_handle()?;
+        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        // 532 is the maximum size of an encoded branch node.
+        let mut buffer = Vec::with_capacity(532);
+
+        for (hash, node) in key_values {
+            let db_key = self.make_key(hash.clone());
+            buffer.clear();
+            node.encode(&mut buffer);
+            batch.put_cf(&cf, db_key, &buffer);
         }
 
         self.db

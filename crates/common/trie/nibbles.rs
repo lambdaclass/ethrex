@@ -12,7 +12,7 @@ use ethrex_rlp::{
 /// Struct representing a list of nibbles (half-bytes)
 #[derive(Debug, Clone, Default)]
 pub struct Nibbles {
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     /// Parts of the path that have already been consumed (used for tracking
     /// current position when visiting nodes). See `current()`.
     already_consumed: Vec<u8>,
