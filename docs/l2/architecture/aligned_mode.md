@@ -7,6 +7,12 @@ This document explains how to run an Ethrex L2 node in **Aligned mode** and high
 > [!IMPORTANT]  
 > For this guide we assumed that there is an L1 running with all Aligned environment set.
 
+If any of the steps fail and you need to start over, you should clean the state with
+
+```bash
+make rm-db-l2
+```
+
 ### 1. Generate the SP1 ELF Program and Verification Key
 
 Run:
