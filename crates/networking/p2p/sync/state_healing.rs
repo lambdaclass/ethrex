@@ -181,9 +181,12 @@ async fn heal_state_trie(
                             }
 
                             storage_accounts.healed_accounts.insert(account_hash);
-                            storage_accounts
+                            let old_value = storage_accounts
                                 .accounts_with_storage_root
-                                .remove(&account_hash);
+                                .get_mut(&account_hash);
+                            if let Some((old_root, _)) = old_value {
+                                *old_root = None;
+                            }
                         }
                     }
                     leafs_healed += nodes
