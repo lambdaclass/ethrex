@@ -1621,10 +1621,9 @@ async fn insert_accounts(
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
             .inspect(|(k, v)| {
-                // TODO: re-add
-                // METRICS
-                //     .account_tries_inserted
-                //     .fetch_add(1, Ordering::Relaxed);
+                METRICS
+                    .account_tries_inserted
+                    .fetch_add(1, Ordering::Relaxed);
                 let account_state = AccountState::decode(v).expect("We should have accounts here");
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
                     storage_accounts.accounts_with_storage_root.insert(
