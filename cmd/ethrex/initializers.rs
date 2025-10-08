@@ -6,15 +6,17 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
+use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    kademlia::Kademlia,
-    network::{P2PContext, peer_table},
+    discv4::peer_table::{PeerTable, PeerTableHandle},
+    network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
+    sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -134,10 +136,17 @@ pub async fn init_rpc_api(
     extra_data: String,
 ) {
     init_datadir(&opts.datadir);
+
+    let syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
@@ -207,7 +216,7 @@ pub async fn init_network(
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
-        peer_handler.peer_table.peers.clone(),
+        peer_handler.peer_table,
     ));
 }
 
@@ -370,7 +379,12 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, Kademlia, Arc<Mutex<NodeRecord>>)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTableHandle,
+    Arc<Mutex<NodeRecord>>,
+)> {
     let datadir = &opts.datadir;
     init_datadir(datadir);
 
@@ -402,7 +416,7 @@ pub async fn init_l1(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(peer_table());
+    let peer_handler = PeerHandler::new(PeerTable::spawn());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -428,6 +442,8 @@ pub async fn init_l1(
     if opts.metrics_enabled {
         init_metrics(&opts, tracker.clone());
     }
+
+    raise_fd_limit()?;
 
     if opts.dev {
         #[cfg(feature = "dev")]
