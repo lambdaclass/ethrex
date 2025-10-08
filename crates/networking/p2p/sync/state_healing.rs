@@ -162,8 +162,6 @@ async fn heal_state_trie(
         }
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
-            // Mark the peer as available
-            peers.peer_table.free_peer(&peer_id).await?;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -227,7 +225,7 @@ async fn heal_state_trie(
                 );
                 let Some((peer_id, connection)) = peers
                     .peer_table
-                    .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
                     .await
                     .inspect_err(
                         |err| error!(err= ?err, "Error requesting a peer to perform state healing"),

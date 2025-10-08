@@ -85,9 +85,6 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
     pub connection: Option<PeerConnection>,
-    /// This tracks if a peer is being used by a task
-    /// So we can't use it yet
-    in_use: bool,
     /// This tracks the score of a peer
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
@@ -107,7 +104,6 @@ impl PeerData {
             supported_capabilities: capabilities,
             is_connection_inbound: false,
             connection,
-            in_use: false,
             score: Default::default(),
             requests: Default::default(),
         }
@@ -190,22 +186,6 @@ impl PeerTable {
         Ok(())
     }
 
-    /// Mark peer as in use
-    pub async fn mark_in_use(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle
-            .cast(CastMessage::MarkInUse { node_id: *node_id })
-            .await?;
-        Ok(())
-    }
-
-    /// Remove "in use" mark for peer
-    pub async fn free_peer(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle
-            .cast(CastMessage::FreePeer { node_id: *node_id })
-            .await?;
-        Ok(())
-    }
-
     /// Record a successful connection, used to score peers
     pub async fn record_success(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
@@ -218,14 +198,6 @@ impl PeerTable {
     pub async fn record_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle
             .cast(CastMessage::RecordFailure { node_id: *node_id })
-            .await?;
-        Ok(())
-    }
-
-    /// Remove "in use" mark for peer, and record a failed connection.
-    pub async fn free_with_failure(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
-        self.handle
-            .cast(CastMessage::FreeWithFailure { node_id: *node_id })
             .await?;
         Ok(())
     }
@@ -323,14 +295,6 @@ impl PeerTable {
         }
     }
 
-    /// Remove the "in use" mark for all peers
-    pub async fn free_peers(&mut self) -> Result<usize, PeerTableError> {
-        match self.handle.call(CallMessage::FreePeers).await? {
-            OutMessage::PeerCount(result) => Ok(result),
-            _ => unreachable!(),
-        }
-    }
-
     /// Check if target number of contacts and connected peers is reached
     pub async fn target_reached(
         &mut self,
@@ -396,27 +360,6 @@ impl PeerTable {
         match self
             .handle
             .call(CallMessage::GetBestPeer {
-                capabilities: capabilities.to_vec(),
-            })
-            .await?
-        {
-            OutMessage::FoundPeer {
-                node_id,
-                connection,
-            } => Ok(Some((node_id, connection))),
-            OutMessage::NotFound => Ok(None),
-            _ => unreachable!(),
-        }
-    }
-
-    /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
-    pub async fn use_best_peer(
-        &mut self,
-        capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerConnection)>, PeerTableError> {
-        match self
-            .handle
-            .call(CallMessage::UseBestPeer {
                 capabilities: capabilities.to_vec(),
             })
             .await?
@@ -569,7 +512,7 @@ impl PeerTableServer {
             .iter()
             // We filter only to those peers which are useful to us
             .filter_map(|(id, peer_data)| {
-                // If the peer is already in use right now, we skip it
+                // TODO: Check if we need some limit or filter for peers
                 // if peer_data.in_use {
                 //     return None;
                 // }
@@ -588,19 +531,9 @@ impl PeerTableServer {
                 // We return the id, the score and the channel to connect with.
                 Some((*id, peer_data.score, peer_data.requests, connection))
             })
+            // TODO: Improve sorting function (currently ignoring score)
             .max_by_key(|(_, _score, reqs, _)| -reqs)
             .map(|(k, _, _, v)| (k, v))
-    }
-
-    /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
-    fn use_best_peer(&mut self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
-        let (peer_id, connection) = self.get_best_peer(capabilities)?;
-
-        self.peers
-            .entry(peer_id)
-            .and_modify(|peer_data| peer_data.in_use = true);
-
-        Some((peer_id, connection))
     }
 
     fn prune(&mut self) {
@@ -827,19 +760,10 @@ enum CastMessage {
     SetUnwanted {
         node_id: H256,
     },
-    MarkInUse {
-        node_id: H256,
-    },
-    FreePeer {
-        node_id: H256,
-    },
     RecordSuccess {
         node_id: H256,
     },
     RecordFailure {
-        node_id: H256,
-    },
-    FreeWithFailure {
         node_id: H256,
     },
     RecordCriticalFailure {
@@ -871,7 +795,6 @@ enum CallMessage {
     PeerCountByCapabilities {
         capabilities: Vec<Capability>,
     },
-    FreePeers,
     TargetReached {
         target_contacts: usize,
         target_peers: usize,
@@ -880,9 +803,6 @@ enum CallMessage {
     GetContactsForLookup,
     GetContactsToRevalidate(Duration),
     GetBestPeer {
-        capabilities: Vec<Capability>,
-    },
-    UseBestPeer {
         capabilities: Vec<Capability>,
     },
     GetScore {
@@ -955,19 +875,6 @@ impl GenServer for PeerTableServer {
             CallMessage::PeerCountByCapabilities { capabilities } => CallResponse::Reply(
                 OutMessage::PeerCount(self.peer_count_by_capabilities(capabilities)),
             ),
-            CallMessage::FreePeers => CallResponse::Reply(Self::OutMsg::PeerCount(
-                self.peers
-                    .iter_mut()
-                    .filter_map(|(_, peer_data)| {
-                        if peer_data.in_use {
-                            peer_data.in_use = false;
-                            Some(peer_data)
-                        } else {
-                            None
-                        }
-                    })
-                    .count(),
-            )),
             CallMessage::TargetReached {
                 target_contacts,
                 target_peers,
@@ -985,16 +892,6 @@ impl GenServer for PeerTableServer {
             ),
             CallMessage::GetBestPeer { capabilities } => {
                 let channels = self.get_best_peer(&capabilities);
-                CallResponse::Reply(channels.map_or(
-                    Self::OutMsg::NotFound,
-                    |(node_id, connection)| Self::OutMsg::FoundPeer {
-                        node_id,
-                        connection,
-                    },
-                ))
-            }
-            CallMessage::UseBestPeer { capabilities } => {
-                let channels = self.use_best_peer(&capabilities);
                 CallResponse::Reply(channels.map_or(
                     Self::OutMsg::NotFound,
                     |(node_id, connection)| Self::OutMsg::FoundPeer {
@@ -1105,16 +1002,6 @@ impl GenServer for PeerTableServer {
                     .entry(node_id)
                     .and_modify(|contact| contact.unwanted = true);
             }
-            CastMessage::MarkInUse { node_id } => {
-                self.peers
-                    .entry(node_id)
-                    .and_modify(|peer_data| peer_data.in_use = true);
-            }
-            CastMessage::FreePeer { node_id } => {
-                self.peers
-                    .entry(node_id)
-                    .and_modify(|peer_data| peer_data.in_use = false);
-            }
             CastMessage::RecordSuccess { node_id } => {
                 self.peers
                     .entry(node_id)
@@ -1124,12 +1011,6 @@ impl GenServer for PeerTableServer {
                 self.peers
                     .entry(node_id)
                     .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
-            }
-            CastMessage::FreeWithFailure { node_id } => {
-                self.peers.entry(node_id).and_modify(|peer_data| {
-                    peer_data.in_use = false;
-                    peer_data.score = (peer_data.score - 1).max(MIN_SCORE);
-                });
             }
             CastMessage::RecordCriticalFailure { node_id } => {
                 self.peers

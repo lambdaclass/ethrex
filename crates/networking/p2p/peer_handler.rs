@@ -302,7 +302,7 @@ impl PeerHandler {
             {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    self.peer_table.free_with_failure(&peer_id).await?;
+                    self.peer_table.record_failure(&peer_id).await?;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
@@ -347,12 +347,11 @@ impl PeerHandler {
                 }
 
                 self.peer_table.record_success(&peer_id).await?;
-                self.peer_table.free_peer(&peer_id).await?;
                 debug!("Downloader {peer_id} freed");
             }
             let Some((peer_id, mut connection)) = self
                 .peer_table
-                .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
                 trace!("We didn't get a peer from the table");
@@ -360,7 +359,6 @@ impl PeerHandler {
             };
 
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(&peer_id).await?;
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -781,8 +779,6 @@ impl PeerHandler {
             }
 
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-                self.peer_table.free_peer(&peer_id).await?;
-
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
                         tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -816,7 +812,7 @@ impl PeerHandler {
 
             let Some((peer_id, connection)) = self
                 .peer_table
-                .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await
                 .inspect_err(|err| error!(err= ?err, "Error requesting a peer for account range"))
                 .unwrap_or(None)
@@ -826,7 +822,6 @@ impl PeerHandler {
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(&peer_id).await?;
                 if completed_tasks >= chunk_count {
                     info!("All account ranges downloaded successfully");
                     break;
@@ -1069,7 +1064,6 @@ impl PeerHandler {
                     remaining_start,
                     remaining_end,
                 } = result;
-                self.peer_table.free_peer(&peer_id).await?;
 
                 debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1096,14 +1090,13 @@ impl PeerHandler {
 
             let Some((peer_id, mut connection)) = self
                 .peer_table
-                .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
                 continue;
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(&peer_id).await?;
                 if completed_tasks >= chunk_count {
                     info!("All bytecodes downloaded successfully");
                     break;
@@ -1321,8 +1314,6 @@ impl PeerHandler {
                     remaining_hash_range: (hash_start, hash_end),
                 } = result;
                 completed_tasks += 1;
-
-                self.peer_table.free_peer(&peer_id).await?;
 
                 for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                     for account in accounts {
@@ -1592,14 +1583,13 @@ impl PeerHandler {
 
             let Some((peer_id, connection)) = self
                 .peer_table
-                .use_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
                 .await?
             else {
                 continue;
             };
 
             let Some(task) = tasks_queue_not_started.pop_front() else {
-                self.peer_table.free_peer(&peer_id).await?;
                 if completed_tasks >= task_count {
                     break;
                 }
@@ -1671,10 +1661,6 @@ impl PeerHandler {
 
         // Dropping the task sender so that the recv returns None
         drop(task_sender);
-
-        while let Some(result) = task_receiver.recv().await {
-            self.peer_table.free_peer(&result.peer_id).await?;
-        }
 
         Ok(chunk_index + 1)
     }

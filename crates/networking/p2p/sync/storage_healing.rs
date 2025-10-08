@@ -287,7 +287,7 @@ pub async fn heal_storage_trie(
                     .extend(inflight_request.requests.clone());
                 peers
                     .peer_table
-                    .free_with_failure(&inflight_request.peer_id)
+                    .record_failure(&inflight_request.peer_id)
                     .await?;
             }
         }
@@ -308,7 +308,7 @@ async fn ask_peers_for_nodes(
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection)) = peers
             .peer_table
-            .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
             .await
             .inspect_err(
                 |err| error!(err= ?err, "Error requesting a peer to perform storage healing"),
@@ -405,7 +405,6 @@ async fn zip_requeue_node_responses_score_peer(
         info!("No matching request found for received response {trie_nodes:?}");
         return Ok(None);
     };
-    peer_handler.peer_table.free_peer(&request.peer_id).await?;
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
