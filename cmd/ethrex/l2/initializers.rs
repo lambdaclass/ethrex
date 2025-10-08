@@ -18,7 +18,9 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_storage::Store;
-use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+#[cfg(feature = "rollup_storage_sql")]
+use ethrex_storage_rollup::EngineTypeRollup;
+use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, task::JoinSet};
@@ -26,6 +28,7 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, reload};
 use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
+use url::Url;
 
 #[allow(clippy::too_many_arguments)]
 async fn init_rpc_api(
@@ -252,10 +255,11 @@ pub async fn init_l2(
         l2_sequencer_cfg,
         cancellation_token.clone(),
         #[cfg(feature = "metrics")]
-        format!(
+        Url::parse(&format!(
             "http://{}:{}",
             opts.node_opts.http_addr, opts.node_opts.http_port
-        ),
+        ))
+        .expect("Invalid L2 RPC URL"),
     )
     .into_future();
 

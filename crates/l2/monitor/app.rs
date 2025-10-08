@@ -3,7 +3,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ethrex_rpc::EthClient;
+use ethrex_rpc::{EthClient, clients::EthClientError};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use futures::StreamExt;
@@ -16,6 +16,7 @@ use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
 };
+use reqwest::Url;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{
@@ -185,11 +186,21 @@ impl EthrexMonitorWidget {
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
     ) -> Result<Self, MonitorError> {
-        let eth_client = EthClient::new(cfg.eth.rpc_url.first().ok_or(MonitorError::RPCListEmpty)?)
-            .map_err(MonitorError::EthClientError)?;
+        let eth_client = EthClient::new(
+            cfg.eth
+                .urls
+                .first()
+                .ok_or(MonitorError::RPCListEmpty)?
+                .clone(),
+        )
+        .map_err(MonitorError::EthClientError)?;
         // TODO: De-hardcode the rollup client URL
-        let rollup_client =
-            EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
+        let rollup_client = EthClient::new(Url::parse("http://localhost:1729").map_err(|_| {
+            MonitorError::EthClientError(EthClientError::ParseUrlError(
+                "http://localhost:1729".to_string(),
+            ))
+        })?)
+        .map_err(MonitorError::EthClientError)?;
 
         let mut monitor_widget = EthrexMonitorWidget {
             title: if cfg.based.enabled {

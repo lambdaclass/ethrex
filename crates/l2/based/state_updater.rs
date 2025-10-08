@@ -75,7 +75,7 @@ impl StateUpdater {
             sequencer_registry_address: sequencer_cfg.based.state_updater.sequencer_registry,
             sequencer_address: sequencer_cfg.l1_committer.signer.address(),
             eth_client: Arc::new(EthClient::new_with_multiple_urls(
-                sequencer_cfg.eth.rpc_url.clone(),
+                sequencer_cfg.eth.urls.clone(),
             )?),
             store,
             rollup_store,

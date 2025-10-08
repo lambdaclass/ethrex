@@ -4,7 +4,7 @@ This document explains how to run an Ethrex L2 node in **Aligned mode** and high
 
 ## How to Run
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > For this guide we assumed that there is an L1 running with all Aligned environment set.
 
 ### 1. Generate the SP1 ELF Program and Verification Key
@@ -44,9 +44,9 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
     --sp1-vk-path <SP1_VERIFICATION_KEY_PATH>
 ```
 
-> [!NOTE]  
-> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.  
-> In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
+> [!NOTE]
+> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
+> In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
 ### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
@@ -68,7 +68,7 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 ```bash
 cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- \
 	l2 \
-	--watcher.block-delay <WATCHER_BLOCK_DELAY> \
+	--eth.safe-block-delay <BLOCKS> \
 	--network <L2_GENESIS_FILE_PATH> \
 	--http.port <L2_PORT> \
 	--http.addr <L2_RPC_ADDRESS> \
@@ -196,7 +196,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--genesis-l2-path ../../fixtures/genesis/l2.json
 ```
 
-> [!NOTE]  
+> [!NOTE]
 > This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 
 You will see that some deposits fail with the following error:
@@ -221,10 +221,10 @@ cargo run deposit-to-batcher \
 
 ```
 cd ethrex/crates/l2
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- l2 --eth.safe-block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf
 ```
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > Set `BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the values printed in step 1.
 
 Suggestion:
