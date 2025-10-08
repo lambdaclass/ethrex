@@ -17,14 +17,18 @@ use std::collections::BTreeMap;
 pub struct LevmAccount {
     pub info: AccountInfo,
     pub storage: BTreeMap<H256, U256>,
-    /// If doing create on that account it would collide because of storage
-    /// We just care about this kind of collision if the account doesn't have code or nonce.
+    /// If true it means that doing create on this account it would collide because of storage.
+    /// We just care about this kind of collision if the account doesn't have code or nonce. Otherwise its value doesn't matter.
     /// It can't even happen in real case scenarios but it happens on tests.
     ///
-    /// - When getting an account from the DB this is set to true if the account has a non-empty storage root.
-    /// - Upon selfdestruct this is set to false (Default)
+    /// - When getting an account from the DB this is set to true if the account has non-empty storage root.
+    /// - Upon destruction this is set to false
+    ///
+    /// This will remain true if storage is "manually" removed from an account (which is wrong), but it won't break anything since we use this attribute only for accounts that don't exist.
     pub storage_collision: bool,
     /// Current status of the account.
+    /// Note that currently we are not using AccountStatus for any important checks but we should probably start using it soon.
+    /// Some examples include: Knowing if an account was destroyed and re-created afterwards, or maybe if we use the Unmodified variant correctly we can skip processing updates of the account.
     pub status: AccountStatus,
 }
 
