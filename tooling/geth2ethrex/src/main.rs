@@ -41,6 +41,7 @@ use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Instant;
+use tracing::debug;
 use tracing::info;
 use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
@@ -196,11 +197,15 @@ impl GethDB {
             "{name}.{}",
             if compressed { "cidx" } else { "ridx" }
         ));
-        let index_file = File::open(idx_path)?;
+        let index_file = File::open(&idx_path)?;
         let size = index_file.metadata()?.size();
         let last = last.min(size / 6);
         // We need one index back to find the start of the entries.
         let to_read = ((last - first + 2) * 6) as usize;
+        debug!(
+            path = idx_path.to_string_lossy().to_string(),
+            size, first, last, to_read, "About to read index file"
+        );
         let mut index_buf = vec![0; to_read];
         index_file.read_exact_at(&mut index_buf, 6 * first)?;
         let index_entries: Vec<_> = index_buf
