@@ -2,6 +2,10 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
 };
+use ethrex_common::H160;
+use genesis_tool::genesis::write_genesis_as_json;
+use std::fs::File;
+use std::io::BufReader;
 
 use ethrex_common::{U256, types::GenesisAccount};
 
@@ -273,9 +277,47 @@ use ethrex_l2_sdk::{
     L2_TO_L1_MESSENGER_ADDRESS, SAFE_SINGLETON_FACTORY_ADDRESS, address_to_word, get_erc1967_slot,
 };
 
-use genesis_tool::genesis::write_genesis_as_json;
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, thiserror::Error)]
+pub enum SystemContractsUpdaterError {
+    #[error("Failed to deploy contract: {0}")]
+    FailedToDecodeRuntimeCode(#[from] hex::FromHexError),
+    #[error("Failed to serialize modified genesis: {0}")]
+    FailedToSerializeModifiedGenesis(#[from] serde_json::Error),
+    #[error("Failed to write modified genesis file: {0}")]
+    FailedToWriteModifiedGenesisFile(#[from] std::io::Error),
+    #[error("Failed to read path: {0}")]
+    InvalidPath(String),
+    #[error(
+        "Contract bytecode not found. Make sure to compile the updater with `COMPILE_CONTRACTS` set."
+    )]
+    BytecodeNotFound,
+}
 
-use crate::{ADMIN_ADDRESS, IMPL_MASK, SystemContractsUpdaterError, read_genesis_file};
+/// Address authorized to perform system contract upgrades
+/// 0x000000000000000000000000000000000000f000
+pub const ADMIN_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xf0, 0x00,
+]);
+
+/// Mask used to derive the initial implementation address
+/// 0x0000000000000000000000000000000000001000
+pub const IMPL_MASK: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x10, 0x00,
+]);
+// From cmd/ethrex
+pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
+    let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
+    _genesis_file(genesis_file).expect("Failed to decode genesis file")
+}
+
+// From cmd/ethrex/decode.rs
+fn _genesis_file(file: File) -> Result<Genesis, serde_json::Error> {
+    let genesis_reader = BufReader::new(file);
+    serde_json::from_reader(genesis_reader)
+}
 
 /// Bytecode of the CommonBridgeL2 contract.
 fn common_bridge_l2_runtime(out_dir: &Path) -> Vec<u8> {
