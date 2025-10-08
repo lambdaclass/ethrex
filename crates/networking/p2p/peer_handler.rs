@@ -1503,6 +1503,8 @@ impl PeerHandler {
                                     if !old_intervals.is_empty() {
                                         acc_hash = *account;
                                     }
+                                } else {
+                                    continue;
                                 }
                             }
                             if acc_hash.is_zero() {
