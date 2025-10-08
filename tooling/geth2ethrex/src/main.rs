@@ -141,7 +141,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         }
     }
     let migration_time = migration_start.elapsed().as_secs_f64();
-    info!("Migration complete in {migration_time}");
+    info!("Migration complete in {migration_time} seconds");
     Ok(())
 }
 
