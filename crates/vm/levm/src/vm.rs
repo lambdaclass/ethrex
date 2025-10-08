@@ -124,13 +124,13 @@ impl Substate {
 
             fn next(&mut self) -> Option<Self::Item> {
                 let next_item = self.iter.next();
-                if next_item.is_none() {
-                    if let Some(parent) = self.parent {
-                        self.parent = parent.parent.as_deref();
-                        self.iter = parent.selfdestruct_set.iter();
+                if next_item.is_none()
+                    && let Some(parent) = self.parent
+                {
+                    self.parent = parent.parent.as_deref();
+                    self.iter = parent.selfdestruct_set.iter();
 
-                        return self.next();
-                    }
+                    return self.next();
                 }
 
                 next_item

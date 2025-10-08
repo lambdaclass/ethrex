@@ -367,23 +367,6 @@ impl NodeRecord {
         Ok(())
     }
 
-    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SecretKey) -> Result<(), NodeError> {
-        if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth") {
-            if *fork_id == ForkId::decode(&value[1..]).expect("No fork Id in NodeRecord pairs") {
-                return Ok(());
-            }
-        }
-
-        // remove previous eth version
-        self.pairs.retain(|(k, _)| k != "eth");
-
-        self.pairs
-            .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
-
-        self.update_seq(signer)?;
-        Ok(())
-    }
-
     fn sign_record(&mut self, signer: &SecretKey) -> Result<H512, NodeError> {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)

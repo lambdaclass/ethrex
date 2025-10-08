@@ -200,10 +200,11 @@ impl Mempool {
             }
 
             // Filter by blob gas fee
-            if let (true, Some(blob_fee)) = (is_blob_tx, filter.blob_fee) {
-                if tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee) {
-                    return false;
-                }
+            if is_blob_tx
+                && let Some(blob_fee) = filter.blob_fee
+                && tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee)
+            {
+                return false;
             }
             true
         };

@@ -35,7 +35,7 @@ impl RocksDBTrieDB {
         })
     }
 
-    fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily>, TrieError> {
+    fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
         self.db
             .cf_handle(&self.cf_name)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))

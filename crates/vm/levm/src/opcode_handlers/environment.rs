@@ -230,18 +230,18 @@ impl<'a> VM<'a> {
         }
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        if let Some(code_offset_end) = code_offset.checked_add(size) {
-            if code_offset_end <= current_call_frame.bytecode.len() {
-                #[expect(unsafe_code, reason = "bounds checked beforehand")]
-                let slice = unsafe {
-                    current_call_frame
-                        .bytecode
-                        .get_unchecked(code_offset..code_offset_end)
-                };
-                current_call_frame.memory.store_data(dest_offset, slice)?;
+        if let Some(code_offset_end) = code_offset.checked_add(size)
+            && code_offset_end <= current_call_frame.bytecode.len()
+        {
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            let slice = unsafe {
+                current_call_frame
+                    .bytecode
+                    .get_unchecked(code_offset..code_offset_end)
+            };
+            current_call_frame.memory.store_data(dest_offset, slice)?;
 
-                return Ok(OpcodeResult::Continue);
-            }
+            return Ok(OpcodeResult::Continue);
         }
 
         let mut data = vec![0u8; size];
@@ -318,16 +318,16 @@ impl<'a> VM<'a> {
         let bytecode = self.db.get_account_code(address)?;
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        if let Some(offset_end) = offset.checked_add(size) {
-            if offset_end <= bytecode.len() {
-                #[expect(unsafe_code, reason = "bounds checked beforehand")]
-                let slice = unsafe { bytecode.get_unchecked(offset..offset_end) };
-                self.current_call_frame
-                    .memory
-                    .store_data(dest_offset, slice)?;
+        if let Some(offset_end) = offset.checked_add(size)
+            && offset_end <= bytecode.len()
+        {
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            let slice = unsafe { bytecode.get_unchecked(offset..offset_end) };
+            self.current_call_frame
+                .memory
+                .store_data(dest_offset, slice)?;
 
-                return Ok(OpcodeResult::Continue);
-            }
+            return Ok(OpcodeResult::Continue);
         }
 
         let mut data = vec![0u8; size];

@@ -593,16 +593,16 @@ fn get_slice_or_default<'c>(
     size_to_expand: usize,
 ) -> Cow<'c, [u8]> {
     let upper_limit = calldata.len().min(upper_limit);
-    if let Some(data) = calldata.get(lower_limit..upper_limit) {
-        if !data.is_empty() {
-            if data.len() == size_to_expand {
-                return data.into();
-            }
-            let mut extended = vec![0u8; size_to_expand];
-            let copy_size = size_to_expand.min(data.len());
-            extended[..copy_size].copy_from_slice(&data[..copy_size]);
-            return extended.into();
+    if let Some(data) = calldata.get(lower_limit..upper_limit)
+        && !data.is_empty()
+    {
+        if data.len() == size_to_expand {
+            return data.into();
         }
+        let mut extended = vec![0u8; size_to_expand];
+        let copy_size = size_to_expand.min(data.len());
+        extended[..copy_size].copy_from_slice(&data[..copy_size]);
+        return extended.into();
     }
     Vec::new().into()
 }
@@ -908,7 +908,7 @@ fn validate_pairing(
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
-    if calldata.len() % 192 != 0 {
+    if !calldata.len().is_multiple_of(192) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1262,7 +1262,7 @@ pub fn bls12_g1msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G1_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1436,7 +1436,7 @@ pub fn bls12_g2msm(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_G2_MSM_PAIR_LENGTH != 0 {
+    if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G2_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1491,7 +1491,11 @@ pub fn bls12_pairing_check(
     gas_remaining: &mut u64,
     _fork: Fork,
 ) -> Result<Bytes, VMError> {
-    if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
+    if calldata.is_empty()
+        || !calldata
+            .len()
+            .is_multiple_of(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
+    {
         return Err(PrecompileError::ParsingInputError.into());
     }
 

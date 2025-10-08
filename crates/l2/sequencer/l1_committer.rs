@@ -352,13 +352,13 @@ impl L1Committer {
             let current_block_gas_used = block_to_commit_header.gas_used;
 
             // Check if adding this block would exceed the batch gas limit
-            if let Some(batch_gas_limit) = self.batch_gas_limit {
-                if acc_gas_used + current_block_gas_used > batch_gas_limit {
-                    debug!(
-                        "Batch gas limit reached. Any remaining blocks will be processed in the next batch"
-                    );
-                    break;
-                }
+            if self.batch_gas_limit.is_some_and(|batch_gas_limit| {
+                acc_gas_used + current_block_gas_used > batch_gas_limit
+            }) {
+                debug!(
+                    "Batch gas limit reached. Any remaining blocks will be processed in the next batch"
+                );
+                break;
             }
 
             // Get block transactions and receipts

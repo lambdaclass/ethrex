@@ -42,18 +42,18 @@ impl MetricsProcess {
                 })?;
         }
 
-        if let Some(path) = DATADIR_PATH.get() {
-            if let Ok(size) = directory_size(path) {
-                let gauge = IntGauge::new(
-                    "datadir_size_bytes",
-                    "Total size in bytes consumed by the configured datadir.",
-                )
+        if let Some(path) = DATADIR_PATH.get()
+            && let Ok(size) = directory_size(path)
+        {
+            let gauge = IntGauge::new(
+                "datadir_size_bytes",
+                "Total size in bytes consumed by the configured datadir.",
+            )
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+            let clamped = size.min(i64::MAX as u64);
+            gauge.set(clamped as i64);
+            r.register(Box::new(gauge))
                 .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-                let clamped = size.min(i64::MAX as u64);
-                gauge.set(clamped as i64);
-                r.register(Box::new(gauge))
-                    .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-            }
         }
 
         let encoder = TextEncoder::new();

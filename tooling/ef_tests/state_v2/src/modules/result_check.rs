@@ -264,27 +264,28 @@ pub fn check_accounts_state(
     for (addr, expected_account) in expected_accounts_state {
         let acc_genesis_state = genesis.alloc.get(&addr);
         // First we check if the address appears in the `current_accounts_state`, which stores accounts modified by the tx.
-        let account: &mut LevmAccount =
-            if let Some(account) = db.current_accounts_state.get_mut(&addr) {
-                if account.storage.is_empty() && acc_genesis_state.is_some() {
-                    account.storage = acc_genesis_state
-                        .unwrap()
-                        .storage
-                        .iter()
-                        .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
-                        .collect();
-                }
-                account
+        let account: &mut LevmAccount = if let Some(account) =
+            db.current_accounts_state.get_mut(&addr)
+            && account.storage.is_empty()
+            && acc_genesis_state.is_some()
+        {
+            account.storage = acc_genesis_state
+                .unwrap()
+                .storage
+                .iter()
+                .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
+                .collect();
+            account
+        } else {
+            // Else, we take its info from the Genesis state, assuming it has not changed.
+            if let Some(account) = acc_genesis_state {
+                &mut Into::<LevmAccount>::into(account.clone())
             } else {
-                // Else, we take its info from the Genesis state, assuming it has not changed.
-                if let Some(account) = acc_genesis_state {
-                    &mut Into::<LevmAccount>::into(account.clone())
-                } else {
-                    // If we can't find it in any of the previous mappings, we provide a default account that will not pass
-                    // the comparisons checks.
-                    &mut LevmAccount::default()
-                }
-            };
+                // If we can't find it in any of the previous mappings, we provide a default account that will not pass
+                // the comparisons checks.
+                &mut LevmAccount::default()
+            }
+        };
 
         // We verify if the account matches the expected post state.
         let account_mismatch = verify_matching_accounts(addr, account, &expected_account);

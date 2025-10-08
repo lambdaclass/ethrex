@@ -631,11 +631,11 @@ impl Genesis {
         let mut blob_gas_used: Option<u64> = None;
         let mut excess_blob_gas: Option<u64> = None;
 
-        if let Some(cancun_time) = self.config.cancun_time {
-            if cancun_time <= self.timestamp {
-                blob_gas_used = Some(self.blob_gas_used.unwrap_or(0));
-                excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
-            }
+        if let Some(cancun_time) = self.config.cancun_time
+            && cancun_time <= self.timestamp
+        {
+            blob_gas_used = Some(self.blob_gas_used.unwrap_or(0));
+            excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
         }
         let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
             self.config
