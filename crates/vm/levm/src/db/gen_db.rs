@@ -223,7 +223,10 @@ impl GeneralizedDatabase {
                 let old_value = initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?;
 
                 if new_value != old_value {
-                    added_storage.insert(*key, *new_value);
+                    // Only include non-zero values in added_storage to match .json file behavior
+                    if *new_value != U256::zero() {
+                        added_storage.insert(*key, *new_value);
+                    }
                     storage_updated = true;
                 }
             }
