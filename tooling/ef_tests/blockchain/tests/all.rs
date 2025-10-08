@@ -54,5 +54,5 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
 
 datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");
 
-#[cfg(any(all(feature = "sp1", feature = "stateless"),))]
+#[cfg(all(feature = "sp1", feature = "stateless"))]
 compile_error!("Only one of `sp1`, `stateless` can be enabled at a time.");

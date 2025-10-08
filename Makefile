@@ -13,7 +13,7 @@ lint-l1:
 		--release -- -D warnings
 
 lint-l2:
-	cargo clippy --all-targets -F debug,sync-test,l2 \
+	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
 		--workspace --exclude ethrex-prover --exclude guest_program --exclude ef_tests-blockchain \
 		--release -- -D warnings
 
