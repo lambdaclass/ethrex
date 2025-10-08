@@ -22,7 +22,6 @@ use crate::{
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
-use ark_ff::Zero;
 use bytes::Bytes;
 use ethrex_common::tracing::CallType;
 use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
@@ -449,7 +448,7 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
-        let target_account_is_cold = !self.substate.add_accessed_address(beneficiary);
+        let target_account_is_cold = self.substate.add_accessed_address(beneficiary);
         let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
 
         let current_account = self.db.get_account(to)?;
@@ -909,7 +908,7 @@ impl<'a> VM<'a> {
         address: Address,
     ) -> Result<(usize, u64, bool, bool), VMError> {
         // Creation of previously empty accounts and cold addresses have higher gas cost
-        let address_was_cold = !self.substate.add_accessed_address(address);
+        let address_was_cold = self.substate.add_accessed_address(address);
         let account_is_empty = self.db.get_account(address)?.is_empty();
 
         // Calculated here for memory expansion gas cost

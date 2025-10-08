@@ -347,9 +347,9 @@ pub fn eip7702_get_code(
     let auth_address = get_authorized_address_from_code(bytecode)?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        WARM_ADDRESS_ACCESS_COST
-    } else {
         COLD_ADDRESS_ACCESS_COST
+    } else {
+        WARM_ADDRESS_ACCESS_COST
     };
 
     let authorized_bytecode = db.get_account_code(auth_address)?.clone();
