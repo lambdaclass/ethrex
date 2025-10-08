@@ -90,6 +90,8 @@ pub struct PeerData {
     in_use: bool,
     /// This tracks the score of a peer
     score: i64,
+    /// Track the amount of concurrent requests this peer is handling
+    requests: i64,
 }
 
 impl PeerData {
@@ -107,6 +109,7 @@ impl PeerData {
             connection,
             in_use: false,
             score: Default::default(),
+            requests: Default::default(),
         }
     }
 }
@@ -164,20 +167,18 @@ impl PeerTable {
     }
 
     /// Increment the number of ongoing requests for this peer
-    pub async fn inc_requests(&mut self, _node_id: H256) -> Result<(), PeerTableError> {
-        // TODO implement
-        // self.handle
-        //     .cast(CastMessage::IncRequests { node_id })
-        //     .await?;
+    pub async fn inc_requests(&mut self, node_id: H256) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::IncRequests { node_id })
+            .await?;
         Ok(())
     }
 
     /// Decrement the number of ongoing requests for this peer
-    pub async fn dec_requests(&mut self, _node_id: H256) -> Result<(), PeerTableError> {
-        // TODO implement
-        // self.handle
-        //     .cast(CastMessage::DecRequests { node_id })
-        //     .await?;
+    pub async fn dec_requests(&mut self, node_id: H256) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::DecRequests { node_id })
+            .await?;
         Ok(())
     }
 
@@ -569,9 +570,9 @@ impl PeerTableServer {
             // We filter only to those peers which are useful to us
             .filter_map(|(id, peer_data)| {
                 // If the peer is already in use right now, we skip it
-                if peer_data.in_use {
-                    return None;
-                }
+                // if peer_data.in_use {
+                //     return None;
+                // }
 
                 // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
@@ -585,10 +586,10 @@ impl PeerTableServer {
                 let connection = peer_data.connection.clone()?;
 
                 // We return the id, the score and the channel to connect with.
-                Some((*id, peer_data.score, connection))
+                Some((*id, peer_data.score, peer_data.requests, connection))
             })
-            .max_by_key(|(_, score, _)| *score)
-            .map(|(k, _, v)| (k, v))
+            .max_by_key(|(_, _score, reqs, _)| -reqs)
+            .map(|(k, _, _, v)| (k, v))
     }
 
     /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
@@ -603,6 +604,13 @@ impl PeerTableServer {
     }
 
     fn prune(&mut self) {
+        info!(
+            "Inflight requests per peer: {:?}",
+            self.peers
+                .iter()
+                .map(|(id, data)| format!("{}: {} - {}", id, data.requests, data.score))
+                .collect::<Vec<String>>()
+        );
         let disposable_contacts = self
             .contacts
             .iter()
@@ -807,6 +815,12 @@ enum CastMessage {
         capabilities: Vec<Capability>,
     },
     RemovePeer {
+        node_id: H256,
+    },
+    IncRequests {
+        node_id: H256,
+    },
+    DecRequests {
         node_id: H256,
     },
     SetUnwanted {
@@ -1074,6 +1088,16 @@ impl GenServer for PeerTableServer {
             }
             CastMessage::RemovePeer { node_id } => {
                 self.peers.remove(&node_id);
+            }
+            CastMessage::IncRequests { node_id } => {
+                self.peers
+                    .entry(node_id)
+                    .and_modify(|peer_data| peer_data.requests += 1);
+            }
+            CastMessage::DecRequests { node_id } => {
+                self.peers
+                    .entry(node_id)
+                    .and_modify(|peer_data| peer_data.requests -= 1);
             }
             CastMessage::SetUnwanted { node_id } => {
                 self.contacts
