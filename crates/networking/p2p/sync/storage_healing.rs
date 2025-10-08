@@ -20,7 +20,7 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::atomic::Ordering,
     time::Instant,
 };
@@ -548,24 +548,7 @@ fn get_initial_downloads(
                 if account.storage_root == *EMPTY_TRIE_HASH {
                     return None;
                 }
-                let trie = store
-                    .open_direct_storage_trie(*acc_path, account.storage_root)
-                    .expect("We should be able to open the store");
 
-                let previous = match trie
-                    .root
-                    .get_node_checked(trie.db(), Nibbles::default())
-                    .expect("To be able to read the store")
-                {
-                    Some((validity, previous)) => {
-                        if validity {
-                            return None;
-                        } else {
-                            Some(previous)
-                        }
-                    }
-                    None => None,
-                };
                 Some(NodeRequest {
                     acc_path: Nibbles::from_bytes(&acc_path.0),
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
@@ -583,24 +566,6 @@ fn get_initial_downloads(
                 if *storage_root == *EMPTY_TRIE_HASH {
                     return None;
                 }
-                let trie = store
-                    .open_direct_storage_trie(*acc_path, *storage_root)
-                    .expect("We should be able to open the store");
-
-                let previous = match trie
-                    .root
-                    .get_node_checked(trie.db(), Nibbles::default())
-                    .expect("To be able to read the store")
-                {
-                    Some((validity, previous)) => {
-                        if validity {
-                            return None;
-                        } else {
-                            Some(previous)
-                        }
-                    }
-                    None => None,
-                };
 
                 Some(NodeRequest {
                     acc_path: Nibbles::from_bytes(&acc_path.0),
@@ -643,14 +608,13 @@ pub fn determine_missing_children(
                 if !child.is_valid() {
                     continue;
                 }
-                let (validity, previous) = match child
-                    .get_node_checked(trie_state, child_path.clone())
+                let validity = child
+                    .get_node(trie_state, child_path.clone())
                     .inspect_err(|_| {
                         error!("Malformed data when doing get child of a branch node")
-                    })? {
-                    Some((validity, previous)) => (validity, Some(previous)),
-                    None => (false, None),
-                };
+                    })?
+                    .is_some();
+
                 if validity {
                     continue;
                 }
@@ -669,14 +633,12 @@ pub fn determine_missing_children(
             if !node.child.is_valid() {
                 return Ok((vec![], 0));
             }
-            let (validity, previous) = match node
+            let validity = node
                 .child
-                .get_node_checked(trie_state, child_path.clone())
+                .get_node(trie_state, child_path.clone())
                 .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
-            {
-                Some((validity, previous)) => (validity, Some(previous)),
-                None => (false, None),
-            };
+                .is_some();
+
             if validity {
                 return Ok((vec![], 0));
             }

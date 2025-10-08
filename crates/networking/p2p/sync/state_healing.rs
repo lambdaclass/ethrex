@@ -43,7 +43,6 @@ pub struct MembatchEntryValue {
     node: Node,
     children_not_in_storage_count: u64,
     parent_path: Nibbles,
-    previous: Option<Node>,
 }
 
 pub async fn heal_state_trie_wrap(
@@ -99,7 +98,6 @@ async fn heal_state_trie(
         hash: state_root,
         path: Nibbles::default(), // We need to be careful, the root parent is a special case
         parent_path: Nibbles::default(),
-        previous: None, // None => can't assume anything
     }];
     let mut last_update = Instant::now();
     let mut inflight_tasks: u64 = 0;
@@ -359,7 +357,6 @@ async fn heal_state_batch(
                 node: node.clone(),
                 children_not_in_storage_count: missing_children_count,
                 parent_path: path.parent_path.clone(),
-                previous: path.previous,
             };
             membatch.insert(path.path.clone(), entry);
         }
@@ -416,14 +413,12 @@ pub fn node_missing_children(
                 if !child.is_valid() {
                     continue;
                 }
-                let (validity, previous) = match child
-                    .get_node_checked(trie_state, child_path.clone())
+                let validity = child
+                    .get_node(trie_state, child_path.clone())
                     .inspect_err(|_| {
                         error!("Malformed data when doing get child of a branch node")
-                    })? {
-                    Some((validity, previous)) => (validity, Some(previous)),
-                    None => (false, None),
-                };
+                    })?
+                    .is_some();
                 if validity {
                     continue;
                 }
@@ -433,7 +428,6 @@ pub fn node_missing_children(
                     hash: child.compute_hash().finalize(),
                     path: child_path,
                     parent_path: path.clone(),
-                    previous,
                 }]);
             }
         }
@@ -442,14 +436,11 @@ pub fn node_missing_children(
             if !node.child.is_valid() {
                 return Ok((0, vec![]));
             }
-            let (validity, previous) = match node
+            let validity = node
                 .child
-                .get_node_checked(trie_state, child_path.clone())
+                .get_node(trie_state, child_path.clone())
                 .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
-            {
-                Some((validity, previous)) => (validity, Some(previous)),
-                None => (false, None),
-            };
+                .is_some();
             if validity {
                 return Ok((0, vec![]));
             }
@@ -459,7 +450,6 @@ pub fn node_missing_children(
                 hash: node.child.compute_hash().finalize(),
                 path: child_path,
                 parent_path: path.clone(),
-                previous,
             }]);
         }
         _ => {}

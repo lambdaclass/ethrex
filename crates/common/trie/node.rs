@@ -48,28 +48,6 @@ impl NodeRef {
         }
     }
 
-    // TODO: remove this method and use get_node
-    pub fn get_node_checked(
-        &self,
-        db: &dyn TrieDB,
-        path: Nibbles,
-    ) -> Result<Option<(bool, Node)>, TrieError> {
-        match *self {
-            NodeRef::Node(ref node, _) => Ok(Some((true, node.as_ref().clone()))),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some((true, Node::decode_raw(&data[..len as usize])?)))
-            }
-            NodeRef::Hash(hash) => db
-                .get(path)?
-                .filter(|rlp| !rlp.is_empty())
-                .map(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => Ok((node.compute_hash() == hash, node)),
-                    Err(err) => Err(TrieError::RLPDecode(err)),
-                })
-                .transpose(),
-        }
-    }
-
     pub fn is_valid(&self) -> bool {
         match self {
             NodeRef::Node(_, _) => true,

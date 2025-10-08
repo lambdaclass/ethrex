@@ -32,9 +32,9 @@ use std::time::SystemTime;
 use std::{
     array,
     cmp::min,
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
