@@ -25,6 +25,7 @@ pub struct LevmAccount {
     /// - Upon destruction this is set to false
     ///
     /// This will remain true if storage is "manually" removed from an account (which is wrong), but it won't break anything since we use this attribute only for accounts that don't exist.
+    /// This wouldn't be enough if an account of this characteristics could be created in a recent fork. We only support this because those kinds of accounts exist in Mainnet.
     pub storage_collision: bool,
     /// Current status of the account.
     /// Note that currently we are not using AccountStatus for any important checks but we should probably start using it soon.
