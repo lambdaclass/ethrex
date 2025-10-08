@@ -198,13 +198,14 @@ pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duratio
         let PayloadBuildResult { payload, .. } = blockchain.get_payload(payload_id).await.unwrap();
         payload
     };
+    let hash = &block.hash();
+
     // 3. engine_newPayload is called, this eventually calls Blockchain::add_block
     // which takes transactions from the mempool and fills the block with them.
     let since = Instant::now();
-    blockchain.add_block(&block).await.unwrap();
+    blockchain.add_block(block).await.unwrap();
     let executed = Instant::now();
     // EXTRA: Sanity check to not benchmark n empty block.
-    let hash = &block.hash();
     assert!(
         !store
             .get_block_body_by_hash(*hash)
