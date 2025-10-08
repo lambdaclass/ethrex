@@ -1,4 +1,4 @@
-use std::cmp;
+use std::{cmp, mem};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -10,7 +10,7 @@ use ethrex_rlp::{
 /// Struct representing a list of nibbles (half-bytes)
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Nibbles {
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl std::hash::Hash for Nibbles {
@@ -197,6 +197,13 @@ impl Nibbles {
     pub fn append_new(&self, nibble: u8) -> Nibbles {
         Nibbles {
             data: [self.data.clone(), vec![nibble]].concat(),
+        }
+    }
+
+    /// Empties `self.data` and returns the content
+    pub fn take(&mut self) -> Self {
+        Nibbles {
+            data: mem::take(&mut self.data),
         }
     }
 }
