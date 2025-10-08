@@ -306,7 +306,7 @@ async fn ask_peers_for_nodes(
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
-        let Some((peer_id, mut connection)) = peers
+        let Some((peer_id, connection)) = peers
             .peer_table
             .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
             .await
@@ -340,10 +340,13 @@ async fn ask_peers_for_nodes(
 
         let tx = task_sender.clone();
 
+        let peer_table = peers.peer_table.clone();
+
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
-            let response = PeerHandler::request_storage_trienodes(&mut connection, gtn).await;
+            let response =
+                PeerHandler::request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")

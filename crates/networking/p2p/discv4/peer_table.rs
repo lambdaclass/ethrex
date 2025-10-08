@@ -163,6 +163,24 @@ impl PeerTable {
         Ok(())
     }
 
+    /// Increment the number of ongoing requests for this peer
+    pub async fn inc_requests(&mut self, _node_id: H256) -> Result<(), PeerTableError> {
+        // TODO implement
+        // self.handle
+        //     .cast(CastMessage::IncRequests { node_id })
+        //     .await?;
+        Ok(())
+    }
+
+    /// Decrement the number of ongoing requests for this peer
+    pub async fn dec_requests(&mut self, _node_id: H256) -> Result<(), PeerTableError> {
+        // TODO implement
+        // self.handle
+        //     .cast(CastMessage::DecRequests { node_id })
+        //     .await?;
+        Ok(())
+    }
+
     /// Mark node as not wanted
     pub async fn set_unwanted(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.handle

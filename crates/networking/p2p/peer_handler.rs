@@ -92,6 +92,7 @@ struct StorageTask {
 async fn ask_peer_head_number(
     peer_id: H256,
     connection: &mut PeerConnection,
+    peer_table: &mut PeerTable,
     sync_head: H256,
     retries: i32,
 ) -> Result<u64, PeerHandlerError> {
@@ -108,9 +109,14 @@ async fn ask_peer_head_number(
 
     debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
-    match connection
-        .outgoing_request(request, Duration::from_millis(500))
-        .await
+    match PeerHandler::make_request(
+        peer_table,
+        peer_id,
+        connection,
+        request,
+        Duration::from_millis(500),
+    )
+    .await
     {
         Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
@@ -147,6 +153,21 @@ impl PeerHandler {
     pub fn dummy() -> PeerHandler {
         let dummy_peer_table = PeerTable::spawn();
         PeerHandler::new(dummy_peer_table)
+    }
+
+    async fn make_request(
+        // TODO: We should receive the PeerHandler (or self) instead, but since it is not yet spawnified it cannot be shared
+        // Fix this to avoid passing the PeerTable as a parameter
+        peer_table: &mut PeerTable,
+        peer_id: H256,
+        connection: &mut PeerConnection,
+        message: RLPxMessage,
+        timeout: Duration,
+    ) -> Result<RLPxMessage, PeerConnectionError> {
+        peer_table.inc_requests(peer_id).await?;
+        let result = connection.outgoing_request(message, timeout).await;
+        peer_table.dec_requests(peer_id).await?;
+        result
     }
 
     /// Returns a random node id and the channel ends to an active peer connection that supports the given capability
@@ -195,7 +216,15 @@ impl PeerHandler {
                 .await?;
 
             for (peer_id, mut connection) in peer_connection {
-                match ask_peer_head_number(peer_id, &mut connection, sync_head, retries).await {
+                match ask_peer_head_number(
+                    peer_id,
+                    &mut connection,
+                    &mut self.peer_table,
+                    sync_head,
+                    retries,
+                )
+                .await
+                {
                     Ok(number) => {
                         sync_head_number = number;
                         if number != 0 {
@@ -341,10 +370,9 @@ impl PeerHandler {
 
                 continue;
             };
-
             let tx = task_sender.clone();
-
             debug!("Downloader {peer_id} is now busy");
+            let mut peer_table = self.peer_table.clone();
 
             // run download_chunk_from_peer in a different Tokio task
             tokio::spawn(async move {
@@ -354,6 +382,7 @@ impl PeerHandler {
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
                     &mut connection,
+                    &mut peer_table,
                     startblock,
                     chunk_limit,
                 )
@@ -436,9 +465,14 @@ impl PeerHandler {
                     if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                         id: _,
                         block_headers,
-                    })) = connection
-                        .outgoing_request(request, PEER_REPLY_TIMEOUT)
-                        .await
+                    })) = PeerHandler::make_request(
+                        &mut self.peer_table,
+                        peer_id,
+                        &mut connection,
+                        request,
+                        PEER_REPLY_TIMEOUT,
+                    )
+                    .await
                     {
                         if are_block_headers_chained(&block_headers, &order) {
                             return Ok(Some(block_headers));
@@ -464,6 +498,7 @@ impl PeerHandler {
     async fn download_chunk_from_peer(
         peer_id: H256,
         connection: &mut PeerConnection,
+        peer_table: &mut PeerTable,
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
@@ -479,9 +514,14 @@ impl PeerHandler {
         if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
             block_headers,
-        })) = connection
-            .outgoing_request(request, Duration::from_secs(2))
-            .await
+        })) = PeerHandler::make_request(
+            peer_table,
+            peer_id,
+            connection,
+            request,
+            Duration::from_secs(2),
+        )
+        .await
         {
             if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
                 Ok(block_headers)
@@ -514,9 +554,14 @@ impl PeerHandler {
                 if let Ok(RLPxMessage::BlockBodies(BlockBodies {
                     id: _,
                     block_bodies,
-                })) = connection
-                    .outgoing_request(request, Duration::from_secs(2))
-                    .await
+                })) = PeerHandler::make_request(
+                    &mut self.peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    Duration::from_secs(2),
+                )
+                .await
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
@@ -604,9 +649,9 @@ impl PeerHandler {
             });
             match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
                 None => return Ok(None),
-                Some((_, mut connection)) => {
+                Some((peer_id, mut connection)) => {
                     if let Some(receipts) =
-                        match connection.outgoing_request(request, PEER_REPLY_TIMEOUT).await {
+                        match PeerHandler::make_request(&mut self.peer_table, peer_id, &mut connection, request, PEER_REPLY_TIMEOUT).await {
                             Ok(RLPxMessage::Receipts68(res)) => {
                                 Some(res.get_receipts())
                             }
@@ -836,12 +881,15 @@ impl PeerHandler {
                 .expect("Should be able to update pivot")
             }
 
+            let peer_table = self.peer_table.clone();
+
             tokio::spawn(PeerHandler::request_account_range_worker(
                 peer_id,
+                connection,
+                peer_table,
                 chunk_start,
                 chunk_end,
                 pivot_header.state_root,
-                connection,
                 tx,
             ));
         }
@@ -879,15 +927,16 @@ impl PeerHandler {
 
     #[allow(clippy::type_complexity)]
     async fn request_account_range_worker(
-        free_peer_id: H256,
+        peer_id: H256,
+        mut connection: PeerConnection,
+        mut peer_table: PeerTable,
         chunk_start: H256,
         chunk_end: H256,
         state_root: H256,
-        mut connection: PeerConnection,
         tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
     ) -> Result<(), PeerHandlerError> {
         debug!(
-            "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
+            "Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
         );
         let request_id = rand::random();
         let request = RLPxMessage::GetAccountRange(GetAccountRange {
@@ -901,12 +950,17 @@ impl PeerHandler {
             id: _,
             accounts,
             proof,
-        })) = connection
-            .outgoing_request(request, Duration::from_secs(2))
-            .await
+        })) = PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request,
+            Duration::from_secs(2),
+        )
+        .await
         {
             if accounts.is_empty() {
-                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                     .await
                     .ok();
                 return Ok(());
@@ -930,7 +984,7 @@ impl PeerHandler {
                 &encoded_accounts,
                 &proof,
             ) else {
-                tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                     .await
                     .ok();
                 tracing::error!("Received invalid account range");
@@ -942,7 +996,7 @@ impl PeerHandler {
                 let last_hash = match account_hashes.last() {
                     Some(last_hash) => last_hash,
                     None => {
-                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                        tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                             .await
                             .ok();
                         error!("Account hashes last failed, this shouldn't happen");
@@ -960,14 +1014,14 @@ impl PeerHandler {
                     .into_iter()
                     .filter(|unit| unit.hash <= chunk_end)
                     .collect(),
-                free_peer_id,
+                peer_id,
                 chunk_left,
             ))
             .await
             .ok();
         } else {
             tracing::debug!("Failed to get account range");
-            tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+            tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                 .await
                 .ok();
         }
@@ -1087,6 +1141,8 @@ impl PeerHandler {
                 .copied()
                 .collect();
 
+            let mut peer_table = self.peer_table.clone();
+
             tokio::spawn(async move {
                 let empty_task_result = TaskResult {
                     start_index: chunk_start,
@@ -1104,8 +1160,14 @@ impl PeerHandler {
                     hashes: hashes_to_request.clone(),
                     bytes: MAX_RESPONSE_BYTES,
                 });
-                if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) = connection
-                    .outgoing_request(request, Duration::from_secs(2))
+                if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) =
+                    PeerHandler::make_request(
+                        &mut peer_table,
+                        peer_id,
+                        &mut connection,
+                        request,
+                        Duration::from_secs(2),
+                    )
                     .await
                 {
                     if codes.is_empty() {
@@ -1430,12 +1492,14 @@ impl PeerHandler {
                     chunk_storage_roots.first().unwrap_or(&H256::zero()),
                 );
             }
+            let peer_table = self.peer_table.clone();
 
             tokio::spawn(PeerHandler::request_storage_ranges_worker(
                 task,
                 peer_id,
-                pivot_header.state_root,
                 connection,
+                peer_table,
+                pivot_header.state_root,
                 chunk_account_hashes,
                 chunk_storage_roots,
                 tx,
@@ -1495,11 +1559,13 @@ impl PeerHandler {
         Ok(chunk_index + 1)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn request_storage_ranges_worker(
         task: StorageTask,
-        free_peer_id: H256,
-        state_root: H256,
+        peer_id: H256,
         mut connection: PeerConnection,
+        mut peer_table: PeerTable,
+        state_root: H256,
         chunk_account_hashes: Vec<H256>,
         chunk_storage_roots: Vec<H256>,
         tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
@@ -1511,7 +1577,7 @@ impl PeerHandler {
         let empty_task_result = StorageTaskResult {
             start_index: task.start_index,
             account_storages: Vec::new(),
-            peer_id: free_peer_id,
+            peer_id,
             remaining_start: task.start_index,
             remaining_end: task.end_index,
             remaining_hash_range: (start_hash, task.end_hash),
@@ -1529,9 +1595,14 @@ impl PeerHandler {
             id: _,
             slots,
             proof,
-        })) = connection
-            .outgoing_request(request, Duration::from_secs(2))
-            .await
+        })) = PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request,
+            Duration::from_secs(2),
+        )
+        .await
         else {
             tracing::debug!("Failed to get storage range");
             tx.send(empty_task_result).await.ok();
@@ -1636,7 +1707,7 @@ impl PeerHandler {
         let task_result = StorageTaskResult {
             start_index: start,
             account_storages,
-            peer_id: free_peer_id,
+            peer_id,
             remaining_start,
             remaining_end,
             remaining_hash_range: (remaining_start_hash, task.end_hash),
@@ -1646,7 +1717,9 @@ impl PeerHandler {
     }
 
     pub async fn request_state_trienodes(
-        connection: &mut PeerConnection,
+        peer_id: H256,
+        mut connection: PeerConnection,
+        mut peer_table: PeerTable,
         state_root: H256,
         paths: Vec<RequestMetadata>,
     ) -> Result<Vec<Node>, RequestStateTrieNodesError> {
@@ -1655,7 +1728,7 @@ impl PeerHandler {
         // This is so we avoid penalizing peers due to requesting stale data
 
         let request_id = rand::random();
-        let message = RLPxMessage::GetTrieNodes(GetTrieNodes {
+        let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
             id: request_id,
             root_hash: state_root,
             // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
@@ -1665,9 +1738,14 @@ impl PeerHandler {
                 .collect(),
             bytes: MAX_RESPONSE_BYTES,
         });
-        let nodes = match connection
-            .outgoing_request(message, Duration::from_secs(7))
-            .await
+        let nodes = match PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request,
+            Duration::from_secs(7),
+        )
+        .await
         {
             Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
                 .nodes
@@ -1709,16 +1787,23 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_trienodes(
-        connection: &mut PeerConnection,
+        peer_id: H256,
+        mut connection: PeerConnection,
+        mut peer_table: PeerTable,
         get_trie_nodes: GetTrieNodes,
     ) -> Result<TrieNodes, RequestStorageTrieNodes> {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let id = get_trie_nodes.id;
-        let message = RLPxMessage::GetTrieNodes(get_trie_nodes);
-        match connection
-            .outgoing_request(message, Duration::from_secs(7))
-            .await
+        let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
+        match PeerHandler::make_request(
+            &mut peer_table,
+            peer_id,
+            &mut connection,
+            request,
+            Duration::from_secs(7),
+        )
+        .await
         {
             Ok(RLPxMessage::TrieNodes(trie_nodes)) => Ok(trie_nodes),
             Ok(other_msg) => Err(RequestStorageTrieNodes::RequestError(
@@ -1746,7 +1831,8 @@ impl PeerHandler {
     }
 
     pub async fn get_block_header(
-        &self,
+        &mut self,
+        peer_id: H256,
         connection: &mut PeerConnection,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
@@ -1759,9 +1845,14 @@ impl PeerHandler {
             reverse: false,
         });
         info!("get_block_header: requesting header with number {block_number}");
-        match connection
-            .outgoing_request(request, Duration::from_secs(5))
-            .await
+        match PeerHandler::make_request(
+            &mut self.peer_table,
+            peer_id,
+            connection,
+            request,
+            Duration::from_secs(5),
+        )
+        .await
         {
             Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                 id: _,

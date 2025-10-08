@@ -116,6 +116,9 @@ impl PeerConnection {
         message: Message,
         timeout: Duration,
     ) -> Result<Message, PeerConnectionError> {
+        let id = message
+            .request_id()
+            .expect("Cannot wait on request without id");
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
 
         self.handle
@@ -127,7 +130,15 @@ impl PeerConnection {
         match tokio::time::timeout(timeout, oneshot_rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(error)) => Err(PeerConnectionError::RecvError(error.to_string())),
-            Err(_timeout) => Err(PeerConnectionError::Timeout),
+            Err(_timeout) => {
+                // Notify timeout on request id
+                self.handle
+                    .cast(CastMessage::RequestTimeout { id })
+                    .await
+                    .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
+                // Return timeout error
+                Err(PeerConnectionError::Timeout)
+            }
         }
     }
 }
@@ -206,6 +217,8 @@ pub enum CastMessage {
     OutgoingMessage(Message),
     /// We request information from the remote peer
     OutgoingRequest(Message, Arc<tokio::sync::oneshot::Sender<Message>>),
+    /// Received a notification of a request that timeouted.
+    RequestTimeout { id: u64 },
     /// Periodic message to send ping to remote peer
     SendPing,
     /// Periodic message to send block range update to remote peer
@@ -330,6 +343,11 @@ impl GenServer for PeerConnectionServer {
                             .expect("Could not obtain sender channel"),
                     )
                     .await
+                }
+                Self::CastMsg::RequestTimeout { id } => {
+                    // Discard the request from current requests
+                    established_state.current_requests.remove(&id);
+                    Ok(())
                 }
                 Self::CastMsg::SendPing => {
                     send(established_state, Message::Ping(PingMessage {})).await
