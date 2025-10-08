@@ -74,7 +74,7 @@ c-kzg = [
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
