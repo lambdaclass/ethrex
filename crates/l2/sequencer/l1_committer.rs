@@ -47,7 +47,7 @@ use std::{
     sync::Arc,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
 use spawned_concurrency::tasks::{
@@ -453,7 +453,7 @@ impl L1Committer {
                 Ok((BlobsBundle::default(), 0_usize))
             };
 
-            let Ok((bundle, _latest_blob_size)) = result else {
+            let Ok((bundle, latest_blob_size)) = result else {
                 if block_to_commit_number == first_block_of_batch {
                     return Err(CommitterError::Unreachable(
                         "Not enough blob space for a single block batch. This means a block was incorrectly produced.".to_string(),
@@ -465,6 +465,8 @@ impl L1Committer {
                 // Break loop. Use the previous generated blobs_bundle.
                 break;
             };
+
+            trace!("Got bundle, latest blob size {latest_blob_size}");
 
             // Save current blobs_bundle and continue to add more blocks.
             blobs_bundle = bundle;

@@ -190,13 +190,16 @@ impl BlockProducer {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        metrics!(let transactions_count = block.body.transactions.len(););
+        let transactions_count = block.body.transactions.len();
         let block_number = block.header.number;
         let block_hash = block.hash();
         self.blockchain
             .store_block(block, account_updates_list, execution_result)
             .await?;
-        info!("Stored new block {:x}", block_hash);
+        info!(
+            "Stored new block {:x}, transaction_count {}",
+            block_hash, transactions_count
+        );
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         self.rollup_store
