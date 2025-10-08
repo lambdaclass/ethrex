@@ -1435,8 +1435,8 @@ impl StoreEngine for Store {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatchWithTransaction::default();
-            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
+            let cf = db.cf_handle(CF_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
             })?;
 
             for (address_hash, nodes) in storage_trie_nodes {

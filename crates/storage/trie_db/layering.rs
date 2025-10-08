@@ -117,7 +117,7 @@ impl TrieDB for TrieWrapper {
         let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
         let new_state_root = match last_pair {
             Some((_, noderlp)) => {
-                let root_node = Node::decode(&noderlp)?;
+                let root_node = Node::decode(noderlp)?;
                 root_node.compute_hash().finalize()
             }
             None => *EMPTY_TRIE_HASH,
