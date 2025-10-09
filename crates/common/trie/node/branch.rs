@@ -77,7 +77,6 @@ impl BranchNode {
                 (choice_ref, ValueOrHash::Value(value)) => {
                     let child_node = choice_ref
                         .get_node(db, path.current())?
-                        .or_else(|| panic!("{:?} not found ref {choice_ref:?}", path))
                         .ok_or(TrieError::InconsistentTree)?;
 
                     *choice_ref = child_node.insert(db, path, value)?.into();
