@@ -237,21 +237,22 @@ impl Store {
     }
 
     pub async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        // NOTE: we block here to avoid other processes reading an outdated latest block
+        if block_number == 0 {
+            return Err(StoreError::Custom(
+                "Cannot remove genesis block".to_string(),
+            ));
+        }
         let mut latest_header = self
             .latest_block_header
             .write()
             .map_err(|_| StoreError::LockError)?;
 
-        self.engine.remove_block(block_number).await?;
-
-        let Some(number) = self.engine.get_latest_block_number().await? else {
-            return Err(StoreError::MissingLatestBlockNumber);
-        };
         *latest_header = self
             .engine
-            .get_block_header(number)?
+            .get_block_header(latest_header.number - 1)?
             .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
+
+        self.engine.remove_block(block_number).await?;
         Ok(())
     }
 
@@ -650,13 +651,13 @@ impl Store {
 
     pub async fn load_initial_state(&self) -> Result<(), StoreError> {
         info!("Loading initial state from DB");
+        let Some(number) = self.engine.get_latest_block_number().await? else {
+            return Err(StoreError::MissingLatestBlockNumber);
+        };
         let mut latest_header = self
             .latest_block_header
             .write()
             .map_err(|_| StoreError::LockError)?;
-        let Some(number) = self.engine.get_latest_block_number().await? else {
-            return Err(StoreError::MissingLatestBlockNumber);
-        };
         *latest_header = self
             .engine
             .get_block_header(number)?
