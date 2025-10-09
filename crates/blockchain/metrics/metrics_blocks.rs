@@ -62,6 +62,7 @@ impl MetricsBlocks {
         self.gas_used.set(gas_used);
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         if self.block_number.get() <= 0 {
             return Ok(String::new());

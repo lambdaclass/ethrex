@@ -117,6 +117,7 @@ impl MetricsTx {
         self.transactions_per_second.set(tps);
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 

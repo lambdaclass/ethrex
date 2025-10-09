@@ -111,6 +111,7 @@ fn log_batch_progress(batch_size: u32, current_block: u32) {
 }
 
 impl Blockchain {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
         Self {
             storage: store,
@@ -121,6 +122,7 @@ impl Blockchain {
         }
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn default_with_store(store: Store) -> Self {
         Self {
             storage: store,
@@ -132,6 +134,7 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn execute_block(
         &self,
         block: &Block,
@@ -163,6 +166,7 @@ impl Blockchain {
     }
 
     /// Executes a block from a given vm instance an does not clear its state
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn execute_block_from_state(
         &self,
         parent_header: &BlockHeader,
@@ -181,6 +185,7 @@ impl Blockchain {
         Ok(execution_result)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
@@ -395,6 +400,7 @@ impl Blockchain {
         })
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn store_block(
         &self,
         block: Block,
@@ -419,6 +425,7 @@ impl Blockchain {
             .map_err(|e| e.into())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(&block).await?;
@@ -458,6 +465,7 @@ impl Blockchain {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn print_add_block_logs(
         gas_used: u64,
         gas_limit: u64,
@@ -514,6 +522,7 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
@@ -661,6 +670,7 @@ impl Blockchain {
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
     #[cfg(feature = "c-kzg")]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
@@ -692,6 +702,7 @@ impl Blockchain {
     }
 
     /// Add a transaction to the mempool checking that the transaction is valid
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn add_transaction_to_pool(
         &self,
         transaction: Transaction,
@@ -718,11 +729,13 @@ impl Blockchain {
     }
 
     /// Remove a transaction from the mempool
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
         self.mempool.remove_transaction(hash)
     }
 
     /// Remove all transactions in the executed block from the pool (if we have them)
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
         for tx in &block.body.transactions {
             self.mempool.remove_transaction(&tx.hash())?;
@@ -762,6 +775,7 @@ impl Blockchain {
 
     */
     /// Returns the hash of the transaction to replace in case the nonce already exists
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
@@ -878,6 +892,7 @@ impl Blockchain {
         self.is_synced.load(Ordering::Relaxed)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
@@ -915,6 +930,7 @@ impl Blockchain {
         Ok(result)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
         let evm = match self.options.r#type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
@@ -935,6 +951,7 @@ impl Blockchain {
     }
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn validate_requests_hash(
     header: &BlockHeader,
     chain_config: &ChainConfig,
@@ -961,6 +978,7 @@ pub fn validate_requests_hash(
 }
 
 /// Performs post-execution checks
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn validate_state_root(
     block_header: &BlockHeader,
     new_state_root: H256,
@@ -975,6 +993,7 @@ pub fn validate_state_root(
     }
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn validate_receipts_root(
     block_header: &BlockHeader,
     receipts: &[Receipt],
@@ -1004,6 +1023,7 @@ pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainE
 
 /// Searchs the header of the parent block header. If the parent header is missing,
 /// Returns a ChainError::ParentNotFound. If the storage has an error it propagates it
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn find_parent_header(
     block_header: &BlockHeader,
     storage: &Store,
@@ -1017,6 +1037,7 @@ pub fn find_parent_header(
 /// Performs pre-execution validation of the block's header values in reference to the parent_header
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
 /// If a block passes this check, execution will still fail with execute_block when a transaction runs out of gas
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,

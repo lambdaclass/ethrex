@@ -50,6 +50,8 @@ ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 url.workspace = true
 ethrex-prover = { workspace = true, features = ["l2"] }
 
+hotpath = { version = "0.4", optional = true }
+
 [target.'cfg(linux)'.dependencies]
 tikv-jemallocator = { version = "0.6.0", optional = true, features = ["stats", "unprefixed_malloc_on_supported_platforms", "background_threads"] }
 
@@ -85,6 +87,10 @@ sync-test = ["ethrex-p2p/sync-test"]
 sp1 = ["ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
 risc0 = ["ethrex-prover/risc0"]
+hotpath = ["dep:hotpath", "hotpath/hotpath", "ethrex-blockchain/hotpath"]
+hotpath-alloc-bytes-total = ["hotpath/hotpath-alloc-bytes-total", "ethrex-blockchain/hotpath-alloc-bytes-total"]
+hotpath-alloc-count-total= ["hotpath/hotpath-alloc-count-total", "ethrex-blockchain/hotpath-alloc-count-total"]
+hotpath-off = ["hotpath/hotpath-off", "ethrex-blockchain/hotpath-off"]
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = [

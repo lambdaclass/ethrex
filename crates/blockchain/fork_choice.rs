@@ -18,6 +18,7 @@ use crate::{
 /// and itself are made canonical.
 ///
 /// If the fork choice state is applied correctly, the head block header is returned.
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub async fn apply_fork_choice(
     store: &Store,
     head_hash: H256,
@@ -112,6 +113,7 @@ pub async fn apply_fork_choice(
 }
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 fn check_order(
     block_1: &Option<BlockHeader>,
     block_2: &Option<BlockHeader>,
@@ -142,6 +144,7 @@ fn check_order(
 // - Ok(Some([])): the block is already canonical.
 // - Ok(Some(branch)): the "branch" is a sequence of blocks that connects the ancestor and the
 //   descendant.
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 async fn find_link_with_canonical_chain(
     store: &Store,
     block_header: &BlockHeader,
