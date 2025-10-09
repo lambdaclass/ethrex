@@ -83,14 +83,14 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
 }
 
 pub(crate) fn log_peer_debug(node: &Node, text: &str) {
-    debug!(client_name = node.client_name(), "[{0}]: {1}", node, text)
+    debug!("{0}/[{1}]: {2}", node.client_name(), node, text)
 }
 
 pub(crate) fn log_peer_error(node: &Node, text: &str) {
-    error!(client_name = node.client_name(), "[{0}]: {1}", node, text)
+    error!("{0}/[{1}]: {2}", node.client_name(), node, text)
 }
 pub(crate) fn log_peer_warn(node: &Node, text: &str) {
-    warn!(client_name = node.client_name(), "[{0}]: {1}", node, text)
+    warn!("{0}/[{1}]: {2}", node.client_name(), node, text)
 }
 
 #[cfg(test)]
