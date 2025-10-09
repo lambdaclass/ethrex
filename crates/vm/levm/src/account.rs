@@ -53,6 +53,18 @@ impl From<GenesisAccount> for LevmAccount {
 }
 
 impl LevmAccount {
+    pub fn created(&mut self) {
+        if self.status == AccountStatus::Destroyed {
+            self.status = AccountStatus::DestroyedCreated
+        } else {
+            self.status = AccountStatus::Created
+        }
+    }
+
+    pub fn destroyed(&mut self) {
+        self.status = AccountStatus::Destroyed;
+    }
+
     pub fn has_nonce(&self) -> bool {
         self.info.nonce != 0
     }
