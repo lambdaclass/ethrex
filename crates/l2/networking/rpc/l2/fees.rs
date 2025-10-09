@@ -73,9 +73,9 @@ impl RpcHandler for GetL1BlobBaseFeeRequest {
             .get_l1_blob_base_fee_by_block(self.block_number)
             .await?
         else {
-            return Ok(Value::Null);
+            return Ok(Value::Number(0.into()));
         };
 
-        serde_json::to_value(&l1_blob_base_fee).map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(l1_blob_base_fee).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

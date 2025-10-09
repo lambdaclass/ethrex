@@ -14,7 +14,10 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_common::H256;
-use ethrex_rpc::EthClient;
+use ethrex_rpc::{
+    EthClient,
+    types::block_identifier::{BlockIdentifier, BlockTag},
+};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -299,13 +302,19 @@ impl GenServer for BlockProducer {
                 CastResponse::NoReply
             }
             InMessage::UpdateL1BlobBaseFee => {
-                let Ok(blob_base_fee) =
-                    self.eth_client.get_blob_base_fee().await.inspect_err(|e| {
+                info!("Updating L1 blob base fee");
+                let Ok(blob_base_fee) = self
+                    .eth_client
+                    .get_blob_base_fee(BlockIdentifier::Tag(BlockTag::Latest))
+                    .await
+                    .inspect_err(|e| {
                         error!("Failed to fetch L1 blob base fee: {e}");
                     })
                 else {
                     return CastResponse::NoReply;
                 };
+
+                info!("Fetched L1 blob base fee: {blob_base_fee}");
 
                 let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
                     error!("Invalid blockchain type. Expected L2.");
@@ -318,6 +327,11 @@ impl GenServer for BlockProducer {
                     warn!("L1 fee config is not set. Skipping L1 blob base fee update.");
                     return CastResponse::NoReply;
                 };
+
+                info!(
+                    "Updating L1 blob base fee from {} to {}",
+                    l1_fee_config.l1_fee_per_blob_gas, blob_base_fee
+                );
 
                 l1_fee_config.l1_fee_per_blob_gas = blob_base_fee;
 

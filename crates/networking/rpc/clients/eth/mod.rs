@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, fmt};
 
 use crate::{
-    clients::eth::errors::{CallError, GetPeerCountError, GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{
+        CallError, GetBlobBaseFeeRequestError, GetL1BlobBaseFeeRequestError, GetPeerCountError,
+        GetWitnessError, TxPoolContentError,
+    },
     debug::execution_witness::RpcExecutionWitness,
     mempool::MempoolContent,
     types::{
@@ -663,15 +666,20 @@ impl EthClient {
         }
     }
 
-    pub async fn get_blob_base_fee(&self) -> Result<u64, EthClientError> {
-        let request = RpcRequest::new("eth_blobBaseFee", None);
+    pub async fn get_blob_base_fee(&self, block: BlockIdentifier) -> Result<u64, EthClientError> {
+        let params = Some(vec![block.into()]);
+        let request = RpcRequest::new("eth_blobBaseFee", params);
 
         match self.send_request(request).await? {
-            RpcResponse::Success(result) => serde_json::from_value(result.result)
-                .map_err(GetBalanceError::SerdeJSONError)
-                .map_err(EthClientError::from),
+            RpcResponse::Success(result) => Ok(u64::from_str_radix(
+                serde_json::from_value::<String>(result.result)
+                    .map_err(GetBlobBaseFeeRequestError::SerdeJSONError)?
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .map_err(GetBlobBaseFeeRequestError::ParseIntError)?),
             RpcResponse::Error(error_response) => {
-                Err(GetBalanceError::RPCError(error_response.error.message).into())
+                Err(GetBlobBaseFeeRequestError::RPCError(error_response.error.message).into())
             }
         }
     }

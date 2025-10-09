@@ -1,7 +1,14 @@
 use crate::{
     call_frame::CallFrameBackup,
     errors::{ContextResult, InternalError, TxValidationError},
-    hooks::{DefaultHook, default_hook, hook::Hook},
+    hooks::{
+        DefaultHook,
+        default_hook::{
+            self, compute_actual_gas_used, compute_gas_refunded, delete_self_destruct_accounts,
+            pay_coinbase, refund_sender, undo_value_transfer,
+        },
+        hook::Hook,
+    },
     opcodes::Opcode,
     utils::get_account_diffs_in_tx,
     vm::VM,
@@ -127,21 +134,33 @@ impl Hook for L2Hook {
         ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
-            DefaultHook.finalize_execution(vm, ctx_result)?;
+            if !ctx_result.is_success() {
+                undo_value_transfer(vm)?;
+            }
+
+            let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
+            let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+            refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
+
             // Different from L1:
+            // We pay to coinbase after the l1_fee to avoid charging the diff to every transaction
+
+            delete_self_destruct_accounts(vm)?;
+
+            // L1 fee is paid to the L1 fee vault
+            pay_l1_fee(
+                vm,
+                std::mem::take(&mut self.pre_execution_backup),
+                self.fee_config.l1_fee_config,
+            )?;
+
+            pay_coinbase(vm, actual_gas_used)?;
 
             // Base fee is not burned
             pay_base_fee_vault(vm, ctx_result.gas_used, self.fee_config.base_fee_vault)?;
 
             // Operator fee is paid to the chain operator
             pay_operator_fee(vm, self.fee_config.operator_fee_config)?;
-
-            //
-            pay_l1_fee(
-                vm,
-                std::mem::take(&mut self.pre_execution_backup),
-                self.fee_config.l1_fee_config,
-            )?;
 
             return Ok(());
         }

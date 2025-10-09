@@ -63,6 +63,8 @@ pub enum EthClientError {
     FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
+    #[error("ethrex_getBlobBaseFee request error: {0}")]
+    GetBlobBaseFeeError(#[from] GetBlobBaseFeeRequestError),
     #[error("All RPC calls failed")]
     FailedAllRPC,
     #[error("Generic transaction error: {0}")]
@@ -71,6 +73,8 @@ pub enum EthClientError {
     FromStrRadixError(#[from] FromStrRadixErr),
     #[error("ethrex_getFeeVaultAddress request error: {0}")]
     GetFeeVaultAddressError(#[from] GetBaseFeeVaultAddressError),
+    #[error("ethrex_getL1BlobBaseFee request error: {0}")]
+    GetL1BlobBaseFeeError(#[from] GetL1BlobBaseFeeRequestError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -296,6 +300,16 @@ pub enum TxPoolContentError {
     RPCError(String),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum GetBlobBaseFeeRequestError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
 // TODO: move to L2
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
@@ -311,4 +325,14 @@ pub enum GetBaseFeeVaultAddressError {
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
     RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetL1BlobBaseFeeRequestError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }
