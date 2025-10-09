@@ -4,7 +4,7 @@ mod tracing;
 use super::BlockExecutionResult;
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
-    SYSTEM_ADDRESS, SYSTEM_CONTRACTS_WITH_CODE, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -383,7 +383,7 @@ pub fn generic_system_contract_levm(
 
     // This check is not necessary in practice, since contract deployment has succesfully happened in all relevant testnets and mainnet
     // However, it's necessary to pass some of the Hive tests related to system contract deployment, which is why we have it
-    if SYSTEM_CONTRACTS_WITH_CODE
+    if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)
         && db.get_account_code(contract_address)?.is_empty()
