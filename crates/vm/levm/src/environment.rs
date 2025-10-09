@@ -31,7 +31,6 @@ pub struct Environment {
     pub gas_price: U256, // Effective gas price
     pub block_excess_blob_gas: Option<U256>,
     pub block_blob_gas_used: Option<U256>,
-    pub tx_blob_hashes: Vec<H256>,
     pub tx_max_priority_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_blob_gas: Option<U256>,

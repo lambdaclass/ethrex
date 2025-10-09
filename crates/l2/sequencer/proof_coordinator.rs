@@ -492,7 +492,7 @@ impl ProofCoordinator {
                 mut commitments,
                 mut proofs,
                 ..
-            } = BlobsBundle::create_from_blobs(&blob)?;
+            } = BlobsBundle::create_from_blobs(blob)?;
             match (commitments.pop(), proofs.pop()) {
                 (Some(commitment), Some(proof)) => (commitment, proof),
                 _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),

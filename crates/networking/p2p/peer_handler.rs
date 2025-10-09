@@ -690,13 +690,13 @@ impl PeerHandler {
                             match receiver.recv().await {
                                 Some(RLPxMessage::Receipts68(res)) => {
                                     if res.get_id() == request_id {
-                                        return Some(res.get_receipts());
+                                        return Some(res.into_receipts());
                                     }
                                     return None;
                                 }
                                 Some(RLPxMessage::Receipts69(res)) => {
                                     if res.get_id() == request_id {
-                                        return Some(res.receipts.clone());
+                                        return Some(res.receipts);
                                     }
                                     return None;
                                 }

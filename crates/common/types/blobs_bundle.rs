@@ -80,20 +80,20 @@ impl BlobsBundle {
 
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
     #[cfg(feature = "c-kzg")]
-    pub fn create_from_blobs(blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
+    pub fn create_from_blobs(blobs: Vec<Blob>) -> Result<Self, BlobsBundleError> {
         use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
 
         // Populate the commitments and proofs
-        for blob in blobs {
+        for blob in &blobs {
             let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
             commitments.push(commitment);
             proofs.push(proof);
         }
 
         Ok(Self {
-            blobs: blobs.clone(),
+            blobs,
             commitments,
             proofs,
             version: 0,
@@ -245,6 +245,8 @@ pub enum BlobsBundleError {
 
 #[cfg(test)]
 mod tests {
+    use ethereum_types::Address;
+
     mod shared {
         #[cfg(feature = "c-kzg")]
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
@@ -266,7 +268,7 @@ mod tests {
             })
             .collect();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(blobs)
             .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -277,10 +279,10 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
+            to: Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),      // Value zero
+            data: crate::Bytes::default(),   // No data
+            access_list: Default::default(), // No access list
             blob_versioned_hashes,
             ..Default::default()
         };
@@ -320,10 +322,10 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
+            to: Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),      // Value zero
+            data: crate::Bytes::default(),   // No data
+            access_list: Default::default(), // No access list
             blob_versioned_hashes: vec![
                 "01ec8054d05bfec80f49231c6e90528bbb826ccd1464c255f38004099c8918d9",
                 "0180cb2dee9e6e016fabb5da4fb208555f5145c32895ccd13b26266d558cd77d",
@@ -372,10 +374,10 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
+            to: Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),      // Value zero
+            data: crate::Bytes::default(),   // No data
+            access_list: Default::default(), // No access list
             blob_versioned_hashes: vec![
                 "01ec8054d05bfec80f49231c6e90528bbb826ccd1464c255f38004099c8918d9",
                 "0180cb2dee9e6e016fabb5da4fb208555f5145c32895ccd13b26266d558cd77d",
@@ -403,7 +405,7 @@ mod tests {
         let blobs =
             std::iter::repeat_n(blob, super::MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(blobs)
             .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -414,10 +416,10 @@ mod tests {
             max_fee_per_gas: 0,
             max_fee_per_blob_gas: 0.into(),
             gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
+            to: Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),      // Value zero
+            data: crate::Bytes::default(),   // No data
+            access_list: Default::default(), // No access list
             blob_versioned_hashes,
             ..Default::default()
         };

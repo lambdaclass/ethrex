@@ -142,7 +142,6 @@ pub fn get_vm_env_for_test(
         gas_price,
         block_excess_blob_gas: test_env.current_excess_blob_gas,
         block_blob_gas_used: None,
-        tx_blob_hashes: test_case.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: test_case.max_priority_fee_per_gas,
         tx_max_fee_per_gas: test_case.max_fee_per_gas,
         tx_max_fee_per_blob_gas: test_case.max_fee_per_blob_gas,
@@ -157,7 +156,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
     let value = test_case.value;
     let data = test_case.data.clone();
     let nonce = test_case.nonce;
-    let to = test_case.to.clone();
+    let to = test_case.to;
     let chain_id = 1; // It's actually in the test config but it's always 1 I believe.
     let access_list = test_case
         .access_list
@@ -194,7 +193,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
             gas: test_case.gas,
             to: match to {
                 TxKind::Call(to) => to,
-                TxKind::Create => return Err(RunnerError::EIP7702ShouldNotBeCreateType), //TODO: See what to do with this. Maybe we want to get rid of the error and skip the test.
+                TxKind::Create => return Err(RunnerError::EIP4844ShouldNotBeCreateType), //TODO: See what to do with this. Maybe we want to get rid of the error and skip the test.
             },
             value,
             data,
