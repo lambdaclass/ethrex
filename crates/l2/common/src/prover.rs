@@ -69,12 +69,12 @@ impl ProverType {
         let path = match self {
             // for risc0, Aligned requires the image id
             Self::RISC0 => format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
+                "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             // for sp1, Aligned requires the ELF file
             Self::SP1 => format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
+                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf",
                 env!("CARGO_MANIFEST_DIR")
             ),
             // other types are not supported by Aligned
@@ -89,17 +89,17 @@ impl ProverType {
     pub fn vk(&self, aligned: bool) -> std::io::Result<Option<Vec<u8>>> {
         let path = match &self {
             Self::RISC0 => format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
+                "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
             // the hash as a bn254 F_r element.
             Self::SP1 if aligned => format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
                 env!("CARGO_MANIFEST_DIR")
             ),
             Self::SP1 if !aligned => format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
                 env!("CARGO_MANIFEST_DIR")
             ),
             // other types don't have a verification key
