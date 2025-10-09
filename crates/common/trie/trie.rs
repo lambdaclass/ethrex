@@ -8,6 +8,7 @@ mod rlp;
 #[cfg(test)]
 mod test_utils;
 mod trie_iter;
+pub mod trie_sorted;
 mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;

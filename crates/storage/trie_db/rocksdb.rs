@@ -1,5 +1,6 @@
 use ethrex_common::H256;
-use ethrex_trie::{NodeHash, TrieDB, error::TrieError};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::{Node, NodeHash, TrieDB, error::TrieError};
 use rocksdb::{MultiThreaded, OptimisticTransactionDB};
 use std::sync::Arc;
 
@@ -34,13 +35,13 @@ impl RocksDBTrieDB {
         })
     }
 
-    fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily>, TrieError> {
+    fn cf_handle(&self) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
         self.db
             .cf_handle(&self.cf_name)
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
-    fn make_key(&self, node_hash: NodeHash) -> Vec<u8> {
+    fn make_key(&self, node_hash: &NodeHash) -> Vec<u8> {
         match &self.address_prefix {
             Some(address) => {
                 // For storage tries, prefix with address
@@ -59,7 +60,7 @@ impl RocksDBTrieDB {
 impl TrieDB for RocksDBTrieDB {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = self.cf_handle()?;
-        let db_key = self.make_key(key);
+        let db_key = self.make_key(&key);
 
         self.db
             .get_cf(&cf, db_key)
@@ -71,8 +72,26 @@ impl TrieDB for RocksDBTrieDB {
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
 
         for (key, value) in key_values {
-            let db_key = self.make_key(key);
+            let db_key = self.make_key(&key);
             batch.put_cf(&cf, db_key, value);
+        }
+
+        self.db
+            .write(batch)
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB batch write error: {}", e)))
+    }
+
+    fn put_batch_no_alloc(&self, key_values: &[(NodeHash, Node)]) -> Result<(), TrieError> {
+        let cf = self.cf_handle()?;
+        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        // 532 is the maximum size of an encoded branch node.
+        let mut buffer = Vec::with_capacity(532);
+
+        for (hash, node) in key_values {
+            let db_key = self.make_key(hash);
+            buffer.clear();
+            node.encode(&mut buffer);
+            batch.put_cf(&cf, db_key, &buffer);
         }
 
         self.db
