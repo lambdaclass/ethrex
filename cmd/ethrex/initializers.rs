@@ -396,28 +396,28 @@ async fn reset_to_head(store: &Store) -> eyre::Result<()> {
 
     // TODO: store latest state metadata in the DB to avoid this loop
     for block_number in (0..=store.get_latest_block_number().await?).rev() {
-        if let Some(header) = store.get_block_header(block_number)? {
-            if header.state_root == state_root {
-                info!("Resetting head to {block_number}");
-                let last_kept_block = block_number;
-                let mut block_to_delete = last_kept_block + 1;
-                while store
-                    .get_canonical_block_hash(block_to_delete)
-                    .await?
-                    .is_some()
-                {
-                    debug!("Deleting block {block_to_delete}");
-                    store.remove_block(block_to_delete).await?;
-                    block_to_delete += 1;
-                }
-                let last_kept_header = store
-                    .get_block_header(last_kept_block)?
-                    .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
-                store
-                    .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
-                    .await?;
-                break;
+        if let Some(header) = store.get_block_header(block_number)?
+            && header.state_root == state_root
+        {
+            info!("Resetting head to {block_number}");
+            let last_kept_block = block_number;
+            let mut block_to_delete = last_kept_block + 1;
+            while store
+                .get_canonical_block_hash(block_to_delete)
+                .await?
+                .is_some()
+            {
+                debug!("Deleting block {block_to_delete}");
+                store.remove_block(block_to_delete).await?;
+                block_to_delete += 1;
             }
+            let last_kept_header = store
+                .get_block_header(last_kept_block)?
+                .ok_or_else(|| eyre::eyre!("Block number {} not found", last_kept_block))?;
+            store
+                .forkchoice_update(None, last_kept_block, last_kept_header.hash(), None, None)
+                .await?;
+            break;
         }
     }
     Ok(())
