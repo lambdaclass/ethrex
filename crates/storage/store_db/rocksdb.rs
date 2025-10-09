@@ -17,7 +17,7 @@ use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBCompactionStyle,
     IngestExternalFileOptions, MultiThreaded, OptimisticTransactionDB, Options, SstFileWriter,
-    WriteBatch, WriteBatchWithTransaction,
+    WriteBatchWithTransaction,
 };
 use std::{
     collections::HashSet,
@@ -317,7 +317,10 @@ impl Store {
     }
 
     // Helper method to get column family handle
-    fn cf_handle(&self, cf_name: &str) -> Result<std::sync::Arc<BoundColumnFamily>, StoreError> {
+    fn cf_handle(
+        &self,
+        cf_name: &str,
+    ) -> Result<std::sync::Arc<BoundColumnFamily<'_>>, StoreError> {
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StoreError::Custom(format!("Column family not found: {}", cf_name)))
@@ -1250,14 +1253,16 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let cf = self.cf_handle(CF_RECEIPTS)?;
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
         let mut index = 0u64;
 
         loop {
             let key = (*block_hash, index).encode_to_vec();
-            match self.db.get_cf(&cf, key)? {
+            match self.read_async(CF_RECEIPTS, key).await? {
                 Some(receipt_bytes) => {
                     let receipt = Receipt::decode(receipt_bytes.as_slice())?;
                     receipts.push(receipt);
@@ -1444,8 +1449,8 @@ impl StoreEngine for Store {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let mut batch = WriteBatchWithTransaction::default();
-            let cf = db.cf_handle(&CF_TRIE_NODES).ok_or_else(|| {
-                StoreError::Custom(format!("Column family not found: CF_TRIE_NODES"))
+            let cf = db.cf_handle(CF_TRIE_NODES).ok_or_else(|| {
+                StoreError::Custom("Column family not found: CF_TRIE_NODES".to_string())
             })?;
 
             for (address_hash, nodes) in storage_trie_nodes {
