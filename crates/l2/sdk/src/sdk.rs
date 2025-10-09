@@ -982,6 +982,7 @@ pub async fn get_pending_privileged_transactions(
     from_hex_string_to_h256_array(&response)
 }
 
+// TODO: This is a work around for now, issue: https://github.com/lambdaclass/ethrex/issues/4828
 pub async fn get_l1_fork(client: &EthClient) -> Fork {
     match client.get_eth_config().await {
         Ok(_) => Fork::Osaka, // This endpoint only supports Osaka and later
