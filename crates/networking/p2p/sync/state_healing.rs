@@ -278,7 +278,10 @@ async fn heal_state_trie(
             let store = store.clone();
             // NOTE: we keep only a single task in the background to avoid out of order deletes
             if !db_joinset.is_empty() {
-                db_joinset.join_next().await;
+                db_joinset
+                    .join_next()
+                    .await
+                    .expect("we just checked joinset is not empty")?;
             }
             db_joinset.spawn_blocking(move || {
                 let mut encoded_to_write = BTreeMap::new();
@@ -286,15 +289,13 @@ async fn heal_state_trie(
                     for i in 0..path.len() {
                         encoded_to_write.insert(path.slice(0, i), vec![]);
                     }
-                    if let Node::Leaf(leaf) = &node {
-                        encoded_to_write.insert(path.concat(&leaf.partial), leaf.value.clone());
-                    }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
                 let trie_db = store
                     .open_direct_state_trie(*EMPTY_TRIE_HASH)
                     .expect("Store should open");
                 let db = trie_db.db();
+                // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
                 db.put_batch(encoded_to_write.into_iter().collect())
                     .expect("The put batch on the store failed");
             });
