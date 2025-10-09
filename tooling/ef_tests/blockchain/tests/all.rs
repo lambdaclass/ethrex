@@ -14,9 +14,10 @@ const SKIPPED_BASE: &[&str] = &[
     "static_Call50000_sha256",
     "CALLBlake2f_MaxRounds",
     "loopMul",
-    // We don't want to implement the check being tested, it's unnecessary and impossible in known networks. It checks that withdrawal requests and consolidation requests accounts have code, which is always the case, except for this test.
+    // It checks that withdrawal requests and consolidation requests accounts have code, which is always the case, except for this test.
+    // The fix is just an if, it's on its way on https://github.com/lambdaclass/ethrex/pull/4731
     "system_contract_deployment",
-    // Gas price higher than u64::MAX; impractical scenario. We don't use 256 bits for gas price for performance reasons, however, it's debatable. See https://github.com/lambdaclass/ethrex/issues/3629
+    // Gas price higher than u64::MAX; impractical scenario. Fix is on its way on https://github.com/lambdaclass/ethrex/pull/4823
     "HighGasPriceParis",
     // Skip because it tries to deserialize number > U256::MAX
     "ValueOverflowParis",
