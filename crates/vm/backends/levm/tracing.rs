@@ -32,10 +32,10 @@ impl LEVM {
         }
 
         // Process withdrawals only if the whole block has been executed.
-        if stop_index.is_none() {
-            if let Some(withdrawals) = &block.body.withdrawals {
-                Self::process_withdrawals(db, withdrawals)?;
-            }
+        if stop_index.is_none()
+            && let Some(withdrawals) = &block.body.withdrawals
+        {
+            Self::process_withdrawals(db, withdrawals)?;
         };
 
         Ok(())

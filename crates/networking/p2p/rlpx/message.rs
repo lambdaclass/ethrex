@@ -216,11 +216,11 @@ impl Message {
             // snap capability
             match msg_id - eth_version.snap_capability_offset() {
                 GetAccountRange::CODE => {
-                    return Ok(Message::GetAccountRange(GetAccountRange::decode(data)?));
+                    Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
                 }
                 AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
                 GetStorageRanges::CODE => {
-                    return Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?));
+                    Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
                 }
                 StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
                 GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
