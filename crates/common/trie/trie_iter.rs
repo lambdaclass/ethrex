@@ -48,29 +48,45 @@ impl TrieIterator {
             match &next_node {
                 Node::Branch(branch_node) => {
                     // Add all children to the stack (in reverse order so we process first child frist)
-                    let Some(choice) = target_nibbles.next_choice() else {
-                        return Ok(());
-                    };
-                    let child = &branch_node.choices[choice];
-                    // If a prefix of `key` exists under this branch, we recur to the child node, skipping
-                    // the branch itself to avoid iterating lesser keys.
-                    if child.is_valid() {
-                        first_ge(
-                            db,
-                            prefix_nibbles.append_new(choice as u8),
-                            target_nibbles,
-                            child.clone(),
-                            new_stack,
-                        )?;
-                    }
-                    // Because we can't add the branch, we need to add the valid greater children.
-                    for i in choice + 1..16 {
-                        let child = &branch_node.choices[i];
-                        if child.is_valid() {
-                            new_stack.push((prefix_nibbles.append_new(i as u8), child.clone()));
+                    match target_nibbles.next_choice() {
+                        Some(choice) => {
+                            let child = &branch_node.choices[choice];
+                            // If a prefix of `key` exists under this branch, we recur to the child node, skipping
+                            // the branch itself to avoid iterating lesser keys.
+                            if child.is_valid() {
+                                first_ge(
+                                    db,
+                                    prefix_nibbles.append_new(choice as u8),
+                                    target_nibbles,
+                                    child.clone(),
+                                    new_stack,
+                                )?;
+                            }
+                            // Because we can't add the branch, we need to add the valid greater children.
+                            for i in choice + 1..16 {
+                                let child = &branch_node.choices[i];
+                                if child.is_valid() {
+                                    new_stack
+                                        .push((prefix_nibbles.append_new(i as u8), child.clone()));
+                                }
+                            }
+                            Ok(())
+                        }
+                        None => {
+                            // Key is exhausted at this branch: our iteration use-case targets leaves only,
+                            // so there is no need to yield the branch itself. All valid children are ≥ key.
+                            // Push children in ascending order so that after the final reverse() the smallest child
+                            // is visited first.
+                            for i in 0..16 {
+                                let child = &branch_node.choices[i];
+                                if child.is_valid() {
+                                    new_stack
+                                        .push((prefix_nibbles.append_new(i as u8), child.clone()));
+                                }
+                            }
+                            Ok(())
                         }
                     }
-                    Ok(())
                 }
                 Node::Extension(extension_node) => {
                     // Update path
