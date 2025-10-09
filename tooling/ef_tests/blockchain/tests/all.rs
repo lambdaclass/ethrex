@@ -6,7 +6,6 @@ const TEST_FOLDER: &str = "vectors/";
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const SKIPPED_TESTS: &[&str] = &[
     "system_contract_deployment",
-    "HighGasPriceParis", // Skipped because it sets a gas price higher than u64::MAX, which most clients don't implement and is a virtually impossible scenario
     "dynamicAccountOverwriteEmpty_Paris", // Skipped because the scenario described is virtually impossible
     "create2collisionStorageParis", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
     "RevertInCreateInInitCreate2Paris", // Skipped because it's not worth implementing since the scenario of the test is virtually impossible. See https://github.com/lambdaclass/ethrex/issues/1555
