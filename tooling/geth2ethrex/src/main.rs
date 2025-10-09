@@ -89,12 +89,12 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         body_rlp,
     )?;
     info!("Inserting canonical hashes");
-    let headers_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
+    let hashes_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
     let numbers_cf = ethrex_db.cf_handle("block_numbers").unwrap();
     for (i, hash) in hashes.into_iter().rev().enumerate() {
         let hash_rlp = hash.encode_to_vec();
         ethrex_db.put_cf(
-            headers_cf,
+            hashes_cf,
             (block_number - i as u64).to_le_bytes(),
             hash_rlp.clone(),
         )?;
@@ -137,7 +137,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         let code = gethdb
             .read_code(code_hash.0)?
             .ok_or_else(|| eyre::eyre!("missing code hash"))?;
-        ethrex_db.put_cf(code_cf, code_hash, code)?;
+        ethrex_db.put_cf(code_cf, code_hash, code.encode_to_vec())?;
     }
     info!("Iterating storage tries");
     let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
