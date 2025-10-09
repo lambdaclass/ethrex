@@ -804,8 +804,25 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     }
 
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
-                        continue;
+                        match e {
+                            // Some of the more common mempool errors are logged at debug level, we might want to move all of them to debug in the future
+                            ethrex_blockchain::error::MempoolError::NonceTooLow
+                            | ethrex_blockchain::error::MempoolError::NotEnoughBalance
+                            | ethrex_blockchain::error::MempoolError::UnderpricedReplacement => {
+                                log_peer_warn(
+                                    &state.node,
+                                    &format!("Error adding transaction common: {e}"),
+                                );
+                                continue;
+                            }
+                            _ => {
+                                log_peer_warn(
+                                    &state.node,
+                                    &format!("Error adding transaction: {e}"),
+                                );
+                                continue;
+                            }
+                        }
                     }
                 }
                 state
