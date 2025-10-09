@@ -65,6 +65,12 @@ impl LevmAccount {
         self.status = AccountStatus::Destroyed;
     }
 
+    pub fn mutated(&mut self) {
+        if self.status == AccountStatus::Unmodified {
+            self.status = AccountStatus::Modified;
+        }
+    }
+
     pub fn has_nonce(&self) -> bool {
         self.info.nonce != 0
     }
@@ -81,11 +87,6 @@ impl LevmAccount {
         self.info.is_empty()
     }
 
-    /// Updates the account status.
-    pub fn update_status(&mut self, status: AccountStatus) {
-        self.status = status;
-    }
-
     /// Checks if the account is unmodified.
     pub fn is_unmodified(&self) -> bool {
         matches!(self.status, AccountStatus::Unmodified)
@@ -95,7 +96,9 @@ impl LevmAccount {
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountStatus {
     #[default]
+    /// Account was only read and not mutated at all.
     Unmodified,
+    /// Account accessed mutably, doesn't necessarily mean that its state has changed though but it could
     Modified,
     /// Contract executed a SELFDESTRUCT
     Destroyed,

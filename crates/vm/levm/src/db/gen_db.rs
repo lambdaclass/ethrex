@@ -87,7 +87,9 @@ impl GeneralizedDatabase {
     /// Gets mutable reference of an account
     /// Warning: Use directly only if outside of the EVM, otherwise use `vm.get_account_mut` because it contemplates call frame backups.
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
-        self.load_account(address)
+        let acc = self.load_account(address)?;
+        acc.mutated();
+        Ok(acc)
     }
 
     /// Gets code immutably given the code hash.
@@ -149,6 +151,10 @@ impl GeneralizedDatabase {
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in self.current_accounts_state.iter() {
+            if new_state_account.is_unmodified() {
+                // Skip processing account that we know wasn't mutably accessed during execution
+                continue;
+            }
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
                 self.initial_accounts_state
