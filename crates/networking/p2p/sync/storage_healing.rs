@@ -208,25 +208,21 @@ pub async fn heal_storage_trie(
             if !db_joinset.is_empty() {
                 db_joinset.join_next().await;
             }
-            db_joinset.spawn_blocking(|| {
-                spawned_rt::tasks::block_on(async move {
-                    let mut encoded_to_write = vec![];
-                    for (hashed_account, nodes) in to_write {
-                        let mut account_nodes = vec![];
-                        for (path, node) in nodes {
-                            for i in 0..path.len() {
-                                account_nodes.push((path.slice(0, i), vec![]));
-                            }
-                            account_nodes.push((path, node.encode_to_vec()));
+            db_joinset.spawn_blocking(move || {
+                let mut encoded_to_write = vec![];
+                for (hashed_account, nodes) in to_write {
+                    let mut account_nodes = vec![];
+                    for (path, node) in nodes {
+                        for i in 0..path.len() {
+                            account_nodes.push((path.slice(0, i), vec![]));
                         }
-                        encoded_to_write.push((hashed_account, account_nodes));
+                        account_nodes.push((path, node.encode_to_vec()));
                     }
-
-                    store
-                        .write_storage_trie_nodes_batch(encoded_to_write)
-                        .await
-                        .expect("db write failed");
-                })
+                    encoded_to_write.push((hashed_account, account_nodes));
+                }
+                // PERF: use put_batch_no_alloc? (it needs to remove parent nodes too)
+                spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch(encoded_to_write))
+                    .expect("db write failed");
             });
         }
 
