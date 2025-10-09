@@ -237,24 +237,17 @@ impl Store {
     }
 
     pub async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        if block_number == 0 {
-            return Err(StoreError::Custom(
-                "Cannot remove genesis block".to_string(),
-            ));
-        }
-        {
-            let mut latest_header = self
-                .latest_block_header
-                .write()
-                .map_err(|_| StoreError::LockError)?;
-
+        let mut latest_header = self
+            .latest_block_header
+            .write()
+            .map_err(|_| StoreError::LockError)?;
+        self.engine.remove_block(block_number).await?;
+        if latest_header.number == block_number {
             *latest_header = self
                 .engine
-                .get_block_header(latest_header.number - 1)?
-                .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
+                .get_block_header(block_number - 1)?
+                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         }
-
-        self.engine.remove_block(block_number).await?;
         Ok(())
     }
 
@@ -617,10 +610,19 @@ impl Store {
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
 
+        if let Some(number) = self.engine.get_latest_block_number().await? {
+            *self
+                .latest_block_header
+                .write()
+                .map_err(|_| StoreError::LockError)? = self
+                .engine
+                .get_block_header(number)?
+                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+        }
+
         match self.engine.get_block_header(genesis_block_number)? {
             Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
-                self.load_initial_state().await?;
                 return Ok(());
             }
             Some(_) => {
@@ -656,14 +658,14 @@ impl Store {
         let Some(number) = self.engine.get_latest_block_number().await? else {
             return Err(StoreError::MissingLatestBlockNumber);
         };
-        let mut latest_header = self
-            .latest_block_header
-            .write()
-            .map_err(|_| StoreError::LockError)?;
-        *latest_header = self
+        let latest_block_header = self
             .engine
             .get_block_header(number)?
             .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
+        *self
+            .latest_block_header
+            .write()
+            .map_err(|_| StoreError::LockError)? = latest_block_header;
         Ok(())
     }
 

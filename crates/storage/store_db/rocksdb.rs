@@ -684,20 +684,13 @@ impl StoreEngine for Store {
             return Ok(());
         };
 
-        let [
-            cf_canonical,
-            cf_bodies,
-            cf_headers,
-            cf_block_numbers,
-            cf_chain_data,
-        ] = open_cfs(
+        let [cf_canonical, cf_bodies, cf_headers, cf_block_numbers] = open_cfs(
             &self.db,
             [
                 CF_CANONICAL_BLOCK_HASHES,
                 CF_BODIES,
                 CF_HEADERS,
                 CF_BLOCK_NUMBERS,
-                CF_CHAIN_DATA,
             ],
         )?;
 
@@ -705,10 +698,6 @@ impl StoreEngine for Store {
         batch.delete_cf(&cf_bodies, hash.as_bytes());
         batch.delete_cf(&cf_headers, hash.as_bytes());
         batch.delete_cf(&cf_block_numbers, hash.as_bytes());
-
-        // TODO: check we have the previous block
-        let key = Self::chain_data_key(ChainDataIndex::LatestBlockNumber);
-        batch.put_cf(&cf_chain_data, key, (block_number - 1).to_le_bytes());
 
         self.db
             .write(batch)
