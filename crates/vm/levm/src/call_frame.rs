@@ -12,6 +12,7 @@ use ethrex_common::{Address, U256};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
+    hash::{Hash, Hasher},
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -217,6 +218,12 @@ impl fmt::Debug for Stack {
         f.debug_tuple("Stack")
             .field(&StackValues(&self.values[self.offset..]))
             .finish()
+    }
+}
+
+impl Hash for Stack {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.values[self.offset..].hash(state);
     }
 }
 

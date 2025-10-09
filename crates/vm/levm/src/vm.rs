@@ -192,7 +192,7 @@ impl Substate {
             .collect()
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Mark an address as accessed and return whether the slot was cold.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
         let is_present = self
             .parent
@@ -200,12 +200,14 @@ impl Substate {
             .map(|parent| parent.is_slot_accessed(&address, &key))
             .unwrap_or_default();
 
-        is_present
+        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
+        //   expression if not necessary.
+        !(is_present
             || !self
                 .accessed_storage_slots
                 .entry(address)
                 .or_default()
-                .insert(key)
+                .insert(key))
     }
 
     /// Return whether an address has already been accessed.
@@ -221,7 +223,7 @@ impl Substate {
                 .unwrap_or_default()
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Mark an address as accessed and return whether the address was cold.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
         let is_present = self
             .parent
@@ -229,7 +231,9 @@ impl Substate {
             .map(|parent| parent.is_address_accessed(&address))
             .unwrap_or_default();
 
-        is_present || !self.accessed_addresses.insert(address)
+        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
+        //   expression if not necessary.
+        !(is_present || !self.accessed_addresses.insert(address))
     }
 
     /// Return whether an address has already been accessed.
@@ -325,7 +329,7 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
-    pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    pub(crate) opcode_table: [OpCodeFn; 256],
 }
 
 impl<'a> VM<'a> {

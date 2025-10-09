@@ -68,7 +68,7 @@ pub const MAX_BLOB_COUNT_TX: usize = 6;
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
 // Block constants
-pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
+pub const LAST_AVAILABLE_BLOCK_LIMIT: u64 = 256;
 
 // EIP7702 - EOA Load Code
 pub static SECP256K1_ORDER: LazyLock<U256> =

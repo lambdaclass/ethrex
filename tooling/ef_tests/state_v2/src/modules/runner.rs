@@ -132,15 +132,21 @@ pub fn get_vm_env_for_test(
         origin: test_case.sender,
         gas_limit: test_case.gas,
         config,
-        block_number: test_env.current_number,
+        block_number: test_env.current_number.try_into().unwrap(),
         coinbase: test_env.current_coinbase,
-        timestamp: test_env.current_timestamp,
+        timestamp: test_env.current_timestamp.try_into().unwrap(),
         prev_randao: test_env.current_random,
         difficulty: test_env.current_difficulty,
-        chain_id: U256::from(1),
-        base_fee_per_gas: test_env.current_base_fee.unwrap_or_default(),
+        chain_id: 1,
+        base_fee_per_gas: test_env
+            .current_base_fee
+            .unwrap_or_default()
+            .try_into()
+            .unwrap(),
         gas_price,
-        block_excess_blob_gas: test_env.current_excess_blob_gas,
+        block_excess_blob_gas: test_env
+            .current_excess_blob_gas
+            .map(|x| x.try_into().unwrap()),
         block_blob_gas_used: None,
         tx_blob_hashes: test_case.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: test_case.max_priority_fee_per_gas,
