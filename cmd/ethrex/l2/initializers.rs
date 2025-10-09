@@ -306,7 +306,7 @@ pub async fn init_l2(
 
 pub fn get_l1_fee_config(sequencer_opts: &SequencerOptions) -> Option<L1FeeConfig> {
     if sequencer_opts.based {
-        // If based is enabled, L1 fee is not applicable
+        // If based is enabled, skip L1 fee configuration
         return None;
     }
 
@@ -323,7 +323,7 @@ pub async fn get_operator_fee_config(
     sequencer_opts: &SequencerOptions,
 ) -> eyre::Result<Option<OperatorFeeConfig>> {
     if sequencer_opts.based {
-        // If based is enabled, operator fee is not applicable
+        // If based is enabled, skip operator fee configuration
         return Ok(None);
     }
 
