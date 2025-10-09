@@ -38,4 +38,33 @@ pub enum StoreError {
     TryInto(#[from] std::num::TryFromIntError),
     #[error("Update batch contains no blocks")]
     UpdateBatchNoBlocks,
+    #[error("Failed to generate snapshot: {0}")]
+    SnapshotGeneration(#[from] SnapshotGenerationError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SnapshotGenerationError {
+    #[error("Failed to open account state trie with error: {0}")]
+    FailedToOpenAccountStateTrie(#[source] StoreError),
+    #[error("Failed to decode account state trie from path {0:#x} with error: {1}")]
+    FailedToDecodeAccountState(H256, #[source] RLPDecodeError),
+    #[error(
+        "Failed to open account state storage trie for account hash {0:#x} from path {1:#x} with error: {2}"
+    )]
+    FailedToOpenAccountStateStorageTrie(H256, H256, #[source] StoreError),
+    #[error(
+        "Failed to store account state storage nodes batch for account hash {0:#x} with error: {1}"
+    )]
+    FailedToStoreAccountStateStorageNodesBatch(H256, #[source] TrieError),
+    #[error(
+        "Failed to store remaining account state storage nodes for account hash {0:#x} with error: {1}"
+    )]
+    FailedToStoreRemainingAccountStateStorageNodes(H256, #[source] TrieError),
+    #[error("Failed to store account state nodes batch for account hash {0:#x} with error: {1}")]
+    FailedToStoreAccountStateNodesBatch(H256, #[source] TrieError),
+    #[error(
+        "Failed to store remaining account state nodes with error: {0}
+    "
+    )]
+    FailedToStoreRemainingAccountStateNodes(#[source] TrieError),
 }
