@@ -17,9 +17,10 @@ use std::collections::BTreeMap;
 pub struct LevmAccount {
     pub info: AccountInfo,
     pub storage: BTreeMap<H256, U256>,
-    /// If true it means that doing create on this account it would collide because of storage.
+    /// If true it means that attempting to create an account with this address it would at least collide because of storage.
     /// We just care about this kind of collision if the account doesn't have code or nonce. Otherwise its value doesn't matter.
     /// For more information see EIP-7610: https://eips.ethereum.org/EIPS/eip-7610
+    /// Warning: This attribute should only be used for handling create collisions as it's not necessary appropriate for every scenario. Read the caveat below.
     ///
     /// How this works:
     /// - When getting an account from the DB this is set to true if the account has non-empty storage root.
@@ -31,7 +32,7 @@ pub struct LevmAccount {
     /// storage root of an account during execution instead of just keeping track of it when fetching it from the Database or updating it when
     /// destroying it. The EIP that adds to the spec this check did it because there are 28 accounts with these characteristics already deployed
     /// in mainnet (back when they were deployed with nonce 0), but they cannot be created intentionally anymore.
-    pub storage_collision: bool,
+    pub has_storage: bool,
     /// Current status of the account.
     /// Note that currently we are not using AccountStatus for any important checks but we should probably start using it soon.
     /// Some examples include: Knowing if an account was destroyed and re-created afterwards, or maybe if we use the Unmodified variant correctly we can skip processing updates of the account.
@@ -53,7 +54,7 @@ impl From<GenesisAccount> for LevmAccount {
                 balance: genesis.balance,
                 nonce: genesis.nonce,
             },
-            storage_collision: !storage.is_empty(),
+            has_storage: !storage.is_empty(),
             storage,
             status: AccountStatus::Unmodified,
         }
@@ -69,7 +70,7 @@ impl From<AccountState> for LevmAccount {
             },
             storage: BTreeMap::new(),
             status: AccountStatus::Unmodified,
-            storage_collision: state.storage_root != *EMPTY_TRIE_HASH,
+            has_storage: state.storage_root != *EMPTY_TRIE_HASH,
         }
     }
 }
@@ -84,7 +85,7 @@ impl LevmAccount {
     }
 
     pub fn create_would_collide(&self) -> bool {
-        self.has_code() || self.has_nonce() || self.storage_collision
+        self.has_code() || self.has_nonce() || self.has_storage
     }
 
     pub fn is_empty(&self) -> bool {

@@ -291,7 +291,7 @@ impl CallFrameBackup {
                 info: account.info.clone(),
                 storage: BTreeMap::new(),
                 status: account.status.clone(),
-                storage_collision: account.storage_collision,
+                has_storage: account.has_storage,
             });
 
         Ok(())
