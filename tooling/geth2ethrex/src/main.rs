@@ -127,6 +127,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             }
             if state.storage_root != *EMPTY_TRIE_HASH {
                 let hashed_address = path.concat(leaf.partial).to_bytes();
+                debug_assert_eq!(hashed_address.len(), 32);
                 storages.push((hashed_address, state.storage_root));
             }
         }
@@ -150,11 +151,9 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         let storage_trie = Trie::open(storage_triedb, storage_root);
         for (_path, node) in storage_trie.into_iter() {
             let hash = node.compute_hash();
-            ethrex_db.put_cf(
-                storages_cf,
-                [&hashed_address[..], &hash.finalize().0].concat(),
-                node.encode_to_vec(),
-            )?;
+            let key = [&hashed_address[..], hash.as_ref()].concat();
+            debug_assert_eq!(key.len(), 64);
+            ethrex_db.put_cf(storages_cf, key, node.encode_to_vec())?;
         }
     }
     info!("Compacting Ethrex DB");
@@ -193,9 +192,6 @@ struct GethDB {
 impl GethDB {
     pub fn open() -> eyre::Result<Self> {
         let ancient_db_path = AsRef::<Path>::as_ref(*GETH_DB_PATH).join("ancient/chain");
-        // let mut opts = Options::default();
-        // opts.create_if_missing(true); // FIXME: just for local testing
-        // let state_db = DBWithThreadMode::open(&opts, gethdb_dir)?;
         let state_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), *GETH_DB_PATH, false)?;
         Ok(Self {
