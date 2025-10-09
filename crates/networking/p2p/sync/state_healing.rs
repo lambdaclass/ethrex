@@ -263,7 +263,6 @@ async fn heal_state_trie(
                 &mut membatch,
                 &mut nodes_to_write,
             )
-            .await
             .inspect_err(|err| {
                 error!("We have found a sync error while trying to write to DB a batch: {err}")
             })?;
@@ -330,7 +329,7 @@ async fn heal_state_trie(
 
 /// Receives a set of state trie paths, fetches their respective nodes, stores them,
 /// and returns their children paths and the paths that couldn't be fetched so they can be returned to the queue
-async fn heal_state_batch(
+fn heal_state_batch(
     mut batch: Vec<RequestMetadata>,
     nodes: Vec<Node>,
     store: Store,
@@ -345,14 +344,12 @@ async fn heal_state_batch(
         batch.extend(missing_children);
         if missing_children_count == 0 {
             commit_node(
-                &store,
                 node,
                 &path.path,
                 &path.parent_path,
                 membatch,
                 nodes_to_write,
-            )
-            .await;
+            );
         } else {
             let entry = MembatchEntryValue {
                 node: node.clone(),
@@ -365,8 +362,7 @@ async fn heal_state_batch(
     Ok(batch)
 }
 
-async fn commit_node(
-    store: &Store,
+fn commit_node(
     node: Node,
     path: &Nibbles,
     parent_path: &Nibbles,
@@ -385,15 +381,13 @@ async fn commit_node(
 
     membatch_entry.children_not_in_storage_count -= 1;
     if membatch_entry.children_not_in_storage_count == 0 {
-        Box::pin(commit_node(
-            store,
+        commit_node(
             membatch_entry.node,
             parent_path,
             &membatch_entry.parent_path,
             membatch,
             nodes_to_write,
-        ))
-        .await;
+        );
     } else {
         membatch.insert(parent_path.clone(), membatch_entry);
     }
