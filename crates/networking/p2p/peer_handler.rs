@@ -42,7 +42,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
 pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
@@ -113,14 +113,8 @@ async fn ask_peer_head_number(
 
     debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
-    match PeerHandler::make_request(
-        peer_table,
-        peer_id,
-        connection,
-        request,
-        Duration::from_millis(500),
-    )
-    .await
+    match PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
+        .await
     {
         Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
@@ -516,14 +510,9 @@ impl PeerHandler {
         if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
             block_headers,
-        })) = PeerHandler::make_request(
-            peer_table,
-            peer_id,
-            connection,
-            request,
-            Duration::from_secs(2),
-        )
-        .await
+        })) =
+            PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
+                .await
         {
             if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
                 Ok(block_headers)
@@ -561,7 +550,7 @@ impl PeerHandler {
                     peer_id,
                     &mut connection,
                     request,
-                    Duration::from_secs(2),
+                    PEER_REPLY_TIMEOUT,
                 )
                 .await
                 {
@@ -929,7 +918,7 @@ impl PeerHandler {
             peer_id,
             &mut connection,
             request,
-            Duration::from_secs(2),
+            PEER_REPLY_TIMEOUT,
         )
         .await
         {
@@ -1138,7 +1127,7 @@ impl PeerHandler {
                         peer_id,
                         &mut connection,
                         request,
-                        Duration::from_secs(2),
+                        PEER_REPLY_TIMEOUT,
                     )
                     .await
                 {
@@ -1706,7 +1695,7 @@ impl PeerHandler {
             peer_id,
             &mut connection,
             request,
-            Duration::from_secs(2),
+            PEER_REPLY_TIMEOUT,
         )
         .await
         else {
@@ -1849,7 +1838,7 @@ impl PeerHandler {
             peer_id,
             &mut connection,
             request,
-            Duration::from_secs(7),
+            PEER_REPLY_TIMEOUT,
         )
         .await
         {
@@ -1907,7 +1896,7 @@ impl PeerHandler {
             peer_id,
             &mut connection,
             request,
-            Duration::from_secs(7),
+            PEER_REPLY_TIMEOUT,
         )
         .await
         {
@@ -1956,7 +1945,7 @@ impl PeerHandler {
             peer_id,
             connection,
             request,
-            Duration::from_secs(5),
+            PEER_REPLY_TIMEOUT,
         )
         .await
         {

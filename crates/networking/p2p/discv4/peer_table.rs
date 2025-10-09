@@ -24,8 +24,10 @@ const MIN_SCORE: i64 = -50;
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 /// Maximum amount of FindNode messages sent to a single node.
 const MAX_FIND_NODE_PER_PEER: u64 = 20;
-/// Number of concurrent requests that can be made to a single peer.
-//const MAX_REQUESTS_PER_PEER: usize = 100;
+/// Score weight for the load balancing function.
+const SCORE_WEIGHT: i64 = 1;
+/// Weight for amount of requests being handled by the peer for the load balancing function.
+const REQUESTS_WEIGHT: i64 = 1;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -507,32 +509,30 @@ struct PeerTableServer {
 impl PeerTableServer {
     // Internal functions //
 
+    fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
+        score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    }
+
     fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
         self.peers
             .iter()
             // We filter only to those peers which are useful to us
             .filter_map(|(id, peer_data)| {
-                // TODO: Check if we need some limit or filter for peers
-                // if peer_data.in_use {
-                //     return None;
-                // }
-
                 // if the peer doesn't have any of the capabilities we need, we skip it
                 if !capabilities
                     .iter()
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
                 {
-                    return None;
+                    None
+                } else {
+                    // if the peer doesn't have the channel open, we skip it.
+                    let connection = peer_data.connection.clone()?;
+
+                    // We return the id, the score and the channel to connect with.
+                    Some((*id, peer_data.score, peer_data.requests, connection))
                 }
-
-                // if the peer doesn't have the channel open, we skip it.
-                let connection = peer_data.connection.clone()?;
-
-                // We return the id, the score and the channel to connect with.
-                Some((*id, peer_data.score, peer_data.requests, connection))
             })
-            // TODO: Improve sorting function
-            .max_by_key(|(_, score, reqs, _)| score - reqs)
+            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
             .map(|(k, _, _, v)| (k, v))
     }
 

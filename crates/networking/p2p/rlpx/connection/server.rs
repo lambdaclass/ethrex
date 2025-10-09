@@ -185,7 +185,7 @@ pub struct Established {
     pub(crate) peer_table: PeerTable,
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
-    pub(crate) current_requests: HashMap<u64, tokio::sync::oneshot::Sender<Message>>,
+    pub(crate) current_requests: HashMap<u64, (String, oneshot::Sender<Message>)>,
 }
 
 impl Established {
@@ -216,7 +216,7 @@ pub enum CastMessage {
     /// We send information to the remote peer
     OutgoingMessage(Message),
     /// We request information from the remote peer
-    OutgoingRequest(Message, Arc<tokio::sync::oneshot::Sender<Message>>),
+    OutgoingRequest(Message, Arc<oneshot::Sender<Message>>),
     /// Received a notification of a request that timeouted.
     RequestTimeout { id: u64 },
     /// Periodic message to send ping to remote peer
@@ -346,7 +346,12 @@ impl GenServer for PeerConnectionServer {
                 }
                 Self::CastMsg::RequestTimeout { id } => {
                     // Discard the request from current requests
-                    established_state.current_requests.remove(&id);
+                    if let Some((msg_type, _)) = established_state.current_requests.remove(&id) {
+                        log_peer_debug(
+                            &established_state.node,
+                            &format!("{msg_type}({id}) timeouted."),
+                        );
+                    }
                     Ok(())
                 }
                 Self::CastMsg::SendPing => {
@@ -1027,7 +1032,7 @@ async fn handle_incoming_message(
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)
         | message @ Message::Receipts69(_) => {
-            if let Some(tx) = message
+            if let Some((_, tx)) = message
                 .request_id()
                 .and_then(|id| state.current_requests.remove(&id))
             {
@@ -1055,12 +1060,14 @@ async fn handle_outgoing_message(
 async fn handle_outgoing_request(
     state: &mut Established,
     message: Message,
-    sender: tokio::sync::oneshot::Sender<Message>,
+    sender: oneshot::Sender<Message>,
 ) -> Result<(), PeerConnectionError> {
     // Insert the request in the request map if it supports a request id.
-    message
-        .request_id()
-        .and_then(|id| state.current_requests.insert(id, sender));
+    message.request_id().and_then(|id| {
+        state
+            .current_requests
+            .insert(id, (format!("{message}"), sender))
+    });
     log_peer_debug(&state.node, &format!("Sending request {message}"));
     send(state, message).await?;
     Ok(())
