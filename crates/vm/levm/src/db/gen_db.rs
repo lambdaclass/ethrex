@@ -167,10 +167,7 @@ impl GeneralizedDatabase {
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be removed completely from the trie.
             // This is a way of removing the storage of an account but keeping the info.
-            if (new_state_account.status == AccountStatus::DestroyedModified
-                || new_state_account.status == AccountStatus::Destroyed)
-                && !new_state_account.is_empty()
-            {
+            if new_state_account.status == AccountStatus::DestroyedModified {
                 // Push to account updates the removal of the account and then push the new state of the account.
                 account_updates.push(AccountUpdate::removed(*address));
                 let new_account_update = AccountUpdate {
