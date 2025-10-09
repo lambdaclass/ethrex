@@ -348,7 +348,7 @@ impl Syncer {
         let mut start_block_number = 0;
         let mut end_block_number = 0;
         loop {
-            let Some(block_headers) = self
+            let Some(mut block_headers) = self
                 .peers
                 .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
                 .await?
@@ -378,11 +378,20 @@ impl Syncer {
             //     current_head = first_block_parent_hash;
             //     continue;
             // }
-
-            sync_head = block_headers.last().as_ref().unwrap().parent_hash;
-            if store.is_canonical_sync(sync_head)? {
+            sync_head = block_headers.last().unwrap().parent_hash;
+            if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
                 // Incoming chain merged with current chain
-                start_block_number = block_headers.last().as_ref().unwrap().number;
+                // Filter out already canonical blocks from batch
+               let mut first_canon_block = block_headers.len();
+               for (index, header) in block_headers.iter().enumerate() {
+                    if store.is_canonical_sync(header.hash())? {
+                        first_canon_block = index;
+                        break;
+                    }
+               }
+                block_headers.drain(first_canon_block..block_headers.len());
+                start_block_number = block_headers.last().as_ref().unwrap().number.max(1);
+                store.add_fullsync_batch(block_headers).await?;
                 break;
             }
             store.add_fullsync_batch(block_headers).await?;
