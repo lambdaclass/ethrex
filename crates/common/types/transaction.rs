@@ -361,10 +361,7 @@ impl Transaction {
             return None;
         }
 
-        let priority_fee_per_gas = min(
-            self.max_priority_fee()?,
-            max_fee.saturating_sub(base_fee),
-        );
+        let priority_fee_per_gas = min(self.max_priority_fee()?, max_fee.saturating_sub(base_fee));
         Some(U256::from(priority_fee_per_gas) + U256::from(base_fee))
     }
 
@@ -1071,6 +1068,7 @@ impl Transaction {
         }
     }
 
+    //TODO: It's not very correct to return gas price for legacy and eip-2930 txs but return the max fee per gas for the others, make necessary changes for it to be technically correct.
     pub fn gas_price(&self) -> U256 {
         match self {
             Transaction::LegacyTransaction(tx) => tx.gas_price,
@@ -1240,13 +1238,11 @@ impl Transaction {
     }
 
     pub fn gas_tip_cap(&self) -> u64 {
-        self.max_priority_fee()
-            .unwrap_or(self.gas_price().as_u64())
+        self.max_priority_fee().unwrap_or(self.gas_price().as_u64())
     }
 
     pub fn gas_fee_cap(&self) -> u64 {
-        self.max_fee_per_gas()
-            .unwrap_or(self.gas_price().as_u64())
+        self.max_fee_per_gas().unwrap_or(self.gas_price().as_u64())
     }
 
     pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<u64> {
