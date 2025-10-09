@@ -2320,7 +2320,7 @@ mod serde_impl {
 
             Ok(Self {
                 tx: value.try_into()?,
-                wrapper_version: Some(1),
+                wrapper_version: (fork > Fork::Prague).then_some(1),
                 blobs_bundle: BlobsBundle::create_from_blobs(&blobs, fork)?,
             })
         }

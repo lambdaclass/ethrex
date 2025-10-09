@@ -13,7 +13,7 @@ use ethrex_l2_common::{
     privileged_transactions::compute_privileged_transactions_hash,
     state_diff::prepare_state_diff,
 };
-use ethrex_l2_sdk::{get_last_committed_batch, get_last_fetched_l1_block};
+use ethrex_l2_sdk::{get_l1_fork, get_last_committed_batch, get_last_fetched_l1_block};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
@@ -388,7 +388,7 @@ impl BlockFetcher {
         )
         .map_err(|_| BlockFetcherError::BlobBundleError)?;
 
-        let fork = self.blockchain.current_fork().await?;
+        let fork = get_l1_fork(&self.eth_client).await;
         let (blobs_bundle, _) = generate_blobs_bundle(&state_diff, fork)
             .map_err(|_| BlockFetcherError::BlobBundleError)?;
 

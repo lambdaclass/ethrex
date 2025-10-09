@@ -75,22 +75,22 @@ pub struct Config;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EthConfigObject {
-    pub activation_time: Option<u64>,
-    pub blob_schedule: Option<ForkBlobSchedule>,
+struct EthConfigObject {
+    activation_time: Option<u64>,
+    blob_schedule: Option<ForkBlobSchedule>,
     #[serde(with = "serde_utils::u64::hex_str")]
-    pub chain_id: u64,
-    pub fork_id: H32,
-    pub precompiles: BTreeMap<String, H160>,
-    pub system_contracts: BTreeMap<String, H160>,
+    chain_id: u64,
+    fork_id: H32,
+    precompiles: BTreeMap<String, H160>,
+    system_contracts: BTreeMap<String, H160>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EthConfigResponse {
-    pub current: EthConfigObject,
-    pub next: Option<EthConfigObject>,
-    pub last: Option<EthConfigObject>,
+    current: EthConfigObject,
+    next: Option<EthConfigObject>,
+    last: Option<EthConfigObject>,
 }
 
 impl RpcHandler for Config {

@@ -13,6 +13,7 @@ use ethrex_common::{
     types::{Block, blobs_bundle},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_sdk::get_l1_fork;
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
@@ -488,11 +489,12 @@ impl ProofCoordinator {
                 .get_blobs_by_batch(batch_number)
                 .await?
                 .ok_or(ProofCoordinatorError::MissingBlob(batch_number))?;
+            let fork = get_l1_fork(&self.eth_client).await;
             let BlobsBundle {
                 mut commitments,
                 mut proofs,
                 ..
-            } = BlobsBundle::create_from_blobs(&blob, self.blockchain.current_fork().await?)?;
+            } = BlobsBundle::create_from_blobs(&blob, fork)?;
             match (commitments.pop(), proofs.pop()) {
                 (Some(commitment), Some(proof)) => (commitment, proof),
                 _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),

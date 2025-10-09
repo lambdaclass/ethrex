@@ -156,7 +156,6 @@ impl Store {
     pub async fn get_batch(
         &self,
         batch_number: u64,
-        // TODO: Should we get the fork from the last block of the batch instead?
         fork: Fork,
     ) -> Result<Option<Batch>, RollupStoreError> {
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {

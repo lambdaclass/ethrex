@@ -670,8 +670,8 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         TxType::EIP4844 => {
-            // TODO: see how to check for fork
-            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, Fork::Osaka)?;
+            let fork = get_l1_fork(client).await;
+            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, fork)?;
             tx.tx
                 .sign_inplace(signer)
                 .await
@@ -980,6 +980,13 @@ pub async fn get_pending_privileged_transactions(
     )
     .await?;
     from_hex_string_to_h256_array(&response)
+}
+
+pub async fn get_l1_fork(client: &EthClient) -> Fork {
+    match client.get_eth_config().await {
+        Ok(_) => Fork::Osaka, // This endpoint only supports Osaka and later
+        Err(_) => Fork::Prague,
+    }
 }
 
 async fn _generic_call(

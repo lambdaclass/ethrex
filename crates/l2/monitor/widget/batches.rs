@@ -2,7 +2,7 @@ use ethrex_common::{
     Address, H256,
     types::{Fork, batch::Batch},
 };
-use ethrex_l2_sdk::get_last_committed_batch;
+use ethrex_l2_sdk::{get_l1_fork, get_last_committed_batch};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use ratatui::{
@@ -63,17 +63,23 @@ impl BatchesTable {
         .await?;
         new_latest_batches.truncate(BATCH_WINDOW_SIZE);
 
+        let fork = get_l1_fork(eth_client).await;
+
         let n_new_latest_batches = new_latest_batches.len();
         self.items
             .truncate(BATCH_WINDOW_SIZE - n_new_latest_batches);
-        self.refresh_items(rollup_store).await?;
+        self.refresh_items(rollup_store, fork).await?;
         self.items.extend_from_slice(&new_latest_batches);
         self.items.rotate_right(n_new_latest_batches);
 
         Ok(())
     }
 
-    async fn refresh_items(&mut self, rollup_store: &StoreRollup) -> Result<(), MonitorError> {
+    async fn refresh_items(
+        &mut self,
+        rollup_store: &StoreRollup,
+        fork: Fork,
+    ) -> Result<(), MonitorError> {
         if self.items.is_empty() {
             return Ok(());
         }
@@ -85,9 +91,8 @@ impl BatchesTable {
                 refreshed_batches.push(batch.clone());
             } else {
                 let batch_number = batch.number;
-                // TODO: change this
                 let new_batch = rollup_store
-                    .get_batch(batch_number, Fork::Prague)
+                    .get_batch(batch_number, fork)
                     .await
                     .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
                     .ok_or(MonitorError::BatchNotFound(batch_number))?;
@@ -120,9 +125,15 @@ impl BatchesTable {
                     .map_err(|_| MonitorError::BatchWindow)?,
             ),
         );
+        let fork = get_l1_fork(eth_client).await;
 
-        let new_batches =
-            Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await?;
+        let new_batches = Self::get_batches(
+            last_l2_batch_fetched,
+            last_l2_batch_number,
+            rollup_store,
+            fork,
+        )
+        .await?;
 
         Ok(Self::process_batches(new_batches))
     }
@@ -131,13 +142,14 @@ impl BatchesTable {
         from: &mut u64,
         to: u64,
         rollup_store: &StoreRollup,
+        fork: Fork,
     ) -> Result<Vec<Batch>, MonitorError> {
         let mut new_batches = Vec::new();
 
         for batch_number in *from + 1..=to {
             // TODO: change this fork
             let batch = rollup_store
-                .get_batch(batch_number, Fork::Prague)
+                .get_batch(batch_number, fork)
                 .await
                 .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
                 .ok_or(MonitorError::BatchNotFound(batch_number))?;
