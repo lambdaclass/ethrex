@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -10,6 +9,7 @@ use ethrex_common::types::Account;
 use ethrex_common::utils::keccak;
 
 use super::Database;
+use crate::account::AccountStatus;
 use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
@@ -29,10 +29,6 @@ pub struct GeneralizedDatabase {
     pub initial_accounts_state: CacheDB,
     pub codes: BTreeMap<H256, Bytes>,
     pub tx_backup: Option<CallFrameBackup>,
-    /// For keeping track of all destroyed accounts during block execution.
-    /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
-    /// In that scenario we want to remove the previous storage of the account but we still want the account to exist.
-    pub destroyed_accounts: HashSet<Address>,
 }
 
 impl GeneralizedDatabase {
@@ -42,7 +38,6 @@ impl GeneralizedDatabase {
             current_accounts_state: CacheDB::new(),
             initial_accounts_state: CacheDB::new(),
             tx_backup: None,
-            destroyed_accounts: HashSet::new(),
             codes: BTreeMap::new(),
         }
     }
@@ -65,7 +60,6 @@ impl GeneralizedDatabase {
             current_accounts_state: levm_accounts.clone(),
             initial_accounts_state: levm_accounts,
             tx_backup: None,
-            destroyed_accounts: HashSet::new(),
             codes,
         }
     }
@@ -121,11 +115,6 @@ impl GeneralizedDatabase {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        // If the account was destroyed then we cannot rely on the DB to obtain its previous value
-        // This is critical when executing blocks in batches, as an account may be destroyed and created within the same batch
-        if self.destroyed_accounts.contains(&address) {
-            return Ok(Default::default());
-        }
         let value = self.store.get_storage_value(address, key)?;
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
@@ -168,10 +157,16 @@ impl GeneralizedDatabase {
                         "Failed to get account {address} from immutable cache",
                     ))))?;
 
-            // Edge case: Account was destroyed and created again afterwards with CREATE2.
-            if self.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
+            // Edge case:
+            //   1. Account was destroyed and created again afterwards (usually with CREATE2).
+            //   2. Account was destroyed but then was sent some balance, so it's not going to be removed completely from the trie.
+            // This is a way of removing storage of an account.
+            if (new_state_account.status == AccountStatus::DestroyedCreated
+                || new_state_account.status == AccountStatus::Destroyed)
+                && !new_state_account.is_empty()
+            {
                 // Push to account updates the removal of the account and then push the new state of the account.
-                // This is for clearing the account's storage when it was selfdestructed in the first place.
+                // This is for clearing the account's storage when it was destroyed but conserve de info.
                 account_updates.push(AccountUpdate::removed(*address));
                 let new_account_update = AccountUpdate {
                     address: *address,
@@ -403,6 +398,10 @@ impl<'a> VM<'a> {
         if let Some(account) = self.db.current_accounts_state.get(&address) {
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
+            }
+            // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
+            if account.status == AccountStatus::DestroyedCreated {
+                return Ok(U256::zero());
             }
         } else {
             // When requesting storage of an account we should've previously requested and cached the account

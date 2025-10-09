@@ -1,4 +1,5 @@
 use crate::{
+    account::AccountStatus,
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
@@ -699,6 +700,13 @@ impl<'a> VM<'a> {
         // Changes that revert in case the Create fails.
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
+
+        let new_account = self.get_account_mut(new_address)?;
+        if new_account.status == AccountStatus::Destroyed {
+            new_account.status = AccountStatus::DestroyedCreated
+        } else {
+            new_account.status = AccountStatus::Created
+        }
 
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.

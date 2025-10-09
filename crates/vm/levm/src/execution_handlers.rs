@@ -1,4 +1,5 @@
 use crate::{
+    account::AccountStatus,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
@@ -116,6 +117,12 @@ impl<'a> VM<'a> {
                 gas_used: self.env.gas_limit,
                 output: Bytes::new(),
             }));
+        }
+
+        if new_account.status == AccountStatus::Destroyed {
+            new_account.status = AccountStatus::DestroyedCreated
+        } else {
+            new_account.status = AccountStatus::Created
         }
 
         self.increase_account_balance(new_contract_address, self.current_call_frame.msg_value)?;
