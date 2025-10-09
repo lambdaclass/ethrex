@@ -355,4 +355,23 @@ impl Store {
             .delete_proof_by_batch_and_type(batch_number, proof_type)
             .await
     }
+
+    pub async fn store_l1_blob_base_fee_by_block(
+        &self,
+        block_number: BlockNumber,
+        l1_blob_base_fee: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_l1_blob_base_fee_by_block(block_number, l1_blob_base_fee)
+            .await
+    }
+
+    pub async fn get_l1_blob_base_fee_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        self.engine
+            .get_l1_blob_base_fee_by_block(block_number)
+            .await
+    }
 }

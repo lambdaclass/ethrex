@@ -28,7 +28,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 15] = [
+const DB_SCHEMA: [&str; 16] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -44,6 +44,7 @@ const DB_SCHEMA: [&str; 15] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE l1_blob_base_fee (block_number INT PRIMARY KEY, l1_blob_base_fee INT)",
 ];
 
 impl SQLStore {
@@ -780,6 +781,43 @@ impl StoreEngineRollup for SQLStore {
             .await?
             .map(|row| read_from_row_int(&row, 0))
             .transpose()
+    }
+
+    async fn store_l1_blob_base_fee_by_block(
+        &self,
+        block_number: BlockNumber,
+        l1_blob_base_fee: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(
+            vec![
+                (
+                    "DELETE FROM l1_blob_base_fee WHERE block_number = ?1",
+                    vec![block_number].into_params()?,
+                ),
+                (
+                    "INSERT INTO l1_blob_base_fee VALUES (?1, ?2)",
+                    (block_number, l1_blob_base_fee).into_params()?,
+                ),
+            ],
+            None,
+        )
+        .await
+    }
+
+    async fn get_l1_blob_base_fee_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT l1_blob_base_fee FROM l1_blob_base_fee WHERE block_number = ?1",
+                vec![block_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            return read_from_row_int(&row, 0).map(Some);
+        }
+        Ok(None)
     }
 }
 

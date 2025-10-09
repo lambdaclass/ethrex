@@ -46,6 +46,8 @@ struct StoreInner {
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
     verify_txs: HashMap<u64, H256>,
+    /// Map of block number to L1 blob base fee
+    l1_blob_base_fee_by_block: HashMap<BlockNumber, u64>,
 }
 
 impl Store {
@@ -333,6 +335,28 @@ impl StoreEngineRollup for Store {
 
     async fn get_last_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
         Ok(self.inner()?.state_roots.keys().max().cloned())
+    }
+
+    async fn store_l1_blob_base_fee_by_block(
+        &self,
+        block_number: BlockNumber,
+        l1_blob_base_fee: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .l1_blob_base_fee_by_block
+            .insert(block_number, l1_blob_base_fee);
+        Ok(())
+    }
+
+    async fn get_l1_blob_base_fee_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .l1_blob_base_fee_by_block
+            .get(&block_number)
+            .cloned())
     }
 }
 

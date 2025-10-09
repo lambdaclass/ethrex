@@ -1,5 +1,5 @@
-use crate::l2::base_fee_vault::GetFeeVaultAddress;
 use crate::l2::batch::{BatchNumberRequest, GetBatchByBatchNumberRequest};
+use crate::l2::fees::{GetFeeVaultAddress, GetL1BlobBaseFeeRequest};
 use crate::l2::l1_message::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
@@ -218,6 +218,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_batchNumber" => BatchNumberRequest::call(req, context).await,
         "ethrex_getBatchByNumber" => GetBatchByBatchNumberRequest::call(req, context).await,
         "ethrex_getFeeVaultAddress" => GetFeeVaultAddress::call(req, context).await,
+        "ethrex_getL1BlobBaseFee" => GetL1BlobBaseFeeRequest::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
         }

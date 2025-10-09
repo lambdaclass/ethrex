@@ -101,7 +101,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         blocks,
         execution_witness,
         elasticity_multiplier,
-        fee_config: _fee_config,
+        fee_configs: _fee_configs,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
@@ -116,7 +116,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &blocks,
             execution_witness,
             elasticity_multiplier,
-            _fee_config,
+            _fee_configs,
             blob_commitment,
             blob_proof,
             chain_id,
@@ -162,7 +162,7 @@ pub fn stateless_validation_l2(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_config: Option<FeeConfig>,
+    fee_configs: Option<Vec<FeeConfig>>,
     blob_commitment: Commitment,
     blob_proof: Proof,
     chain_id: u64,
@@ -181,7 +181,12 @@ pub fn stateless_validation_l2(
         nodes_hashed,
         codes_hashed,
         parent_block_header,
-    } = execute_stateless(blocks, execution_witness, elasticity_multiplier, fee_config)?;
+    } = execute_stateless(
+        blocks,
+        execution_witness,
+        elasticity_multiplier,
+        fee_configs,
+    )?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -262,12 +267,11 @@ struct StatelessResult {
     #[cfg(feature = "l2")]
     pub parent_block_header: BlockHeader,
 }
-
 fn execute_stateless(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
-    fee_config: Option<FeeConfig>,
+    fee_configs: Option<Vec<FeeConfig>>,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let guest_program_state: GuestProgramState = execution_witness
         .try_into()
@@ -282,6 +286,15 @@ fn execute_stateless(
     let codes_hashed = guest_program_state.codes_hashed.clone();
     #[cfg(feature = "l2")]
     let parent_block_header_clone = guest_program_state.parent_block_header.clone();
+    #[cfg(feature = "l2")]
+    let fee_configs = fee_configs.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?;
+    #[cfg(feature = "l2")]
+    let operator_fee = fee_configs
+        .first()
+        .and_then(|fc| fc.operator_fee_config.map(|oc| oc.operator_fee))
+        .unwrap_or_else(U256::zero);
+    #[cfg(not(feature = "l2"))]
+    let operator_fee = U256::zero();
 
     let mut wrapped_db = GuestProgramStateWrapper::new(guest_program_state);
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
@@ -321,7 +334,8 @@ fn execute_stateless(
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut acc_receipts = Vec::new();
     let mut non_privileged_count = 0;
-    for block in blocks {
+
+    for (i, block) in blocks.iter().enumerate() {
         // Validate the block
         validate_block(
             block,
@@ -335,10 +349,14 @@ fn execute_stateless(
         #[cfg(feature = "l2")]
         let mut vm = Evm::new_for_l2(
             wrapped_db.clone(),
-            fee_config.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
+            fee_configs
+                .get(i)
+                .cloned()
+                .ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
         )?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());
+
         let result = vm
             .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;
@@ -376,10 +394,6 @@ fn execute_stateless(
 
         parent_block_header = &block.header;
     }
-
-    let operator_fee = fee_config
-        .and_then(|fc| fc.operator_fee_config.map(|oc| oc.operator_fee))
-        .unwrap_or_else(U256::zero);
 
     // Calculate final state root hash and check
     let last_block = blocks

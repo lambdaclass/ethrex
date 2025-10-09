@@ -147,4 +147,15 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<(), RollupStoreError>;
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
+
+    async fn store_l1_blob_base_fee_by_block(
+        &self,
+        block_number: BlockNumber,
+        l1_blob_base_fee: u64,
+    ) -> Result<(), RollupStoreError>;
+
+    async fn get_l1_blob_base_fee_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<u64>, RollupStoreError>;
 }
