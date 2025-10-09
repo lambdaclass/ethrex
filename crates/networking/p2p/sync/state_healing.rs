@@ -173,9 +173,12 @@ async fn heal_state_trie(
                             }
 
                             storage_accounts.healed_accounts.insert(account_hash);
-                            storage_accounts
+                            let old_value = storage_accounts
                                 .accounts_with_storage_root
-                                .remove(&account_hash);
+                                .get_mut(&account_hash);
+                            if let Some((old_root, _)) = old_value {
+                                *old_root = None;
+                            }
                         }
                     }
                     leafs_healed += nodes
@@ -293,8 +296,6 @@ async fn heal_state_trie(
                         .open_direct_state_trie(*EMPTY_TRIE_HASH)
                         .expect("Store should open");
                     let db = trie_db.db();
-                    // TODO: do we need this?
-                    encoded_to_write.retain(|path, _| path.len() < 32);
                     db.put_batch(encoded_to_write.into_iter().collect())
                         .expect("The put batch on the store failed");
                 })

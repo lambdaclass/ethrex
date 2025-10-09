@@ -432,10 +432,11 @@ impl DumpReader {
     /// Create a new DumpReader that will read state data from the given directory
     fn new_from_dir(dirname: String, prev_checkpoint: &Option<CheckPoint>) -> eyre::Result<Self> {
         let mut dir_reader = DumpDirReader::new(dirname)?;
-        if let Some(checkpoint) = prev_checkpoint {
-            if let Some(current) = checkpoint.reading.current_file {
-                dir_reader.current_file = current
-            }
+        if let Some(current) = prev_checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.reading.current_file)
+        {
+            dir_reader.current_file = current
         }
         Ok(Self::Dir(dir_reader))
     }
@@ -447,10 +448,11 @@ impl DumpReader {
         prev_checkpoint: &Option<CheckPoint>,
     ) -> eyre::Result<Self> {
         let mut ipc_reader = DumpIpcReader::new(archive_ipc_path, block_number).await?;
-        if let Some(checkpoint) = prev_checkpoint {
-            if let Some(start) = checkpoint.reading.start_hash {
-                ipc_reader.start = start
-            }
+        if let Some(start) = prev_checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.reading.start_hash)
+        {
+            ipc_reader.start = start
         }
         Ok(Self::Ipc(ipc_reader))
     }
