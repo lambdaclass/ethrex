@@ -19,14 +19,18 @@ pub struct LevmAccount {
     pub storage: BTreeMap<H256, U256>,
     /// If true it means that doing create on this account it would collide because of storage.
     /// We just care about this kind of collision if the account doesn't have code or nonce. Otherwise its value doesn't matter.
-    /// It can't even happen in real case scenarios but it happens on tests.
+    /// For more information see EIP-7610: https://eips.ethereum.org/EIPS/eip-7610
     ///
+    /// How this works:
     /// - When getting an account from the DB this is set to true if the account has non-empty storage root.
-    /// - Upon destruction this is set to false
+    /// - Upon destruction of an account this is set to false because storage is emptied for sure.
     ///
-    /// This will remain true if storage is "manually" removed from an account (which is wrong), but it won't break anything since we use this attribute only for accounts that don't exist.
-    /// This wouldn't be enough if an account of this characteristics could be created in a recent fork. We only support this because those kinds of accounts already exist in Mainnet.
-    /// The perfect implementation of this would be more complex, and this implementation is enough for all scenarios than can happen
+    /// **Important Caveat**
+    /// This only works for accounts of these characteristics that have been created in the past, we consider that accounts with storage
+    /// but no nonce or code cannot be created anymore, otherwise the fix would need to be more complex because we should keep track of the
+    /// storage root of an account during execution instead of just keeping track of it when fetching it from the Database or updating it when
+    /// destroying it. The EIP that adds to the spec this check did it because there are 28 accounts with these characteristics already deployed
+    /// in mainnet (back when they were deployed with nonce 0), but they cannot be created intentionally anymore.
     pub storage_collision: bool,
     /// Current status of the account.
     /// Note that currently we are not using AccountStatus for any important checks but we should probably start using it soon.
