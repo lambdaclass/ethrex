@@ -129,7 +129,8 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
                 codes.insert(state.code_hash);
             }
             if state.storage_root != *EMPTY_TRIE_HASH {
-                let hashed_address = path.concat(leaf.partial).to_bytes();
+                // NOTE: our iterator already appends the partial path for leaves.
+                let hashed_address = path.to_bytes();
                 debug_assert_eq!(hashed_address.len(), 32);
                 storages.insert(hashed_address, state.storage_root);
             }
