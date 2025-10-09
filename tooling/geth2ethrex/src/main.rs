@@ -216,21 +216,27 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         info!("Validating latest block");
 
         assert_eq!(
-            block_on(store.get_latest_block_number()).unwrap(),
+            block_on(store.engine.get_latest_block_number())
+                .unwrap()
+                .unwrap(),
             block_number
         );
         assert_eq!(
-            block_on(store.get_latest_canonical_block_hash())
+            block_on(store.engine.get_canonical_block_hash(block_number))
                 .unwrap()
                 .unwrap(),
             block_hash.into(),
         );
         assert_eq!(
-            store.get_block_header(block_number).unwrap().unwrap(),
+            store
+                .engine
+                .get_block_header(block_number)
+                .unwrap()
+                .unwrap(),
             header
         );
         assert_eq!(
-            block_on(store.get_block_body(block_number))
+            block_on(store.engine.get_block_body(block_number))
                 .unwrap()
                 .unwrap()
                 .encode_to_vec(),
@@ -240,13 +246,13 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             let block_number = block_number - (block_offset as u64);
             let block_hash = H256::from_slice(block_hash);
             assert_eq!(
-                block_on(store.get_block_number(block_hash))
+                block_on(store.engine.get_block_number(block_hash))
                     .unwrap()
                     .unwrap(),
                 block_number
             );
             assert_eq!(
-                block_on(store.get_canonical_block_hash(block_number))
+                block_on(store.engine.get_canonical_block_hash(block_number))
                     .unwrap()
                     .unwrap(),
                 block_hash
