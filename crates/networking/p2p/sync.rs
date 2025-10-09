@@ -1181,34 +1181,71 @@ impl Syncer {
 pub fn build_snapshot(state_root: H256, store: &Store) -> Result<Duration, SyncError> {
     let start = SystemTime::now();
 
-    // Traverse account state trie
-
-    std::thread::scope(|s| {
-        s.spawn(|| -> Result<(), SyncError> {
-            // thread 1
-            let iter_1 = store
-                .open_direct_state_trie(state_root)
-                .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?
-                .into_iter();
-
-            iter_1
-                .take_while(|(path, _)| &path.data[..] < &[8u8; 32][..])
-                .try_for_each(|(path, node)| inner_fn(path, node, &store, state_root))?;
-            Ok(())
-        });
-        s.spawn(|| -> Result<(), SyncError> {
-            // thread 2
-            let mut iter_2 = store
-                .open_direct_state_trie(state_root)
-                .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?
-                .into_iter();
-            let _ = iter_2.advance([8u8; 32].to_vec());
-            iter_2.try_for_each(|(path, node)| inner_fn(path, node, &store, state_root))?;
-            Ok(())
-        });
+    std::thread::scope(|s: &std::thread::Scope<'_, '_>| {
+        for task_number in 1..=16 {
+            create_thread_for_task(s, store, state_root, task_number);
+        }
     });
 
     Ok(start.elapsed().expect("failed to get elapsed time"))
+}
+
+/// Creates a thread to process part of the state trie.
+///
+/// The total number of threads is 16, and each thread processes a different range of the trie.
+///
+/// This function is used to parallelize the processing of the state trie.
+///
+/// Arguments:
+///
+/// * `s` - The thread scope to spawn the thread in.
+/// * `store` - The store to use for accessing the state trie.
+/// * `state_root` - The root hash of the state trie.
+/// * `number` - The thread number (must be between 1 and 16).
+fn create_thread_for_task<'a>(
+    s: &'a std::thread::Scope<'a, '_>,
+    store: &'a Store,
+    state_root: H256,
+    task_number: u8,
+) {
+    s.spawn(move || -> Result<(), SyncError> {
+        match task_number {
+            1 => {
+                // thread 1
+                let iter = store
+                    .open_direct_state_trie(state_root)
+                    .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?
+                    .into_iter();
+
+                iter.take_while(|(path, _)| path.data[..] < [1u8; 32][..])
+                    .try_for_each(|(path, node)| inner_fn(path, node, store, state_root))?;
+            }
+            16 => {
+                // thread 16
+                let mut iter = store
+                    .open_direct_state_trie(state_root)
+                    .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?
+                    .into_iter();
+                let _ = iter.advance([15u8; 32].to_vec());
+                iter.try_for_each(|(path, node)| inner_fn(path, node, store, state_root))?;
+            }
+            task_number => {
+                // thread n
+                let mut iter = store
+                    .open_direct_state_trie(state_root)
+                    .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?
+                    .into_iter();
+
+                let start = task_number - 1;
+                let _ = iter.advance([start; 32].to_vec());
+
+                iter.take_while(|(path, _)| path.data[..] < [task_number; 32][..])
+                    .try_for_each(|(path, node)| inner_fn(path, node, store, state_root))?;
+            }
+        }
+
+        Ok(())
+    });
 }
 
 fn inner_fn(path: Nibbles, node: Node, store: &Store, state_root: H256) -> Result<(), SyncError> {
