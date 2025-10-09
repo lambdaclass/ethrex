@@ -147,7 +147,6 @@ impl BatchesTable {
         let mut new_batches = Vec::new();
 
         for batch_number in *from + 1..=to {
-            // TODO: change this fork
             let batch = rollup_store
                 .get_batch(batch_number, fork)
                 .await
