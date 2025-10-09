@@ -35,6 +35,7 @@ use eyre::OptionExt;
 use futures_lite::future::block_on;
 use rocksdb::Cache;
 use rocksdb::Env;
+use rocksdb::IteratorMode;
 use rocksdb::{DBWithThreadMode, Options, SingleThreaded};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -136,28 +137,70 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             }
         }
     }
-    info!("Inserting account codes");
-    let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
-    for code_hash in &codes {
-        let code = gethdb
-            .read_code(code_hash.0)?
-            .ok_or_else(|| eyre::eyre!("missing code hash"))?;
-        ethrex_db.put_cf(
-            code_cf,
-            code_hash,
-            <[u8] as RLPEncode>::encode_to_vec(&code),
-        )?;
-    }
-    info!("Iterating storage tries");
-    let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
-    for (hashed_address, storage_root) in &storages {
-        let storage_triedb = gethdb.triedb()?;
-        let storage_trie = Trie::open(storage_triedb, *storage_root);
-        for (_path, node) in storage_trie.into_iter() {
-            let hash = node.compute_hash();
-            let key = [&hashed_address[..], hash.as_ref()].concat();
-            debug_assert_eq!(key.len(), 64);
-            ethrex_db.put_cf(storages_cf, key, node.encode_to_vec())?;
+    let pathbased = gethdb.is_path_based()?;
+    if pathbased {
+        info!("Inserting account codes (path-based)");
+        for item in gethdb
+            .state_db
+            .iterator(IteratorMode::From(b"A", rocksdb::Direction::Forward))
+            .take_while(|item| {
+                item.as_ref()
+                    .map(|(k, _)| k.starts_with(b"A"))
+                    .unwrap_or_default()
+            })
+        {
+            let (_k, v) = item?;
+            let node = Node::decode_raw(&v)?;
+            let node_hash = node.compute_hash();
+            let node_rlp = node.encode_to_vec();
+            ethrex_db.put_cf(account_trie_cf, node_hash.as_ref(), node_rlp)?;
+        }
+
+        info!("Inserting storage tries (path-based)");
+        for item in gethdb
+            .state_db
+            .iterator(IteratorMode::From(b"O", rocksdb::Direction::Forward))
+            .take_while(|item| {
+                item.as_ref()
+                    .map(|(k, _)| k.starts_with(b"O"))
+                    .unwrap_or_default()
+            })
+        {
+            let (k, v) = item?;
+            let node = Node::decode_raw(&v)?;
+            let node_hash = node.compute_hash();
+            let node_rlp = node.encode_to_vec();
+            ethrex_db.put_cf(
+                account_trie_cf,
+                [&k[1..33], node_hash.as_ref()].concat(),
+                node_rlp,
+            )?;
+        }
+    } else {
+        info!("Inserting account codes (hash-based)");
+
+        let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
+        for code_hash in &codes {
+            let code = gethdb
+                .read_code(code_hash.0)?
+                .ok_or_else(|| eyre::eyre!("missing code hash"))?;
+            ethrex_db.put_cf(
+                code_cf,
+                code_hash,
+                <[u8] as RLPEncode>::encode_to_vec(&code),
+            )?;
+        }
+        info!("Iterating storage tries (hash-based)");
+        let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
+        for (hashed_address, storage_root) in &storages {
+            let storage_triedb = gethdb.triedb()?;
+            let storage_trie = Trie::open(storage_triedb, *storage_root);
+            for (_path, node) in storage_trie.into_iter() {
+                let hash = node.compute_hash();
+                let key = [&hashed_address[..], hash.as_ref()].concat();
+                debug_assert_eq!(key.len(), 64);
+                ethrex_db.put_cf(storages_cf, key, node.encode_to_vec())?;
+            }
         }
     }
     info!("Compacting Ethrex DB");
@@ -470,6 +513,10 @@ impl GethDB {
         let trie_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
         Ok(GethTrieDBHashBased::with_db(trie_db))
+    }
+
+    pub fn is_path_based(&self) -> eyre::Result<bool> {
+        Ok(self.state_db.get(b"A")?.is_some())
     }
 }
 
