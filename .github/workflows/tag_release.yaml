@@ -22,29 +22,41 @@ jobs:
           - ubuntu-22.04
           - ubuntu-24.04-arm
           - macos-latest
-        gpu:
-          - true
-          - false
+        stack:
+          - l1
+          - l2
+          - l2_gpu
+        exclude:
+          - platform: macos-latest
+            stack: l2_gpu
         include:
           - platform: ubuntu-22.04
             os: linux
             arch: x86_64
-            prover_features: sp1,risc0
             cpu_flags: RUSTFLAGS='-C target-cpu=x86-64-v2'
           - platform: ubuntu-24.04-arm
             os: linux
             arch: aarch64
-            prover_features: sp1
           - platform: macos-latest
             os: macos
             arch: aarch64
-          - gpu: true
+          - platform: ubuntu-22.04
+            stack: l2
+            features: sp1,risc0
+          - platform: ubuntu-22.04
+            stack: l2_gpu
+            features: sp1,risc0,gpu
+          - platform: ubuntu-24.04-arm
+            stack: l2
+            features: sp1
+          - platform: ubuntu-24.04-arm
+            stack: l2_gpu
+            features: sp1,gpu
+          - stack: l2_gpu
             gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
-            gpu_feature: ",gpu"
-            gpu_suffix: "-gpu"
-        exclude:
-          - platform: macos-latest
-            gpu: true
+            suffix: "-l2-gpu"
+          - stack: l2
+            suffix: "-l2"
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Free Disk Space (Ubuntu)
@@ -57,10 +69,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install SP1 (only Linux)
         if: ${{ matrix.os == 'linux' }}
@@ -89,7 +99,7 @@ jobs:
 
       - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.24
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }}
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }}
         id: cuda-toolkit
         with:
           cuda: "12.9.0"
@@ -116,11 +126,12 @@ jobs:
 
       - name: Build ethrex
         run: |
-          COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.prover_features }}${{ matrix.gpu_feature }}" --bin ethrex
-          mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.features }}" --bin ethrex
+          chmod +x target/release/ethrex
+          mv target/release/ethrex ethrex-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
 
       - name: Copy verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         run: |
           mkdir -p ./verification_keys
           mv crates/l2/prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
@@ -129,11 +140,11 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
-          path: ethrex-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          name: ethrex-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
+          path: ethrex-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
 
       - name: Upload verification keys
-        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.gpu }} # Run only once
+        if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         uses: actions/upload-artifact@v4
         with:
           name: verification_keys
