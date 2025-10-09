@@ -109,7 +109,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     info!("Inserting latest block number");
     ethrex_db.put_cf(
         ethrex_db.cf_handle("chain_data").unwrap(),
-        4u32.encode_to_vec(),
+        4u8.encode_to_vec(),
         block_number.to_le_bytes(),
     )?;
 
@@ -120,17 +120,18 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
     info!("Iterating account trie");
     for (path, node) in account_trie.into_iter() {
-        if let Node::Leaf(leaf) = &node {
+        let hash = node.compute_hash();
+        ethrex_db.put_cf(account_trie_cf, hash.encode_to_vec(), node.encode_to_vec())?;
+        if let Node::Leaf(leaf) = node {
             let state = AccountState::decode(&leaf.value)?;
             if state.code_hash != *EMPTY_KECCACK_HASH {
                 codes.insert(state.code_hash);
             }
             if state.storage_root != *EMPTY_TRIE_HASH {
-                storages.push((path.to_bytes(), state.storage_root));
+                let hashed_address = path.concat(leaf.partial).to_bytes();
+                storages.push((hashed_address, state.storage_root));
             }
         }
-        let hash = node.compute_hash();
-        ethrex_db.put_cf(account_trie_cf, hash.encode_to_vec(), node.encode_to_vec())?;
     }
     info!("Inserting account codes");
     let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
