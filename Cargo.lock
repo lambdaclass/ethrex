@@ -10231,10 +10231,8 @@ name = "snapshooter"
 version = "0.1.0"
 dependencies = [
  "ethrex",
- "ethrex-common 0.1.0",
- "ethrex-rlp 0.1.0",
+ "ethrex-p2p",
  "ethrex-storage 0.1.0",
- "ethrex-trie 0.1.0",
 ]
 
 [[package]]
