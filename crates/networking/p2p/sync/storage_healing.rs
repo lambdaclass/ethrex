@@ -16,7 +16,7 @@ use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
@@ -157,7 +157,7 @@ pub async fn heal_storage_trie(
         Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodes>>>,
     > = JoinSet::new();
 
-    let mut nodes_to_write: HashMap<H256, Vec<(NodeHash, Vec<u8>)>> = HashMap::new();
+    let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Node)>> = HashMap::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -175,7 +175,7 @@ pub async fn heal_storage_trie(
                 .store(state.empty_count as u64, Ordering::Relaxed);
             state.last_update = Instant::now();
             debug!(
-                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
+                "We are storage healing. Snap Peers {}. Inflight tasks {}. Download Queue {}. Maximum length {}. Leafs Healed {}. Global Leafs Healed {global_leafs_healed}. Roots Healed {}. Good Downloads {}. Good Download Percentage {}. Empty count {}. Disconnected Count {}.",
                 peers
                     .peer_table
                     .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
@@ -186,6 +186,7 @@ pub async fn heal_storage_trie(
                 state.maximum_length_seen,
                 state.leafs_healed,
                 state.roots_healed,
+                state.succesful_downloads,
                 state.succesful_downloads as f64
                     / (state.succesful_downloads as f64 + state.failed_downloads as f64),
                 state.empty_count,
@@ -201,15 +202,28 @@ pub async fn heal_storage_trie(
         let is_stale = current_unix_time() > state.staleness_timestamp;
 
         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
-            let to_write = nodes_to_write.drain().collect();
+            let to_write: Vec<_> = nodes_to_write.drain().collect();
             let store = state.store.clone();
-            if db_joinset.len() > 3 {
+            // NOTE: we keep only a single task in the background to avoid out of order deletes
+            if !db_joinset.is_empty() {
                 db_joinset.join_next().await;
             }
             db_joinset.spawn_blocking(|| {
                 spawned_rt::tasks::block_on(async move {
+                    let mut encoded_to_write = vec![];
+                    for (hashed_account, nodes) in to_write {
+                        let mut account_nodes = vec![];
+                        for (path, node) in nodes {
+                            for i in 0..path.len() {
+                                account_nodes.push((path.slice(0, i), vec![]));
+                            }
+                            account_nodes.push((path, node.encode_to_vec()));
+                        }
+                        encoded_to_write.push((hashed_account, account_nodes));
+                    }
+
                     store
-                        .write_storage_trie_nodes_batch(to_write)
+                        .write_storage_trie_nodes_batch(encoded_to_write)
                         .await
                         .expect("db write failed");
                 })
@@ -277,6 +291,7 @@ pub async fn heal_storage_trie(
                     &mut state.maximum_length_seen,
                     &mut nodes_to_write,
                 )
+                .await
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
             Err(RequestStorageTrieNodes::SendMessageError(id, _err)) => {
@@ -456,7 +471,7 @@ async fn zip_requeue_node_responses_score_peer(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn process_node_responses(
+async fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
     store: Store,
@@ -465,7 +480,7 @@ fn process_node_responses(
     global_leafs_healed: &mut u64,
     roots_healed: &mut usize,
     maximum_length_seen: &mut usize,
-    to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!("We are processing node response {:?}", node_response);
@@ -486,9 +501,11 @@ fn process_node_responses(
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
-                error!("{err} in commit node while committing {node_response:?}")
-            })?;
+            commit_node(&store, &node_response, membatch, roots_healed, to_write)
+                .await
+                .inspect_err(|err| {
+                    error!("{err} in commit node while committing {node_response:?}")
+                })?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -532,12 +549,7 @@ fn get_initial_downloads(
                 if account.storage_root == *EMPTY_TRIE_HASH {
                     return None;
                 }
-                if store
-                    .contains_storage_node(*acc_path, account.storage_root)
-                    .expect("We should be able to open the store")
-                {
-                    return None;
-                }
+
                 Some(NodeRequest {
                     acc_path: Nibbles::from_bytes(&acc_path.0),
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
@@ -560,7 +572,7 @@ pub fn determine_missing_children(
     let mut count = 0;
     let node = node_response.node.clone();
     let trie = store
-        .open_storage_trie(
+        .open_direct_storage_trie(
             H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
             *EMPTY_TRIE_HASH,
         )
@@ -568,70 +580,78 @@ pub fn determine_missing_children(
             error!("Malformed data when opening the storage trie in determine missing children")
         })?;
     let trie_state = trie.db();
+
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid()
-                    && child
-                        .get_node(trie_state)
-                        .inspect_err(|_| {
-                            error!("Malformed data when doing get child of a branch node")
-                        })?
-                        .is_none()
-                {
-                    count += 1;
-
-                    paths.extend(vec![NodeRequest {
-                        acc_path: node_response.node_request.acc_path.clone(),
-                        storage_path: node_response
-                            .node_request
-                            .storage_path
-                            .append_new(index as u8),
-                        parent: node_response.node_request.storage_path.clone(),
-                        hash: child.compute_hash().finalize(),
-                    }]);
+                let child_path = node_response
+                    .node_request
+                    .storage_path
+                    .append_new(index as u8);
+                if !child.is_valid() {
+                    continue;
                 }
-            }
-        }
-        Node::Extension(node) => {
-            if node.child.is_valid()
-                && node
-                    .child
-                    .get_node(trie_state)
+                let validity = child
+                    .get_node(trie_state, child_path.clone())
                     .inspect_err(|_| {
-                        error!("Malformed data when doing get child of an extension node")
+                        error!("Malformed data when doing get child of a branch node")
                     })?
-                    .is_none()
-            {
+                    .is_some();
+
+                if validity {
+                    continue;
+                }
                 count += 1;
 
                 paths.extend(vec![NodeRequest {
                     acc_path: node_response.node_request.acc_path.clone(),
-                    storage_path: node_response
-                        .node_request
-                        .storage_path
-                        .concat(node.prefix.clone()),
+                    storage_path: child_path,
                     parent: node_response.node_request.storage_path.clone(),
-                    hash: node.child.compute_hash().finalize(),
+                    hash: child.compute_hash().finalize(),
                 }]);
             }
+        }
+        Node::Extension(node) => {
+            let child_path = node_response.node_request.storage_path.concat(&node.prefix);
+            if !node.child.is_valid() {
+                return Ok((vec![], 0));
+            }
+            let validity = node
+                .child
+                .get_node(trie_state, child_path.clone())
+                .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
+                .is_some();
+
+            if validity {
+                return Ok((vec![], 0));
+            }
+            count += 1;
+
+            paths.extend(vec![NodeRequest {
+                acc_path: node_response.node_request.acc_path.clone(),
+                storage_path: child_path,
+                parent: node_response.node_request.storage_path.clone(),
+                hash: node.child.compute_hash().finalize(),
+            }]);
         }
         _ => {}
     }
     Ok((paths, count))
 }
 
-fn commit_node(
+async fn commit_node(
+    store: &Store,
     node: &NodeResponse,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
-    to_write: &mut HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+    to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
+
     to_write
         .entry(hashed_account)
         .or_default()
-        .push((node.node.compute_hash(), node.node.encode_to_vec()));
+        .push((node.node_request.storage_path.clone(), node.node.clone()));
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {
@@ -654,12 +674,14 @@ fn commit_node(
     parent_entry.missing_children_count -= 1;
 
     if parent_entry.missing_children_count == 0 {
-        commit_node(
+        Box::pin(commit_node(
+            store,
             &parent_entry.node_response,
             membatch,
             roots_healed,
             to_write,
-        )?;
+        ))
+        .await?;
     } else {
         membatch.insert(parent_key, parent_entry);
     }
