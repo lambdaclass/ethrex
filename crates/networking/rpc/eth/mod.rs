@@ -110,7 +110,7 @@ pub mod test_utils {
     fn legacy_tx_for_test(nonce: u64) -> Transaction {
         Transaction::LegacyTransaction(LegacyTransaction {
             nonce,
-            gas_price: nonce * BASE_PRICE_IN_WEI,
+            gas_price: U256::from(nonce) * U256::from(BASE_PRICE_IN_WEI),
             gas: 10000,
             to: TxKind::Create,
             value: 100.into(),
