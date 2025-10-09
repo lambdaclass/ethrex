@@ -469,20 +469,20 @@ impl GethDB {
     pub fn triedb(&self) -> eyre::Result<Box<dyn TrieDB>> {
         let trie_db =
             DBWithThreadMode::open_for_read_only(&Options::default(), self.state_db.path(), false)?;
-        Ok(GethTrieDBWithNodeBuckets::with_db(trie_db))
+        Ok(GethTrieDBHashBased::with_db(trie_db))
     }
 }
 
-struct GethTrieDBWithNodeBuckets {
+struct GethTrieDBHashBased {
     db: DBWithThreadMode<SingleThreaded>,
 }
-impl GethTrieDBWithNodeBuckets {
+impl GethTrieDBHashBased {
     pub fn with_db(db: DBWithThreadMode<SingleThreaded>) -> Box<dyn TrieDB> {
         Box::new(Self { db })
     }
 }
 
-impl TrieDB for GethTrieDBWithNodeBuckets {
+impl TrieDB for GethTrieDBHashBased {
     fn get(&self, hash: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let hash = hash.finalize().0;
         let Some(value) = self
