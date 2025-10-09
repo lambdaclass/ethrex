@@ -890,6 +890,8 @@ impl Syncer {
             free_peers_and_log_if_not_empty(&mut self.peers).await?;
             info!("Finish downloading account ranges from peers");
 
+            std::process::exit(-1);
+
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
             // We read the account leafs from the files in account_state_snapshots_dir, write it into
             // the trie to compute the nodes and stores the accounts with storages for later use
