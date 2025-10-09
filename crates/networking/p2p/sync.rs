@@ -28,7 +28,7 @@ use ethrex_trie::{Nibbles, Node, Trie, TrieError};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::{
     array,
     cmp::min,
@@ -1134,52 +1134,9 @@ impl Syncer {
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
-        info!("Adding leaves...");
-        let trie = store.open_direct_state_trie(pivot_header.state_root)?;
-        let mut nodes_to_write = Vec::new();
-        let db = trie.db();
-        store
-            .open_direct_state_trie(pivot_header.state_root)?
-            .into_iter()
-            .try_for_each(|(path, node)| -> Result<(), SyncError> {
-                let Node::Leaf(node) = node else {
-                    return Ok(());
-                };
-
-                let account_state = AccountState::decode(&node.value)?;
-                let storage_trie = store.open_direct_storage_trie(
-                    H256::from_slice(&path.to_bytes()),
-                    account_state.storage_root,
-                )?;
-                let storage_db = storage_trie.db();
-
-                let mut storages_to_write = Vec::new();
-                store
-                    .open_direct_storage_trie(
-                        H256::from_slice(&path.to_bytes()),
-                        account_state.storage_root,
-                    )?
-                    .into_iter()
-                    .try_for_each(|(path, node)| -> Result<(), SyncError> {
-                        let Node::Leaf(node) = node else {
-                            return Ok(());
-                        };
-
-                        storages_to_write.push((path, node.value));
-                        if storages_to_write.len() > 100_000 {
-                            storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
-                        }
-                        Ok(())
-                    })?;
-                storage_db.put_batch(storages_to_write)?;
-
-                nodes_to_write.push((path, node.value));
-                if nodes_to_write.len() > 100_000 {
-                    db.put_batch(std::mem::take(&mut nodes_to_write))?;
-                }
-                Ok(())
-            })?;
-            db.put_batch(nodes_to_write)?;
+        println!("Building snapshot from pivot...");
+        let elapsed = build_snapshot(pivot_header.state_root, store)?;
+        println!("Snapshot built in: {}", format_duration(elapsed));
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
@@ -1282,6 +1239,145 @@ impl Syncer {
             .await?;
         Ok(())
     }
+}
+
+pub fn build_snapshot(pivot_block_state_root: H256, store: &Store) -> Result<Duration, SyncError> {
+    // Open the account state trie
+    let account_state_trie = store
+        .open_direct_state_trie(pivot_block_state_root)
+        .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?;
+
+    // Retrieve account state db
+    let account_state_db = account_state_trie.db();
+
+    let mut nodes_to_write = Vec::new();
+
+    let start = SystemTime::now();
+
+    // Traverse account state trie
+    store
+        .open_direct_state_trie(pivot_block_state_root)
+        .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?
+        .into_iter()
+        .try_for_each(|(path, node)| -> Result<(), SyncError> {
+            // Retrieve account state node
+            let Node::Leaf(node) = node else {
+                return Ok(());
+            };
+
+            let path_as_key = H256::from_slice(&path.to_bytes());
+
+            // Retrieve the account state by decoding the node
+            let AccountState {
+                storage_root: account_hash,
+                ..
+            } = AccountState::decode(&node.value).map_err(|rlp_decode_err| {
+                SnapshotBuildError::FailedToDecodeAccountState(path_as_key, rlp_decode_err)
+            })?;
+
+            // Open the account state storage trie
+            let storage_trie = store
+                .open_direct_storage_trie(path_as_key, account_hash)
+                .map_err(|store_err| {
+                    SnapshotBuildError::FailedToOpenAccountStateStorageTrie(
+                        account_hash,
+                        path_as_key,
+                        store_err,
+                    )
+                })?;
+
+            // Retrieve the account state storage db
+            let storage_trie_db = storage_trie.db();
+
+            let mut storages_to_write = Vec::new();
+
+            // Traverse account state storage trie
+            store
+                .open_direct_storage_trie(path_as_key, account_hash)
+                .map_err(|store_err| {
+                    SnapshotBuildError::FailedToOpenAccountStateStorageTrie(
+                        account_hash,
+                        path_as_key,
+                        store_err,
+                    )
+                })?
+                .into_iter()
+                .try_for_each(|(path, node)| -> Result<(), SyncError> {
+                    // Retrieve the account state storage node
+                    let Node::Leaf(node) = node else {
+                        return Ok(());
+                    };
+
+                    // Add to the list of storage nodes to store
+                    storages_to_write.push((path, node.value));
+
+                    // Store every 100k batches account storage node batches
+                    if storages_to_write.len() > 100_000 {
+                        storage_trie_db
+                            .put_batch(std::mem::take(&mut storages_to_write))
+                            .map_err(|trie_err| {
+                                SnapshotBuildError::FailedToStoreAccountStateStorageNodesBatch(
+                                    account_hash,
+                                    trie_err,
+                                )
+                            })?;
+                    }
+
+                    Ok(())
+                })?;
+
+            // Store the remining account storage nodes
+            storage_trie_db
+                .put_batch(storages_to_write)
+                .map_err(|trie_err| {
+                    SnapshotBuildError::FailedToStoreRemainingAccountStateStorageNodes(
+                        account_hash,
+                        trie_err,
+                    )
+                })?;
+
+            // Add account state node to the list of account state nodes to store
+            nodes_to_write.push((path, node.value));
+
+            // Store every in 100k account state nodes batches
+            if nodes_to_write.len() > 100_000 {
+                account_state_db
+                    .put_batch(std::mem::take(&mut nodes_to_write))
+                    .map_err(|trie_err| {
+                        SnapshotBuildError::FailedToStoreAccountStateNodesBatch(
+                            account_hash,
+                            trie_err,
+                        )
+                    })?;
+            }
+
+            Ok(())
+        })?;
+
+    // Store the remaining account state nodes
+    account_state_db
+        .put_batch(nodes_to_write)
+        .map_err(SnapshotBuildError::FailedToStoreRemainingAccountStateNodes)?;
+
+    Ok(start.elapsed().expect("failed to get elapsed time"))
+}
+
+fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let milliseconds = duration.subsec_millis();
+
+    if hours > 0 {
+        return format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:03}ms");
+    }
+
+    if minutes == 0 {
+        return format!("{seconds:02}s {milliseconds:03}ms");
+    }
+
+    format!("{minutes:02}m {seconds:02}s")
 }
 
 type StorageRoots = (H256, Vec<(Nibbles, Vec<u8>)>);
@@ -1456,12 +1552,39 @@ pub enum SyncError {
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
     PeerTableError(#[from] PeerTableError),
+    #[error(transparent)]
+    SnapshotBuildError(#[from] SnapshotBuildError),
 }
 
 impl<T> From<SendError<T>> for SyncError {
     fn from(value: SendError<T>) -> Self {
         Self::Send(value.to_string())
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SnapshotBuildError {
+    #[error("Failed to open account state trie with error: {0}")]
+    FailedToOpenAccountStateTrie(#[source] StoreError),
+    #[error("Failed to decode account state trie from path {0:#x} with error: {1}")]
+    FailedToDecodeAccountState(H256, #[source] RLPDecodeError),
+    #[error(
+        "Failed to open account state storage trie for account hash {0:#x} from path {1:#x} with error: {2}"
+    )]
+    FailedToOpenAccountStateStorageTrie(H256, H256, #[source] StoreError),
+    #[error(
+        "Failed to store account state storage nodes batch for account hash {0:#x} with error: {1}"
+    )]
+    FailedToStoreAccountStateStorageNodesBatch(H256, #[source] TrieError),
+    #[error(
+        "Failed to store remaining account state storage nodes for account hash {0:#x} with error: {1}"
+    )]
+    FailedToStoreRemainingAccountStateStorageNodes(H256, #[source] TrieError),
+    #[error("Failed to store account state nodes batch for account hash {0:#x} with error: {1}")]
+    FailedToStoreAccountStateNodesBatch(H256, #[source] TrieError),
+    #[error("Failed to store remaining account state nodes with error: {0}
+    ")]
+    FailedToStoreRemainingAccountStateNodes(#[source] TrieError),
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
