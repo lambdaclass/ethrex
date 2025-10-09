@@ -29,7 +29,7 @@ Usage is:
 ./geth2ethrex --input_dir <geth_db_path> --output_dir <ethrex_db_path> <block_number>
 ```
 where:
-* `<geth_db_path>` is the path to Geth's database (by default `.ethereum/geth/chaindata`). The DB is opened read-only.
+* `<geth_db_path>` is the path to Geth's database (by default `.ethereum/geth/<chain>/chaindata`). The DB is opened read-only.
 * `<ethrex_db_path>` is the path to Ethrex' database.
 * `<BLOCK_NUMBER>` is the target block, typically the first post-merge block of the chain.
   * For Sepolia: 1450410
