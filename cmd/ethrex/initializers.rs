@@ -387,7 +387,7 @@ async fn set_sync_block(store: &Store) {
 }
 
 async fn reset_to_head(store: &Store) -> eyre::Result<()> {
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let Some(root) = trie.db().get(Default::default())? else {
         return Ok(());
     };
