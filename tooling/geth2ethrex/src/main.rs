@@ -133,11 +133,15 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     }
     info!("Inserting account codes");
     let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
-    for code_hash in codes {
+    for code_hash in &codes {
         let code = gethdb
             .read_code(code_hash.0)?
             .ok_or_else(|| eyre::eyre!("missing code hash"))?;
-        ethrex_db.put_cf(code_cf, code_hash, code.encode_to_vec())?;
+        ethrex_db.put_cf(
+            code_cf,
+            code_hash,
+            <[u8] as RLPEncode>::encode_to_vec(&code),
+        )?;
     }
     info!("Iterating storage tries");
     let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
@@ -164,6 +168,9 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
 
 fn open_ethrexdb() -> eyre::Result<DBWithThreadMode<SingleThreaded>> {
     // Quick and dirty way to ensure the DB is initialized correctly
+    // TODO: remove this and document why: we need the genesis to be
+    // already there or else ethrex is going to overwrite our canonical
+    // chain and go and try to sync from genesis.
     let _ = ethrex_storage::store_db::rocksdb::Store::new((*ETHREX_DB_PATH).as_ref())?;
     let (ethrex_opts, ethrex_cfs) = Options::load_latest(
         *ETHREX_DB_PATH,
