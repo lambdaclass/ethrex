@@ -417,6 +417,54 @@ jobs:
           cd crates/l2
           make state-diff-test
 
+  integration-test-l2-dev:
+    name: Integration Test - L2 Dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: lambdaclass/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
+      - name: Start ethrex
+        run: |
+          cd crates/l2
+          make init-l2-dev &
+
+      - name: Wait for ethrex l2
+        run: |
+          for i in {1..100}; do
+            echo "Checking if ethrex l2 is ready... (attempt $i)"
+            if nc -z localhost 3900; then
+              echo "ProofCoordinator ready!"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "ProofCoordinator not ready in time"
+          exit 1
+
+      - name: Init prover
+        run: |
+          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 &
+      
+      - name: Run test
+        run: |
+          cd crates/l2
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
@@ -428,9 +476,10 @@ jobs:
         state-diff-test,
         integration-test-based,
         integration-test-tdx,
+        integration-test-l2-dev,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' }}
+    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -446,5 +495,10 @@ jobs:
 
           if [ "${{ needs.integration-test-based.result }}" != "success" ]; then
             echo "Job Integration Tests Based failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.integration-test-l2-dev.result }}" != "success" ]; then
+            echo "Job Integration Tests L2 Dev failed"
             exit 1
           fi
