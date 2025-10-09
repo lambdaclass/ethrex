@@ -2047,8 +2047,8 @@ async fn get_fees_details_l2(
     let block_number = tx_receipt.block_info.block_number;
 
     let l1_blob_base_fee_per_gas = get_l1_blob_base_fee_per_gas(l2_client, block_number).await?;
-    let l1_fee_per_blob: u64 = l1_blob_base_fee_per_gas * GAS_PER_BLOB as u64;
-    let l1_fee_per_blob_byte = l1_fee_per_blob / SAFE_BYTES_PER_BLOB as u64;
+    let l1_fee_per_blob: u64 = l1_blob_base_fee_per_gas * u64::from(GAS_PER_BLOB);
+    let l1_fee_per_blob_byte = l1_fee_per_blob / u64::try_from(SAFE_BYTES_PER_BLOB).unwrap();
     let l1_fee = l1_fee_per_blob_byte * tx_account_diff_size;
 
     let base_fee_per_gas = l2_client
@@ -2343,9 +2343,7 @@ fn get_account_diff_size_for_deploy(
             ..Default::default()
         },
     );
-
-    let size = get_accounts_diff_size(&account_diffs).unwrap();
-    size
+    get_accounts_diff_size(&account_diffs).unwrap()
 }
 
 fn get_account_diff_size_for_withdraw() -> u64 {
@@ -2368,8 +2366,7 @@ fn get_account_diff_size_for_withdraw() -> u64 {
             ..Default::default()
         },
     );
-    let size = get_accounts_diff_size(&account_diffs).unwrap();
-    size
+    get_accounts_diff_size(&account_diffs).unwrap()
 }
 
 fn get_account_diff_size_for_erc20withdraw() -> u64 {
@@ -2392,8 +2389,7 @@ fn get_account_diff_size_for_erc20withdraw() -> u64 {
             ..Default::default()
         },
     );
-    let size = get_accounts_diff_size(&account_diffs).unwrap();
-    size
+    get_accounts_diff_size(&account_diffs).unwrap()
 }
 
 fn get_account_diff_size_for_erc20approve() -> u64 {
@@ -2412,18 +2408,16 @@ fn get_account_diff_size_for_erc20approve() -> u64 {
         },
     );
 
-    let size = get_accounts_diff_size(&account_diffs).unwrap();
-    size
+    get_accounts_diff_size(&account_diffs).unwrap()
 }
 
 // Account diff for the sender of the transaction
 fn sender_account_diff() -> AccountStateDiff {
-    let account_diff = AccountStateDiff {
+    AccountStateDiff {
         nonce_diff: 1,
         new_balance: Some(U256::zero()),
         ..Default::default()
-    };
-    account_diff
+    }
 }
 
 fn dummy_modified_storage_slots(modified_storage_slots: u64) -> BTreeMap<H256, U256> {

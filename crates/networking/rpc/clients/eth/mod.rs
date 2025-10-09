@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, fmt};
 
 use crate::{
     clients::eth::errors::{
-        CallError, GetBlobBaseFeeRequestError, GetL1BlobBaseFeeRequestError, GetPeerCountError,
-        GetWitnessError, TxPoolContentError,
+        CallError, GetBlobBaseFeeRequestError, GetPeerCountError, GetWitnessError,
+        TxPoolContentError,
     },
     debug::execution_witness::RpcExecutionWitness,
     mempool::MempoolContent,
