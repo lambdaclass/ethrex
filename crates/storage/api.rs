@@ -261,6 +261,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         self.open_storage_trie(hashed_address, storage_root, state_root)
     }
 
+    async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError>;
+
     async fn forkchoice_update(
         &self,
         new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,

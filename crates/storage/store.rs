@@ -1234,6 +1234,10 @@ impl Store {
         self.engine.clear_snap_state().await
     }
 
+    pub async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
+        self.engine.generate_snapshot(state_root).await
+    }
+
     /// Fetches the latest valid ancestor for a block that was previously marked as invalid
     /// Returns None if the block was never marked as invalid
     pub async fn get_latest_valid_ancestor(
