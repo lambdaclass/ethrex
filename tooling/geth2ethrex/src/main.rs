@@ -120,23 +120,6 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let account_triedb = gethdb.triedb()?;
     let account_trie = Trie::open(account_triedb, header.state_root);
     let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
-    info!("Iterating account trie");
-    for (path, node) in account_trie.into_iter() {
-        let hash = node.compute_hash();
-        ethrex_db.put_cf(account_trie_cf, hash, node.encode_to_vec())?;
-        if let Node::Leaf(leaf) = node {
-            let state = AccountState::decode(&leaf.value)?;
-            if state.code_hash != *EMPTY_KECCACK_HASH {
-                codes.insert(state.code_hash);
-            }
-            if state.storage_root != *EMPTY_TRIE_HASH {
-                // NOTE: our iterator already appends the partial path for leaves.
-                let hashed_address = path.to_bytes();
-                debug_assert_eq!(hashed_address.len(), 32);
-                storages.insert(hashed_address, state.storage_root);
-            }
-        }
-    }
     let pathbased = gethdb.is_path_based()?;
     if pathbased {
         info!("Inserting account codes (path-based)");
@@ -154,6 +137,12 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             let node_hash = node.compute_hash();
             let node_rlp = node.encode_to_vec();
             ethrex_db.put_cf(account_trie_cf, node_hash.as_ref(), node_rlp)?;
+            if let Node::Leaf(leaf) = node {
+                let state = AccountState::decode(&leaf.value)?;
+                if state.code_hash != *EMPTY_KECCACK_HASH {
+                    codes.insert(state.code_hash);
+                }
+            }
         }
 
         info!("Inserting storage tries (path-based)");
@@ -177,19 +166,24 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             )?;
         }
     } else {
-        info!("Inserting account codes (hash-based)");
-
-        let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
-        for code_hash in &codes {
-            let code = gethdb
-                .read_code(code_hash.0)?
-                .ok_or_else(|| eyre::eyre!("missing code hash"))?;
-            ethrex_db.put_cf(
-                code_cf,
-                code_hash,
-                <[u8] as RLPEncode>::encode_to_vec(&code),
-            )?;
+        info!("Inserting account trie (hash-based)");
+        for (path, node) in account_trie.into_iter() {
+            let hash = node.compute_hash();
+            ethrex_db.put_cf(account_trie_cf, hash, node.encode_to_vec())?;
+            if let Node::Leaf(leaf) = node {
+                let state = AccountState::decode(&leaf.value)?;
+                if state.code_hash != *EMPTY_KECCACK_HASH {
+                    codes.insert(state.code_hash);
+                }
+                if state.storage_root != *EMPTY_TRIE_HASH {
+                    // NOTE: our iterator already appends the partial path for leaves.
+                    let hashed_address = path.to_bytes();
+                    debug_assert_eq!(hashed_address.len(), 32);
+                    storages.insert(hashed_address, state.storage_root);
+                }
+            }
         }
+
         info!("Iterating storage tries (hash-based)");
         let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
         for (hashed_address, storage_root) in &storages {
@@ -202,6 +196,19 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
                 ethrex_db.put_cf(storages_cf, key, node.encode_to_vec())?;
             }
         }
+    }
+    info!("Inserting account codes");
+
+    let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
+    for code_hash in &codes {
+        let code = gethdb
+            .read_code(code_hash.0)?
+            .ok_or_else(|| eyre::eyre!("missing code hash"))?;
+        ethrex_db.put_cf(
+            code_cf,
+            code_hash,
+            <[u8] as RLPEncode>::encode_to_vec(&code),
+        )?;
     }
     info!("Compacting Ethrex DB");
     ethrex_db.flush_wal(true)?;
