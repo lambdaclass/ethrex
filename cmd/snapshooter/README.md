@@ -21,7 +21,7 @@ git checkout ansible-dev-deps
 #### 1.1.3 Install dependencies remotely to a server
 
 ```
-make -C ansible inventory L1_IP=<server_name> && make ethrex-dev-deps BRANCH=<branch>
+make -C ansible inventory L1_IP=<server_name> && make -C ansible ethrex-dev-deps BRANCH=<branch>
 ```
 
 #### 1.1.3 In the remote server create a `.env` file in `ethrex/tooling/sync`
