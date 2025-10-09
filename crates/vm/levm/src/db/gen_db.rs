@@ -88,7 +88,7 @@ impl GeneralizedDatabase {
     /// Warning: Use directly only if outside of the EVM, otherwise use `vm.get_account_mut` because it contemplates call frame backups.
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
         let acc = self.load_account(address)?;
-        acc.mutated();
+        acc.modified();
         Ok(acc)
     }
 
@@ -167,7 +167,7 @@ impl GeneralizedDatabase {
             //   1. Account was destroyed and created again afterwards (usually with CREATE2).
             //   2. Account was destroyed but then was sent some balance, so it's not going to be removed completely from the trie.
             // This is a way of removing storage of an account.
-            if (new_state_account.status == AccountStatus::DestroyedCreated
+            if (new_state_account.status == AccountStatus::DestroyedModified
                 || new_state_account.status == AccountStatus::Destroyed)
                 && !new_state_account.is_empty()
             {
@@ -406,7 +406,7 @@ impl<'a> VM<'a> {
                 return Ok(*value);
             }
             // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
-            if account.status == AccountStatus::DestroyedCreated {
+            if account.status == AccountStatus::DestroyedModified {
                 return Ok(U256::zero());
             }
         } else {

@@ -118,7 +118,6 @@ impl<'a> VM<'a> {
             }));
         }
 
-        new_account.created();
         self.increase_account_balance(new_contract_address, self.current_call_frame.msg_value)?;
 
         self.increment_account_nonce(new_contract_address)?;

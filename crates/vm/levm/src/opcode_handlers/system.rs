@@ -699,7 +699,6 @@ impl<'a> VM<'a> {
         // Changes that revert in case the Create fails.
         self.increment_account_nonce(new_address)?; // 0 -> 1
         self.transfer(deployer, new_address, value)?;
-        self.get_account_mut(new_address)?.created();
 
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.

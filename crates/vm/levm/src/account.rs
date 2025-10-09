@@ -53,21 +53,16 @@ impl From<GenesisAccount> for LevmAccount {
 }
 
 impl LevmAccount {
-    pub fn created(&mut self) {
-        if self.status == AccountStatus::Destroyed {
-            self.status = AccountStatus::DestroyedCreated
-        } else {
-            self.status = AccountStatus::Created
-        }
-    }
-
     pub fn destroyed(&mut self) {
         self.status = AccountStatus::Destroyed;
     }
 
-    pub fn mutated(&mut self) {
+    pub fn modified(&mut self) {
         if self.status == AccountStatus::Unmodified {
             self.status = AccountStatus::Modified;
+        }
+        if self.status == AccountStatus::Destroyed {
+            self.status = AccountStatus::DestroyedModified;
         }
     }
 
@@ -102,9 +97,7 @@ pub enum AccountStatus {
     Modified,
     /// Contract executed a SELFDESTRUCT
     Destroyed,
-    /// Contract created via external transaction or CREATE/CREATE2
-    Created,
-    /// Contract has been destroyed and then re-created, usually with CREATE2
+    /// Contract has been destroyed and then modified
     /// This is a particular state because we'll still have in the Database the storage (trie) values but they are actually invalid.
-    DestroyedCreated,
+    DestroyedModified,
 }
