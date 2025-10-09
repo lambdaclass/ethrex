@@ -960,7 +960,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         // What to do, depending on TxResult
-        match ctx_result.result.clone() {
+        match &ctx_result.result {
             TxResult::Success => {
                 parent_call_frame.stack.push1(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;

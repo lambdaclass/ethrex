@@ -21,6 +21,7 @@ use ethrex_levm::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
+use std::sync::Arc;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -213,7 +214,7 @@ pub fn prepare_vm_for_tx<'a>(
     };
 
     VM::new(
-        Environment {
+        Arc::new(Environment {
             origin: test_tx.sender,
             gas_limit: test_tx.gas_limit,
             config,
@@ -234,7 +235,7 @@ pub fn prepare_vm_for_tx<'a>(
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
             is_privileged: false,
-        },
+        }),
         db,
         &tx,
         LevmCallTracer::disabled(),

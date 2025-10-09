@@ -80,7 +80,7 @@ impl LevmAccount {
     }
 }
 
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountStatus {
     #[default]
     Unmodified,
