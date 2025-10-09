@@ -1403,6 +1403,11 @@ impl PeerHandler {
                         let start_hash_u256 = U256::from_big_endian(&hash_start.0);
                         let missing_storage_range = U256::MAX - start_hash_u256;
 
+                        // Big accounts need to be marked for storage healing unconditionally
+                        for account in accounts_by_root_hash[remaining_start].1.iter() {
+                            account_storage_roots.healed_accounts.insert(*account);
+                        }
+
                         let slot_count = account_storages
                             .last()
                             .map(|v| v.len())
