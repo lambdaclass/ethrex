@@ -138,10 +138,6 @@ impl Trie {
         if !self.root.is_valid() {
             return Ok(None);
         }
-        if path.len() == 32 {
-            self.pending_removal.insert(Nibbles::from_bytes(path));
-        }
-
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
             .root
