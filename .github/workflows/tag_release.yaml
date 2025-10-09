@@ -40,18 +40,21 @@ jobs:
           - platform: macos-latest
             os: macos
             arch: aarch64
+          - platform: macos-latest
+            stack: l2
+            features: l2,l2-sql
           - platform: ubuntu-22.04
             stack: l2
-            features: sp1,risc0
+            features: l2,l2-sql,sp1,risc0
           - platform: ubuntu-22.04
             stack: l2_gpu
-            features: sp1,risc0,gpu
+            features: l2,l2-sql,sp1,risc0,gpu
           - platform: ubuntu-24.04-arm
             stack: l2
-            features: sp1
+            features: l2,l2-sql,sp1
           - platform: ubuntu-24.04-arm
             stack: l2_gpu
-            features: sp1,gpu
+            features: l2,l2-sql,sp1,gpu
           - stack: l2_gpu
             gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
             suffix: "-l2-gpu"
