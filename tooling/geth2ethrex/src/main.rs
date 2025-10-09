@@ -166,6 +166,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     ethrex_db.compact_range(Option::<[u8; 0]>::None, Option::<[u8; 0]>::None);
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time} seconds");
+    std::mem::drop(ethrex_db);
 
     if cfg!(debug_assertions) {
         // Run validations
@@ -318,10 +319,6 @@ impl GethDB {
         } else {
             ((last - first + 2) * 6) as usize
         };
-        warn!(
-            path = idx_path.to_string_lossy().to_string(),
-            size, first, last, to_read, "About to read index file"
-        );
         let mut index_buf = vec![0; to_read];
         index_file.read_exact_at(&mut index_buf, 6 * first)?;
         let index_entries: Vec<_> = index_buf
