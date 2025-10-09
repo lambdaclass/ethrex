@@ -50,7 +50,7 @@ pub struct ProverInputData {
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
-    pub fee_config: FeeConfig,
+    pub fee_configs: Vec<FeeConfig>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -473,7 +473,17 @@ impl ProofCoordinator {
             )));
         };
 
-        let blocks = self.fetch_blocks(block_numbers).await?;
+        // Get the current fee config
+        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
+            return Err(ProofCoordinatorError::InternalError(
+                "Invalid blockchain type, expected L2".to_string(),
+            ));
+        };
+        let fee_config = *l2_config.fee_config.read().await;
+
+        let (blocks, fee_configs) = self
+            .fetch_blocks_with_respective_fee_configs(block_numbers, fee_config)
+            .await?;
 
         let witness = self
             .blockchain
@@ -503,12 +513,6 @@ impl ProofCoordinator {
 
         debug!("Created prover input for batch {batch_number}");
 
-        let BlockchainType::L2(l2_config) = &self.blockchain.options.r#type else {
-            return Err(ProofCoordinatorError::InternalError(
-                "Invalid blockchain type, expected L2".to_string(),
-            ));
-        };
-
         Ok(ProverInputData {
             execution_witness: witness,
             blocks,
@@ -517,15 +521,17 @@ impl ProofCoordinator {
             blob_commitment,
             #[cfg(feature = "l2")]
             blob_proof,
-            fee_config: *l2_config.fee_config.read().await,
+            fee_configs,
         })
     }
 
-    async fn fetch_blocks(
+    async fn fetch_blocks_with_respective_fee_configs(
         &mut self,
         block_numbers: Vec<u64>,
-    ) -> Result<Vec<Block>, ProofCoordinatorError> {
+        fee_config: FeeConfig,
+    ) -> Result<(Vec<Block>, Vec<FeeConfig>), ProofCoordinatorError> {
         let mut blocks = vec![];
+        let mut fee_configs = vec![];
         for block_number in block_numbers {
             let header = self
                 .store
@@ -537,8 +543,26 @@ impl ProofCoordinator {
                 .await?
                 .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
             blocks.push(Block::new(header, body));
+
+            // Update the L1 fee per blob gas used for this block if needed
+            if let Some(mut l1_fee_config) = fee_config.l1_fee_config.clone() {
+                let l1_blob_base_fee = self
+                    .rollup_store
+                    .get_l1_blob_base_fee_by_block(block_number)
+                    .await?
+                    .ok_or(ProofCoordinatorError::InternalError(
+                        "L1 blob base fee not found".to_string(),
+                    ))?;
+                l1_fee_config.l1_fee_per_blob_gas = l1_blob_base_fee;
+
+                let mut fee_config = fee_config.clone();
+                fee_config.l1_fee_config = Some(l1_fee_config);
+                fee_configs.push(fee_config);
+            } else {
+                fee_configs.push(fee_config.clone());
+            }
         }
-        Ok(blocks)
+        Ok((blocks, fee_configs))
     }
 }
 
