@@ -545,7 +545,7 @@ impl ProofCoordinator {
             blocks.push(Block::new(header, body));
 
             // Update the L1 fee per blob gas used for this block if needed
-            if let Some(mut l1_fee_config) = fee_config.l1_fee_config.clone() {
+            if let Some(mut l1_fee_config) = fee_config.l1_fee_config {
                 let l1_blob_base_fee = self
                     .rollup_store
                     .get_l1_blob_base_fee_by_block(block_number)
@@ -555,11 +555,11 @@ impl ProofCoordinator {
                     ))?;
                 l1_fee_config.l1_fee_per_blob_gas = l1_blob_base_fee;
 
-                let mut fee_config = fee_config.clone();
+                let mut fee_config = fee_config;
                 fee_config.l1_fee_config = Some(l1_fee_config);
                 fee_configs.push(fee_config);
             } else {
-                fee_configs.push(fee_config.clone());
+                fee_configs.push(fee_config);
             }
         }
         Ok((blocks, fee_configs))
