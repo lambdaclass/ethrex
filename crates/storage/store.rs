@@ -237,7 +237,18 @@ impl Store {
     }
 
     pub async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.remove_block(block_number).await
+        let mut latest_header = self
+            .latest_block_header
+            .write()
+            .map_err(|_| StoreError::LockError)?;
+        self.engine.remove_block(block_number).await?;
+        if latest_header.number == block_number {
+            *latest_header = self
+                .engine
+                .get_block_header(block_number - 1)?
+                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
+        }
+        Ok(())
     }
 
     pub async fn get_block_bodies(
