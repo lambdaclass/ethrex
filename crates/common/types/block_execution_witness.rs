@@ -6,7 +6,7 @@ use crate::types::Block;
 use crate::{
     H160,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::{decode_hex, keccak},
 };
 use bytes::Bytes;
@@ -357,10 +357,10 @@ impl GuestProgramState {
 
     /// Retrieves the account info based on what is stored in the state trie.
     /// Returns an error if the state trie is not rebuilt or if decoding the account state fails.
-    pub fn get_account_info(
+    pub fn get_account_state(
         &mut self,
         address: Address,
-    ) -> Result<Option<AccountInfo>, GuestProgramStateError> {
+    ) -> Result<Option<AccountState>, GuestProgramStateError> {
         let state_trie = self
             .state_trie
             .as_ref()
@@ -380,11 +380,7 @@ impl GuestProgramState {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
-        Ok(Some(AccountInfo {
-            balance: state.balance,
-            code_hash: state.code_hash,
-            nonce: state.nonce,
-        }))
+        Ok(Some(state))
     }
 
     /// Fetches the block hash for a specific block number.
