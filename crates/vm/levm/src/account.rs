@@ -53,11 +53,11 @@ impl From<GenesisAccount> for LevmAccount {
 }
 
 impl LevmAccount {
-    pub fn destroyed(&mut self) {
+    pub fn mark_destroyed(&mut self) {
         self.status = AccountStatus::Destroyed;
     }
 
-    pub fn modified(&mut self) {
+    pub fn mark_modified(&mut self) {
         if self.status == AccountStatus::Unmodified {
             self.status = AccountStatus::Modified;
         }

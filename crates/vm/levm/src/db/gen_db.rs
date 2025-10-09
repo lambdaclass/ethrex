@@ -88,7 +88,7 @@ impl GeneralizedDatabase {
     /// Warning: Use directly only if outside of the EVM, otherwise use `vm.get_account_mut` because it contemplates call frame backups.
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
         let acc = self.load_account(address)?;
-        acc.modified();
+        acc.mark_modified();
         Ok(acc)
     }
 
