@@ -12,7 +12,7 @@ use ethrex_rlp::{
 /// Struct representing a list of nibbles (half-bytes)
 #[derive(Debug, Clone, Default)]
 pub struct Nibbles {
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     /// Parts of the path that have already been consumed (used for tracking
     /// current position when visiting nodes). See `current()`.
     already_consumed: Vec<u8>,
@@ -72,6 +72,10 @@ impl Nibbles {
             data,
             already_consumed: vec![],
         }
+    }
+
+    pub fn into_vec(self) -> Vec<u8> {
+        self.data
     }
 
     /// Returns the amount of nibbles
@@ -224,9 +228,9 @@ impl Nibbles {
     }
 
     /// Concatenates self and another Nibbles returning a new Nibbles
-    pub fn concat(&self, other: Nibbles) -> Nibbles {
+    pub fn concat(&self, other: &Nibbles) -> Nibbles {
         Nibbles {
-            data: [self.data.clone(), other.data].concat(),
+            data: [&self.data[..], &other.data[..]].concat(),
             already_consumed: self.already_consumed.clone(),
         }
     }

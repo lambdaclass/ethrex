@@ -20,7 +20,7 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::atomic::Ordering,
     time::Instant,
 };
@@ -204,7 +204,8 @@ pub async fn heal_storage_trie(
         if nodes_to_write.values().map(Vec::len).sum::<usize>() > 100_000 || is_done || is_stale {
             let to_write: Vec<_> = nodes_to_write.drain().collect();
             let store = state.store.clone();
-            if db_joinset.len() > 0 {
+            // NOTE: we keep only a single task in the background to avoid out of order deletes
+            if !db_joinset.is_empty() {
                 db_joinset.join_next().await;
             }
             db_joinset.spawn_blocking(|| {
@@ -548,65 +549,12 @@ fn get_initial_downloads(
                 if account.storage_root == *EMPTY_TRIE_HASH {
                     return None;
                 }
-                let trie = store
-                    .open_direct_storage_trie(*acc_path, account.storage_root)
-                    .expect("We should be able to open the store");
 
-                let previous = match trie
-                    .root
-                    .get_node_checked(trie.db(), Nibbles::default())
-                    .expect("To be able to read the store")
-                {
-                    Some((validity, previous)) => {
-                        if validity {
-                            return None;
-                        } else {
-                            Some(previous)
-                        }
-                    }
-                    None => None,
-                };
                 Some(NodeRequest {
                     acc_path: Nibbles::from_bytes(&acc_path.0),
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                     parent: Nibbles::default(),
                     hash: account.storage_root,
-                })
-            })
-            .collect::<VecDeque<_>>(),
-    );
-    initial_requests.extend(
-        account_paths
-            .accounts_with_storage_root
-            .par_iter()
-            .filter_map(|(acc_path, storage_root)| {
-                if *storage_root == *EMPTY_TRIE_HASH {
-                    return None;
-                }
-                let trie = store
-                    .open_direct_storage_trie(*acc_path, *storage_root)
-                    .expect("We should be able to open the store");
-
-                let previous = match trie
-                    .root
-                    .get_node_checked(trie.db(), Nibbles::default())
-                    .expect("To be able to read the store")
-                {
-                    Some((validity, previous)) => {
-                        if validity {
-                            return None;
-                        } else {
-                            Some(previous)
-                        }
-                    }
-                    None => None,
-                };
-
-                Some(NodeRequest {
-                    acc_path: Nibbles::from_bytes(&acc_path.0),
-                    storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
-                    parent: Nibbles::default(),
-                    hash: *storage_root,
                 })
             })
             .collect::<VecDeque<_>>(),
@@ -643,14 +591,13 @@ pub fn determine_missing_children(
                 if !child.is_valid() {
                     continue;
                 }
-                let (validity, previous) = match child
-                    .get_node_checked(trie_state, child_path.clone())
+                let validity = child
+                    .get_node(trie_state, child_path.clone())
                     .inspect_err(|_| {
                         error!("Malformed data when doing get child of a branch node")
-                    })? {
-                    Some((validity, previous)) => (validity, Some(previous)),
-                    None => (false, None),
-                };
+                    })?
+                    .is_some();
+
                 if validity {
                     continue;
                 }
@@ -665,21 +612,16 @@ pub fn determine_missing_children(
             }
         }
         Node::Extension(node) => {
-            let child_path = node_response
-                .node_request
-                .storage_path
-                .concat(node.prefix.clone());
+            let child_path = node_response.node_request.storage_path.concat(&node.prefix);
             if !node.child.is_valid() {
                 return Ok((vec![], 0));
             }
-            let (validity, previous) = match node
+            let validity = node
                 .child
-                .get_node_checked(trie_state, child_path.clone())
+                .get_node(trie_state, child_path.clone())
                 .inspect_err(|_| error!("Malformed data when doing get child of a branch node"))?
-            {
-                Some((validity, previous)) => (validity, Some(previous)),
-                None => (false, None),
-            };
+                .is_some();
+
             if validity {
                 return Ok((vec![], 0));
             }

@@ -1,16 +1,22 @@
-use crate::{UpdateBatch, api::StoreEngine, error::StoreError, store::STATE_TRIE_SEGMENTS};
+use crate::{
+    UpdateBatch,
+    api::StoreEngine,
+    apply_prefix,
+    error::StoreError,
+    store::STATE_TRIE_SEGMENTS,
+    trie_db::layering::{TrieLayerCache, TrieWrapper},
+};
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::nibbles_to_fixed_size};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie, db::NodeMap};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, RwLock},
 };
-pub type NodeMap = Arc<Mutex<BTreeMap<[u8; 33], Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -27,13 +33,13 @@ pub struct StoreInner {
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
-    pub state_trie_nodes: NodeMap,
-    // A storage trie for each hashed account address
-    pub storage_trie_nodes: HashMap<Nibbles, NodeMap>,
+    trie_cache: Arc<RwLock<TrieLayerCache>>,
+    // Contains account trie nodes
+    state_trie_nodes: NodeMap,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores invalid blocks and their latest valid ancestor
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
-    // Stores current Snap Sate
+    // Stores current Snap State
     snap_state: SnapState,
 }
 
@@ -73,42 +79,63 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    fn open_direct_storage_trie(&self, _: H256, _: H256) -> Result<Trie, StoreError> {
-        todo!()
-    }
-
-    fn open_direct_state_trie(&self, _: H256) -> Result<Trie, StoreError> {
-        todo!()
-    }
-
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
+
+        // Store trie updates
         {
-            // store account updates
-            let mut state_trie_store = store
+            let mut trie = store
+                .trie_cache
+                .write()
+                .map_err(|_| StoreError::LockError)?;
+            let parent_state_root = self
+                .get_block_header_by_hash(
+                    update_batch
+                        .blocks
+                        .first()
+                        .ok_or(StoreError::UpdateBatchNoBlocks)?
+                        .header
+                        .parent_hash,
+                )?
+                .map(|header| header.state_root)
+                .unwrap_or_default();
+
+            let last_state_root = update_batch
+                .blocks
+                .last()
+                .ok_or(StoreError::UpdateBatchNoBlocks)?
+                .header
+                .state_root;
+
+            let mut state_trie = store
                 .state_trie_nodes
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in update_batch.account_updates {
-                state_trie_store.insert(nibbles_to_fixed_size(node_hash), node_data);
-            }
-        }
 
-        // store code updates
-        for (code_hash, code) in update_batch.code_updates {
-            store.account_codes.insert(code_hash, code);
-        }
-
-        for (hashed_address, nodes) in update_batch.storage_updates {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(Nibbles::from_bytes(&hashed_address.0))
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(nibbles_to_fixed_size(node_hash), node_data);
+            if let Some(root) = trie.get_commitable(parent_state_root) {
+                let nodes = trie.commit(root).unwrap_or_default();
+                for (key, value) in nodes {
+                    if value.is_empty() {
+                        state_trie.remove(&key);
+                    } else {
+                        state_trie.insert(key, value);
+                    }
+                }
             }
+            trie.put_batch(
+                parent_state_root,
+                last_state_root,
+                update_batch
+                    .storage_updates
+                    .into_iter()
+                    .flat_map(|(account_hash, nodes)| {
+                        nodes
+                            .into_iter()
+                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                    })
+                    .chain(update_batch.account_updates)
+                    .collect(),
+            );
         }
 
         for block in update_batch.blocks {
@@ -179,10 +206,12 @@ impl StoreEngine for Store {
         let store = self.inner()?;
         let mut res = Vec::new();
         for block_number in from..=to {
-            if let Some(hash) = store.canonical_hashes.get(&block_number) {
-                if let Some(block) = store.bodies.get(hash).cloned() {
-                    res.push(block);
-                }
+            if let Some(block) = store
+                .canonical_hashes
+                .get(&block_number)
+                .and_then(|hash| store.bodies.get(hash))
+            {
+                res.push(block.clone())
             }
         }
         Ok(res)
@@ -393,22 +422,51 @@ impl StoreEngine for Store {
     fn open_storage_trie(
         &self,
         hashed_address: H256,
-        storage_root: H256,
+        _storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
-        let mut store = self.inner()?;
-        let trie_backend = store
-            .storage_trie_nodes
-            .entry(Nibbles::from_bytes(&hashed_address.0))
-            .or_default();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
-        Ok(Trie::open(db, storage_root))
+        let store = self.inner()?;
+        let trie_backend = store.state_trie_nodes.clone();
+        let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: store.trie_cache.clone(),
+            db,
+            prefix: Some(hashed_address),
+        });
+        Ok(Trie::open(wrap_db, state_root))
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_backend = self.inner()?.state_trie_nodes.clone();
+        let store = self.inner()?;
+        let trie_backend = store.state_trie_nodes.clone();
+        let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        let wrap_db = Box::new(TrieWrapper {
+            state_root,
+            inner: store.trie_cache.clone(),
+            db,
+            prefix: None,
+        });
+        Ok(Trie::open(wrap_db, state_root))
+    }
+
+    fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        let store = self.inner()?;
+        let trie_backend = store.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         Ok(Trie::open(db, state_root))
+    }
+
+    fn open_direct_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        let store = self.inner()?;
+        let trie_backend = store.state_trie_nodes.clone();
+        let prefix = apply_prefix(Some(hashed_address), Default::default());
+        let db = Box::new(InMemoryTrieDB::new_with_prefix(trie_backend, prefix));
+        Ok(Trie::open(db, storage_root))
     }
 
     async fn get_block_body_by_hash(
@@ -478,7 +536,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let store = self.inner()?;
         let Some(receipts_for_block) = store.receipts.get(block_hash) else {
             return Ok(vec![]);
@@ -597,17 +658,16 @@ impl StoreEngine for Store {
         &self,
         storage_trie_nodes: Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>,
     ) -> Result<(), StoreError> {
-        let mut store = self.inner()?;
+        let store = self.inner()?;
+        let mut trie = store
+            .state_trie_nodes
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
 
         for (hashed_address, nodes) in storage_trie_nodes {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(Nibbles::from_bytes(&hashed_address.0))
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(nibbles_to_fixed_size(node_hash), node_data);
+            for (node_path, node_data) in nodes {
+                let full_path = apply_prefix(Some(hashed_address), node_path);
+                trie.insert(full_path.into_vec(), node_data);
             }
         }
 

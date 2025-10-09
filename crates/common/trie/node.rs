@@ -48,27 +48,6 @@ impl NodeRef {
         }
     }
 
-    pub fn get_node_checked(
-        &self,
-        db: &dyn TrieDB,
-        path: Nibbles,
-    ) -> Result<Option<(bool, Node)>, TrieError> {
-        match *self {
-            NodeRef::Node(ref node, _) => Ok(Some((true, node.as_ref().clone()))),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some((true, Node::decode_raw(&data[..len as usize])?)))
-            }
-            NodeRef::Hash(hash) => db
-                .get(path)?
-                .filter(|rlp| !rlp.is_empty())
-                .map(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => Ok((node.compute_hash() == hash, node)),
-                    Err(err) => Err(TrieError::RLPDecode(err)),
-                })
-                .transpose(),
-        }
-    }
-
     pub fn is_valid(&self) -> bool {
         match self {
             NodeRef::Node(_, _) => true,
@@ -86,7 +65,7 @@ impl NodeRef {
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(path.concat(node.prefix.clone()), acc);
+                        node.child.commit(path.concat(&node.prefix), acc);
                     }
                     Node::Leaf(_) => {
                         //path.extend(&node.partial);
@@ -96,7 +75,7 @@ impl NodeRef {
                 let hash = hash.get_or_init(|| node.compute_hash());
                 acc.push((path.clone(), node.encode_to_vec()));
                 if let Node::Leaf(leaf) = node.as_ref() {
-                    acc.push((path.concat(leaf.partial.clone()), leaf.value.clone()));
+                    acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
 
                 let hash = *hash;

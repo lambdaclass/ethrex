@@ -172,7 +172,7 @@ async fn process_dump_storage(
     hashed_address: H256,
     storage_root: H256,
 ) -> eyre::Result<()> {
-    let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH, todo!())?;
+    let mut trie = store.open_direct_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
         // The key we receive is the preimage of the one stored in the trie
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
@@ -432,10 +432,11 @@ impl DumpReader {
     /// Create a new DumpReader that will read state data from the given directory
     fn new_from_dir(dirname: String, prev_checkpoint: &Option<CheckPoint>) -> eyre::Result<Self> {
         let mut dir_reader = DumpDirReader::new(dirname)?;
-        if let Some(checkpoint) = prev_checkpoint {
-            if let Some(current) = checkpoint.reading.current_file {
-                dir_reader.current_file = current
-            }
+        if let Some(current) = prev_checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.reading.current_file)
+        {
+            dir_reader.current_file = current
         }
         Ok(Self::Dir(dir_reader))
     }
@@ -447,10 +448,11 @@ impl DumpReader {
         prev_checkpoint: &Option<CheckPoint>,
     ) -> eyre::Result<Self> {
         let mut ipc_reader = DumpIpcReader::new(archive_ipc_path, block_number).await?;
-        if let Some(checkpoint) = prev_checkpoint {
-            if let Some(start) = checkpoint.reading.start_hash {
-                ipc_reader.start = start
-            }
+        if let Some(start) = prev_checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.reading.start_hash)
+        {
+            ipc_reader.start = start
         }
         Ok(Self::Ipc(ipc_reader))
     }
