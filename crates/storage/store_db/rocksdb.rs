@@ -9,7 +9,7 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBWithThreadMode,
+    BlockBasedOptions, BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode,
     MultiThreaded, Options, WriteBatch,
 };
 use std::{collections::HashSet, path::Path, sync::Arc};
