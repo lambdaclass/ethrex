@@ -1,10 +1,10 @@
 use std::time::{Duration, Instant};
 
 use ethrex::utils::default_datadir;
-use ethrex_p2p::sync::build_snapshot;
 use ethrex_storage::{EngineType, Store};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Load already synced store
     let store = Store::new(default_datadir(), EngineType::RocksDB).expect("failed to create store");
 
@@ -17,7 +17,10 @@ fn main() {
     println!("Building snapshot...");
 
     let start = Instant::now();
-    build_snapshot(pivot_header.state_root, &store).expect("failed to build snapshot");
+    store
+        .generate_snapshot(pivot_header.state_root)
+        .await
+        .expect("failed to build snapshot");
     let elapsed = start.elapsed();
 
     println!("Snapshot built in: {}", format_duration(elapsed))

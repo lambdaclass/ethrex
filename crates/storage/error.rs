@@ -1,3 +1,4 @@
+use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::TrieError;
 use thiserror::Error;
@@ -45,13 +46,13 @@ pub enum StoreError {
 #[derive(thiserror::Error, Debug)]
 pub enum SnapshotGenerationError {
     #[error("Failed to open account state trie with error: {0}")]
-    FailedToOpenAccountStateTrie(#[source] StoreError),
+    FailedToOpenAccountStateTrie(#[source] Box<StoreError>),
     #[error("Failed to decode account state trie from path {0:#x} with error: {1}")]
     FailedToDecodeAccountState(H256, #[source] RLPDecodeError),
     #[error(
         "Failed to open account state storage trie for account hash {0:#x} from path {1:#x} with error: {2}"
     )]
-    FailedToOpenAccountStateStorageTrie(H256, H256, #[source] StoreError),
+    FailedToOpenAccountStateStorageTrie(H256, H256, #[source] Box<StoreError>),
     #[error(
         "Failed to store account state storage nodes batch for account hash {0:#x} with error: {1}"
     )]

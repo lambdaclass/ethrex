@@ -2,7 +2,7 @@ use crate::{
     UpdateBatch,
     api::StoreEngine,
     apply_prefix,
-    error::{SnapshotBuildError, StoreError},
+    error::{SnapshotGenerationError, StoreError},
     store::STATE_TRIE_SEGMENTS,
     trie_db::layering::{TrieLayerCache, TrieWrapper},
 };
@@ -691,23 +691,23 @@ impl StoreEngine for Store {
 
     async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
         // Open the account state trie
-        let account_state_trie = store
-            .open_direct_state_trie(pivot_block_state_root)
-            .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?;
+        let account_state_trie = self
+            .open_direct_state_trie(state_root)
+            .map_err(Box::new)
+            .map_err(SnapshotGenerationError::FailedToOpenAccountStateTrie)?;
 
         // Retrieve account state db
         let account_state_db = account_state_trie.db();
 
         let mut nodes_to_write = Vec::new();
 
-        let start = SystemTime::now();
-
         // Traverse account state trie
-        store
-            .open_direct_state_trie(pivot_block_state_root)
-            .map_err(SnapshotBuildError::FailedToOpenAccountStateTrie)?
+        self
+            .open_direct_state_trie(state_root)
+            .map_err(Box::new)
+            .map_err(SnapshotGenerationError::FailedToOpenAccountStateTrie)?
             .into_iter()
-            .try_for_each(|(path, node)| -> Result<(), SyncError> {
+            .try_for_each(|(path, node)| -> Result<(), StoreError> {
                 // Retrieve account state node
                 let Node::Leaf(node) = node else {
                     return Ok(());
@@ -720,17 +720,17 @@ impl StoreEngine for Store {
                     storage_root: account_hash,
                     ..
                 } = AccountState::decode(&node.value).map_err(|rlp_decode_err| {
-                    SnapshotBuildError::FailedToDecodeAccountState(path_as_key, rlp_decode_err)
+                    SnapshotGenerationError::FailedToDecodeAccountState(path_as_key, rlp_decode_err)
                 })?;
 
                 // Open the account state storage trie
-                let storage_trie = store
+                let storage_trie = self
                     .open_direct_storage_trie(path_as_key, account_hash)
                     .map_err(|store_err| {
-                        SnapshotBuildError::FailedToOpenAccountStateStorageTrie(
+                        SnapshotGenerationError::FailedToOpenAccountStateStorageTrie(
                             account_hash,
                             path_as_key,
-                            store_err,
+                            Box::new(store_err),
                         )
                     })?;
 
@@ -740,17 +740,17 @@ impl StoreEngine for Store {
                 let mut storages_to_write = Vec::new();
 
                 // Traverse account state storage trie
-                store
+                self
                     .open_direct_storage_trie(path_as_key, account_hash)
                     .map_err(|store_err| {
-                        SnapshotBuildError::FailedToOpenAccountStateStorageTrie(
+                        SnapshotGenerationError::FailedToOpenAccountStateStorageTrie(
                             account_hash,
                             path_as_key,
-                            store_err,
+                            Box::new(store_err),
                         )
                     })?
                     .into_iter()
-                    .try_for_each(|(path, node)| -> Result<(), SyncError> {
+                    .try_for_each(|(path, node)| -> Result<(), StoreError> {
                         // Retrieve the account state storage node
                         let Node::Leaf(node) = node else {
                             return Ok(());
@@ -764,7 +764,7 @@ impl StoreEngine for Store {
                             storage_trie_db
                                 .put_batch(std::mem::take(&mut storages_to_write))
                                 .map_err(|trie_err| {
-                                    SnapshotBuildError::FailedToStoreAccountStateStorageNodesBatch(
+                                    SnapshotGenerationError::FailedToStoreAccountStateStorageNodesBatch(
                                         account_hash,
                                         trie_err,
                                     )
@@ -778,7 +778,7 @@ impl StoreEngine for Store {
                 storage_trie_db
                     .put_batch(storages_to_write)
                     .map_err(|trie_err| {
-                        SnapshotBuildError::FailedToStoreRemainingAccountStateStorageNodes(
+                        SnapshotGenerationError::FailedToStoreRemainingAccountStateStorageNodes(
                             account_hash,
                             trie_err,
                         )
@@ -792,7 +792,7 @@ impl StoreEngine for Store {
                     account_state_db
                         .put_batch(std::mem::take(&mut nodes_to_write))
                         .map_err(|trie_err| {
-                            SnapshotBuildError::FailedToStoreAccountStateNodesBatch(
+                            SnapshotGenerationError::FailedToStoreAccountStateNodesBatch(
                                 account_hash,
                                 trie_err,
                             )
@@ -805,7 +805,7 @@ impl StoreEngine for Store {
         // Store the remaining account state nodes
         account_state_db
             .put_batch(nodes_to_write)
-            .map_err(SnapshotBuildError::FailedToStoreRemainingAccountStateNodes)?;
+            .map_err(SnapshotGenerationError::FailedToStoreRemainingAccountStateNodes)?;
 
         Ok(())
     }
