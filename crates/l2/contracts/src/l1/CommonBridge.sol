@@ -63,7 +63,8 @@ contract CommonBridge is
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
     /// @dev The token can take the value {ETH_TOKEN} to represent ETH
-    mapping(address => mapping(address => uint256)) public deposits;
+    mapping(uint256 => mapping(address => mapping(address => uint256)))
+        public deposits;
 
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN =
@@ -86,6 +87,8 @@ contract CommonBridge is
 
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
+
+    mapping(uint256 => bool) public l2BridgesRegistry;
 
     modifier onlyOnChainProposer() {
         require(
@@ -118,6 +121,23 @@ contract CommonBridge is
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
+    }
+
+    function registerL2(
+        address[] calldata sequencerAddresses,
+        uint256 _chainId
+    ) external {
+        require(
+            !l2BridgesRegistry[_chainId],
+            "CommonBridge: L2 bridge already registered for given chain ID"
+        );
+
+        l2BridgesRegistry[_chainId] = true;
+
+        IOnChainProposer(ON_CHAIN_PROPOSER).authorizeSequencers(
+            sequencerAddresses,
+            _chainId
+        );
     }
 
     /// @inheritdoc ICommonBridge
@@ -164,7 +184,11 @@ contract CommonBridge is
             address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
     }
 
-    function _sendToL2(address from, SendValues memory sendValues) private {
+    function _sendToL2(
+        address from,
+        SendValues memory sendValues,
+        uint256 _chainId
+    ) private {
         _burnGas(sendValues.gasLimit);
 
         bytes32 l2MintTxHash = keccak256(
@@ -182,6 +206,7 @@ contract CommonBridge is
 
         emit PrivilegedTxSent(
             msg.sender,
+            _chainId,
             from,
             sendValues.to,
             transactionId,
@@ -189,7 +214,9 @@ contract CommonBridge is
             sendValues.gasLimit,
             sendValues.data
         );
+
         transactionId += 1;
+
         privilegedTxDeadline[l2MintTxHash] =
             block.timestamp +
             PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
@@ -197,58 +224,76 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function sendToL2(
-        SendValues calldata sendValues
+        SendValues calldata sendValues,
+        uint256 _chainId
     ) public override whenNotPaused {
-        _sendToL2(_getSenderAlias(), sendValues);
+        _sendToL2(_getSenderAlias(), sendValues, _chainId);
     }
 
     /// @inheritdoc ICommonBridge
     function deposit(
-        address l2Recipient
+        address l2Recipient,
+        uint256 _chainId
     ) public payable override whenNotPaused {
-        _deposit(l2Recipient);
-    }
+        require(
+            l2BridgesRegistry[_chainId],
+            "CommonBridge: L2 bridge not registered for given chain ID"
+        );
 
-    function _deposit(address l2Recipient) private {
-        deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
+        require(msg.value > 0, "CommonBridge: amount to deposit is zero");
+
+        deposits[_chainId][ETH_TOKEN][ETH_TOKEN] += msg.value;
+
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintETH,
             (l2Recipient)
         );
+
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
             gasLimit: 21000 * 5,
             value: msg.value,
             data: callData
         });
-        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues, _chainId);
     }
 
     receive() external payable whenNotPaused {
-        _deposit(msg.sender);
+        revert("CommonBridge: use deposit() to deposit ETH to L2");
     }
 
     function depositERC20(
         address tokenL1,
         address tokenL2,
         address destination,
-        uint256 amount
+        uint256 amount,
+        uint256 _chainId
     ) external whenNotPaused {
+        require(
+            l2BridgesRegistry[_chainId],
+            "CommonBridge: L2 bridge not registered for given chain ID"
+        );
+
         require(amount > 0, "CommonBridge: amount to deposit is zero");
-        deposits[tokenL1][tokenL2] += amount;
+
+        deposits[_chainId][tokenL1][tokenL2] += amount;
+
         IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
 
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintERC20,
             (tokenL1, tokenL2, destination, amount)
         );
+
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
             gasLimit: 21000 * 5,
             value: 0,
             data: callData
         });
-        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues, _chainId);
     }
 
     /// @inheritdoc ICommonBridge
@@ -328,7 +373,8 @@ contract CommonBridge is
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
-        bytes32[] calldata withdrawalProof
+        bytes32[] calldata withdrawalProof,
+        uint256 _chainId
     ) public override whenNotPaused {
         _claimWithdrawal(
             ETH_TOKEN,
@@ -336,9 +382,12 @@ contract CommonBridge is
             claimedAmount,
             withdrawalBatchNumber,
             withdrawalMessageId,
-            withdrawalProof
+            withdrawalProof,
+            _chainId
         );
+
         (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
+
         require(success, "CommonBridge: failed to send the claimed amount");
     }
 
@@ -349,7 +398,8 @@ contract CommonBridge is
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
-        bytes32[] calldata withdrawalProof
+        bytes32[] calldata withdrawalProof,
+        uint256 _chainId
     ) public override nonReentrant whenNotPaused {
         _claimWithdrawal(
             tokenL1,
@@ -357,12 +407,15 @@ contract CommonBridge is
             claimedAmount,
             withdrawalBatchNumber,
             withdrawalMessageId,
-            withdrawalProof
+            withdrawalProof,
+            _chainId
         );
+
         require(
             tokenL1 != ETH_TOKEN,
             "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
         );
+
         IERC20(tokenL1).safeTransfer(msg.sender, claimedAmount);
     }
 
@@ -372,31 +425,45 @@ contract CommonBridge is
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
-        bytes32[] calldata withdrawalProof
+        bytes32[] calldata withdrawalProof,
+        uint256 _chainId
     ) private {
         require(
-            deposits[tokenL1][tokenL2] >= claimedAmount,
+            l2BridgesRegistry[_chainId],
+            "CommonBridge: L2 bridge not registered for given chain ID"
+        );
+
+        require(
+            deposits[_chainId][tokenL1][tokenL2] >= claimedAmount,
             "CommonBridge: trying to withdraw more tokens/ETH than were deposited"
         );
-        deposits[tokenL1][tokenL2] -= claimedAmount;
+
+        deposits[_chainId][tokenL1][tokenL2] -= claimedAmount;
+
         bytes32 msgHash = keccak256(
             abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount)
         );
+
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
             "CommonBridge: the batch that emitted the withdrawal logs was not committed"
         );
+
         require(
             withdrawalBatchNumber <=
                 IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
             "CommonBridge: the batch that emitted the withdrawal logs was not verified"
         );
+
         require(
             claimedWithdrawalIDs[withdrawalMessageId] == false,
             "CommonBridge: the withdrawal was already claimed"
         );
+
         claimedWithdrawalIDs[withdrawalMessageId] = true;
+
         emit WithdrawalClaimed(withdrawalMessageId);
+
         require(
             _verifyMessageProof(
                 msgHash,
@@ -429,19 +496,27 @@ contract CommonBridge is
         address l2Contract,
         address newImplementation,
         uint256 gasLimit,
-        bytes calldata data
+        bytes calldata data,
+        uint256 _chainId
     ) public onlyOwner {
+        require(
+            l2BridgesRegistry[_chainId],
+            "CommonBridge: L2 bridge not registered for given chain ID"
+        );
+
         bytes memory callData = abi.encodeCall(
             ITransparentUpgradeableProxy.upgradeToAndCall,
             (newImplementation, data)
         );
+
         SendValues memory sendValues = SendValues({
             to: l2Contract,
             gasLimit: gasLimit,
             value: 0,
             data: callData
         });
-        _sendToL2(L2_PROXY_ADMIN, sendValues);
+
+        _sendToL2(L2_PROXY_ADMIN, sendValues, _chainId);
     }
 
     /// @notice Allow owner to upgrade the contract.

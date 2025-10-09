@@ -19,7 +19,7 @@ use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode,
     deploy_with_proxy_from_bytecode, initialize_contract, send_generic_transaction,
-    wait_for_transaction_receipt,
+    send_tx_bump_gas_exponential_backoff, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     EthClient,
@@ -485,12 +485,19 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 ));
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
+    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256)";
+
+// registerL2(address[] calldata sequencerAddresses, uint256 _chainId)
+const REGISTER_L2_SIGNATURE: &str = "registerL2(address[],uint256)";
+
+// deposit(address l2Recipient, uint256 _chainId)
+const DEPOSIT_SIGNATURE: &str = "deposit(address,uint256)";
 
 #[derive(Clone, Copy)]
 pub struct ContractAddresses {
@@ -923,6 +930,40 @@ async fn initialize_contracts(
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
 
+    info!("Registering L2 in CommonBridge");
+    let register_l2_tx_hash = {
+        wait_for_transaction_receipt(initialize_tx_hash, eth_client, 100).await?;
+
+        let calldata_values = vec![Value::Uint(genesis.config.chain_id.into())];
+
+        let register_l2_calldata = encode_calldata(REGISTER_L2_SIGNATURE, &calldata_values)?;
+
+        let gas_price = eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
+
+        let register_tx = build_generic_tx(
+            eth_client,
+            TxType::EIP1559,
+            contract_addresses.bridge_address,
+            initializer.address(),
+            register_l2_calldata.into(),
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        send_tx_bump_gas_exponential_backoff(eth_client, register_tx, initializer).await?
+    };
+    info!(tx_hash = %format!("{register_l2_tx_hash:#x}"), "L2 registered in CommonBridge");
+
     trace!("Contracts initialized");
     Ok(())
 }
@@ -977,23 +1018,40 @@ async fn make_deposits(
         let get_balance = eth_client
             .get_balance(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
+
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
 
-        let overrides = Overrides {
-            value: Some(value_to_deposit),
-            from: Some(signer.address()),
-            ..Overrides::default()
+        let genesis: Genesis = if opts.use_compiled_genesis {
+            serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)
+                .map_err(|_| DeployerError::Genesis)?
+        } else {
+            read_genesis_file(
+                opts.genesis_l2_path
+                    .to_str()
+                    .ok_or(DeployerError::FailedToGetStringFromPath)?,
+            )
         };
+
+        let calldata_values = vec![
+            Value::Address(signer.address()),
+            Value::Uint(genesis.config.chain_id.into()),
+        ];
+
+        let deposit_calldata = encode_calldata(DEPOSIT_SIGNATURE, &calldata_values)?;
 
         let build = build_generic_tx(
             eth_client,
             TxType::EIP1559,
             bridge,
             signer.address(),
-            Bytes::new(),
-            overrides,
+            deposit_calldata.into(),
+            Overrides {
+                value: Some(value_to_deposit),
+                from: Some(signer.address()),
+                ..Overrides::default()
+            },
         )
         .await?;
 

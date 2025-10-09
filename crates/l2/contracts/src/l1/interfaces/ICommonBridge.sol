@@ -17,6 +17,7 @@ interface ICommonBridge {
     /// @param data The calldata of the deposit transaction.
     event PrivilegedTxSent(
         address indexed l1From,
+        uint256 indexed chainId,
         address from,
         address to,
         uint256 transactionId,
@@ -59,14 +60,17 @@ interface ICommonBridge {
     /// event. This event will later be intercepted by the L2 operator to
     /// be inserted as a transaction.
     /// @param sendValues the parameters of the transaction being sent.
-    function sendToL2(SendValues calldata sendValues) external;
+    function sendToL2(
+        SendValues calldata sendValues,
+        uint256 _chainId
+    ) external;
 
     /// @notice Method that starts an L2 ETH deposit process.
     /// @dev The deposit process starts here by emitting a L1ToL2Message
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
     /// @param l2Recipient the address on L2 that will receive the deposit.
-    function deposit(address l2Recipient) external payable;
+    function deposit(address l2Recipient, uint256 _chainId) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number`
     /// pending privileged transactions.
@@ -126,7 +130,8 @@ interface ICommonBridge {
         uint256 claimedAmount,
         uint256 l2WithdrawalBatchNumber,
         uint256 withdrawalLogIndex,
-        bytes32[] calldata withdrawalProof
+        bytes32[] calldata withdrawalProof,
+        uint256 _chainId
     ) external;
 
     /// @notice Claims an ERC20 withdrawal
@@ -143,7 +148,8 @@ interface ICommonBridge {
         uint256 claimedAmount,
         uint256 l2WithdrawalBatchNumber,
         uint256 withdrawalLogIndex,
-        bytes32[] calldata withdrawalProof
+        bytes32[] calldata withdrawalProof,
+        uint256 _chainId
     ) external;
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines

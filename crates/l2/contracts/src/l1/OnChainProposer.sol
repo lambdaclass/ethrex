@@ -42,24 +42,25 @@ contract OnChainProposer is
     /// @dev If a batch was not committed yet, it won't be here.
     /// @dev It is used by other contracts to verify if a batch was committed.
     /// @dev The key is the batch number.
-    mapping(uint256 => BatchCommitmentInfo) public batchCommitments;
+    mapping(uint256 => mapping(uint256 => BatchCommitmentInfo))
+        public batchCommitments;
 
     /// @notice The latest verified batch number.
     /// @dev This variable holds the batch number of the most recently verified batch.
     /// @dev All batches with a batch number less than or equal to `lastVerifiedBatch` are considered verified.
     /// @dev Batches with a batch number greater than `lastVerifiedBatch` have not been verified yet.
     /// @dev This is crucial for ensuring that only valid and confirmed batches are processed in the contract.
-    uint256 public lastVerifiedBatch;
+    mapping(uint256 => uint256) public lastVerifiedBatch;
 
     /// @notice The latest committed batch number.
     /// @dev This variable holds the batch number of the most recently committed batch.
     /// @dev All batches with a batch number less than or equal to `lastCommittedBatch` are considered committed.
     /// @dev Batches with a block number greater than `lastCommittedBatch` have not been committed yet.
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
-    uint256 public lastCommittedBatch;
+    mapping(uint256 => uint256) public lastCommittedBatch;
 
     /// @dev The sequencer addresses that are authorized to commit and verify batches.
-    mapping(address _authorizedAddress => bool)
+    mapping(uint256 => mapping(address _authorizedAddress => bool))
         public authorizedSequencerAddresses;
 
     address public BRIDGE;
@@ -91,10 +92,18 @@ contract OnChainProposer is
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
 
-    modifier onlySequencer() {
+    modifier onlySequencer(uint256 _chainId) {
         require(
-            authorizedSequencerAddresses[msg.sender],
+            authorizedSequencerAddresses[_chainId][msg.sender],
             "OnChainProposer: caller is not the sequencer"
+        );
+        _;
+    }
+
+    modifier onlyBridge(uint256 _chainId) {
+        require(
+            msg.sender == BRIDGE,
+            "OnChainProposer: caller is not the bridge"
         );
         _;
     }
@@ -115,9 +124,7 @@ contract OnChainProposer is
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
-        bytes32 genesisStateRoot,
-        address[] calldata sequencerAddresses,
-        uint256 chainId
+        bytes32 genesisStateRoot
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -161,13 +168,23 @@ contract OnChainProposer is
             bytes32(0)
         );
 
-        for (uint256 i = 0; i < sequencerAddresses.length; i++) {
-            authorizedSequencerAddresses[sequencerAddresses[i]] = true;
-        }
-
-        CHAIN_ID = chainId;
-
         OwnableUpgradeable.__Ownable_init(owner);
+    }
+
+    function authorizeSequencers(
+        address[] calldata sequencerAddresses,
+        uint256 _chainId
+    ) public onlyBridge {
+        require(
+            msg.sender == owner() || msg.sender == address(this),
+            "OnChainProposer: only owner or self can authorize sequencers"
+        );
+
+        for (uint256 i = 0; i < sequencerAddresses.length; i++) {
+            authorizedSequencerAddresses[_chainId][
+                sequencerAddresses[i]
+            ] = true;
+        }
     }
 
     /// @inheritdoc IOnChainProposer

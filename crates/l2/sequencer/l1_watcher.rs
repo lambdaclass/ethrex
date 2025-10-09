@@ -173,8 +173,9 @@ impl L1Watcher {
         );
 
         // Matches the event PrivilegedTxSent from ICommonBridge.sol
-        let topic =
-            keccak(b"PrivilegedTxSent(address,address,address,uint256,uint256,uint256,bytes)");
+        let topic = keccak(
+            b"PrivilegedTxSent(address,uint256,address,address,uint256,uint256,uint256,bytes)",
+        );
 
         let logs = self
             .eth_client
@@ -199,10 +200,24 @@ impl L1Watcher {
         &mut self,
         logs: Vec<RpcLog>,
     ) -> Result<Vec<H256>, L1WatcherError> {
+        let chain_id = self
+            .store
+            .get_chain_config()
+            .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
+            .chain_id;
+
         let mut privileged_txs = Vec::new();
 
         for log in logs {
             let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)?;
+
+            if U256::from(chain_id) != privileged_transaction_data.chain_id {
+                warn!(
+                    "Foreign chain privileged transaction detected, skipping. PrivilegedTx chain_id: {}, this L2 chain_id: {}",
+                    privileged_transaction_data.chain_id, chain_id
+                );
+                continue;
+            }
 
             let gas_price = self.l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
@@ -348,6 +363,7 @@ pub struct PrivilegedTransactionData {
     pub from: H160,
     pub gas_limit: U256,
     pub calldata: Vec<u8>,
+    pub chain_id: U256,
 }
 
 impl PrivilegedTransactionData {
@@ -355,6 +371,7 @@ impl PrivilegedTransactionData {
         /*
             event PrivilegedTxSent (
                 address indexed L1from, => part of topics, not data
+                uint256 indexed chainId => part of topics, not data
                 address from, => 0..32
                 address to, => 32..64
                 uint256 transactionId, => 64..96
@@ -374,6 +391,15 @@ impl PrivilegedTransactionData {
             ),
         )?);
         let from_address = hash_to_address(from);
+
+        let chain_id = U256::from_big_endian(
+            log.topics
+                .get(2)
+                .ok_or(L1WatcherError::FailedToDeserializeLog(
+                    "Failed to parse chain_id from log: log.topics[2] not found".to_owned(),
+                ))?
+                .as_bytes(),
+        );
 
         let to = H256::from_slice(log.data.get(32..64).ok_or(
             L1WatcherError::FailedToDeserializeLog(
@@ -426,6 +452,7 @@ impl PrivilegedTransactionData {
             from: from_address,
             gas_limit,
             calldata: calldata.to_vec(),
+            chain_id,
         })
     }
     pub async fn into_tx(
