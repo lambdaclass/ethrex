@@ -42,7 +42,7 @@ impl Hook for L2Hook {
             // Operator fee is deducted from the sender before execution
             deduct_operator_fee(vm, &self.fee_config.operator_fee_config)?;
 
-            // We need to backup the callframe to calculate the state diff later
+            // Backup the callframe to calculate the tx state diff later
             self.pre_execution_backup = vm.current_call_frame.call_frame_backup.clone();
             return Ok(());
         }

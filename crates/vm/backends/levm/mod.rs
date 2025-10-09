@@ -470,7 +470,7 @@ fn adjust_disabled_base_fee(env: &mut Environment, vm_type: &mut VMType) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
         if let VMType::L2(fee_config) = vm_type {
-            // Don't deduct operator fee if no gas price is set
+            // Don't deduct any fees if no gas price was specified
             fee_config.operator_fee_config = None;
             fee_config.l1_fee_config = None;
         }

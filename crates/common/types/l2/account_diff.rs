@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+// This file needs to be accessible from both the `vm` and `L2` crates.
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use tracing::debug;
 
 #[derive(Debug, thiserror::Error)]

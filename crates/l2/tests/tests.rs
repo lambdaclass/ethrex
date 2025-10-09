@@ -2322,9 +2322,9 @@ async fn get_operator_fee(l1_client: &EthClient, proposer_address: Address) -> R
     Ok(U256::zero())
 }
 
-// ==============================================================================
-// Auxiliary functions to calculate account diff size for different tx types
-// ==============================================================================
+// ======================================================================
+// Auxiliary functions to calculate account diff size for different tx
+// ======================================================================
 
 fn get_account_diff_size_for_deploy(
     bytecode: &Bytes,
@@ -2401,8 +2401,6 @@ fn get_account_diff_size_for_erc20approve() -> u64 {
     account_diffs.insert(
         Address::random(),
         AccountStateDiff {
-            nonce_diff: 0,
-            bytecode: None,
             storage: dummy_modified_storage_slots(1),
             ..Default::default()
         },

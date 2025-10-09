@@ -63,6 +63,7 @@ pub enum BlockchainType {
 
 #[derive(Debug, Clone, Default)]
 pub struct L2Config {
+    /// We use a RwLock because the L2::BlockProducer updates the L1 fee config periodically
     pub fee_config: Arc<RwLock<FeeConfig>>,
 }
 
