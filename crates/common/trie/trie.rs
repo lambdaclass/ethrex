@@ -50,7 +50,7 @@ pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
 pub type TrieNode = (Nibbles, NodeRLP);
 
-/// Libmdx-based Ethereum Compatible Merkle Patricia Trie
+/// Ethereum-compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
