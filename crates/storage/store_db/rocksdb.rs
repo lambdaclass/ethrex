@@ -1482,10 +1482,10 @@ impl StoreEngine for Store {
     }
 
     async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
-        // account nibbles (64B) + 16 (1B) + 17 (1B) + storage nibbles (64B)
-        let mut key_buf = [0u8; 130];
+        // account nibbles (64B) + 16 (1B) + 17 (1B) + storage nibbles (64B) + 16 (1B)
+        let mut key_buf = [0u8; 131];
         key_buf[65] = 17;
-        
+
         let mut sst_options = Options::default();
         set_database_opts(&mut sst_options);
         get_cf_opts(&mut sst_options, CF_TRIE_NODES);
@@ -1513,7 +1513,7 @@ impl StoreEngine for Store {
                         let Node::Leaf(node) = node else {
                             return Ok(());
                         };
-                        key_buf[66..130].copy_from_slice(path.as_ref());
+                        key_buf[66..131].copy_from_slice(path.as_ref());
 
                         sst.put(&key_buf, node.value)?;
                         Ok(())

@@ -2,10 +2,11 @@ use crate::{UpdateBatch, api::StoreEngine, error::StoreError, store::STATE_TRIE_
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt,
 };
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_trie::{db::nibbles_to_fixed_size, InMemoryTrieDB, Nibbles, Node, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, Trie, db::nibbles_to_fixed_size};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
@@ -628,12 +629,11 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError>{
+    async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
         let trie = self.open_direct_state_trie(state_root)?;
         let mut nodes_to_write = Vec::new();
         let db = trie.db();
-        self
-            .open_direct_state_trie(state_root)?
+        self.open_direct_state_trie(state_root)?
             .into_iter()
             .try_for_each(|(path, node)| -> Result<(), StoreError> {
                 let Node::Leaf(node) = node else {
@@ -648,23 +648,22 @@ impl StoreEngine for Store {
                 let storage_db = storage_trie.db();
 
                 let mut storages_to_write = Vec::new();
-                self
-                    .open_direct_storage_trie(
-                        H256::from_slice(&path.to_bytes()),
-                        account_state.storage_root,
-                    )?
-                    .into_iter()
-                    .try_for_each(|(path, node)| -> Result<(), StoreError> {
-                        let Node::Leaf(node) = node else {
-                            return Ok(());
-                        };
+                self.open_direct_storage_trie(
+                    H256::from_slice(&path.to_bytes()),
+                    account_state.storage_root,
+                )?
+                .into_iter()
+                .try_for_each(|(path, node)| -> Result<(), StoreError> {
+                    let Node::Leaf(node) = node else {
+                        return Ok(());
+                    };
 
-                        storages_to_write.push((path, node.value));
-                        if storages_to_write.len() > 100_000 {
-                            storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
-                        }
-                        Ok(())
-                    })?;
+                    storages_to_write.push((path, node.value));
+                    if storages_to_write.len() > 100_000 {
+                        storage_db.put_batch(std::mem::take(&mut storages_to_write))?;
+                    }
+                    Ok(())
+                })?;
                 storage_db.put_batch(storages_to_write)?;
 
                 nodes_to_write.push((path, node.value));

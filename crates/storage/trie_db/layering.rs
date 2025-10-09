@@ -105,7 +105,7 @@ impl TrieDB for TrieWrapper {
         let Ok(inner) = self.inner.read() else {
             return false;
         };
-        return inner.last_id > 10
+        return inner.last_id > 10;
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);
