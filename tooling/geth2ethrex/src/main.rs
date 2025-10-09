@@ -33,7 +33,6 @@ use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
 use eyre::OptionExt;
 use rocksdb::Cache;
 use rocksdb::Env;
-use rocksdb::WaitForCompactOptions;
 use rocksdb::{DBWithThreadMode, Options, SingleThreaded};
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -42,12 +41,11 @@ use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Instant;
-use tracing::debug;
 use tracing::info;
 use tracing::warn;
 use tracing_subscriber::FmtSubscriber;
 
-const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
+const BLOCK_HASH_LOOKUP_DEPTH: u64 = 256;
 static GETH_DB_PATH: LazyLock<&str> = LazyLock::new(|| Args::parse().input_dir.leak());
 static ETHREX_DB_PATH: LazyLock<&str> = LazyLock::new(|| Args::parse().output_dir.leak());
 
