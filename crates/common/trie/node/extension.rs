@@ -26,10 +26,13 @@ impl ExtensionNode {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node =
+                self.child
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree(format!(
+                        "Node with hash {:?} not found in db",
+                        self.child.compute_hash()
+                    )))?;
 
             child_node.get(db, path)
         } else {
@@ -57,10 +60,13 @@ impl ExtensionNode {
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
             // Insert into child node
-            let child_node = self
-                .child
-                .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node =
+                self.child
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree(format!(
+                        "Node with hash {:?} not found in db",
+                        self.child.compute_hash()
+                    )))?;
             let new_child_node = child_node.insert(db, path.offset(match_index), value)?;
             self.child = new_child_node.into();
             Ok(self.into())
@@ -74,7 +80,12 @@ impl ExtensionNode {
             let branch_node = if self.prefix.at(0) == 16 {
                 match new_node.get_node(db)? {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
-                    _ => return Err(TrieError::InconsistentTree),
+                    _ => {
+                        return Err(TrieError::InconsistentTree(format!(
+                            "Node with hash {:?} not found in db",
+                            new_node.compute_hash()
+                        )));
+                    }
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;
@@ -105,10 +116,13 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node =
+                self.child
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree(format!(
+                        "Node with hash {:?} not found in db",
+                        self.child.compute_hash()
+                    )))?;
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(db, path)?;
             // Restructure node based on removal
@@ -172,10 +186,13 @@ impl ExtensionNode {
         };
         // Continue to child
         if path.skip_prefix(&self.prefix) {
-            let child_node = self
-                .child
-                .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node =
+                self.child
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree(format!(
+                        "Node with hash {:?} not found in db",
+                        self.child.compute_hash()
+                    )))?;
             child_node.get_path(db, path, node_path)?;
         }
         Ok(())

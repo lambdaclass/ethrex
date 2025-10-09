@@ -331,7 +331,7 @@ impl GenServer for RLPxConnection {
                         );
                         return CastResponse::Stop;
                     }
-                    RLPxError::StoreError(StoreError::Trie(TrieError::InconsistentTree)) => {
+                    RLPxError::StoreError(StoreError::Trie(TrieError::InconsistentTree(_))) => {
                         if established_state.blockchain.is_synced() {
                             log_peer_error(
                                 &established_state.node,

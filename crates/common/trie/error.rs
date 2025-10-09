@@ -7,8 +7,8 @@ pub enum TrieError {
     RLPDecode(#[from] RLPDecodeError),
     #[error("Verification Error: {0}")]
     Verify(String),
-    #[error("Inconsistent internal tree structure")]
-    InconsistentTree,
+    #[error("Inconsistent internal tree structure {0}")]
+    InconsistentTree(String),
     #[error("Lock Error: Panicked when trying to acquire a lock")]
     LockError,
     #[error("Database error: {0}")]
