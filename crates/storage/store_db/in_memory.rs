@@ -422,7 +422,7 @@ impl StoreEngine for Store {
     fn open_storage_trie(
         &self,
         hashed_address: H256,
-        _storage_root: H256,
+        storage_root: H256,
         state_root: H256,
     ) -> Result<Trie, StoreError> {
         let store = self.inner()?;
@@ -434,7 +434,7 @@ impl StoreEngine for Store {
             db,
             prefix: Some(hashed_address),
         });
-        Ok(Trie::open(wrap_db, state_root))
+        Ok(Trie::open(wrap_db, storage_root))
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
