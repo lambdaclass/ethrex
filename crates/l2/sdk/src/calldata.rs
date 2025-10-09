@@ -248,7 +248,7 @@ impl DataType {
                     .consume_u256()?
                     .try_into()
                     .map_err(|_| CalldataDecodeError::OutOfBounds)?;
-                let size = if n % 32 == 0 {
+                let size = if n.is_multiple_of(32) {
                     n
                 } else {
                     n.next_multiple_of(32)
