@@ -537,13 +537,6 @@ impl PeerTableServer {
     }
 
     fn prune(&mut self) {
-        info!(
-            "Inflight requests per peer: {:?}",
-            self.peers
-                .iter()
-                .map(|(id, data)| format!("{}: {} - {}", id, data.requests, data.score))
-                .collect::<Vec<String>>()
-        );
         let disposable_contacts = self
             .contacts
             .iter()
