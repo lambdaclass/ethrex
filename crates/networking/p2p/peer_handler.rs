@@ -210,7 +210,7 @@ impl PeerHandler {
             }
             let peer_connection = self
                 .peer_table
-                .get_peer_connection(&SUPPORTED_ETH_CAPABILITIES)
+                .get_peer_connections(&SUPPORTED_ETH_CAPABILITIES)
                 .await?;
 
             for (peer_id, mut connection) in peer_connection {

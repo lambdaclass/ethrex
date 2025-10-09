@@ -28,6 +28,8 @@ const MAX_FIND_NODE_PER_PEER: u64 = 20;
 const SCORE_WEIGHT: i64 = 1;
 /// Weight for amount of requests being handled by the peer for the load balancing function.
 const REQUESTS_WEIGHT: i64 = 1;
+/// Max amount of ongoing requests per peer.
+const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -413,13 +415,13 @@ impl PeerTable {
     }
 
     /// Get peer channels for communication
-    pub async fn get_peer_connection(
+    pub async fn get_peer_connections(
         &mut self,
         capabilities: &[Capability],
     ) -> Result<Vec<(H256, PeerConnection)>, PeerTableError> {
         match self
             .handle
-            .call(CallMessage::GetPeerChannels {
+            .call(CallMessage::GetPeerConnections {
                 capabilities: capabilities.to_vec(),
             })
             .await?
@@ -518,10 +520,12 @@ impl PeerTableServer {
             .iter()
             // We filter only to those peers which are useful to us
             .filter_map(|(id, peer_data)| {
-                // if the peer doesn't have any of the capabilities we need, we skip it
-                if !capabilities
-                    .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+                // Skip the peer if it has too many ongoing requests or if it doesn't match
+                // the capabilities
+                if peer_data.requests > MAX_CONCURRENT_REQUESTS_PER_PEER
+                    || !capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
                 {
                     None
                 } else {
@@ -663,7 +667,7 @@ impl PeerTableServer {
             .len()
     }
 
-    fn get_peer_connection(
+    fn get_peer_connections(
         &mut self,
         capabilities: Vec<Capability>,
     ) -> Vec<(H256, PeerConnection)> {
@@ -803,7 +807,7 @@ enum CallMessage {
     },
     GetConnectedNodes,
     GetPeersWithCapabilities,
-    GetPeerChannels {
+    GetPeerConnections {
         capabilities: Vec<Capability>,
     },
     InsertIfNew {
@@ -921,8 +925,8 @@ impl GenServer for PeerTableServer {
                         .collect(),
                 ))
             }
-            CallMessage::GetPeerChannels { capabilities } => CallResponse::Reply(
-                OutMessage::PeerConnection(self.get_peer_connection(capabilities)),
+            CallMessage::GetPeerConnections { capabilities } => CallResponse::Reply(
+                OutMessage::PeerConnection(self.get_peer_connections(capabilities)),
             ),
             CallMessage::InsertIfNew { node } => CallResponse::Reply(Self::OutMsg::IsNew(
                 match self.contacts.entry(node.node_id()) {
