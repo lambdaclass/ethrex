@@ -140,7 +140,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(&block).await;
+        let chain_result = blockchain.add_block(block).await;
 
         match chain_result {
             Err(error) => {
