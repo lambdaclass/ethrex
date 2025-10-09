@@ -133,7 +133,7 @@ pub async fn archive_sync(
 /// This could be improved in the future to use an in_memory trie with async db writes
 async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Result<H256> {
     let mut storage_tasks = JoinSet::new();
-    let mut state_trie = store.open_state_trie(current_root)?;
+    let mut state_trie = store.open_direct_state_trie(current_root)?;
     for (address, dump_account) in dump.accounts.into_iter() {
         let hashed_address = dump_account
             .hashed_address
