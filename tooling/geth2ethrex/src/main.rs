@@ -20,6 +20,7 @@
 // Trie Nodes: only in statedb, with only the hash as key.
 // Bytecodes: in statedb, ['c' || code_hash ].
 use clap::Parser;
+use ethrex_common::H256;
 use ethrex_common::types::BlockHeader;
 use ethrex_common::types::BlockNumber;
 use ethrex_common::utils::keccak;
@@ -31,9 +32,11 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Node, NodeHash, Trie, TrieDB, TrieError};
 use eyre::OptionExt;
+use futures_lite::future::block_on;
 use rocksdb::Cache;
 use rocksdb::Env;
 use rocksdb::{DBWithThreadMode, Options, SingleThreaded};
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::io;
@@ -86,12 +89,12 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     ethrex_db.put_cf(
         ethrex_db.cf_handle("bodies").unwrap(),
         block_hash_rlp,
-        body_rlp,
+        &body_rlp,
     )?;
     info!("Inserting canonical hashes");
     let hashes_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
     let numbers_cf = ethrex_db.cf_handle("block_numbers").unwrap();
-    for (i, hash) in hashes.into_iter().rev().enumerate() {
+    for (i, hash) in hashes.iter().rev().enumerate() {
         let hash_rlp = hash.encode_to_vec();
         ethrex_db.put_cf(
             hashes_cf,
@@ -112,7 +115,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     )?;
 
     let mut codes = BTreeSet::new();
-    let mut storages = Vec::new();
+    let mut storages = BTreeMap::new();
     let account_triedb = gethdb.triedb()?;
     let account_trie = Trie::open(account_triedb, header.state_root);
     let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
@@ -128,7 +131,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             if state.storage_root != *EMPTY_TRIE_HASH {
                 let hashed_address = path.concat(leaf.partial).to_bytes();
                 debug_assert_eq!(hashed_address.len(), 32);
-                storages.push((hashed_address, state.storage_root));
+                storages.insert(hashed_address, state.storage_root);
             }
         }
     }
@@ -146,9 +149,9 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     }
     info!("Iterating storage tries");
     let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
-    for (hashed_address, storage_root) in storages {
+    for (hashed_address, storage_root) in &storages {
         let storage_triedb = gethdb.triedb()?;
-        let storage_trie = Trie::open(storage_triedb, storage_root);
+        let storage_trie = Trie::open(storage_triedb, *storage_root);
         for (_path, node) in storage_trie.into_iter() {
             let hash = node.compute_hash();
             let key = [&hashed_address[..], hash.as_ref()].concat();
@@ -162,6 +165,94 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     ethrex_db.compact_range(Option::<[u8; 0]>::None, Option::<[u8; 0]>::None);
     let migration_time = migration_start.elapsed().as_secs_f64();
     info!("Migration complete in {migration_time} seconds");
+
+    if cfg!(debug_assertions) {
+        // Run validations
+        info!("Running validations");
+        let store =
+            ethrex_storage::Store::new(*ETHREX_DB_PATH, ethrex_storage::EngineType::RocksDB)?;
+        info!("Validating codes");
+        for code_hash in codes {
+            let code = store
+                .get_account_code(code_hash)?
+                .expect("inserted code not found");
+            assert_eq!(code_hash, keccak(code));
+        }
+        let state_root = header.state_root;
+        info!("Validating storage tries");
+        let mut with_storage_count = 0;
+        for (hashed_address, account_state) in store
+            .iter_accounts(state_root)
+            .expect("Couldn't open state trie")
+        {
+            let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
+                store
+                    .iter_storage(state_root, hashed_address)
+                    .expect("Couldn't iterate storage trie")
+                    .expect("Missing storage root")
+                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+            );
+            with_storage_count += (account_state.storage_root != *EMPTY_TRIE_HASH) as usize;
+            assert_eq!(account_state.storage_root, computed_storage_root);
+            assert_eq!(
+                storages
+                    .get(&hashed_address.0[..])
+                    .copied()
+                    .unwrap_or(*EMPTY_TRIE_HASH),
+                computed_storage_root
+            );
+        }
+        assert_eq!(storages.len(), with_storage_count);
+        info!("Validating state trie");
+        let computed_state_root = Trie::compute_hash_from_unsorted_iter(
+            store
+                .iter_accounts(state_root)
+                .expect("Couldn't iterate state trie")
+                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
+        );
+        assert_eq!(state_root, computed_state_root);
+        info!("Validating latest block");
+
+        assert_eq!(
+            block_on(store.get_latest_block_number()).unwrap(),
+            block_number
+        );
+        assert_eq!(
+            block_on(store.get_latest_canonical_block_hash())
+                .unwrap()
+                .unwrap(),
+            block_hash.into(),
+        );
+        assert_eq!(
+            store.get_block_header(block_number).unwrap().unwrap(),
+            header
+        );
+        assert_eq!(
+            block_on(store.get_block_body(block_number))
+                .unwrap()
+                .unwrap()
+                .encode_to_vec(),
+            body_rlp
+        );
+        for (block_offset, block_hash) in hashes.iter().rev().enumerate() {
+            let block_number = block_number - (block_offset as u64);
+            let block_hash = H256::from_slice(block_hash);
+            assert_eq!(
+                block_on(store.get_block_number(block_hash))
+                    .unwrap()
+                    .unwrap(),
+                block_number
+            );
+            assert_eq!(
+                block_on(store.get_canonical_block_hash(block_number))
+                    .unwrap()
+                    .unwrap(),
+                block_hash
+            );
+        }
+        info!("Validations finished successfully")
+    }
+
     Ok(())
 }
 
