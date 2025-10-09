@@ -8,9 +8,9 @@ use ethrex_common::types::Genesis;
 use ethrex_common::{Bytes, types::ChainConfig};
 use ethrex_common::{H256, H512, U256};
 use ethrex_config::networks::Network;
-use ethrex_p2p::kademlia;
 use ethrex_p2p::rlpx::snap::GetAccountRange;
 use ethrex_p2p::utils::public_key_from_signing_key;
+use ethrex_p2p::{kademlia, rlpx::snap::AccountRange};
 use ethrex_p2p::{
     kademlia::Kademlia,
     rlpx::{
@@ -206,6 +206,14 @@ fn print_storage_ranges(storage_ranges: StorageRanges) -> H256 {
     return storage_ranges.slots.last().unwrap().last().unwrap().hash;
 }
 
+fn print_account_range(account_range: AccountRange) -> H256 {
+    println!("{:?}", account_range.proof.len());
+    println!("{:?}", account_range.accounts.len());
+    println!("{:x?}", account_range.accounts);
+    //println!("{storage_ranges:x?}")
+    return H256::repeat_byte(0xff);
+}
+
 #[tokio::main]
 async fn main() -> Result<(), ConsoleError> {
     let opts = Options::parse();
@@ -237,20 +245,25 @@ async fn main() -> Result<(), ConsoleError> {
 
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let gtn = GetStorageRanges {
+        let gtn = GetAccountRange {
             id: 0,
             root_hash: opts.state_root,
-            account_hashes: vec![sai_account],
-            starting_hash,
-            limit_hash,
-            response_bytes: MAX_RESPONSE_BYTES,
+            starting_hash: H256::from_str(
+                "68a73ec5edb9a12d2bcac9a1d2050818e75c199937aecc159340c12ff97e41d0",
+            )
+            .unwrap(),
+            limit_hash: H256::from_str(
+                "68a73ec5edb9a12d2bcac9a1d2050818e75c199937aecc159340c12ff97e41d0",
+            )
+            .unwrap(),
+            response_bytes: 4000,
         };
 
         info!("Sending the gtn {gtn:x?}");
 
         peer_channel
             .connection
-            .cast(CastMessage::BackendMessage(Message::GetStorageRanges(gtn)))
+            .cast(CastMessage::BackendMessage(Message::GetAccountRange(gtn)))
             .await?;
 
         let mut receiver = peer_channel.receiver.lock().await;
@@ -258,6 +271,7 @@ async fn main() -> Result<(), ConsoleError> {
         starting_hash = match receiver.recv().await {
             Some(Message::TrieNodes(nodes)) => print_trie_nodes(nodes),
             Some(Message::StorageRanges(ranges)) => print_storage_ranges(ranges),
+            Some(Message::AccountRange(range)) => print_account_range(range),
             _ => {
                 error!("We received a random message");
                 break;
