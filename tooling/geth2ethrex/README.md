@@ -9,6 +9,8 @@ The most efficient way to sync Geth to an arbitrary block is by full-syncing and
 ```shell
 # This syncs to post-merge mainnet.
 # You'll need to fetch the right block's hash, this one is taken from Etherscan.
+# Target for Sepolia: 0xa8958f18de8705a0c04dfc7b64c0a7dc38b19bd7517a3030fff7cf077f3f33bc
+# Target for Mainnet: 0xe37e1a183a3d1c7234d090bfb7196081635919c26f2e65c67c106513158a7db4
 geth --state.scheme=hash --syncmode=full --exitwhensynced=true --mainnet --synctarget=0xe37e1a183a3d1c7234d090bfb7196081635919c26f2e65c67c106513158a7db4
 ```
 
