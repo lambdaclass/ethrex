@@ -2,7 +2,7 @@ use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
-use crate::{api::StoreEngine, trie_db::layering::apply_prefix};
+use crate::{api::StoreEngine, apply_prefix};
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -536,6 +536,7 @@ impl Store {
         }
         let (state_root, state_nodes) = genesis_state_trie.collect_changes_since_last_hash();
 
+        // TODO: replace this with a Store method
         genesis_state_trie.db().put_batch(
             nodes
                 .into_iter()
@@ -1088,11 +1089,11 @@ impl Store {
         Ok(nodes)
     }
 
-    pub fn get_receipts_for_block(
+    pub async fn get_receipts_for_block(
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
-        self.engine.get_receipts_for_block(block_hash)
+        self.engine.get_receipts_for_block(block_hash).await
     }
 
     /// Creates a new state trie with an empty state root, for testing purposes only
@@ -1290,6 +1291,8 @@ impl Store {
             .is_some_and(|h| h == block_hash))
     }
 
+    /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
+    /// For updating the state after block execution, use [`Self::store_block_updates`].
     pub async fn write_storage_trie_nodes_batch(
         &self,
         storage_trie_nodes: StorageTrieNodes,
