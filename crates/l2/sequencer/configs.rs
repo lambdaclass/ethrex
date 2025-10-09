@@ -65,6 +65,7 @@ pub struct ProofCoordinatorConfig {
     pub signer: Signer,
     pub validium: bool,
     pub tdx_private_key: Option<SecretKey>,
+    pub qpl_tool_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]

@@ -39,7 +39,6 @@ use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
-    sync::Mutex,
 };
 use tokio_util::codec::Framed;
 
@@ -123,7 +122,7 @@ pub(crate) async fn perform(
     Ok((
         Established {
             signer: context.signer,
-            sink: Arc::new(Mutex::new(sink)),
+            sink,
             node: node.clone(),
             storage: context.storage.clone(),
             blockchain: context.blockchain.clone(),
@@ -134,7 +133,7 @@ pub(crate) async fn perform(
             requested_pooled_txs: HashMap::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
-            table: context.table.clone(),
+            peer_table: context.table.clone(),
             backend_channel: None,
             _inbound: inbound,
             l2_state: context
@@ -458,7 +457,7 @@ fn retrieve_remote_ephemeral_key(
 ) -> Result<PublicKey, RLPxError> {
     let signature_prehash = shared_secret ^ remote_nonce;
     let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
-    let rid = RecoveryId::from_i32(signature[64].into())?;
+    let rid = RecoveryId::try_from(Into::<i32>::into(signature[64]))?;
     let sig = RecoverableSignature::from_compact(&signature[0..64], rid)?;
     Ok(secp256k1::SECP256K1.recover_ecdsa(&msg, &sig)?)
 }
@@ -474,8 +473,7 @@ fn sign_shared_secret(
     let (rid, signature) = sig.serialize_compact();
     let mut signature_bytes = [0; 65];
     signature_bytes[..64].copy_from_slice(&signature);
-    signature_bytes[64] = rid
-        .to_i32()
+    signature_bytes[64] = Into::<i32>::into(rid)
         .try_into()
         .map_err(|_| RLPxError::CryptographyError("Invalid recovery id".into()))?;
     Ok(signature_bytes.into())
