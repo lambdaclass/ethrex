@@ -418,11 +418,16 @@ impl GenServer for PeerConnectionServer {
                         }
                     }
                     _ => {
+                        let client_id = established_state
+                            .node
+                            .version
+                            .clone()
+                            .unwrap_or("-".to_string());
                         log_peer_warn(
                             &established_state.node,
                             &format!(
                                 "Error handling cast message: {e}, for client: {} with capabilities {:?}",
-                                established_state.client_version, established_state.capabilities
+                                client_id, established_state.capabilities
                             ),
                         );
                     }
