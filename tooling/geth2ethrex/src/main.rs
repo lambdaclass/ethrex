@@ -121,7 +121,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     info!("Iterating account trie");
     for (path, node) in account_trie.into_iter() {
         let hash = node.compute_hash();
-        ethrex_db.put_cf(account_trie_cf, hash.encode_to_vec(), node.encode_to_vec())?;
+        ethrex_db.put_cf(account_trie_cf, hash, node.encode_to_vec())?;
         if let Node::Leaf(leaf) = node {
             let state = AccountState::decode(&leaf.value)?;
             if state.code_hash != *EMPTY_KECCACK_HASH {
