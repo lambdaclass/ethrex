@@ -242,15 +242,17 @@ impl Store {
                 "Cannot remove genesis block".to_string(),
             ));
         }
-        let mut latest_header = self
-            .latest_block_header
-            .write()
-            .map_err(|_| StoreError::LockError)?;
+        {
+            let mut latest_header = self
+                .latest_block_header
+                .write()
+                .map_err(|_| StoreError::LockError)?;
 
-        *latest_header = self
-            .engine
-            .get_block_header(latest_header.number - 1)?
-            .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
+            *latest_header = self
+                .engine
+                .get_block_header(latest_header.number - 1)?
+                .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
+        }
 
         self.engine.remove_block(block_number).await?;
         Ok(())
