@@ -160,10 +160,10 @@ where
         return Ok(*EMPTY_TRIE_HASH);
     };
     // TODO: check
-    let _ = db.put(
-        Nibbles::from_bytes(initial_value.0.0.as_ref()),
-        initial_value.1.clone(),
-    );
+    // let _ = db.put(
+    //     Nibbles::from_bytes(initial_value.0.0.as_ref()),
+    //     initial_value.1.clone(),
+    // );
     let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
@@ -174,10 +174,10 @@ where
     let mut right_side_opt: Option<(H256, Vec<u8>)> = data_iter.next();
 
     while let Some(right_side) = right_side_opt {
-        let _ = db.put(
-            Nibbles::from_bytes(right_side.0.0.as_ref()),
-            right_side.1.clone(),
-        );
+        // let _ = db.put(
+        //     Nibbles::from_bytes(right_side.0.0.as_ref()),
+        //     right_side.1.clone(),
+        // );
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
             let buffer_sender = buffer_sender.clone();
             scope.execute_priority(Box::new(move || {
