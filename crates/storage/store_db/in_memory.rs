@@ -733,6 +733,11 @@ impl StoreEngine for Store {
                 Ok(())
             })?;
         db.put_batch(nodes_to_write)?;
+        self.inner()?
+            .trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)?
+            .snapshot_completed = true;
         Ok(())
     }
 }

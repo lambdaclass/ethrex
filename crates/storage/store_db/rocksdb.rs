@@ -142,6 +142,10 @@ fn get_cf_opts(cf_opts: &mut Options, name: &str) {
             cf_opts.set_block_based_table_factory(&block_opts);
         }
         CF_TRIE_NODES => {
+            cf_opts.set_allow_ingest_behind(true);
+            cf_opts.set_compaction_style(DBCompactionStyle::Universal);
+            cf_opts.set_num_levels(40);
+
             cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
             cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
             cf_opts.set_max_write_buffer_number(6);
@@ -188,8 +192,10 @@ fn set_database_opts(db_options: &mut Options) {
     db_options.create_if_missing(true);
     db_options.create_missing_column_families(true);
 
+    // Needed for insert_behind
     db_options.set_allow_ingest_behind(true);
     db_options.set_compaction_style(DBCompactionStyle::Universal);
+    db_options.set_num_levels(40);
 
     db_options.set_max_open_files(-1);
     db_options.set_max_file_opening_threads(16);
@@ -1525,6 +1531,7 @@ impl StoreEngine for Store {
                     })?;
                 Ok(())
             })?;
+        sst.finish()?;
         let mut ingest_opts = IngestExternalFileOptions::default();
         ingest_opts.set_move_files(true);
         ingest_opts.set_ingest_behind(true);
@@ -1534,6 +1541,10 @@ impl StoreEngine for Store {
             .ok_or(StoreError::Custom("missing cf: CF_TRIE_NODES".to_string()))?;
         self.db
             .ingest_external_file_cf_opts(&cf_trie, &ingest_opts, vec![path])?;
+        self.trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)?
+            .snapshot_completed = true;
         Ok(())
     }
 }

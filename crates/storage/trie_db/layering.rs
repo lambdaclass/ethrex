@@ -20,6 +20,7 @@ pub struct TrieLayerCache {
     /// TODO: this implementation panics on overflow
     last_id: usize,
     layers: HashMap<H256, TrieLayer>,
+    pub(crate) snapshot_completed: bool
 }
 
 impl TrieLayerCache {
@@ -101,11 +102,11 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 }
 
 impl TrieDB for TrieWrapper {
-    fn leaves_present(&self) -> bool {
+    fn snapshot_completed(&self) -> bool {
         let Ok(inner) = self.inner.read() else {
             return false;
         };
-        return inner.last_id > 10;
+        return inner.snapshot_completed;
     }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let key = apply_prefix(self.prefix, key);

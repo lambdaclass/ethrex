@@ -100,7 +100,7 @@ impl Trie {
 
         if pathrlp.len() == 32
             && !self.pending_removal.contains(&path)
-            && self.db().leaves_present()
+            && self.db().snapshot_completed()
         {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);

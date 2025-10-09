@@ -1071,8 +1071,18 @@ impl Syncer {
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
-        info!("Generating snapshot...");
-        store.generate_snapshot(pivot_header.state_root).await?;
+        info!("Started snapshot generation in the background");
+        let store_clone = store.clone();
+        let state_root = pivot_header.state_root;
+        std::thread::spawn(move || {
+            spawned_rt::tasks::block_on(async move {
+                if let Err(err) = store_clone.generate_snapshot(state_root).await {
+                    error!("Failed to generate snapshot. {err}");
+                } else {
+                    info!("Snapshot generation complete.");
+                }
+            });
+        });
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
