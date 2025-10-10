@@ -12,6 +12,7 @@ use crate::rlpx::{
 
 // Request Processing
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub async fn process_account_range_request(
     request: GetAccountRange,
     store: Store,
@@ -43,6 +44,7 @@ pub async fn process_account_range_request(
     .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub async fn process_storage_ranges_request(
     request: GetStorageRanges,
     store: Store,
@@ -105,6 +107,7 @@ pub async fn process_storage_ranges_request(
     .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn process_byte_codes_request(
     request: GetByteCodes,
     store: Store,
@@ -126,6 +129,7 @@ pub fn process_byte_codes_request(
     })
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub async fn process_trie_nodes_request(
     request: GetTrieNodes,
     store: Store,

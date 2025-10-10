@@ -49,7 +49,7 @@ async fn server_shutdown(
 }
 
 #[tokio::main]
-#[cfg_attr(feature = "hotpath", hotpath::main(percentiles = [95]))]
+#[cfg_attr(feature = "hotpath", hotpath::main(percentiles = [99]))]
 async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 

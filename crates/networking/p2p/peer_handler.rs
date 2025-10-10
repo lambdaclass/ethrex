@@ -169,6 +169,7 @@ impl PeerHandler {
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_block_headers(
         &mut self,
         start: u64,
@@ -423,6 +424,7 @@ impl PeerHandler {
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// - No peer returned a valid response in the given time and retry limits
     ///   Since request_block_headers brought problems in cases of reorg seen in this pr https://github.com/lambdaclass/ethrex/pull/4028, we have this other function to request block headers only for full sync.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_block_headers_from_hash(
         &mut self,
         start: H256,
@@ -490,6 +492,7 @@ impl PeerHandler {
     /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
     ///
     /// If it fails, returns an error message.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn download_chunk_from_peer(
         peer_id: H256,
         peer_channel: &mut PeerChannels,
@@ -544,6 +547,7 @@ impl PeerHandler {
     /// Returns the block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - The requested peer did not return a valid response in the given time limit
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn request_block_bodies_inner(
         &mut self,
         block_hashes: &[H256],
@@ -608,6 +612,7 @@ impl PeerHandler {
     /// Returns the block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_block_bodies(
         &mut self,
         block_hashes: &[H256],
@@ -625,6 +630,7 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_and_validate_block_bodies(
         &mut self,
         block_headers: &[BlockHeader],
@@ -662,6 +668,7 @@ impl PeerHandler {
     /// Returns the lists of receipts or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_receipts(
         &mut self,
         block_hashes: Vec<H256>,
@@ -731,6 +738,7 @@ impl PeerHandler {
     ///
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_account_range(
         &mut self,
         start: H256,
@@ -947,6 +955,7 @@ impl PeerHandler {
     }
 
     #[allow(clippy::type_complexity)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn request_account_range_worker(
         free_peer_id: H256,
         chunk_start: H256,
@@ -1067,6 +1076,7 @@ impl PeerHandler {
     /// Returns the bytecodes or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_bytecodes(
         &mut self,
         all_bytecode_hashes: &[H256],
@@ -1265,6 +1275,7 @@ impl PeerHandler {
     /// Returns the list of hashed storage keys and values for each account's storage or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_storage_ranges(
         &mut self,
         account_storage_roots: &mut AccountStorageRoots,
@@ -1752,6 +1763,7 @@ impl PeerHandler {
         Ok(chunk_index + 1)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn request_storage_ranges_worker(
         task: StorageTask,
         free_peer_id: H256,
@@ -1920,6 +1932,7 @@ impl PeerHandler {
         Ok::<(), PeerHandlerError>(())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_state_trienodes(
         peer_channel: &mut PeerChannels,
         state_root: H256,
@@ -1967,6 +1980,7 @@ impl PeerHandler {
     /// Returns the nodes or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn request_storage_trienodes(
         peer_channel: &mut PeerChannels,
         get_trie_nodes: GetTrieNodes,
@@ -1981,6 +1995,7 @@ impl PeerHandler {
     }
 
     /// Returns the PeerData for each connected Peer
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn read_connected_peers(&mut self) -> Vec<PeerData> {
         self.peer_table
             .get_peers_data()
@@ -1989,10 +2004,12 @@ impl PeerHandler {
             .unwrap_or(Vec::new())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn count_total_peers(&mut self) -> Result<usize, PeerHandlerError> {
         Ok(self.peer_table.peer_count().await?)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_block_header(
         &self,
         peer_channel: &mut PeerChannels,
@@ -2052,6 +2069,7 @@ impl PeerHandler {
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header
 /// matches the hash of the previous one, i.e. the headers are chained
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
     block_headers.windows(2).all(|headers| match order {
         BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),

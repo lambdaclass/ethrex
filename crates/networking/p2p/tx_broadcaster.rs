@@ -160,6 +160,7 @@ impl TxBroadcaster {
         }
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
         debug!(total = self.known_txs.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id), "Adding transactions to known list");
 
@@ -176,6 +177,7 @@ impl TxBroadcaster {
         }
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn broadcast_txs(&mut self) -> Result<(), TxBroadcasterError> {
         let txs_to_broadcast = self
             .blockchain
@@ -247,6 +249,7 @@ impl TxBroadcaster {
         Ok(())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn send_tx_hashes(
         &mut self,
         txs: Vec<MempoolTransaction>,
@@ -278,6 +281,7 @@ impl TxBroadcaster {
     }
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub async fn send_tx_hashes(
     txs: Vec<MempoolTransaction>,
     capabilities: Vec<Capability>,
@@ -314,6 +318,7 @@ impl GenServer for TxBroadcaster {
     type OutMsg = OutMessage;
     type Error = TxBroadcasterError;
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,

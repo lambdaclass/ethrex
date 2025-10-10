@@ -164,6 +164,7 @@ impl Syncer {
     }
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
@@ -177,6 +178,7 @@ impl Syncer {
     }
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn sync_cycle_snap(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         let mut sync_mode = SyncMode::Snap;

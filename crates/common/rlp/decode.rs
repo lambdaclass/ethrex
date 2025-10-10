@@ -44,6 +44,7 @@ impl RLPDecode for bool {
 }
 
 impl RLPDecode for u8 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let first_byte = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
         match first_byte {
@@ -72,6 +73,7 @@ impl RLPDecode for u8 {
 }
 
 impl RLPDecode for u16 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
         let padded_bytes = static_left_pad(bytes)?;
@@ -80,6 +82,7 @@ impl RLPDecode for u16 {
 }
 
 impl RLPDecode for u32 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
         let padded_bytes = static_left_pad(bytes)?;
@@ -88,6 +91,7 @@ impl RLPDecode for u32 {
 }
 
 impl RLPDecode for u64 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
         let padded_bytes = static_left_pad(bytes)?;
@@ -96,6 +100,7 @@ impl RLPDecode for u64 {
 }
 
 impl RLPDecode for usize {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
         let padded_bytes = static_left_pad(bytes)?;
@@ -104,6 +109,7 @@ impl RLPDecode for usize {
 }
 
 impl RLPDecode for u128 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
         let padded_bytes = static_left_pad(bytes)?;
@@ -115,6 +121,7 @@ impl RLPDecode for u128 {
 // you should use the Vec<T> implementation (for elements of the same type),
 // or use the decode implementation for tuples (for elements of different types)
 impl<const N: usize> RLPDecode for [u8; N] {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (decoded_bytes, rest) = decode_bytes(rlp)?;
         let value = decoded_bytes
@@ -126,6 +133,7 @@ impl<const N: usize> RLPDecode for [u8; N] {
 }
 
 impl RLPDecode for Bytes {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (decoded, rest) = decode_bytes(rlp)?;
         Ok((Bytes::copy_from_slice(decoded), rest))
@@ -133,6 +141,7 @@ impl RLPDecode for Bytes {
 }
 
 impl RLPDecode for BytesMut {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (decoded, rest) = decode_bytes(rlp)?;
         Ok((BytesMut::from(decoded), rest))
@@ -140,6 +149,7 @@ impl RLPDecode for BytesMut {
 }
 
 impl RLPDecode for H32 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((H32(value), rest))
@@ -147,6 +157,7 @@ impl RLPDecode for H32 {
 }
 
 impl RLPDecode for H64 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((H64(value), rest))
@@ -154,6 +165,7 @@ impl RLPDecode for H64 {
 }
 
 impl RLPDecode for H128 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((H128(value), rest))
@@ -161,6 +173,7 @@ impl RLPDecode for H128 {
 }
 
 impl RLPDecode for H256 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((H256(value), rest))
@@ -168,6 +181,7 @@ impl RLPDecode for H256 {
 }
 
 impl RLPDecode for H264 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((H264(value), rest))
@@ -175,6 +189,7 @@ impl RLPDecode for H264 {
 }
 
 impl RLPDecode for Address {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((H160(value), rest))
@@ -182,6 +197,7 @@ impl RLPDecode for Address {
 }
 
 impl RLPDecode for H512 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((H512(value), rest))
@@ -189,6 +205,7 @@ impl RLPDecode for H512 {
 }
 
 impl RLPDecode for Signature {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((H520(value), rest))
@@ -196,6 +213,7 @@ impl RLPDecode for Signature {
 }
 
 impl RLPDecode for U256 {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
         let padded_bytes: [u8; 32] = static_left_pad(bytes)?;
@@ -204,6 +222,7 @@ impl RLPDecode for U256 {
 }
 
 impl RLPDecode for Bloom {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
         Ok((Bloom(value), rest))
@@ -211,6 +230,7 @@ impl RLPDecode for Bloom {
 }
 
 impl RLPDecode for String {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (str_bytes, rest) = decode_bytes(rlp)?;
         let value =
@@ -220,6 +240,7 @@ impl RLPDecode for String {
 }
 
 impl RLPDecode for Ipv4Addr {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (ip_bytes, rest) = decode_bytes(rlp)?;
         let octets: [u8; 4] = ip_bytes
@@ -230,6 +251,7 @@ impl RLPDecode for Ipv4Addr {
 }
 
 impl RLPDecode for Ipv6Addr {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (ip_bytes, rest) = decode_bytes(rlp)?;
         let octets: [u8; 16] = ip_bytes
@@ -240,6 +262,7 @@ impl RLPDecode for Ipv6Addr {
 }
 
 impl RLPDecode for IpAddr {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (ip_bytes, rest) = decode_bytes(rlp)?;
 
@@ -266,6 +289,7 @@ impl RLPDecode for IpAddr {
 // If you need to decode a slice of bytes, you should decode it via the
 // [u8; N] implementation or similar (Bytes, BytesMut, etc).
 impl<T: RLPDecode> RLPDecode for Vec<T> {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         if rlp.is_empty() {
             return Err(RLPDecodeError::InvalidLength);
@@ -294,6 +318,7 @@ impl<T: RLPDecode> RLPDecode for Vec<T> {
 }
 
 impl<T1: RLPDecode, T2: RLPDecode> RLPDecode for (T1, T2) {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         if rlp.is_empty() {
             return Err(RLPDecodeError::InvalidLength);
@@ -317,6 +342,7 @@ impl<T1: RLPDecode, T2: RLPDecode> RLPDecode for (T1, T2) {
 }
 
 impl<T1: RLPDecode, T2: RLPDecode, T3: RLPDecode> RLPDecode for (T1, T2, T3) {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         if rlp.is_empty() {
             return Err(RLPDecodeError::InvalidLength);
@@ -340,6 +366,7 @@ impl<T1: RLPDecode, T2: RLPDecode, T3: RLPDecode> RLPDecode for (T1, T2, T3) {
 // This implementation is useful when the message is a list with elements of mixed types
 // for example, the P2P message 'GetBlockHeaders', mixes hashes and numbers.
 impl<T1: RLPDecode, T2: RLPDecode, T3: RLPDecode, T4: RLPDecode> RLPDecode for (T1, T2, T3, T4) {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         if rlp.is_empty() {
             return Err(RLPDecodeError::InvalidLength);
@@ -366,6 +393,7 @@ impl<T1: RLPDecode, T2: RLPDecode, T3: RLPDecode, T4: RLPDecode> RLPDecode for (
 /// - A boolean indicating if the item is a list or not.
 /// - The payload of the item, without its prefix.
 /// - The remaining bytes after the item.
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeError> {
     if data.is_empty() {
         return Err(RLPDecodeError::InvalidLength);
@@ -431,6 +459,7 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
 /// It returns a 2-element tuple with the following elements:
 /// - The payload of the item, including its prefix.
 /// - The remaining bytes after the item.
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
     if data.is_empty() {
         return Err(RLPDecodeError::InvalidLength);
@@ -487,12 +516,14 @@ pub fn get_item_with_prefix(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeErro
     }
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn is_encoded_as_bytes(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
     let prefix = rlp.first().ok_or(RLPDecodeError::MalformedData)?;
     Ok((0xb8..=0xbf).contains(prefix))
 }
 
 /// Receives an RLP bytes item (prefix between 0xb8 and 0xbf) and returns its payload
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
     let prefix = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
     let offset: usize = (prefix - 0xb8 + 1).into();
@@ -503,6 +534,7 @@ pub fn get_rlp_bytes_item_payload(rlp: &[u8]) -> Result<&[u8], RLPDecodeError> {
 /// It returns a 2-element tuple with the following elements:
 /// - The payload of the item.
 /// - The remaining bytes after the item.
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
     let (is_list, payload, rest) = decode_rlp_item(data)?;
     if is_list {

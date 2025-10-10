@@ -234,6 +234,7 @@ impl PeerTableHandle {
     }
 
     /// Record ping sent, store the ping hash for later check
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn record_ping_sent(
         &mut self,
         node_id: &H256,
@@ -249,6 +250,7 @@ impl PeerTableHandle {
     }
 
     /// Record a pong received. Check previously saved hash and reset it if it matches
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn record_pong_received(
         &mut self,
         node_id: &H256,
@@ -264,6 +266,7 @@ impl PeerTableHandle {
     }
 
     /// Set peer as disposable
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn set_disposable(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.0
             .cast(CastMessage::SetDisposable { node_id: *node_id })
@@ -272,6 +275,7 @@ impl PeerTableHandle {
     }
 
     /// Increment FindNode message counter for peer
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn increment_find_node_sent(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.0
             .cast(CastMessage::IncrementFindNodeSent { node_id: *node_id })
@@ -280,6 +284,7 @@ impl PeerTableHandle {
     }
 
     /// Set flag for peer that tells that it knows us
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn knows_us(&mut self, node_id: &H256) -> Result<(), PeerTableError> {
         self.0
             .cast(CastMessage::KnowsUs { node_id: *node_id })
@@ -288,12 +293,14 @@ impl PeerTableHandle {
     }
 
     /// Remove from list of contacts the ones marked as disposable
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn prune(&mut self) -> Result<(), PeerTableError> {
         self.0.cast(CastMessage::Prune).await?;
         Ok(())
     }
 
     /// Return the amount of connected peers
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn peer_count(&mut self) -> Result<usize, PeerTableError> {
         match self.0.call(CallMessage::PeerCount).await? {
             OutMessage::PeerCount(peer_count) => Ok(peer_count),
@@ -302,6 +309,7 @@ impl PeerTableHandle {
     }
 
     /// Return the amount of connected peers that matches any of the given capabilities
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn peer_count_by_capabilities(
         &mut self,
         capabilities: &[Capability],
@@ -319,6 +327,7 @@ impl PeerTableHandle {
     }
 
     /// Remove the "in use" mark for all peers
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn free_peers(&mut self) -> Result<usize, PeerTableError> {
         match self.0.call(CallMessage::FreePeers).await? {
             OutMessage::PeerCount(result) => Ok(result),
@@ -327,6 +336,7 @@ impl PeerTableHandle {
     }
 
     /// Check if target number of contacts and connected peers is reached
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn target_reached(
         &mut self,
         target_contacts: usize,
@@ -346,6 +356,7 @@ impl PeerTableHandle {
     }
 
     /// Get all contacts available to initiate a connection
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_contacts_to_initiate(
         &mut self,
         amount: usize,
@@ -361,6 +372,7 @@ impl PeerTableHandle {
     }
 
     /// Get all contacts available for lookup
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_contacts_for_lookup(&mut self) -> Result<Vec<Contact>, PeerTableError> {
         match self.0.call(CallMessage::GetContactsForLookup).await? {
             OutMessage::Contacts(contacts) => Ok(contacts),
@@ -369,6 +381,7 @@ impl PeerTableHandle {
     }
 
     /// Get all contacts available to revalidate
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_contacts_to_revalidate(
         &mut self,
         revalidation_interval: Duration,
@@ -384,6 +397,7 @@ impl PeerTableHandle {
     }
 
     /// Returns the peer with the highest score and its peer channel.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_best_peer(
         &mut self,
         capabilities: &[Capability],
@@ -405,6 +419,7 @@ impl PeerTableHandle {
     }
 
     /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn use_best_peer(
         &mut self,
         capabilities: &[Capability],
@@ -426,6 +441,7 @@ impl PeerTableHandle {
     }
 
     /// Get peer score
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_score(&mut self, node_id: &H256) -> Result<i64, PeerTableError> {
         match self
             .0
@@ -438,6 +454,7 @@ impl PeerTableHandle {
     }
 
     /// Get list of connected peers
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_connected_nodes(&mut self) -> Result<Vec<Node>, PeerTableError> {
         if let OutMessage::Nodes(nodes) = self.0.call(CallMessage::GetConnectedNodes).await? {
             Ok(nodes)
@@ -447,6 +464,7 @@ impl PeerTableHandle {
     }
 
     /// Get list of connected peers with their capabilities
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_peers_with_capabilities(
         &mut self,
     ) -> Result<Vec<(H256, PeerChannels, Vec<Capability>)>, PeerTableError> {
@@ -459,6 +477,7 @@ impl PeerTableHandle {
     }
 
     /// Get peer channels for communication
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_peer_channels(
         &mut self,
         capabilities: &[Capability],
@@ -476,6 +495,7 @@ impl PeerTableHandle {
     }
 
     /// Insert new peer if it is new. Returns a boolean telling if it was new or not.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn insert_if_new(&mut self, node: &Node) -> Result<bool, PeerTableError> {
         match self
             .0
@@ -488,6 +508,7 @@ impl PeerTableHandle {
     }
 
     /// Validate a contact
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn validate_contact(
         &mut self,
         node_id: &H256,
@@ -503,6 +524,7 @@ impl PeerTableHandle {
     }
 
     /// Get closest nodes according to kademlia's distance
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_closest_nodes(&mut self, node_id: &H256) -> Result<Vec<Node>, PeerTableError> {
         match self
             .0
@@ -515,6 +537,7 @@ impl PeerTableHandle {
     }
 
     /// Get metadata associated to peer
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_peers_data(&mut self) -> Result<Vec<PeerData>, PeerTableError> {
         match self.0.call(CallMessage::GetPeersData).await? {
             OutMessage::PeersData(peers_data) => Ok(peers_data),
@@ -523,6 +546,7 @@ impl PeerTableHandle {
     }
 
     /// Retrieve a random peer.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_random_peer(
         &mut self,
         capabilities: &[Capability],
@@ -559,6 +583,7 @@ impl PeerTable {
 
     // Internal functions //
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerChannels)> {
         self.peers
             .iter()
@@ -588,6 +613,7 @@ impl PeerTable {
     }
 
     /// Returns the peer with the highest score and its peer channel, and marks it as used, if found.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn use_best_peer(&mut self, capabilities: &[Capability]) -> Option<(H256, PeerChannels)> {
         let (peer_id, peer_channel) = self.get_best_peer(capabilities)?;
 
@@ -598,6 +624,7 @@ impl PeerTable {
         Some((peer_id, peer_channel))
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn prune(&mut self) {
         let disposable_contacts = self
             .contacts
@@ -611,6 +638,7 @@ impl PeerTable {
         }
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_contacts_to_initiate(&mut self, max_amount: usize) -> Vec<Contact> {
         let mut contacts = Vec::new();
         let mut tried_connections = 0;
@@ -641,6 +669,7 @@ impl PeerTable {
         contacts
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_contacts_for_lookup(&mut self) -> Vec<Contact> {
         self.contacts
             .values()
@@ -649,6 +678,7 @@ impl PeerTable {
             .collect()
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_contacts_to_revalidate(&mut self, revalidation_interval: Duration) -> Vec<Contact> {
         self.contacts
             .values()
@@ -657,6 +687,7 @@ impl PeerTable {
             .collect()
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn validate_contact(&mut self, node_id: H256, sender_ip: IpAddr) -> OutMessage {
         let Some(contact) = self.contacts.get(&node_id) else {
             return OutMessage::UnknownContact;
@@ -675,6 +706,7 @@ impl PeerTable {
         OutMessage::ValidContact(contact.clone())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_closest_nodes(&mut self, node_id: H256) -> Vec<Node> {
         let mut nodes: Vec<(Node, usize)> = vec![];
 
@@ -694,6 +726,7 @@ impl PeerTable {
         nodes.into_iter().map(|(node, _distance)| node).collect()
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     async fn new_contacts(&mut self, nodes: Vec<Node>, local_node_id: H256) {
         for node in nodes {
             let node_id = node.node_id();
@@ -707,6 +740,7 @@ impl PeerTable {
         }
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn peer_count_by_capabilities(&mut self, capabilities: Vec<Capability>) -> usize {
         self.peers
             .iter()
@@ -725,6 +759,7 @@ impl PeerTable {
             .len()
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_peer_channels(&mut self, capabilities: Vec<Capability>) -> Vec<(H256, PeerChannels)> {
         self.peers
             .iter()
@@ -744,6 +779,7 @@ impl PeerTable {
             .collect()
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_random_peer(&mut self, capabilities: Vec<Capability>) -> Option<(H256, PeerChannels)> {
         let peers: Vec<(H256, PeerChannels)> = self
             .peers
@@ -765,11 +801,13 @@ impl PeerTable {
         peers.choose(&mut rand::rngs::OsRng).cloned()
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
         let xor = node_id_1 ^ node_id_2;
         let distance = U256::from_big_endian(xor.as_bytes());
         distance.bits().saturating_sub(1)
     }
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
         let sent_ping_ttl = Duration::from_secs(30);

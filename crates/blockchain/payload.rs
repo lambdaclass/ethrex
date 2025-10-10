@@ -117,6 +117,7 @@ impl BuildPayloadArgs {
 
 /// Creates a new payload based on the payload arguments
 // Basic payload block building, can and should be improved
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn create_payload(
     args: &BuildPayloadArgs,
     storage: &Store,
@@ -181,6 +182,7 @@ pub fn create_payload(
     Ok(Block::new(header, body))
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
     // TODO: check where we should get builder values from
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
