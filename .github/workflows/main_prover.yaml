@@ -51,7 +51,7 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          PROVER=sp1 G=true make build-prover
+          make build-prover-sp1 GPU=true
 
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -65,7 +65,7 @@ jobs:
           cd crates/l2
           DOCKER_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
+          ETHREX_L2_SP1=true \
           docker compose up --build contract_deployer
 
       - name: Ensure admin permissions in _work
@@ -90,8 +90,10 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug PROVER=sp1 G=true make init-prover &
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-sp1 GPU=true &
           docker logs --follow ethrex_l2 & DOCKER_LOGS_PID=$!
+          cd crates/l2
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-sp1 GPU=true &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
           kill $DOCKER_LOGS_PID || true

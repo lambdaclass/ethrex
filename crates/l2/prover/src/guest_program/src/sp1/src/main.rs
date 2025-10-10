@@ -16,6 +16,6 @@ pub fn main() {
     println!("cycle-tracker-report-end: execution");
 
     println!("cycle-tracker-report-start: commit_public_inputs");
-    sp1_zkvm::io::commit(&output.encode());
+    sp1_zkvm::io::commit_slice(&output.encode());
     println!("cycle-tracker-report-end: commit_public_inputs");
 }

@@ -960,6 +960,18 @@ pub async fn get_sp1_vk(
     _call_bytes32_variable(client, b"SP1_VERIFICATION_KEY()", on_chain_proposer_address).await
 }
 
+pub async fn get_risc0_vk(
+    client: &EthClient,
+    on_chain_proposer_address: Address,
+) -> Result<[u8; 32], EthClientError> {
+    _call_bytes32_variable(
+        client,
+        b"RISC0_VERIFICATION_KEY()",
+        on_chain_proposer_address,
+    )
+    .await
+}
+
 pub async fn get_last_fetched_l1_block(
     client: &EthClient,
     common_bridge_address: Address,
