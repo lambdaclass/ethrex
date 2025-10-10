@@ -43,7 +43,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Run a Makefile with optional variables."
     )
-    parser.add_argument("--snap", action="store_true", help="Whether snap is activated")
+    parser.add_argument("--full-sync", action="store_true", help="Whether full-sync is activated")
     parser.add_argument(
         "--healing", action="store_true", help="Whether healing is activated"
     )
@@ -172,9 +172,9 @@ def capitalize_network(word):
 def get_variables(args):
     variables = {}
 
-    # Only include SNAP if flag is set
-    if args.snap:
-        variables["SNAP"] = "1"
+    # Only include FULL_SYNC if flag is set
+    if args.full_sync:
+        variables["FULL_SYNC"] = "1"
     if args.healing:
         variables["HEALING"] = "1"
     if args.memory:
