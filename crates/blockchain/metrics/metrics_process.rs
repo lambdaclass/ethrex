@@ -26,7 +26,7 @@ impl MetricsProcess {
 
     /// The Process collector gathers standard process metrics (CPU time, RSS, VSZ, FDs, threads, start_time).
     /// But it only works on Linux. This is an initial implementation.
-    #[cfg_attr(feature = "hotpath", hotpath::measure)]
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -74,7 +74,6 @@ pub fn set_datadir_path(path: PathBuf) {
     let _ = DATADIR_PATH.set(path);
 }
 
-#[cfg_attr(feature = "hotpath", hotpath::measure)]
 fn directory_size(root: &Path) -> io::Result<u64> {
     let mut total = 0;
     let mut stack = vec![root.to_path_buf()];

@@ -53,7 +53,6 @@ where
     }
 }
 
-#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn gather_profiling_metrics() -> Result<String, MetricsError> {
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
