@@ -180,18 +180,12 @@ jobs:
             hive_repository: ethereum/hive
             hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
             artifact_prefix: engine_withdrawals
-          - name: "Sync full"
+          - name: "Sync"
             simulation: ethereum/sync
             limit: ""
             hive_repository: ethereum/hive
             hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
-            artifact_prefix: sync_full
-          - name: "Sync snap"
-            simulation: ethereum/sync
-            limit: ""
-            hive_repository: ethereum/hive
-            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
-            artifact_prefix: sync_snap
+            artifact_prefix: sync
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@v1.3.1
