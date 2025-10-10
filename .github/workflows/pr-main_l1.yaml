@@ -248,6 +248,59 @@ jobs:
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.artifact_prefix }}
 
+      - name: Check Hive Results For Failures
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          results_dir="src/results"
+
+          if [ ! -d "$results_dir" ]; then
+            echo "Hive results directory '$results_dir' not found"
+            exit 1
+          fi
+
+          shopt -s nullglob
+          json_files=("$results_dir"/*.json)
+          shopt -u nullglob
+
+          if [ ${#json_files[@]} -eq 0 ]; then
+            echo "No Hive JSON result files found in $results_dir"
+            exit 1
+          fi
+
+          failures=0
+
+          for json_file in "${json_files[@]}"; do
+            if [[ "$json_file" == *"hive.json" ]]; then
+              continue
+            fi
+
+            suite_name=$(jq -r '.name // empty' "$json_file")
+            failed_cases=$(jq '[.testCases[]? | select(.summaryResult.pass != true)] | length' "$json_file")
+
+            if [ "$failed_cases" -gt 0 ]; then
+              echo "Detected $failed_cases failing test case(s) in ${suite_name:-$(basename "$json_file")}"
+              jq -r '
+                .testCases[]?
+                | select(.summaryResult.pass != true)
+                | (.summaryResult | del(.pass)) as $details
+                | "- " + (.name // "unknown test")
+                  + (if $details == {} then ""
+                     else ": " + ($details.message // $details.reason // $details.error // ($details | tostring))
+                     end)
+              ' "$json_file"
+              failures=$((failures + failed_cases))
+            fi
+          done
+
+          if [ "$failures" -gt 0 ]; then
+            echo "Hive reported $failures failing test cases in total"
+            exit 1
+          fi
+
+          echo "Hive reported no failing test cases."
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
