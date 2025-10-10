@@ -23,6 +23,9 @@ tokio-util.workspace = true
 
 ethrex-metrics = { path = "./metrics", default-features = false }
 
+hotpath = { version = "0.4", optional = true }
+
+
 [dev-dependencies]
 serde_json.workspace = true
 hex = "0.4.3"
@@ -35,6 +38,10 @@ path = "./blockchain.rs"
 default = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
+hotpath-alloc-bytes-total = ["hotpath/hotpath-alloc-bytes-total"]
+hotpath-alloc-count-total= ["hotpath/hotpath-alloc-count-total"]
+hotpath-off = ["hotpath/hotpath-off"]
 
 [lints.clippy]
 unwrap_used = "deny"

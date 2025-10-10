@@ -50,6 +50,8 @@ rand = "0.8.5"
 rayon = "1.10.0"
 crossbeam.workspace = true
 
+hotpath = { version = "0.4", optional = true }
+
 [dev-dependencies]
 hex-literal = "0.4.1"
 
@@ -61,6 +63,10 @@ default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
 rocksdb = ["dep:rocksdb"]
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
+hotpath-alloc-bytes-total = ["hotpath/hotpath-alloc-bytes-total"]
+hotpath-alloc-count-total= ["hotpath/hotpath-alloc-count-total"]
+hotpath-off = ["hotpath/hotpath-off"]
 
 [lints.clippy]
 unwrap_used = "deny"

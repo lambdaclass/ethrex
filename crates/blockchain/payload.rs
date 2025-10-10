@@ -117,6 +117,7 @@ impl BuildPayloadArgs {
 
 /// Creates a new payload based on the payload arguments
 // Basic payload block building, can and should be improved
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn create_payload(
     args: &BuildPayloadArgs,
     storage: &Store,
@@ -181,6 +182,7 @@ pub fn create_payload(
     Ok(Block::new(header, body))
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
     // TODO: check where we should get builder values from
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
@@ -316,6 +318,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 impl Blockchain {
     /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
     /// Fails if there is no payload or active payload build task for the given id.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
         let mut payloads = self.payloads.lock().await;
         // Find the given payload and finish the active build process if needed
@@ -334,6 +337,7 @@ impl Blockchain {
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
     /// The build process will run for the full block building timeslot or until `get_payload` is called
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
@@ -359,6 +363,7 @@ impl Blockchain {
 
     /// Build the given payload and keep on rebuilding it until either the time slot
     /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn build_payload_loop(
         self: Arc<Blockchain>,
         payload: Block,
@@ -383,6 +388,7 @@ impl Blockchain {
     }
 
     /// Completes the payload building process, return the block value
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
@@ -425,6 +431,7 @@ impl Blockchain {
         Ok(context.into())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         let binding = Vec::new();
         let withdrawals = context
@@ -439,6 +446,7 @@ impl Blockchain {
     // This function applies system level operations:
     // - Call beacon root contract, and obtain the new state root
     // - Call block hash process contract, and store parent block hash
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn apply_system_operations(
         &self,
         context: &mut PayloadBuildContext,
@@ -448,6 +456,7 @@ impl Blockchain {
 
     /// Fetches suitable transactions from the mempool
     /// Returns two transaction queues, one for plain and one for blob txs
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn fetch_mempool_transactions(
         &self,
         context: &mut PayloadBuildContext,
@@ -482,6 +491,7 @@ impl Blockchain {
 
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let chain_config = context.chain_config()?;
         let max_blob_number_per_block = chain_config
@@ -566,6 +576,7 @@ impl Blockchain {
 
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn apply_transaction(
         &self,
         head: &HeadTransaction,
@@ -578,6 +589,7 @@ impl Blockchain {
     }
 
     /// Runs a blob transaction, updates the gas count & blob data and returns the receipt
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn apply_blob_transaction(
         &self,
         head: &HeadTransaction,
@@ -610,6 +622,7 @@ impl Blockchain {
         Ok(receipt)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         if !context
             .chain_config()?
@@ -627,6 +640,7 @@ impl Blockchain {
         Ok(())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub async fn finalize_payload(
         &self,
         context: &mut PayloadBuildContext,
@@ -665,6 +679,7 @@ impl Blockchain {
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
@@ -712,6 +727,7 @@ impl From<HeadTransaction> for Transaction {
 
 impl TransactionQueue {
     /// Creates a new TransactionQueue from a set of transactions grouped by sender and sorted by nonce
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn new(
         mut txs: HashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
@@ -741,6 +757,7 @@ impl TransactionQueue {
     }
 
     /// Remove all transactions from the queue
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn clear(&mut self) {
         self.heads.clear();
         self.txs.clear();
@@ -753,11 +770,13 @@ impl TransactionQueue {
 
     /// Returns the head transaction with the highest tip
     /// If there is more than one transaction with the highest tip, return the one with the lowest timestamp
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn peek(&self) -> Option<HeadTransaction> {
         self.heads.first().cloned()
     }
 
     /// Removes current head transaction and all transactions from the given sender
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn pop(&mut self) {
         if !self.is_empty() {
             let sender = self.heads.remove(0).tx.sender();
@@ -767,6 +786,7 @@ impl TransactionQueue {
 
     /// Remove the top transaction
     /// Add a tx from the same sender to the head transactions
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn shift(&mut self) -> Result<(), ChainError> {
         let tx = self.heads.remove(0);
         if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {

@@ -13,8 +13,13 @@ hex.workspace = true
 lazy_static.workspace = true
 ethereum-types.workspace = true
 snap.workspace = true
+hotpath = { version = "0.4", optional = true }
 
 [dev-dependencies]
 hex-literal.workspace = true
 [lib]
 path = "./rlp.rs"
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
+hotpath-alloc-bytes-total = ["hotpath/hotpath-alloc-bytes-total"]
+hotpath-alloc-count-total= ["hotpath/hotpath-alloc-count-total"]
+hotpath-off = ["hotpath/hotpath-off"]
