@@ -120,6 +120,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let account_triedb = gethdb.triedb()?;
     let account_trie = Trie::open(account_triedb, header.state_root);
     let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
+    let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
     let pathbased = gethdb.is_path_based()?;
     if pathbased {
         info!("Inserting account codes (path-based)");
@@ -160,7 +161,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             let node_hash = node.compute_hash();
             let node_rlp = node.encode_to_vec();
             ethrex_db.put_cf(
-                account_trie_cf,
+                storages_cf,
                 [&k[1..33], node_hash.as_ref()].concat(),
                 node_rlp,
             )?;
@@ -185,7 +186,6 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         }
 
         info!("Iterating storage tries (hash-based)");
-        let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
         for (hashed_address, storage_root) in &storages {
             let storage_triedb = gethdb.triedb()?;
             let storage_trie = Trie::open(storage_triedb, *storage_root);
