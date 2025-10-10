@@ -245,8 +245,6 @@ jobs:
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
-          workflow_artifact_upload: true
-          workflow_artifact_prefix: ${{ matrix.artifact_prefix }}
 
       - name: Check Hive Results For Failures
         id: verify-hive-results
