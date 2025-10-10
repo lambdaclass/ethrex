@@ -124,6 +124,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let pathbased = gethdb.is_path_based()?;
     if pathbased {
         info!("Inserting account codes (path-based)");
+        let mut account_nodes = 0;
         for item in gethdb
             .state_db
             .iterator(IteratorMode::From(b"A", rocksdb::Direction::Forward))
@@ -144,9 +145,11 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
                     codes.insert(state.code_hash);
                 }
             }
+            account_nodes += 1;
         }
 
         info!("Inserting storage tries (path-based)");
+        let mut storage_nodes = 0;
         for item in gethdb
             .state_db
             .iterator(IteratorMode::From(b"O", rocksdb::Direction::Forward))
@@ -165,7 +168,9 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
                 [&k[1..33], node_hash.as_ref()].concat(),
                 node_rlp,
             )?;
+            storage_nodes += 1;
         }
+        info!(account_nodes, storage_nodes, "All nodes inserted");
     } else {
         info!("Inserting account trie (hash-based)");
         for (path, node) in account_trie.into_iter() {
