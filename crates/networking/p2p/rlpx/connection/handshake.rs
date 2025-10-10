@@ -8,11 +8,12 @@ use super::{
     codec::RLPxCodec,
     server::{Initiator, Receiver},
 };
+#[cfg(feature = "l2")]
+use crate::rlpx::l2::l2_connection::L2ConnState;
 use crate::{
     rlpx::{
         connection::server::{Established, InnerState},
         error::RLPxError,
-        l2::l2_connection::L2ConnState,
         message::EthCapVersion,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
@@ -136,6 +137,7 @@ pub(crate) async fn perform(
             peer_table: context.table.clone(),
             backend_channel: None,
             _inbound: inbound,
+            #[cfg(feature = "l2")]
             l2_state: context
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),

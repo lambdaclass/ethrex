@@ -6,7 +6,9 @@ use std::{
 };
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{MempoolTransaction, Transaction};
+use ethrex_common::types::MempoolTransaction;
+#[cfg(feature = "l2")]
+use ethrex_common::types::Transaction;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -30,6 +32,14 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
+#[cfg(feature = "l2")]
+use crate::rlpx::l2::{
+    PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
+    l2_connection::{
+        self, L2Cast, L2ConnState, handle_based_capability_message,
+        handle_l2_broadcast,
+    },
+};
 use crate::{
     discv4::peer_table::{PeerChannels, PeerTableHandle},
     metrics::METRICS,
@@ -45,13 +55,6 @@ use crate::{
             status::{StatusMessage68, StatusMessage69},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
-        },
-        l2::{
-            self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
-            l2_connection::{
-                self, L2Cast, L2ConnState, broadcast_l2_message, handle_based_capability_message,
-                handle_l2_broadcast,
-            },
         },
         message::EthCapVersion,
         p2p::{
@@ -117,6 +120,7 @@ pub struct Established {
     pub(crate) peer_table: PeerTableHandle,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) _inbound: bool,
+    #[cfg(feature = "l2")]
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
 }
@@ -151,6 +155,7 @@ pub enum CastMessage {
     SendPing,
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
+    #[cfg(feature = "l2")]
     L2(L2Cast),
 }
 
@@ -264,6 +269,7 @@ impl GenServer for RLPxConnection {
         _handle: &RLPxConnectionHandle,
     ) -> CastResponse {
         if let InnerState::Established(ref mut established_state) = self.inner_state {
+            #[cfg(feature = "l2")]
             let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             let result = match message {
                 Self::CastMsg::PeerMessage(message) => {
@@ -294,6 +300,7 @@ impl GenServer for RLPxConnection {
                     log_peer_debug(&established_state.node, "Block Range Update");
                     handle_block_range_update(established_state).await
                 }
+                #[cfg(feature = "l2")]
                 Self::CastMsg::L2(msg) if peer_supports_l2 => {
                     log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
@@ -301,10 +308,11 @@ impl GenServer for RLPxConnection {
                             l2_connection::send_sealed_batch(established_state).await
                         }
                         L2Cast::BlockBroadcast => {
-                            l2::l2_connection::send_new_block(established_state).await
+                            l2_connection::send_new_block(established_state).await
                         }
                     }
                 }
+                #[cfg(feature = "l2")]
                 _ => Err(RLPxError::MessageNotHandled(
                     "Unknown message or capability not handled".to_string(),
                 )),
@@ -437,6 +445,7 @@ where
         CastMessage::BlockRangeUpdate,
     );
 
+    #[cfg(feature = "l2")]
     // Periodic L2 messages events.
     if state.l2_state.connection_state().is_ok() {
         send_interval(
@@ -640,13 +649,17 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, RLPxError>>,
 {
+    // This allow is because in l2 we mut the capabilities
+    // to include the l2 cap
+    #[allow(unused_mut)]
     let mut supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
     ]
     .concat();
+    #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
-        supported_capabilities.push(l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+        supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
     }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
@@ -692,6 +705,7 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
+                    #[cfg(feature = "l2")]
                     "based" if state.l2_state.is_supported() => {
                         state.l2_state.set_established()?;
                     }
@@ -748,6 +762,7 @@ where
 
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
+    #[cfg(feature = "l2")]
     let peer_supports_l2 = state.l2_state.connection_state().is_ok();
     match message {
         Message::Disconnect(msg_data) => {
@@ -792,9 +807,11 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
             if state.blockchain.is_synced() {
+                #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
                 for tx in &txs.transactions {
                     // Reject blob transactions in L2 mode
+                    #[cfg(feature = "l2")]
                     if is_l2_mode && matches!(tx, Transaction::EIP4844Transaction(_)) {
                         log_peer_debug(
                             &state.node,
@@ -900,7 +917,11 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                         state.requested_pooled_txs.remove(&msg.id);
                     }
                 }
+                #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
+
+                #[cfg(not(feature = "l2"))]
+                let is_l2_mode = false;
                 msg.handle(&state.node, &state.blockchain, is_l2_mode)
                     .await?;
             }
@@ -925,6 +946,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let response = process_trie_nodes_request(req, state.storage.clone()).await?;
             send(state, Message::TrieNodes(response)).await?
         }
+        #[cfg(feature = "l2")]
         Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;
         }
@@ -965,6 +987,7 @@ async fn handle_broadcast(
 ) -> Result<(), RLPxError> {
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
+            #[cfg(feature = "l2")]
             l2_msg @ Message::L2(_) => {
                 handle_l2_broadcast(state, l2_msg).await?;
             }
@@ -983,16 +1006,5 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
         send_block_range_update(state).await
     } else {
         Ok(())
-    }
-}
-
-pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
-    match msg {
-        l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
-        msg => {
-            let error_message = format!("Broadcasting for msg: {msg} is not supported");
-            log_peer_error(&state.node, &error_message);
-            Err(RLPxError::BroadcastError(error_message))
-        }
     }
 }
