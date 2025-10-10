@@ -205,7 +205,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
@@ -215,7 +215,7 @@ impl Store {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
-                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB 
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
@@ -224,14 +224,14 @@ impl Store {
                 }
                 CF_STATE_TRIE_NODES | CF_STORAGE_TRIES_NODES => {
                     cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB 
+                    cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
-                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB 
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter 
+                    cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(16 * 1024); // 16KB 
+                    block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
