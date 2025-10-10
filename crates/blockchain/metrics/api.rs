@@ -1,4 +1,5 @@
 use axum::{Router, routing::get};
+use prometheus::{Encoder, TextEncoder};
 
 use crate::profiling::gather_profiling_metrics;
 
@@ -55,6 +56,18 @@ pub(crate) async fn get_metrics() -> String {
         Ok(s) => ret_string.push_str(&s),
         Err(_) => tracing::error!("Failed to register METRICS_PROCESS"),
     };
+
+    ret_string.push('\n');
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::default_registry().gather();
+    let mut buffer = Vec::new();
+    match encoder.encode(&metric_families, &mut buffer) {
+        Ok(()) => match String::from_utf8(buffer) {
+            Ok(s) => ret_string.push_str(&s),
+            Err(err) => tracing::error!(err = %err, "Failed to encode default registry metrics"),
+        },
+        Err(err) => tracing::error!(err = %err, "Failed to gather default registry metrics"),
+    }
 
     ret_string
 }

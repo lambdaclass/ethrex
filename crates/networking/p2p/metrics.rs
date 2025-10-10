@@ -9,7 +9,7 @@ use std::{
 };
 
 use ethrex_common::H256;
-use prometheus::{Gauge, IntCounter, Registry};
+use prometheus::{Gauge, IntCounter, Registry, core::Collector};
 use tokio::sync::Mutex;
 
 use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
@@ -528,6 +528,22 @@ impl Default for Metrics {
     fn default() -> Self {
         let registry = Registry::new();
 
+        fn register_collector<C>(registry: &Registry, collector: &C, name: &str)
+        where
+            C: Clone + Collector + 'static,
+        {
+            registry
+                .register(Box::new(collector.clone()))
+                .unwrap_or_else(|err| panic!("Failed to register {name} collector: {err}"));
+            prometheus::default_registry()
+                .register(Box::new(collector.clone()))
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to register {name} collector in default Prometheus registry: {err}"
+                    )
+                });
+        }
+
         let discovered_nodes = IntCounter::new(
             "discv4_discovered_nodes",
             "Total number of new nodes discovered",
@@ -544,17 +560,9 @@ impl Default for Metrics {
             IntCounter::new("discv4_discarded_nodes", "Total number of discarded nodes")
                 .expect("Failed to create discarded_nodes counter");
 
-        registry
-            .register(Box::new(discovered_nodes.clone()))
-            .expect("Failed to register discovered_nodes counter");
-
-        registry
-            .register(Box::new(new_contacts_rate.clone()))
-            .expect("Failed to register contacts_rate gauge");
-
-        registry
-            .register(Box::new(discarded_nodes.clone()))
-            .expect("Failed to register discarded_nodes counter");
+        register_collector(&registry, &discovered_nodes, "discovered_nodes");
+        register_collector(&registry, &new_contacts_rate, "new_contacts_rate");
+        register_collector(&registry, &discarded_nodes, "discarded_nodes");
 
         let attempted_rlpx_conn = IntCounter::new(
             "rlpx_attempted_rlpx_conn",
@@ -586,29 +594,20 @@ impl Default for Metrics {
         let pings_sent_rate = Gauge::new("pings_sent_rate", "Rate of pings sent per second")
             .expect("Failed to create pings_sent_rate gauge");
 
-        registry
-            .register(Box::new(attempted_rlpx_conn.clone()))
-            .expect("Failed to register attempted_rlpx_conn counter");
-
-        registry
-            .register(Box::new(attempted_rlpx_conn_rate.clone()))
-            .expect("Failed to register attempted_rlpx_conn_rate gauge");
-
-        registry
-            .register(Box::new(established_rlpx_conn.clone()))
-            .expect("Failed to register established_rlpx_conn counter");
-
-        registry
-            .register(Box::new(established_rlpx_conn_rate.clone()))
-            .expect("Failed to register established_rlpx_conn_rate gauge");
-
-        registry
-            .register(Box::new(pings_sent.clone()))
-            .expect("Failed to register pings_sent counter");
-
-        registry
-            .register(Box::new(pings_sent_rate.clone()))
-            .expect("Failed to register pings_sent_rate gauge");
+        register_collector(&registry, &attempted_rlpx_conn, "attempted_rlpx_conn");
+        register_collector(
+            &registry,
+            &attempted_rlpx_conn_rate,
+            "attempted_rlpx_conn_rate",
+        );
+        register_collector(&registry, &established_rlpx_conn, "established_rlpx_conn");
+        register_collector(
+            &registry,
+            &established_rlpx_conn_rate,
+            "established_rlpx_conn_rate",
+        );
+        register_collector(&registry, &pings_sent, "pings_sent");
+        register_collector(&registry, &pings_sent_rate, "pings_sent_rate");
 
         let storage_tries_state_roots_computed = IntCounter::new(
             "storage_tries_state_roots_computed",
@@ -616,9 +615,11 @@ impl Default for Metrics {
         )
         .expect("Failed to create storage_tries_state_roots_computed counter");
 
-        registry
-            .register(Box::new(storage_tries_state_roots_computed.clone()))
-            .expect("Failed to register storage_tries_state_roots_computed counter");
+        register_collector(
+            &registry,
+            &storage_tries_state_roots_computed,
+            "storage_tries_state_roots_computed",
+        );
 
         let snap_sync_head_retrieval_seconds = Gauge::new(
             "snap_sync_head_retrieval_seconds",
@@ -674,33 +675,51 @@ impl Default for Metrics {
         )
         .expect("Failed to create snap_sync_total_seconds gauge");
 
-        registry
-            .register(Box::new(snap_sync_head_retrieval_seconds.clone()))
-            .expect("Failed to register snap_sync_head_retrieval_seconds gauge");
-        registry
-            .register(Box::new(snap_sync_headers_download_seconds.clone()))
-            .expect("Failed to register snap_sync_headers_download_seconds gauge");
-        registry
-            .register(Box::new(snap_sync_account_download_seconds.clone()))
-            .expect("Failed to register snap_sync_account_download_seconds gauge");
-        registry
-            .register(Box::new(snap_sync_account_insert_seconds.clone()))
-            .expect("Failed to register snap_sync_account_insert_seconds gauge");
-        registry
-            .register(Box::new(snap_sync_storage_download_seconds.clone()))
-            .expect("Failed to register snap_sync_storage_download_seconds gauge");
-        registry
-            .register(Box::new(snap_sync_storage_insert_seconds.clone()))
-            .expect("Failed to register snap_sync_storage_insert_seconds gauge");
-        registry
-            .register(Box::new(snap_sync_healing_seconds.clone()))
-            .expect("Failed to register snap_sync_healing_seconds gauge");
-        registry
-            .register(Box::new(snap_sync_bytecode_download_seconds.clone()))
-            .expect("Failed to register snap_sync_bytecode_download_seconds gauge");
-        registry
-            .register(Box::new(snap_sync_total_seconds.clone()))
-            .expect("Failed to register snap_sync_total_seconds gauge");
+        register_collector(
+            &registry,
+            &snap_sync_head_retrieval_seconds,
+            "snap_sync_head_retrieval_seconds",
+        );
+        register_collector(
+            &registry,
+            &snap_sync_headers_download_seconds,
+            "snap_sync_headers_download_seconds",
+        );
+        register_collector(
+            &registry,
+            &snap_sync_account_download_seconds,
+            "snap_sync_account_download_seconds",
+        );
+        register_collector(
+            &registry,
+            &snap_sync_account_insert_seconds,
+            "snap_sync_account_insert_seconds",
+        );
+        register_collector(
+            &registry,
+            &snap_sync_storage_download_seconds,
+            "snap_sync_storage_download_seconds",
+        );
+        register_collector(
+            &registry,
+            &snap_sync_storage_insert_seconds,
+            "snap_sync_storage_insert_seconds",
+        );
+        register_collector(
+            &registry,
+            &snap_sync_healing_seconds,
+            "snap_sync_healing_seconds",
+        );
+        register_collector(
+            &registry,
+            &snap_sync_bytecode_download_seconds,
+            "snap_sync_bytecode_download_seconds",
+        );
+        register_collector(
+            &registry,
+            &snap_sync_total_seconds,
+            "snap_sync_total_seconds",
+        );
 
         Metrics {
             _registry: registry,
