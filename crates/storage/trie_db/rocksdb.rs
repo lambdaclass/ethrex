@@ -1,13 +1,13 @@
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Node, NodeHash, TrieDB, error::TrieError};
-use rocksdb::{MultiThreaded, OptimisticTransactionDB};
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::sync::Arc;
 
 /// RocksDB implementation for the TrieDB trait, with get and put operations.
 pub struct RocksDBTrieDB {
     /// RocksDB database
-    db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Column family name
     cf_name: String,
     /// Storage trie address prefix
@@ -16,7 +16,7 @@ pub struct RocksDBTrieDB {
 
 impl RocksDBTrieDB {
     pub fn new(
-        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+        db: Arc<DBWithThreadMode<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
     ) -> Result<Self, TrieError> {
@@ -69,7 +69,7 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
-        let mut batch = rocksdb::WriteBatchWithTransaction::default();
+        let mut batch = rocksdb::WriteBatch::default();
 
         for (key, value) in key_values {
             let db_key = self.make_key(&key);
@@ -104,7 +104,7 @@ impl TrieDB for RocksDBTrieDB {
 mod tests {
     use super::*;
     use ethrex_trie::NodeHash;
-    use rocksdb::{ColumnFamilyDescriptor, MultiThreaded, Options};
+    use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options};
     use tempfile::TempDir;
 
     #[test]
@@ -118,7 +118,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
@@ -158,7 +158,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
@@ -195,7 +195,7 @@ mod tests {
         db_options.create_missing_column_families(true);
 
         let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
-        let db = OptimisticTransactionDB::<MultiThreaded>::open_cf_descriptors(
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
             &db_options,
             db_path,
             vec![cf_descriptor],
