@@ -99,6 +99,17 @@ pub struct Metrics {
     pub bytecode_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
+    // Snap sync durations (seconds)
+    pub snap_sync_head_retrieval_seconds: Gauge,
+    pub snap_sync_headers_download_seconds: Gauge,
+    pub snap_sync_account_download_seconds: Gauge,
+    pub snap_sync_account_insert_seconds: Gauge,
+    pub snap_sync_storage_download_seconds: Gauge,
+    pub snap_sync_storage_insert_seconds: Gauge,
+    pub snap_sync_healing_seconds: Gauge,
+    pub snap_sync_bytecode_download_seconds: Gauge,
+    pub snap_sync_total_seconds: Gauge,
+
     start_time: SystemTime,
 }
 
@@ -609,6 +620,88 @@ impl Default for Metrics {
             .register(Box::new(storage_tries_state_roots_computed.clone()))
             .expect("Failed to register storage_tries_state_roots_computed counter");
 
+        let snap_sync_head_retrieval_seconds = Gauge::new(
+            "snap_sync_head_retrieval_seconds",
+            "Duration in seconds to retrieve the snap sync head block number",
+        )
+        .expect("Failed to create snap_sync_head_retrieval_seconds gauge");
+
+        let snap_sync_headers_download_seconds = Gauge::new(
+            "snap_sync_headers_download_seconds",
+            "Duration in seconds spent downloading headers during snap sync",
+        )
+        .expect("Failed to create snap_sync_headers_download_seconds gauge");
+
+        let snap_sync_account_download_seconds = Gauge::new(
+            "snap_sync_account_download_seconds",
+            "Duration in seconds spent downloading account ranges during snap sync",
+        )
+        .expect("Failed to create snap_sync_account_download_seconds gauge");
+
+        let snap_sync_account_insert_seconds = Gauge::new(
+            "snap_sync_account_insert_seconds",
+            "Duration in seconds spent inserting account ranges during snap sync",
+        )
+        .expect("Failed to create snap_sync_account_insert_seconds gauge");
+
+        let snap_sync_storage_download_seconds = Gauge::new(
+            "snap_sync_storage_download_seconds",
+            "Duration in seconds spent downloading storage ranges during snap sync",
+        )
+        .expect("Failed to create snap_sync_storage_download_seconds gauge");
+
+        let snap_sync_storage_insert_seconds = Gauge::new(
+            "snap_sync_storage_insert_seconds",
+            "Duration in seconds spent inserting storage ranges during snap sync",
+        )
+        .expect("Failed to create snap_sync_storage_insert_seconds gauge");
+
+        let snap_sync_healing_seconds = Gauge::new(
+            "snap_sync_healing_seconds",
+            "Duration in seconds spent healing state during snap sync",
+        )
+        .expect("Failed to create snap_sync_healing_seconds gauge");
+
+        let snap_sync_bytecode_download_seconds = Gauge::new(
+            "snap_sync_bytecode_download_seconds",
+            "Duration in seconds spent downloading bytecodes during snap sync",
+        )
+        .expect("Failed to create snap_sync_bytecode_download_seconds gauge");
+
+        let snap_sync_total_seconds = Gauge::new(
+            "snap_sync_total_seconds",
+            "Total snap sync duration in seconds (headers to bytecodes)",
+        )
+        .expect("Failed to create snap_sync_total_seconds gauge");
+
+        registry
+            .register(Box::new(snap_sync_head_retrieval_seconds.clone()))
+            .expect("Failed to register snap_sync_head_retrieval_seconds gauge");
+        registry
+            .register(Box::new(snap_sync_headers_download_seconds.clone()))
+            .expect("Failed to register snap_sync_headers_download_seconds gauge");
+        registry
+            .register(Box::new(snap_sync_account_download_seconds.clone()))
+            .expect("Failed to register snap_sync_account_download_seconds gauge");
+        registry
+            .register(Box::new(snap_sync_account_insert_seconds.clone()))
+            .expect("Failed to register snap_sync_account_insert_seconds gauge");
+        registry
+            .register(Box::new(snap_sync_storage_download_seconds.clone()))
+            .expect("Failed to register snap_sync_storage_download_seconds gauge");
+        registry
+            .register(Box::new(snap_sync_storage_insert_seconds.clone()))
+            .expect("Failed to register snap_sync_storage_insert_seconds gauge");
+        registry
+            .register(Box::new(snap_sync_healing_seconds.clone()))
+            .expect("Failed to register snap_sync_healing_seconds gauge");
+        registry
+            .register(Box::new(snap_sync_bytecode_download_seconds.clone()))
+            .expect("Failed to register snap_sync_bytecode_download_seconds gauge");
+        registry
+            .register(Box::new(snap_sync_total_seconds.clone()))
+            .expect("Failed to register snap_sync_total_seconds gauge");
+
         Metrics {
             _registry: registry,
             enabled: Arc::new(Mutex::new(false)),
@@ -685,6 +778,16 @@ impl Default for Metrics {
             downloaded_bytecodes: AtomicU64::new(0),
             bytecode_download_start_time: Arc::new(Mutex::new(None)),
             bytecode_download_end_time: Arc::new(Mutex::new(None)),
+
+            snap_sync_head_retrieval_seconds,
+            snap_sync_headers_download_seconds,
+            snap_sync_account_download_seconds,
+            snap_sync_account_insert_seconds,
+            snap_sync_storage_download_seconds,
+            snap_sync_storage_insert_seconds,
+            snap_sync_healing_seconds,
+            snap_sync_bytecode_download_seconds,
+            snap_sync_total_seconds,
 
             start_time: SystemTime::now(),
         }

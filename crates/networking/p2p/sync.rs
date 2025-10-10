@@ -909,7 +909,16 @@ impl Syncer {
                 "Finished inserting account ranges, total storage accounts: {}",
                 storage_accounts.accounts_with_storage_root.len()
             );
-            *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
+            let account_insert_end = SystemTime::now();
+            *METRICS.account_tries_insert_end_time.lock().await = Some(account_insert_end);
+            let account_insert_start = *METRICS.account_tries_insert_start_time.lock().await;
+            if let Some(start_time) = account_insert_start {
+                if let Ok(duration) = account_insert_end.duration_since(start_time) {
+                    METRICS
+                        .snap_sync_account_insert_seconds
+                        .set(duration.as_secs_f64());
+                }
+            }
 
             info!("Original state root: {state_root:?}");
             info!("Computed state root after request_account_rages: {computed_state_root:?}");
@@ -1007,7 +1016,16 @@ impl Syncer {
                 storage_accounts.healed_accounts.len() as u64,
                 Ordering::Relaxed,
             );
-            *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
+            let storage_download_end = SystemTime::now();
+            *METRICS.storage_tries_download_end_time.lock().await = Some(storage_download_end);
+            let storage_download_start = *METRICS.storage_tries_download_start_time.lock().await;
+            if let Some(start_time) = storage_download_start {
+                if let Ok(duration) = storage_download_end.duration_since(start_time) {
+                    METRICS
+                        .snap_sync_storage_download_seconds
+                        .set(duration.as_secs_f64());
+                }
+            }
 
             *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
             METRICS
@@ -1024,7 +1042,16 @@ impl Syncer {
             )
             .await?;
 
-            *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
+            let storage_insert_end = SystemTime::now();
+            *METRICS.storage_tries_insert_end_time.lock().await = Some(storage_insert_end);
+            let storage_insert_start = *METRICS.storage_tries_insert_start_time.lock().await;
+            if let Some(start_time) = storage_insert_start {
+                if let Ok(duration) = storage_insert_end.duration_since(start_time) {
+                    METRICS
+                        .snap_sync_storage_insert_seconds
+                        .set(duration.as_secs_f64());
+                }
+            }
 
             info!("Finished storing storage tries");
         }
@@ -1071,7 +1098,16 @@ impl Syncer {
 
             free_peers_and_log_if_not_empty(&mut self.peers).await?;
         }
-        *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
+        let heal_end = SystemTime::now();
+        *METRICS.heal_end_time.lock().await = Some(heal_end);
+        let heal_start = *METRICS.heal_start_time.lock().await;
+        if let Some(start_time) = heal_start {
+            if let Ok(duration) = heal_end.duration_since(start_time) {
+                METRICS
+                    .snap_sync_healing_seconds
+                    .set(duration.as_secs_f64());
+            }
+        }
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
@@ -1138,7 +1174,16 @@ impl Syncer {
                 .await?;
         }
 
-        *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
+        let bytecode_download_end = SystemTime::now();
+        *METRICS.bytecode_download_end_time.lock().await = Some(bytecode_download_end);
+        let bytecode_download_start = *METRICS.bytecode_download_start_time.lock().await;
+        if let Some(start_time) = bytecode_download_start {
+            if let Ok(duration) = bytecode_download_end.duration_since(start_time) {
+                METRICS
+                    .snap_sync_bytecode_download_seconds
+                    .set(duration.as_secs_f64());
+            }
+        }
 
         debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);
 
@@ -1171,6 +1216,14 @@ impl Syncer {
                 None,
             )
             .await?;
+
+        let snap_sync_end = SystemTime::now();
+        let headers_start = *METRICS.headers_download_start_time.lock().await;
+        if let Some(start_time) = headers_start {
+            if let Ok(duration) = snap_sync_end.duration_since(start_time) {
+                METRICS.snap_sync_total_seconds.set(duration.as_secs_f64());
+            }
+        }
         Ok(())
     }
 }

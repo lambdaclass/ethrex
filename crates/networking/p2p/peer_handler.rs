@@ -230,6 +230,9 @@ impl PeerHandler {
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
         METRICS
+            .snap_sync_head_retrieval_seconds
+            .set(sync_head_number_retrieval_elapsed.as_secs_f64());
+        METRICS
             .sync_head_block
             .store(sync_head_number, Ordering::Relaxed);
         METRICS
@@ -382,6 +385,10 @@ impl PeerHandler {
         );
 
         let elapsed = start_time.elapsed().unwrap_or_default();
+
+        METRICS
+            .snap_sync_headers_download_seconds
+            .set(elapsed.as_secs_f64());
 
         debug!(
             "Downloaded {} headers in {} seconds",
@@ -941,7 +948,16 @@ impl PeerHandler {
         METRICS
             .downloaded_account_tries
             .store(downloaded_count, Ordering::Relaxed);
-        *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
+        let account_download_end = SystemTime::now();
+        *METRICS.account_tries_download_end_time.lock().await = Some(account_download_end);
+        let account_download_start = *METRICS.account_tries_download_start_time.lock().await;
+        if let Some(start_time) = account_download_start {
+            if let Ok(duration) = account_download_end.duration_since(start_time) {
+                METRICS
+                    .snap_sync_account_download_seconds
+                    .set(duration.as_secs_f64());
+            }
+        }
 
         Ok(())
     }
