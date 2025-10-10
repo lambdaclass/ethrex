@@ -523,7 +523,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {
-        self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
+        self.execute("UPDATE latest_sent SET batch = ?1", [batch_number])
             .await?;
         Ok(())
     }
