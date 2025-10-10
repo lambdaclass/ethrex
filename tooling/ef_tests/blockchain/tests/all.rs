@@ -12,7 +12,7 @@ const TEST_FOLDER: &str = "vectors/";
 const SKIPPED_BASE: &[&str] = &[
     // These tests contain accounts without nonce or code but have storage, which is a virtually impossible scenario. That's why we fail, but that's okay.
     // When creating an account we don't check the storage root but just if it has nonce or code.
-    // Fix is on it's way on https://github.com/lambdaclass/ethrex/pull/4813
+    // Fix is on its way on https://github.com/lambdaclass/ethrex/pull/4813
     "InitCollisionParis",
     "RevertInCreateInInitCreate2Paris",
     "create2collisionStorageParis",
