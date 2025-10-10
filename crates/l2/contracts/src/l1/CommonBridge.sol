@@ -40,7 +40,7 @@ contract CommonBridge is
     /// @dev The value is the merkle root of the logs.
     /// @dev If there exist a merkle root for a given batch number it means
     /// that the logs were published on L1, and that that batch was committed.
-    mapping(uint256 => bytes32) public batchWithdrawalLogsMerkleRoots;
+    mapping(address chainProposer => mapping(uint256 batchNumber => bytes32)) public batchWithdrawalLogsMerkleRoots;
 
     /// @notice Array of hashed pending privileged transactions
     bytes32[] public pendingTxHashes;
@@ -86,6 +86,8 @@ contract CommonBridge is
     /// @notice Deadline for the sequencer to include the transaction.
     mapping(bytes32 => uint256) public privilegedTxDeadline;
 
+    address public sharedBridgeRouter = address(0);
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -102,7 +104,8 @@ contract CommonBridge is
     function initialize(
         address owner,
         address onChainProposer,
-        uint256 inclusionMaxWait
+        uint256 inclusionMaxWait,
+        address _sharedBridgeRouter
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -114,6 +117,8 @@ contract CommonBridge is
         transactionId = 0;
 
         PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
+
+        sharedBridgeRouter = _sharedBridgeRouter;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -293,9 +298,10 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function getWithdrawalLogsMerkleRoot(
-        uint256 blockNumber
+        address chainProposer,
+        uint256 batchNumber
     ) public view returns (bytes32) {
-        return batchWithdrawalLogsMerkleRoots[blockNumber];
+        return batchWithdrawalLogsMerkleRoots[chainProposer][batchNumber];
     }
 
     /// @inheritdoc ICommonBridge
@@ -304,13 +310,11 @@ contract CommonBridge is
         bytes32 withdrawalsLogsMerkleRoot
     ) public onlyOnChainProposer {
         require(
-            batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] ==
+            batchWithdrawalLogsMerkleRoots[msg.sender][withdrawalLogsBatchNumber] ==
                 bytes32(0),
             "CommonBridge: withdrawal logs already published"
         );
-        batchWithdrawalLogsMerkleRoots[
-            withdrawalLogsBatchNumber
-        ] = withdrawalsLogsMerkleRoot;
+        batchWithdrawalLogsMerkleRoots[msg.sender][withdrawalLogsBatchNumber] = withdrawalsLogsMerkleRoot;
         emit WithdrawalsPublished(
             withdrawalLogsBatchNumber,
             withdrawalsLogsMerkleRoot
@@ -320,6 +324,7 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function claimWithdrawal(
         uint256 claimedAmount,
+        address withdrawalChainProposer,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
@@ -328,6 +333,7 @@ contract CommonBridge is
             ETH_TOKEN,
             ETH_TOKEN,
             claimedAmount,
+            withdrawalChainProposer,
             withdrawalBatchNumber,
             withdrawalMessageId,
             withdrawalProof
@@ -341,6 +347,7 @@ contract CommonBridge is
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
+        address withdrawalChainProposer,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
@@ -349,6 +356,7 @@ contract CommonBridge is
             tokenL1,
             tokenL2,
             claimedAmount,
+            withdrawalChainProposer,
             withdrawalBatchNumber,
             withdrawalMessageId,
             withdrawalProof
@@ -364,6 +372,7 @@ contract CommonBridge is
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
+        address withdrawalChainProposer,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
@@ -377,12 +386,12 @@ contract CommonBridge is
             abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount)
         );
         require(
-            batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
+            batchWithdrawalLogsMerkleRoots[withdrawalChainProposer][withdrawalBatchNumber] != bytes32(0),
             "CommonBridge: the batch that emitted the withdrawal logs was not committed"
         );
         require(
             withdrawalBatchNumber <=
-                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
+                IOnChainProposer(withdrawalChainProposer).lastVerifiedBatch(),
             "CommonBridge: the batch that emitted the withdrawal logs was not verified"
         );
         require(
@@ -394,6 +403,7 @@ contract CommonBridge is
         require(
             _verifyMessageProof(
                 msgHash,
+                withdrawalChainProposer,
                 withdrawalBatchNumber,
                 withdrawalMessageId,
                 withdrawalProof
@@ -404,6 +414,7 @@ contract CommonBridge is
 
     function _verifyMessageProof(
         bytes32 msgHash,
+        address withdrawalChainProposer,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
@@ -418,7 +429,7 @@ contract CommonBridge is
         return
             MerkleProof.verify(
                 withdrawalProof,
-                batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
+                batchWithdrawalLogsMerkleRoots[withdrawalChainProposer][withdrawalBatchNumber],
                 withdrawalLeaf
             );
     }

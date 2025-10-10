@@ -11,6 +11,7 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+import {IRouter} from "./shared_bridge/interfaces/IRouter.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -91,6 +92,8 @@ contract OnChainProposer is
     /// @notice Chain ID of the network
     uint256 public CHAIN_ID;
 
+    address public sharedBridgeRouter = address(0);
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -117,7 +120,8 @@ contract OnChainProposer is
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses,
-        uint256 chainId
+        uint256 chainId,
+        address _sharedBridgeRouter
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -167,6 +171,8 @@ contract OnChainProposer is
 
         CHAIN_ID = chainId;
 
+        sharedBridgeRouter = _sharedBridgeRouter;
+
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
@@ -195,7 +201,8 @@ contract OnChainProposer is
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
-        bytes32 withdrawalsLogsMerkleRoot,
+        uint256[] calldata withdrawalsLogsChainIds,
+        bytes32[] calldata withdrawalsLogsMerkleRoots,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external override onlySequencer whenNotPaused {
@@ -212,6 +219,10 @@ contract OnChainProposer is
             lastBlockHash != bytes32(0),
             "OnChainProposer: lastBlockHash cannot be zero"
         );
+        require(
+            withdrawalsLogsChainIds.length == withdrawalsLogsMerkleRoots.length,
+            "OnChainProposer: withdrawalsLogs chain ids and merkle roots length mismatch"
+        );
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
@@ -224,10 +235,13 @@ contract OnChainProposer is
                 "OnChainProposer: invalid privileged transaction logs"
             );
         }
-        if (withdrawalsLogsMerkleRoot != bytes32(0)) {
-            ICommonBridge(BRIDGE).publishWithdrawals(
+
+        // TODO: Check if sharedbridge is being used.
+        for (uint256 i = 0; i < withdrawalsLogsMerkleRoots.length; i++) {
+            address chainBridge = IRouter(sharedBridgeRouter).bridge(withdrawalsLogsChainIds[i]);
+            ICommonBridge(chainBridge).publishWithdrawals(
                 batchNumber,
-                withdrawalsLogsMerkleRoot
+                withdrawalsLogsMerkleRoots[i]
             );
         }
 
@@ -249,7 +263,7 @@ contract OnChainProposer is
             newStateRoot,
             blobVersionedHash,
             processedPrivilegedTransactionsRollingHash,
-            withdrawalsLogsMerkleRoot,
+            withdrawalsLogsMerkleRoots[0],
             lastBlockHash
         );
         emit BatchCommitted(newStateRoot);
