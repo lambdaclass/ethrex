@@ -124,6 +124,10 @@ fn download_script() {
     // L1 contracts
     let l1_contracts = [
         (
+            &Path::new("../../crates/l2/contracts/src/l1/shared_bridge/Router.sol"),
+            "Router",
+        ),
+        (
             &Path::new("../../crates/l2/contracts/src/l1/OnChainProposer.sol"),
             "OnChainProposer",
         ),
@@ -199,6 +203,7 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
     let contract_names = [
         "ERC1967Proxy",
         "SP1Verifier",
+        "Router",
         "OnChainProposer",
         "CommonBridge",
         "CommonBridgeL2",
