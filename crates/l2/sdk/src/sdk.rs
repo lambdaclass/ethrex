@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
+use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
@@ -669,7 +670,8 @@ pub async fn send_generic_transaction(
             signed_tx.encode(&mut encoded_tx);
         }
         TxType::EIP4844 => {
-            let mut tx: WrappedEIP4844Transaction = generic_tx.try_into()?;
+            let fork = get_l1_fork(client).await;
+            let mut tx = WrappedEIP4844Transaction::from_generic_tx(generic_tx, fork)?;
             tx.tx
                 .sign_inplace(signer)
                 .await
@@ -978,6 +980,14 @@ pub async fn get_pending_privileged_transactions(
     )
     .await?;
     from_hex_string_to_h256_array(&response)
+}
+
+// TODO: This is a work around for now, issue: https://github.com/lambdaclass/ethrex/issues/4828
+pub async fn get_l1_fork(client: &EthClient) -> Fork {
+    match client.get_eth_config().await {
+        Ok(_) => Fork::Osaka, // This endpoint only supports Osaka and later
+        Err(_) => Fork::Prague,
+    }
 }
 
 async fn _generic_call(

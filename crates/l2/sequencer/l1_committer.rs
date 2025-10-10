@@ -12,7 +12,7 @@ use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
+        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential_checked,
     },
 };
@@ -28,7 +28,7 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, get_last_committed_batch,
+    build_generic_tx, calldata::encode_calldata, get_l1_fork, get_last_committed_batch,
     send_tx_bump_gas_exponential_backoff,
 };
 #[cfg(feature = "metrics")]
@@ -206,7 +206,8 @@ impl L1Committer {
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
-        let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
+        let fork = get_l1_fork(&self.eth_client).await;
+        let batch = match self.rollup_store.get_batch(batch_to_commit, fork).await? {
             Some(batch) => batch,
             None => {
                 let last_committed_blocks = self
@@ -448,7 +449,8 @@ impl L1Committer {
                     &acc_privileged_txs,
                     acc_account_updates.clone().into_values().collect(),
                 )?;
-                generate_blobs_bundle(&state_diff)
+                let fork = get_l1_fork(&self.eth_client).await;
+                generate_blobs_bundle(&state_diff, fork)
             } else {
                 Ok((BlobsBundle::default(), 0_usize))
             };
@@ -778,6 +780,7 @@ impl GenServer for L1Committer {
 /// Generate the blob bundle necessary for the EIP-4844 transaction.
 pub fn generate_blobs_bundle(
     state_diff: &StateDiff,
+    fork: Fork,
 ) -> Result<(BlobsBundle, usize), CommitterError> {
     let blob_data = state_diff.encode().map_err(CommitterError::from)?;
 
@@ -786,7 +789,7 @@ pub fn generate_blobs_bundle(
     let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 
     Ok((
-        BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
+        BlobsBundle::create_from_blobs(&vec![blob], fork).map_err(CommitterError::from)?,
         blob_size,
     ))
 }
