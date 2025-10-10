@@ -809,7 +809,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                             ethrex_blockchain::error::MempoolError::NonceTooLow
                             | ethrex_blockchain::error::MempoolError::NotEnoughBalance
                             | ethrex_blockchain::error::MempoolError::UnderpricedReplacement => {
-                                log_peer_warn(
+                                log_peer_debug(
                                     &state.node,
                                     &format!("Error adding transaction common: {e}"),
                                 );
