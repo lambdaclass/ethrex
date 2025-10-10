@@ -1904,6 +1904,299 @@
       "title": "Node Memory (RSS)",
       "type": "timeseries"
     }
+    ,
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Latest snap sync stage durations. Values are seconds captured at the end of each stage.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 600
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "id": 47,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_head_retrieval_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Head retrieval",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_headers_download_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Headers download",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_account_download_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Account download",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_account_insert_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Account insert",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_storage_download_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Storage download",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_storage_insert_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Storage insert",
+          "range": true,
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_healing_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Healing",
+          "range": true,
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_bytecode_download_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Bytecode download",
+          "range": true,
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_total_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Total",
+          "range": true,
+          "refId": "I"
+        }
+      ],
+      "title": "Snap Sync Stage Durations",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Snap sync stage share based on the latest recorded durations.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 51
+      },
+      "id": 48,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "values": [
+            "percent"
+          ]
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_head_retrieval_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Head retrieval",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_headers_download_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Headers download",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_account_download_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Account download",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_account_insert_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Account insert",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_storage_download_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Storage download",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_storage_insert_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Storage insert",
+          "range": true,
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_healing_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Healing",
+          "range": true,
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_bytecode_download_seconds{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "Bytecode download",
+          "range": true,
+          "refId": "H"
+        }
+      ],
+      "title": "Snap Sync Stage Share",
+      "type": "piechart"
+    }
   ],
   "preload": false,
   "refresh": "5s",
@@ -1985,5 +2278,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 8
+  "version": 9
 }
