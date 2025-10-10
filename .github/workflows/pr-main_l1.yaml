@@ -180,18 +180,12 @@ jobs:
             hive_repository: ethereum/hive
             hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
             artifact_prefix: engine_withdrawals
-          - name: "Sync full"
+          - name: "Sync"
             simulation: ethereum/sync
             limit: ""
             hive_repository: ethereum/hive
             hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
-            artifact_prefix: sync_full
-          - name: "Sync snap"
-            simulation: ethereum/sync
-            limit: ""
-            hive_repository: ethereum/hive
-            hive_version: 2b7a9c007770b10cb1a242a6c6de88c87a383e5a
-            artifact_prefix: sync_snap
+            artifact_prefix: sync
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -245,8 +239,20 @@ jobs:
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
-          workflow_artifact_upload: true
-          workflow_artifact_prefix: ${{ matrix.artifact_prefix }}
+
+      - name: Check Hive Results For Failures
+        id: verify-hive-results
+        if: ${{ success() }}
+        shell: bash
+        run: ./.github/scripts/check-hive-results.sh src/results
+
+      - name: Upload Hive Failure Logs
+        if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive_failed_logs_${{ matrix.artifact_prefix }}
+          path: src/results/failed_logs
+          if-no-files-found: warn
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
