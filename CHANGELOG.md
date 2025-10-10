@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-10-10
+
+- Improve get_closest_nodes p2p performance [#4838](https://github.com/lambdaclass/ethrex/pull/4838)
+
 ### 2025-10-06
 
 - Improve block headers vec handling in syncer [#4771](https://github.com/lambdaclass/ethrex/pull/4771)
