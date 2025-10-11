@@ -6,7 +6,6 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-#[cfg(feature = "rocksdb")]
 use tracing::error;
 
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
@@ -134,7 +133,7 @@ pub fn get_code_hashes_snapshot_file(directory: &Path, chunk_index: u64) -> Path
 
 pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
     std::fs::write(path, &contents)
-        .inspect_err(|err| tracing::error!(%err, ?path, "Failed to dump snapshot to file"))
+        .inspect_err(|err| error!(%err, ?path, "Failed to dump snapshot to file"))
         .map_err(|err| DumpError {
             path: path.to_path_buf(),
             contents,
