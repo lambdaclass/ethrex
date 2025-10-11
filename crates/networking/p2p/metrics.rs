@@ -290,43 +290,6 @@ impl Metrics {
             .await;
     }
 
-    /// Reset all snap sync metrics to initial state
-    pub async fn reset_snap_sync_metrics(&self) {
-        // Reset current step
-        self.current_step.set(CurrentStepValue::None);
-        
-        // Reset counters
-        self.sync_head_block.store(0, Ordering::Relaxed);
-        self.headers_to_download.store(0, Ordering::Relaxed);
-        self.downloaded_headers.store(0, Ordering::Relaxed);
-        self.downloaded_account_tries.store(0, Ordering::Relaxed);
-        self.account_tries_inserted.store(0, Ordering::Relaxed);
-        self.downloaded_storage_slots.store(0, Ordering::Relaxed);
-        self.storage_accounts_initial.store(0, Ordering::Relaxed);
-        self.storage_accounts_healed.store(0, Ordering::Relaxed);
-        self.global_state_trie_leafs_healed.store(0, Ordering::Relaxed);
-        self.global_storage_tries_leafs_healed.store(0, Ordering::Relaxed);
-        self.bytecodes_to_download.store(0, Ordering::Relaxed);
-        self.downloaded_bytecodes.store(0, Ordering::Relaxed);
-        
-        // Reset timestamps
-        *self.sync_head_hash.lock().await = Default::default();
-        *self.time_to_retrieve_sync_head_block.lock().await = None;
-        *self.headers_download_start_time.lock().await = None;
-        *self.account_tries_download_start_time.lock().await = None;
-        *self.account_tries_download_end_time.lock().await = None;
-        *self.account_tries_insert_start_time.lock().await = None;
-        *self.account_tries_insert_end_time.lock().await = None;
-        *self.storage_tries_download_start_time.lock().await = None;
-        *self.storage_tries_download_end_time.lock().await = None;
-        *self.storage_tries_insert_start_time.lock().await = None;
-        *self.storage_tries_insert_end_time.lock().await = None;
-        *self.heal_start_time.lock().await = None;
-        *self.heal_end_time.lock().await = None;
-        *self.bytecode_download_start_time.lock().await = None;
-        *self.bytecode_download_end_time.lock().await = None;
-    }
-
     pub async fn update_rate(&self, events: &mut VecDeque<SystemTime>, rate_gauge: &Gauge) {
         self.clean_old_events(events).await;
 
@@ -854,10 +817,6 @@ impl Metrics {
 
 pub async fn gather_snap_sync_metrics() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     METRICS.gather_snap_sync_metrics().await
-}
-
-pub async fn reset_snap_sync_metrics() {
-    METRICS.reset_snap_sync_metrics().await
 }
 
 impl Default for Metrics {
