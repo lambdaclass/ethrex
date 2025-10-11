@@ -238,6 +238,497 @@
       "fieldConfig": {
         "defaults": {
           "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "dark-gray",
+                  "text": "Not Started"
+                },
+                "1": {
+                  "color": "blue",
+                  "text": "Healing Storage"
+                },
+                "2": {
+                  "color": "blue",
+                  "text": "Healing State"
+                },
+                "3": {
+                  "color": "yellow",
+                  "text": "Requesting Bytecodes"
+                },
+                "4": {
+                  "color": "orange",
+                  "text": "Requesting Account Ranges"
+                },
+                "5": {
+                  "color": "orange",
+                  "text": "Requesting Storage Ranges"
+                },
+                "6": {
+                  "color": "purple",
+                  "text": "Downloading Headers"
+                },
+                "7": {
+                  "color": "red",
+                  "text": "Inserting Storage Ranges"
+                },
+                "8": {
+                  "color": "red",
+                  "text": "Inserting Account Ranges"
+                },
+                "9": {
+                  "color": "red",
+                  "text": "Inserting Account Ranges (No DB)"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 6,
+        "x": 0,
+        "y": 3
+      },
+      "id": 51,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_current_step{job=\"$job\"}",
+          "legendFormat": "Current Phase",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Snap Sync Current Phase",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 7200
+              },
+              {
+                "color": "red",
+                "value": 21600
+              }
+            ]
+          },
+          "unit": "h"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 6,
+        "x": 6,
+        "y": 3
+      },
+      "id": 52,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_total_duration_seconds{job=\"$job\"} / 3600",
+          "legendFormat": "Total Duration",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Snap Sync Total Duration",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Duration (seconds)",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 3
+      },
+      "id": 53,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_account_tries_download_duration_seconds{job=\"$job\"}",
+          "legendFormat": "Account Tries Download",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_account_tries_insert_duration_seconds{job=\"$job\"}",
+          "legendFormat": "Account Tries Insert",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_storage_tries_download_duration_seconds{job=\"$job\"}",
+          "legendFormat": "Storage Tries Download",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_storage_tries_insert_duration_seconds{job=\"$job\"}",
+          "legendFormat": "Storage Tries Insert",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_healing_duration_seconds{job=\"$job\"}",
+          "legendFormat": "Healing Phase",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_bytecode_download_duration_seconds{job=\"$job\"}",
+          "legendFormat": "Bytecode Download",
+          "range": true,
+          "refId": "F"
+        }
+      ],
+      "title": "Snap Sync Phase Duration Breakdown",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Storage Accounts Healed %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Healed %"
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 54,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_global_state_trie_leafs_healed{job=\"$job\"}",
+          "legendFormat": "State Trie Leafs Healed",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_global_storage_tries_leafs_healed{job=\"$job\"}",
+          "legendFormat": "Storage Tries Leafs Healed",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_storage_accounts_healed{job=\"$job\"} / snap_sync_storage_accounts_initial{job=\"$job\"} * 100",
+          "legendFormat": "Storage Accounts Healed %",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Snap Sync Healing Progress",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
             "mode": "palette-classic"
           },
           "custom": {
@@ -312,7 +803,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 3
+        "y": 11
       },
       "id": 2,
       "options": {
@@ -461,7 +952,7 @@
         "h": 8,
         "w": 7,
         "x": 6,
-        "y": 3
+        "y": 11
       },
       "id": 11,
       "options": {
@@ -565,7 +1056,7 @@
         "h": 8,
         "w": 11,
         "x": 13,
-        "y": 3
+        "y": 11
       },
       "id": 1,
       "options": {
@@ -728,7 +1219,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 19
       },
       "id": 12,
       "options": {
@@ -977,7 +1468,7 @@
         "h": 3,
         "w": 5,
         "x": 0,
-        "y": 23
+        "y": 31
       },
       "id": 34,
       "options": {
@@ -1046,7 +1537,7 @@
         "h": 3,
         "w": 2,
         "x": 5,
-        "y": 23
+        "y": 31
       },
       "id": 33,
       "options": {
@@ -1114,7 +1605,7 @@
         "h": 3,
         "w": 5,
         "x": 7,
-        "y": 23
+        "y": 31
       },
       "id": 43,
       "options": {
@@ -1176,7 +1667,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 31
       },
       "id": 18,
       "options": {
@@ -1288,7 +1779,7 @@
         "h": 5,
         "w": 12,
         "x": 0,
-        "y": 26
+        "y": 34
       },
       "id": 32,
       "options": {
@@ -1390,7 +1881,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 31
+        "y": 39
       },
       "id": 46,
       "options": {
@@ -1494,7 +1985,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 37
+        "y": 45
       },
       "id": 45,
       "options": {
@@ -1632,7 +2123,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 37
+        "y": 45
       },
       "id": 42,
       "options": {
@@ -1741,7 +2232,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 45
+        "y": 53
       },
       "id": 30,
       "options": {
@@ -1868,7 +2359,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 45
+        "y": 53
       },
       "id": 31,
       "options": {
