@@ -404,13 +404,24 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "snap_sync_total_duration_seconds{job=\"$job\"} / 3600",
-          "legendFormat": "Total Duration",
+          "expr": "snap_sync_elapsed_time_seconds{job=\"$job\"} / 3600",
+          "legendFormat": "Elapsed Time",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "snap_sync_total_duration_seconds{job=\"$job\"} / 3600",
+          "legendFormat": "Total Duration (Final)",
+          "range": true,
+          "refId": "B"
         }
       ],
-      "title": "Snap Sync Total Duration",
+      "title": "Snap Sync Duration",
       "type": "stat"
     },
     {
@@ -423,39 +434,7 @@
           "color": {
             "mode": "palette-classic"
           },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "Duration (seconds)",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
+
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -482,20 +461,21 @@
       },
       "id": 53,
       "options": {
-        "legend": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
           "calcs": [
-            "mean",
-            "max"
+            "lastNotNull"
           ],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
       },
       "pluginVersion": "12.2.0",
       "targets": [
@@ -567,7 +547,7 @@
         }
       ],
       "title": "Snap Sync Phase Duration Breakdown",
-      "type": "timeseries"
+      "type": "stat"
     },
     {
       "datasource": {

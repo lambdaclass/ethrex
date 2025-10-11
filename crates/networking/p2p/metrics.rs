@@ -715,7 +715,7 @@ impl Metrics {
             }
         }
 
-        // Total sync duration (if we have any start and end times)
+        // Total sync duration calculation
         let earliest_start = [
             *self.headers_download_start_time.lock().await,
             *self.account_tries_download_start_time.lock().await,
@@ -728,6 +728,11 @@ impl Metrics {
         .min();
 
         let latest_end = [
+            // Include headers end time if headers downloading is complete
+            if self.downloaded_headers.load(Ordering::Relaxed) == self.headers_to_download.load(Ordering::Relaxed) 
+                && self.headers_to_download.load(Ordering::Relaxed) > 0 {
+                self.headers_download_start_time.lock().await.map(|_| SystemTime::now())
+            } else { None },
             *self.account_tries_insert_end_time.lock().await,
             *self.storage_tries_insert_end_time.lock().await,
             *self.heal_end_time.lock().await,
@@ -737,15 +742,27 @@ impl Metrics {
         .flatten()
         .max();
 
+        // Emit total duration if sync is completely finished
         if let (Some(start), Some(end)) = (earliest_start, latest_end) {
             if let Ok(duration) = end.duration_since(start) {
                 let total_sync_duration_gauge = Gauge::new(
                     "snap_sync_total_duration_seconds",
-                    "Total time taken for snap sync in seconds"
+                    "Total time taken for completed snap sync in seconds"
                 )?;
                 total_sync_duration_gauge.set(duration.as_secs_f64());
                 registry.register(Box::new(total_sync_duration_gauge))?;
             }
+        }
+
+        // Always emit elapsed time since sync started (for real-time progress)
+        if let Some(start) = earliest_start {
+            let elapsed = SystemTime::now().duration_since(start).unwrap_or_default();
+            let elapsed_time_gauge = Gauge::new(
+                "snap_sync_elapsed_time_seconds",
+                "Time elapsed since snap sync started in seconds"
+            )?;
+            elapsed_time_gauge.set(elapsed.as_secs_f64());
+            registry.register(Box::new(elapsed_time_gauge))?;
         }
 
         let encoder = TextEncoder::new();
