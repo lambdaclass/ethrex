@@ -625,6 +625,23 @@ impl Metrics {
             registry.register(Box::new(sync_head_block_time_gauge))?;
         }
 
+        // Headers download duration
+        if let Some(start) = *self.headers_download_start_time.lock().await {
+            // Calculate headers download duration if headers are complete
+            if self.downloaded_headers.load(Ordering::Relaxed) == self.headers_to_download.load(Ordering::Relaxed) 
+                && self.headers_to_download.load(Ordering::Relaxed) > 0 {
+                let end = SystemTime::now(); // Use current time as end since we don't track headers_download_end_time
+                if let Ok(duration) = end.duration_since(start) {
+                    let headers_download_duration_gauge = Gauge::new(
+                        "snap_sync_headers_download_duration_seconds",
+                        "Time taken to download headers in seconds"
+                    )?;
+                    headers_download_duration_gauge.set(duration.as_secs_f64());
+                    registry.register(Box::new(headers_download_duration_gauge))?;
+                }
+            }
+        }
+
         // Account tries download duration
         if let (Some(start), Some(end)) = (
             *self.account_tries_download_start_time.lock().await,

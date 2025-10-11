@@ -480,10 +480,21 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
+          "expr": "snap_sync_headers_download_duration_seconds{job=\"$job\"}",
+          "legendFormat": "Headers Download",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
           "expr": "snap_sync_account_tries_download_duration_seconds{job=\"$job\"}",
           "legendFormat": "Account Tries Download",
           "range": true,
-          "refId": "A"
+          "refId": "B"
         },
         {
           "datasource": {
@@ -494,7 +505,7 @@
           "expr": "snap_sync_account_tries_insert_duration_seconds{job=\"$job\"}",
           "legendFormat": "Account Tries Insert",
           "range": true,
-          "refId": "B"
+          "refId": "C"
         },
         {
           "datasource": {
@@ -505,7 +516,7 @@
           "expr": "snap_sync_storage_tries_download_duration_seconds{job=\"$job\"}",
           "legendFormat": "Storage Tries Download",
           "range": true,
-          "refId": "C"
+          "refId": "D"
         },
         {
           "datasource": {
@@ -516,7 +527,7 @@
           "expr": "snap_sync_storage_tries_insert_duration_seconds{job=\"$job\"}",
           "legendFormat": "Storage Tries Insert",
           "range": true,
-          "refId": "D"
+          "refId": "E"
         },
         {
           "datasource": {
@@ -527,7 +538,7 @@
           "expr": "snap_sync_healing_duration_seconds{job=\"$job\"}",
           "legendFormat": "Healing Phase",
           "range": true,
-          "refId": "E"
+          "refId": "F"
         },
         {
           "datasource": {
@@ -538,7 +549,7 @@
           "expr": "snap_sync_bytecode_download_duration_seconds{job=\"$job\"}",
           "legendFormat": "Bytecode Download",
           "range": true,
-          "refId": "F"
+          "refId": "G"
         }
       ],
       "title": "Snap Sync Phase Duration Breakdown",
