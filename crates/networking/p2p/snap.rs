@@ -3,7 +3,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 
 use crate::rlpx::{
-    error::RLPxError,
+    error::PeerConnectionError,
     snap::{
         AccountRange, AccountRangeUnit, AccountStateSlim, ByteCodes, GetAccountRange, GetByteCodes,
         GetStorageRanges, GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
@@ -129,13 +129,13 @@ pub fn process_byte_codes_request(
 pub async fn process_trie_nodes_request(
     request: GetTrieNodes,
     store: Store,
-) -> Result<TrieNodes, RLPxError> {
+) -> Result<TrieNodes, PeerConnectionError> {
     tokio::task::spawn_blocking(move || {
         let mut nodes = vec![];
         let mut remaining_bytes = request.bytes;
         for paths in request.paths {
             if paths.is_empty() {
-                return Err(RLPxError::BadRequest(
+                return Err(PeerConnectionError::BadRequest(
                     "zero-item pathset requested".to_string(),
                 ));
             }
