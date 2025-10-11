@@ -88,12 +88,10 @@ impl BlockProducer {
             block_gas_limit,
         } = config;
 
-        if let Some(fee_vault) = fee_vault_address {
-            if fee_vault == coinbase_address {
-                warn!(
-                    "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
-                );
-            }
+        if fee_vault_address.is_some_and(|fee_vault| fee_vault == coinbase_address) {
+            warn!(
+                "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
+            );
         }
 
         Self {
