@@ -200,27 +200,30 @@ impl BlockProducer {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        let transactions_count = block.body.transactions.len();
+        let block_number = block.header.number;
+        let block_hash = block.hash();
         self.blockchain
-            .store_block(&block, account_updates_list, execution_result)
+            .store_block(block, account_updates_list, execution_result)
             .await?;
-        info!("Stored new block {:x}", block.hash());
+        info!("Stored new block {:x}", block_hash);
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         self.rollup_store
-            .store_account_updates_by_block_number(block.header.number, account_updates)
+            .store_account_updates_by_block_number(block_number, account_updates)
             .await?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&self.store, block.hash(), block.hash(), block.hash()).await?;
+        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
             let _ = METRICS_BLOCKS
-            .set_block_number(block.header.number)
+            .set_block_number(block_number)
             .inspect_err(|e| {
                 tracing::error!("Failed to set metric: block_number {}", e.to_string())
             });
             #[allow(clippy::as_conversions)]
-            let tps = block.body.transactions.len() as f64 / (self.block_time_ms as f64 / 1000_f64);
+            let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
             METRICS_TX.set_transactions_per_second(tps);
         );
 

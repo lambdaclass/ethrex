@@ -278,23 +278,21 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
                 })?;
                 // Get storage trie at before updates
-                if !acc_keys.is_empty() {
-                    if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
-                    {
-                        let (storage_trie_witness, storage_trie) =
-                            TrieLogger::open_trie(storage_trie);
-                        // Access all the keys
-                        for storage_key in acc_keys {
-                            let hashed_key = hash_key(storage_key);
-                            storage_trie.get(&hashed_key).map_err(|_e| {
-                                ChainError::WitnessGeneration(
-                                    "Failed to access storage key".to_string(),
-                                )
-                            })?;
-                        }
-                        // Store the tries to reuse when applying account updates
-                        used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
+                if !acc_keys.is_empty()
+                    && let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
+                {
+                    let (storage_trie_witness, storage_trie) = TrieLogger::open_trie(storage_trie);
+                    // Access all the keys
+                    for storage_key in acc_keys {
+                        let hashed_key = hash_key(storage_key);
+                        storage_trie.get(&hashed_key).map_err(|_e| {
+                            ChainError::WitnessGeneration(
+                                "Failed to access storage key".to_string(),
+                            )
+                        })?;
                     }
+                    // Store the tries to reuse when applying account updates
+                    used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
                 }
             }
             // Store all the accessed evm bytecodes
@@ -346,10 +344,10 @@ impl Blockchain {
         let state_trie_witness = std::mem::take(&mut *state_trie_witness);
         used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
         // If the witness is empty at least try to store the root
-        if used_trie_nodes.is_empty() {
-            if let Some(root) = root_node {
-                used_trie_nodes.push(root.encode_raw());
-            }
+        if used_trie_nodes.is_empty()
+            && let Some(root) = root_node
+        {
+            used_trie_nodes.push(root.encode_raw());
         }
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
@@ -364,10 +362,10 @@ impl Blockchain {
             .saturating_sub(1);
         // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
         let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
-        if let Some(block_number_from_logger) = needed_block_numbers.first() {
-            if **block_number_from_logger < first_needed_block_number {
-                first_needed_block_number = **block_number_from_logger;
-            }
+        if let Some(block_number_from_logger) = needed_block_numbers.first()
+            && **block_number_from_logger < first_needed_block_number
+        {
+            first_needed_block_number = **block_number_from_logger;
         }
         let mut block_headers_bytes = Vec::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
@@ -402,7 +400,7 @@ impl Blockchain {
 
     pub async fn store_block(
         &self,
-        block: &Block,
+        block: Block,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
@@ -412,8 +410,8 @@ impl Blockchain {
         let update_batch = UpdateBatch {
             account_updates: account_updates_list.state_updates,
             storage_updates: account_updates_list.storage_updates,
-            blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
+            blocks: vec![block],
             code_updates: account_updates_list.code_updates,
         };
 
@@ -424,9 +422,9 @@ impl Blockchain {
             .map_err(|e| e.into())
     }
 
-    pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub async fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(block).await?;
+        let (res, updates) = self.execute_block(&block).await?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root
@@ -436,18 +434,38 @@ impl Blockchain {
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
+        let (gas_used, gas_limit, block_number, transactions_count) = (
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.number,
+            block.body.transactions.len(),
+        );
+
         let merkleized = Instant::now();
         let result = self.store_block(block, account_updates_list, res).await;
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
-            Self::print_add_block_logs(block, since, executed, merkleized, stored);
+            Self::print_add_block_logs(
+                gas_used,
+                gas_limit,
+                block_number,
+                transactions_count,
+                since,
+                executed,
+                merkleized,
+                stored,
+            );
         }
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn print_add_block_logs(
-        block: &Block,
+        gas_used: u64,
+        gas_limit: u64,
+        block_number: u64,
+        transactions_count: usize,
         since: Instant,
         executed: Instant,
         merkleized: Instant,
@@ -455,30 +473,29 @@ impl Blockchain {
     ) {
         let interval = stored.duration_since(since).as_millis() as f64;
         if interval != 0f64 {
-            let as_gigas = block.header.gas_used as f64 / 10_f64.powf(9_f64);
+            let as_gigas = gas_used as f64 / 10_f64.powf(9_f64);
             let throughput = as_gigas / interval * 1000_f64;
 
             metrics!(
-                let _ = METRICS_BLOCKS.set_block_number(block.header.number);
-                METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
-                METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
+                let _ = METRICS_BLOCKS.set_block_number(block_number);
+                METRICS_BLOCKS.set_latest_gas_used(gas_used as f64);
+                METRICS_BLOCKS.set_latest_block_gas_limit(gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
             );
 
             let base_log = format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
-                block.header.number,
+                block_number,
                 throughput,
                 interval,
                 as_gigas,
-                (block.header.gas_used as f64 / block.header.gas_limit as f64) * 100.0,
-                block.body.transactions.len()
+                (gas_used as f64 / gas_limit as f64) * 100.0,
+                transactions_count
             );
 
             fn percentage(init: Instant, end: Instant, total: f64) -> f64 {
                 (end.duration_since(init).as_millis() as f64 / total * 100.0).round()
             }
-
             let extra_log = if as_gigas > 0.0 {
                 format!(
                     " exec: {}% merkle: {}% store: {}%",
@@ -489,7 +506,6 @@ impl Blockchain {
             } else {
                 "".to_string()
             };
-
             info!("{}{}", base_log, extra_log);
         }
     }
@@ -836,10 +852,11 @@ impl Blockchain {
         // If it exists check if the new tx has higher fees
         let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
 
-        if let Some(chain_id) = tx.chain_id() {
-            if chain_id != config.chain_id {
-                return Err(MempoolError::InvalidChainId(config.chain_id));
-            }
+        if tx
+            .chain_id()
+            .is_some_and(|chain_id| chain_id != config.chain_id)
+        {
+            return Err(MempoolError::InvalidChainId(config.chain_id));
         }
 
         Ok(tx_to_replace_hash)
@@ -1057,12 +1074,12 @@ pub fn validate_gas_used(
     receipts: &[Receipt],
     block_header: &BlockHeader,
 ) -> Result<(), ChainError> {
-    if let Some(last) = receipts.last() {
-        if last.cumulative_gas_used != block_header.gas_used {
-            return Err(ChainError::InvalidBlock(
-                InvalidBlockError::GasUsedMismatch(last.cumulative_gas_used, block_header.gas_used),
-            ));
-        }
+    if let Some(last) = receipts.last()
+        && last.cumulative_gas_used != block_header.gas_used
+    {
+        return Err(ChainError::InvalidBlock(
+            InvalidBlockError::GasUsedMismatch(last.cumulative_gas_used, block_header.gas_used),
+        ));
     }
     Ok(())
 }

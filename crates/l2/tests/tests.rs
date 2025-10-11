@@ -36,7 +36,6 @@ use std::{
     io::{BufRead, BufReader},
     ops::Mul,
     path::{Path, PathBuf},
-    str::FromStr,
     time::Duration,
 };
 use tokio::task::JoinSet;
@@ -79,6 +78,12 @@ const DEFAULT_BRIDGE_OWNER_PRIVATE_KEY: H256 = H256([
 const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0x00, 0x07, 0xa8, 0x81, 0xcd, 0x95, 0xb1, 0x48, 0x4f, 0xca, 0x47, 0x61, 0x5b, 0x64, 0x80, 0x3d,
     0xad, 0x62, 0x0c, 0x8d,
+]);
+
+// 0x44e09413ab37c3dae5663f2fd408e60ac2dbc7e2
+const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
+    0x44, 0xe0, 0x94, 0x13, 0xab, 0x37, 0xc3, 0xda, 0xe5, 0x66, 0x3f, 0x2f, 0xd4, 0x08, 0xe6, 0x0a,
+    0xc2, 0xdb, 0xc7, 0xe2,
 ]);
 
 // 0x000c0d6b7c4516a5b274c51ea331a9410fe69127
@@ -1909,7 +1914,12 @@ async fn wait_for_l2_deposit_receipt(
 
 pub fn read_env_file_by_config() {
     let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cmd/.env");
-    let reader = BufReader::new(File::open(env_file_path).expect("Failed to open .env file"));
+    let Ok(env_file) = File::open(env_file_path) else {
+        println!(".env file not found, skipping");
+        return;
+    };
+
+    let reader = BufReader::new(env_file);
 
     for line in reader.lines() {
         let line = line.expect("Failed to read line");
@@ -2048,11 +2058,9 @@ fn transfer_value() -> U256 {
 }
 
 fn on_chain_proposer_address() -> Address {
-    Address::from_str(
-        &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
-            .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
-    )
-    .unwrap()
+    std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
+        .map(|address| address.parse().expect("Invalid proposer address"))
+        .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
 }
 
 /// Waits until the batch containing L2->L1 message is verified on L1, and returns the proof for that message

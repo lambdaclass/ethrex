@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "cmd/ethrex",
-  "cmd/ethrex_replay",
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
@@ -31,6 +30,7 @@ members = [
   "tooling/archive_sync",
   "crates/common/config",
   "tooling/reorgs",
+  "crates/concurrency",
   "tooling/migrations",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
@@ -75,6 +75,7 @@ ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
+ethrex-threadpool = { path = "./crates/concurrency" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -116,6 +117,7 @@ spawned-concurrency = "0.4.0"
 spawned-rt = "0.4.0"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
+crossbeam = "0.8.4"
 rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"

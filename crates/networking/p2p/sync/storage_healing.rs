@@ -1,5 +1,5 @@
 use crate::{
-    metrics::METRICS,
+    metrics::{CurrentStepValue, METRICS},
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -126,7 +126,7 @@ pub async fn heal_storage_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
-    *METRICS.current_step.lock().await = "Healing Storage".to_string();
+    METRICS.current_step.set(CurrentStepValue::HealingStorage);
     let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
     info!(
         "Started Storage Healing with {} accounts",
@@ -543,26 +543,6 @@ fn get_initial_downloads(
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                     parent: Nibbles::default(),
                     hash: account.storage_root,
-                })
-            })
-            .collect::<VecDeque<_>>(),
-    );
-    initial_requests.extend(
-        account_paths
-            .accounts_with_storage_root
-            .par_iter()
-            .filter_map(|(acc_path, storage_root)| {
-                if store
-                    .contains_storage_node(*acc_path, *storage_root)
-                    .expect("We should be able to open the store")
-                {
-                    return None;
-                }
-                Some(NodeRequest {
-                    acc_path: Nibbles::from_bytes(&acc_path.0),
-                    storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
-                    parent: Nibbles::default(),
-                    hash: *storage_root,
                 })
             })
             .collect::<VecDeque<_>>(),
