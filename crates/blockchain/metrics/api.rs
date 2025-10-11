@@ -22,6 +22,10 @@ pub async fn start_prometheus_metrics_api(
     Ok(())
 }
 
+pub async fn gather_blockchain_metrics() -> String {
+    get_metrics().await
+}
+
 #[allow(unused_mut)]
 pub(crate) async fn get_metrics() -> String {
     let mut ret_string = match METRICS_TX.gather_metrics() {

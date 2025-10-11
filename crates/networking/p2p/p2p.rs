@@ -1,5 +1,5 @@
 pub mod discv4;
-pub(crate) mod metrics;
+pub mod metrics;
 pub mod network;
 pub mod peer_handler;
 pub mod rlpx;

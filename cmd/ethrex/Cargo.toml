@@ -47,6 +47,7 @@ tui-logger.workspace = true
 
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
+axum.workspace = true
 url.workspace = true
 ethrex-prover = { workspace = true, features = ["l2"] }
 

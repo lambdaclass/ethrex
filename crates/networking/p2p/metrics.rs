@@ -511,6 +511,255 @@ impl Metrics {
             }
         }
     }
+
+    pub async fn gather_snap_sync_metrics(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        use prometheus::{Encoder, TextEncoder, Registry, Gauge, IntGauge};
+
+        let registry = Registry::new();
+
+        // Current step
+        let current_step_gauge = IntGauge::new(
+            "snap_sync_current_step",
+            "Current step of snap sync process (0=None, 1=HealingStorage, 2=HealingState, 3=RequestingBytecodes, 4=RequestingAccountRanges, 5=RequestingStorageRanges, 6=DownloadingHeaders, 7=InsertingStorageRanges, 8=InsertingAccountRanges, 9=InsertingAccountRangesNoDb)"
+        )?;
+        current_step_gauge.set(self.current_step.get() as u8 as i64);
+        registry.register(Box::new(current_step_gauge))?;
+
+        // Sync head block
+        let sync_head_block_gauge = IntGauge::new(
+            "snap_sync_head_block",
+            "Block number of the sync head"
+        )?;
+        sync_head_block_gauge.set(self.sync_head_block.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(sync_head_block_gauge))?;
+
+        // Headers metrics
+        let headers_to_download_gauge = IntGauge::new(
+            "snap_sync_headers_to_download",
+            "Number of headers remaining to download"
+        )?;
+        headers_to_download_gauge.set(self.headers_to_download.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(headers_to_download_gauge))?;
+
+        let downloaded_headers_gauge = IntGauge::new(
+            "snap_sync_downloaded_headers",
+            "Number of headers downloaded"
+        )?;
+        downloaded_headers_gauge.set(self.downloaded_headers.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(downloaded_headers_gauge))?;
+
+        // Account tries metrics
+        let downloaded_account_tries_gauge = IntGauge::new(
+            "snap_sync_downloaded_account_tries",
+            "Number of account tries downloaded"
+        )?;
+        downloaded_account_tries_gauge.set(self.downloaded_account_tries.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(downloaded_account_tries_gauge))?;
+
+        let account_tries_inserted_gauge = IntGauge::new(
+            "snap_sync_account_tries_inserted", 
+            "Number of account tries inserted"
+        )?;
+        account_tries_inserted_gauge.set(self.account_tries_inserted.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(account_tries_inserted_gauge))?;
+
+        // Storage slots metrics
+        let downloaded_storage_slots_gauge = IntGauge::new(
+            "snap_sync_downloaded_storage_slots",
+            "Number of storage slots downloaded"
+        )?;
+        downloaded_storage_slots_gauge.set(self.downloaded_storage_slots.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(downloaded_storage_slots_gauge))?;
+
+        let storage_accounts_initial_gauge = IntGauge::new(
+            "snap_sync_storage_accounts_initial",
+            "Initial number of storage accounts"
+        )?;
+        storage_accounts_initial_gauge.set(self.storage_accounts_initial.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(storage_accounts_initial_gauge))?;
+
+        let storage_accounts_healed_gauge = IntGauge::new(
+            "snap_sync_storage_accounts_healed",
+            "Number of storage accounts healed"
+        )?;
+        storage_accounts_healed_gauge.set(self.storage_accounts_healed.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(storage_accounts_healed_gauge))?;
+
+        // Healing metrics
+        let global_state_trie_leafs_healed_gauge = IntGauge::new(
+            "snap_sync_global_state_trie_leafs_healed",
+            "Number of global state trie leafs healed"
+        )?;
+        global_state_trie_leafs_healed_gauge.set(self.global_state_trie_leafs_healed.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(global_state_trie_leafs_healed_gauge))?;
+
+        let global_storage_tries_leafs_healed_gauge = IntGauge::new(
+            "snap_sync_global_storage_tries_leafs_healed",
+            "Number of global storage tries leafs healed"
+        )?;
+        global_storage_tries_leafs_healed_gauge.set(self.global_storage_tries_leafs_healed.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(global_storage_tries_leafs_healed_gauge))?;
+
+        // Bytecodes metrics
+        let bytecodes_to_download_gauge = IntGauge::new(
+            "snap_sync_bytecodes_to_download",
+            "Number of bytecodes remaining to download"
+        )?;
+        bytecodes_to_download_gauge.set(self.bytecodes_to_download.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(bytecodes_to_download_gauge))?;
+
+        let downloaded_bytecodes_gauge = IntGauge::new(
+            "snap_sync_downloaded_bytecodes",
+            "Number of bytecodes downloaded"
+        )?;
+        downloaded_bytecodes_gauge.set(self.downloaded_bytecodes.load(Ordering::Relaxed) as i64);
+        registry.register(Box::new(downloaded_bytecodes_gauge))?;
+
+        // Time duration metrics (in seconds)
+        if let Some(time) = *self.time_to_retrieve_sync_head_block.lock().await {
+            let sync_head_block_time_gauge = Gauge::new(
+                "snap_sync_head_block_retrieval_duration_seconds",
+                "Time taken to retrieve sync head block in seconds"
+            )?;
+            sync_head_block_time_gauge.set(time.as_secs_f64());
+            registry.register(Box::new(sync_head_block_time_gauge))?;
+        }
+
+        // Account tries download duration
+        if let (Some(start), Some(end)) = (
+            *self.account_tries_download_start_time.lock().await,
+            *self.account_tries_download_end_time.lock().await
+        ) {
+            if let Ok(duration) = end.duration_since(start) {
+                let account_tries_download_duration_gauge = Gauge::new(
+                    "snap_sync_account_tries_download_duration_seconds",
+                    "Time taken to download account tries in seconds"
+                )?;
+                account_tries_download_duration_gauge.set(duration.as_secs_f64());
+                registry.register(Box::new(account_tries_download_duration_gauge))?;
+            }
+        }
+
+        // Account tries insert duration
+        if let (Some(start), Some(end)) = (
+            *self.account_tries_insert_start_time.lock().await,
+            *self.account_tries_insert_end_time.lock().await
+        ) {
+            if let Ok(duration) = end.duration_since(start) {
+                let account_tries_insert_duration_gauge = Gauge::new(
+                    "snap_sync_account_tries_insert_duration_seconds",
+                    "Time taken to insert account tries in seconds"
+                )?;
+                account_tries_insert_duration_gauge.set(duration.as_secs_f64());
+                registry.register(Box::new(account_tries_insert_duration_gauge))?;
+            }
+        }
+
+        // Storage tries download duration
+        if let (Some(start), Some(end)) = (
+            *self.storage_tries_download_start_time.lock().await,
+            *self.storage_tries_download_end_time.lock().await
+        ) {
+            if let Ok(duration) = end.duration_since(start) {
+                let storage_tries_download_duration_gauge = Gauge::new(
+                    "snap_sync_storage_tries_download_duration_seconds",
+                    "Time taken to download storage tries in seconds"
+                )?;
+                storage_tries_download_duration_gauge.set(duration.as_secs_f64());
+                registry.register(Box::new(storage_tries_download_duration_gauge))?;
+            }
+        }
+
+        // Storage tries insert duration
+        if let (Some(start), Some(end)) = (
+            *self.storage_tries_insert_start_time.lock().await,
+            *self.storage_tries_insert_end_time.lock().await
+        ) {
+            if let Ok(duration) = end.duration_since(start) {
+                let storage_tries_insert_duration_gauge = Gauge::new(
+                    "snap_sync_storage_tries_insert_duration_seconds",
+                    "Time taken to insert storage tries in seconds"
+                )?;
+                storage_tries_insert_duration_gauge.set(duration.as_secs_f64());
+                registry.register(Box::new(storage_tries_insert_duration_gauge))?;
+            }
+        }
+
+        // Healing duration
+        if let (Some(start), Some(end)) = (
+            *self.heal_start_time.lock().await,
+            *self.heal_end_time.lock().await
+        ) {
+            if let Ok(duration) = end.duration_since(start) {
+                let heal_duration_gauge = Gauge::new(
+                    "snap_sync_healing_duration_seconds",
+                    "Time taken for healing phase in seconds"
+                )?;
+                heal_duration_gauge.set(duration.as_secs_f64());
+                registry.register(Box::new(heal_duration_gauge))?;
+            }
+        }
+
+        // Bytecode download duration
+        if let (Some(start), Some(end)) = (
+            *self.bytecode_download_start_time.lock().await,
+            *self.bytecode_download_end_time.lock().await
+        ) {
+            if let Ok(duration) = end.duration_since(start) {
+                let bytecode_download_duration_gauge = Gauge::new(
+                    "snap_sync_bytecode_download_duration_seconds",
+                    "Time taken to download bytecodes in seconds"
+                )?;
+                bytecode_download_duration_gauge.set(duration.as_secs_f64());
+                registry.register(Box::new(bytecode_download_duration_gauge))?;
+            }
+        }
+
+        // Total sync duration (if we have any start and end times)
+        let earliest_start = [
+            *self.headers_download_start_time.lock().await,
+            *self.account_tries_download_start_time.lock().await,
+            *self.storage_tries_download_start_time.lock().await,
+            *self.heal_start_time.lock().await,
+            *self.bytecode_download_start_time.lock().await,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+
+        let latest_end = [
+            *self.account_tries_insert_end_time.lock().await,
+            *self.storage_tries_insert_end_time.lock().await,
+            *self.heal_end_time.lock().await,
+            *self.bytecode_download_end_time.lock().await,
+        ]
+        .into_iter()
+        .flatten()
+        .max();
+
+        if let (Some(start), Some(end)) = (earliest_start, latest_end) {
+            if let Ok(duration) = end.duration_since(start) {
+                let total_sync_duration_gauge = Gauge::new(
+                    "snap_sync_total_duration_seconds",
+                    "Total time taken for snap sync in seconds"
+                )?;
+                total_sync_duration_gauge.set(duration.as_secs_f64());
+                registry.register(Box::new(total_sync_duration_gauge))?;
+            }
+        }
+
+        let encoder = TextEncoder::new();
+        let metric_families = registry.gather();
+
+        let mut buffer = Vec::new();
+        encoder.encode(&metric_families, &mut buffer)?;
+
+        Ok(String::from_utf8(buffer)?)
+    }
+}
+
+pub async fn gather_snap_sync_metrics() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    METRICS.gather_snap_sync_metrics().await
 }
 
 impl Default for Metrics {

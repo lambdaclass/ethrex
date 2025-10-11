@@ -81,14 +81,47 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_addr,
         opts.metrics_port
     );
-    let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
+    let combined_metrics_api = start_combined_metrics_server(
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
     );
 
     initialize_block_processing_profile();
 
-    tracker.spawn(metrics_api);
+    tracker.spawn(combined_metrics_api);
+}
+
+async fn start_combined_metrics_server(
+    address: String,
+    port: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    use axum::{Router, routing::get};
+
+    async fn get_all_metrics() -> String {
+        let mut ret_string = ethrex_metrics::api::gather_blockchain_metrics().await;
+        
+        match ethrex_p2p::metrics::gather_snap_sync_metrics().await {
+            Ok(snap_sync_metrics) => {
+                ret_string.push('\n');
+                ret_string.push_str(&snap_sync_metrics);
+            }
+            Err(e) => {
+                tracing::error!("Failed to gather snap sync metrics: {}", e);
+            }
+        }
+
+        ret_string
+    }
+
+    let app = Router::new()
+        .route("/metrics", get(get_all_metrics))
+        .route("/health", get("Combined Metrics Service Up"));
+
+    // Start the axum app
+    let listener = tokio::net::TcpListener::bind(&format!("{address}:{port}")).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
