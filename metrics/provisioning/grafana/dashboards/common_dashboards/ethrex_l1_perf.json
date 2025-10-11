@@ -279,6 +279,10 @@
                 "9": {
                   "color": "red",
                   "text": "Inserting Account Ranges (No DB)"
+                },
+                "10": {
+                  "color": "green",
+                  "text": "Synced"
                 }
               },
               "type": "value"

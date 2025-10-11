@@ -128,6 +128,7 @@ pub enum CurrentStepValue {
     InsertingStorageRanges,
     InsertingAccountRanges,
     InsertingAccountRangesNoDb,
+    Synced,
 }
 
 impl From<u8> for CurrentStepValue {
@@ -142,6 +143,7 @@ impl From<u8> for CurrentStepValue {
             7 => Self::InsertingStorageRanges,
             8 => Self::InsertingAccountRanges,
             9 => Self::InsertingAccountRangesNoDb,
+            10 => Self::Synced,
             _ => Self::None,
         }
     }
@@ -160,6 +162,7 @@ impl From<CurrentStepValue> for u8 {
             CurrentStepValue::InsertingStorageRanges => 7,
             CurrentStepValue::InsertingAccountRanges => 8,
             CurrentStepValue::InsertingAccountRangesNoDb => 9,
+            CurrentStepValue::Synced => 10,
         }
     }
 }
@@ -181,6 +184,7 @@ impl fmt::Display for CurrentStepValue {
                 write!(f, "Inserting Account Ranges - \x1b[31mWriting to DB\x1b[0m")
             }
             CurrentStepValue::InsertingAccountRangesNoDb => write!(f, "Inserting Account Ranges"),
+            CurrentStepValue::Synced => write!(f, "Synced"),
         }
     }
 }
@@ -284,6 +288,43 @@ impl Metrics {
 
         self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, &reason)
             .await;
+    }
+
+    /// Reset all snap sync metrics to initial state
+    pub async fn reset_snap_sync_metrics(&self) {
+        // Reset current step
+        self.current_step.set(CurrentStepValue::None);
+        
+        // Reset counters
+        self.sync_head_block.store(0, Ordering::Relaxed);
+        self.headers_to_download.store(0, Ordering::Relaxed);
+        self.downloaded_headers.store(0, Ordering::Relaxed);
+        self.downloaded_account_tries.store(0, Ordering::Relaxed);
+        self.account_tries_inserted.store(0, Ordering::Relaxed);
+        self.downloaded_storage_slots.store(0, Ordering::Relaxed);
+        self.storage_accounts_initial.store(0, Ordering::Relaxed);
+        self.storage_accounts_healed.store(0, Ordering::Relaxed);
+        self.global_state_trie_leafs_healed.store(0, Ordering::Relaxed);
+        self.global_storage_tries_leafs_healed.store(0, Ordering::Relaxed);
+        self.bytecodes_to_download.store(0, Ordering::Relaxed);
+        self.downloaded_bytecodes.store(0, Ordering::Relaxed);
+        
+        // Reset timestamps
+        *self.sync_head_hash.lock().await = Default::default();
+        *self.time_to_retrieve_sync_head_block.lock().await = None;
+        *self.headers_download_start_time.lock().await = None;
+        *self.account_tries_download_start_time.lock().await = None;
+        *self.account_tries_download_end_time.lock().await = None;
+        *self.account_tries_insert_start_time.lock().await = None;
+        *self.account_tries_insert_end_time.lock().await = None;
+        *self.storage_tries_download_start_time.lock().await = None;
+        *self.storage_tries_download_end_time.lock().await = None;
+        *self.storage_tries_insert_start_time.lock().await = None;
+        *self.storage_tries_insert_end_time.lock().await = None;
+        *self.heal_start_time.lock().await = None;
+        *self.heal_end_time.lock().await = None;
+        *self.bytecode_download_start_time.lock().await = None;
+        *self.bytecode_download_end_time.lock().await = None;
     }
 
     pub async fn update_rate(&self, events: &mut VecDeque<SystemTime>, rate_gauge: &Gauge) {
@@ -517,12 +558,26 @@ impl Metrics {
 
         let registry = Registry::new();
 
+        // Check if we have any sync activity to report
+        let current_step = self.current_step.get();
+        let has_sync_activity = current_step != CurrentStepValue::None || 
+                               self.sync_head_block.load(Ordering::Relaxed) > 0 ||
+                               self.downloaded_headers.load(Ordering::Relaxed) > 0 ||
+                               self.downloaded_account_tries.load(Ordering::Relaxed) > 0 ||
+                               self.downloaded_storage_slots.load(Ordering::Relaxed) > 0 ||
+                               self.downloaded_bytecodes.load(Ordering::Relaxed) > 0;
+
+        // Only emit metrics if there's actual sync activity
+        if !has_sync_activity {
+            return Ok(String::new());
+        }
+
         // Current step
         let current_step_gauge = IntGauge::new(
             "snap_sync_current_step",
-            "Current step of snap sync process (0=None, 1=HealingStorage, 2=HealingState, 3=RequestingBytecodes, 4=RequestingAccountRanges, 5=RequestingStorageRanges, 6=DownloadingHeaders, 7=InsertingStorageRanges, 8=InsertingAccountRanges, 9=InsertingAccountRangesNoDb)"
+            "Current step of snap sync process (0=None, 1=HealingStorage, 2=HealingState, 3=RequestingBytecodes, 4=RequestingAccountRanges, 5=RequestingStorageRanges, 6=DownloadingHeaders, 7=InsertingStorageRanges, 8=InsertingAccountRanges, 9=InsertingAccountRangesNoDb, 10=Synced)"
         )?;
-        current_step_gauge.set(self.current_step.get() as u8 as i64);
+        current_step_gauge.set(current_step as u8 as i64);
         registry.register(Box::new(current_step_gauge))?;
 
         // Sync head block
@@ -759,27 +814,32 @@ impl Metrics {
         .flatten()
         .max();
 
-        // Emit total duration if sync is completely finished
-        if let (Some(start), Some(end)) = (earliest_start, latest_end) {
-            if let Ok(duration) = end.duration_since(start) {
-                let total_sync_duration_gauge = Gauge::new(
-                    "snap_sync_total_duration_seconds",
-                    "Total time taken for completed snap sync in seconds"
-                )?;
-                total_sync_duration_gauge.set(duration.as_secs_f64());
-                registry.register(Box::new(total_sync_duration_gauge))?;
+        // Check if sync is completely finished
+        let sync_complete = earliest_start.is_some() && latest_end.is_some();
+        
+        if sync_complete {
+            // Emit total duration for completed sync
+            if let (Some(start), Some(end)) = (earliest_start, latest_end) {
+                if let Ok(duration) = end.duration_since(start) {
+                    let total_sync_duration_gauge = Gauge::new(
+                        "snap_sync_total_duration_seconds",
+                        "Total time taken for completed snap sync in seconds"
+                    )?;
+                    total_sync_duration_gauge.set(duration.as_secs_f64());
+                    registry.register(Box::new(total_sync_duration_gauge))?;
+                }
             }
-        }
-
-        // Always emit elapsed time since sync started (for real-time progress)
-        if let Some(start) = earliest_start {
-            let elapsed = SystemTime::now().duration_since(start).unwrap_or_default();
-            let elapsed_time_gauge = Gauge::new(
-                "snap_sync_elapsed_time_seconds",
-                "Time elapsed since snap sync started in seconds"
-            )?;
-            elapsed_time_gauge.set(elapsed.as_secs_f64());
-            registry.register(Box::new(elapsed_time_gauge))?;
+        } else {
+            // Emit elapsed time for ongoing sync
+            if let Some(start) = earliest_start {
+                let elapsed = SystemTime::now().duration_since(start).unwrap_or_default();
+                let elapsed_time_gauge = Gauge::new(
+                    "snap_sync_elapsed_time_seconds",
+                    "Time elapsed since snap sync started in seconds"
+                )?;
+                elapsed_time_gauge.set(elapsed.as_secs_f64());
+                registry.register(Box::new(elapsed_time_gauge))?;
+            }
         }
 
         let encoder = TextEncoder::new();
@@ -794,6 +854,10 @@ impl Metrics {
 
 pub async fn gather_snap_sync_metrics() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     METRICS.gather_snap_sync_metrics().await
+}
+
+pub async fn reset_snap_sync_metrics() {
+    METRICS.reset_snap_sync_metrics().await
 }
 
 impl Default for Metrics {

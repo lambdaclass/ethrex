@@ -752,6 +752,11 @@ impl FullBlockSyncState {
 
 impl SnapBlockSyncState {
     fn new(store: Store) -> Self {
+        // Reset snap sync metrics when starting a new snap sync
+        tokio::spawn(async {
+            crate::metrics::reset_snap_sync_metrics().await;
+        });
+        
         Self {
             block_hashes: Vec::new(),
             store,
