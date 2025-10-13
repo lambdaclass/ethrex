@@ -296,7 +296,7 @@ impl PooledTransactions {
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
                 if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    log_peer_warn(node, &format!("Error adding transaction: {e}"));
+                    log_peer_debug(node, &format!("Error adding transaction: {e}"));
                     continue;
                 }
             }
