@@ -1,4 +1,4 @@
-use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig};
+use ethrex_common::types::{AccountInfo, AccountState, AccountUpdate, ChainConfig};
 use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_vm::EvmError;
@@ -61,7 +61,7 @@ impl revm::Database for RevmDynVmDatabase {
             .get_account_state(CoreAddress::from(address.0.as_ref()))
             .map_err(|e| RevmError(EvmError::from(e)))?;
         // If the account
-        if acc_state.is_nonexistent() {
+        if acc_state == AccountState::default() {
             return Ok(None);
         }
         let acc_info = AccountInfo {
