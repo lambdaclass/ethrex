@@ -3521,6 +3521,7 @@ dependencies = [
  "ethrex-vm",
  "eyre",
  "genesis-tool",
+ "guest_program",
  "hex",
  "itertools 0.14.0",
  "lazy_static",

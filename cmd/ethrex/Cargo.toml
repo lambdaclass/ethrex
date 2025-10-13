@@ -25,6 +25,7 @@ ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 ethrex-prover = { workspace = true, default-features = false }
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true, default-features = false }
 ethrex-rlp.workspace = true
+guest_program = { path = "../../crates/l2/prover/src/guest_program", optional = true }
 
 tikv-jemallocator = { version = "0.6.0", optional = true, features = [
   "stats",
@@ -91,6 +92,9 @@ l1 = [
   "ethrex-metrics/l1",
   "ethrex-prover/l1",
 ]
+
+sp1-guest = ["guest_program/sp1-guest"]
+risc0-guest = ["guest_program/risc0-guest"]
 
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
 rocksdb = ["ethrex-storage/rocksdb"]

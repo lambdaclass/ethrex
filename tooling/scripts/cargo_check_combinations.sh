@@ -100,6 +100,9 @@ get_cargo_args() {
         l2+risc0+sp1-guest)
             echo "--no-default-features -F l2,risc0,sp1-guest"
             ;;
+        l1,sp1-guest,risc0-guest)
+            echo "-F l1,sp1-guest,risc0-guest"
+            ;;
         *)
             echo ""
             ;;
@@ -215,6 +218,18 @@ for package in "${packages[@]}"; do
         fi
         # l1,sp1-guest
         variant="l1,sp1-guest"
+        extra=$(get_cargo_args "$package" "$variant")
+        cmd="cd $package && cargo c -r $extra"
+        echo "$cmd"
+        if cargo c -r $extra; then
+            current_status["$package:$variant"]="success"
+        else
+            current_status["$package:$variant"]="fail"
+            failed_packages+=("$package")
+            failed_variants+=("$variant")
+        fi
+        # l1,sp1-guest,risc0-guest
+        variant="l1,sp1-guest,risc0-guest"
         extra=$(get_cargo_args "$package" "$variant")
         cmd="cd $package && cargo c -r $extra"
         echo "$cmd"
