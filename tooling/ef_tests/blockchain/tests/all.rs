@@ -25,8 +25,6 @@ const SKIPPED_BASE: &[&str] = &[
     // It checks that withdrawal requests and consolidation requests accounts have code, which is always the case, except for this test.
     // The fix is just an if, it's on its way on https://github.com/lambdaclass/ethrex/pull/4731
     "system_contract_deployment",
-    // Gas price higher than u64::MAX; impractical scenario. Fix is on its way on https://github.com/lambdaclass/ethrex/pull/4823
-    "HighGasPriceParis",
     // Skip because it tries to deserialize number > U256::MAX
     "ValueOverflowParis",
     // Skip because it's a "Create" Blob Transaction, which doesn't actually exist. It never reaches the EVM because we can't even parse it as an actual Transaction.
