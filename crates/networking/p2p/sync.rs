@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 #[cfg(not(feature = "rocksdb"))]
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use std::{
     array,
     cmp::min,
@@ -204,12 +204,11 @@ impl Syncer {
         // We validate that we have the folders that are being used empty, as we currently assume
         // they are.
         if !validate_folders(&self.datadir) {
-            // Temp std::process::exit until promised #2767
-            println!("Found an error in validate_folders");
-            tokio::time::sleep(Duration::from_secs(2));
+            // Temp std::process::exit until #2767 is done
+            error!("Found an error in validate_folders");
             std::process::exit(-1);
             // Cloning a single string, the node should stop after this
-            return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
+            // return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
         }
 
         loop {
