@@ -402,6 +402,9 @@ pub async fn init_l1(
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
+
+    raise_fd_limit()?;
+
     let store = init_store(datadir, genesis).await;
 
     #[cfg(feature = "sync-test")]
@@ -452,8 +455,6 @@ pub async fn init_l1(
     if opts.metrics_enabled {
         init_metrics(&opts, tracker.clone());
     }
-
-    raise_fd_limit()?;
 
     if opts.dev {
         #[cfg(feature = "dev")]
