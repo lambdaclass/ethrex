@@ -10,7 +10,7 @@ use crate::sync::state_healing::heal_state_trie_wrap;
 use crate::sync::storage_healing::heal_storage_trie;
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
-    get_code_hashes_snapshots_dir,
+    get_code_hashes_snapshots_dir, validate_folders,
 };
 use crate::{
     metrics::METRICS,
@@ -200,6 +200,13 @@ impl Syncer {
             Ok(res) => res,
             Err(e) => return Err(e.into()),
         };
+
+        // We validate that we have the folders that are being used empty, as we currently assume
+        // they are.
+        if !validate_folders(&self.datadir) {
+            // Cloning a single string, the node should stop after this
+            return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
+        }
 
         loop {
             debug!("Sync Log 1: In snap sync");
@@ -1349,6 +1356,8 @@ pub enum SyncError {
     NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
+    #[error("The download datadir folders at {0} are not empty, delete them first")]
+    NotEmptyDatadirFolders(PathBuf),
     #[error("Couldn't create a thread")]
     ThreadCreationError,
     #[error("Called update_pivot outside snapsync mode")]
