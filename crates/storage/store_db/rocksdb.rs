@@ -1535,9 +1535,11 @@ impl StoreEngine for Store {
                 if value_ctr > 1024 * 1024 {
                     sst.finish()?;
                     let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
+                    sst = SstFileWriter::create(&sst_options);
                     sst.open(&path)?;
                     paths.push(path);
                     ctr += 1;
+                    value_ctr = 0;
                 }
 
                 let address_hash = H256::from_slice(&path.to_bytes());
@@ -1560,9 +1562,11 @@ impl StoreEngine for Store {
                         if value_ctr > 1024 * 1024 {
                             sst.finish()?;
                             let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
+                            sst = SstFileWriter::create(&sst_options);
                             sst.open(&path)?;
                             paths.push(path);
                             ctr += 1;
+                            value_ctr = 0;
                         }
                         Ok(())
                     })?;
