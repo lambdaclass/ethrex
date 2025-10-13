@@ -7,6 +7,7 @@ on:
     branches: ["**"]
     paths-ignore:
       - "crates/l2/**" # Behind a feature flag not used in this workflow
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

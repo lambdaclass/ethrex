@@ -10,6 +10,7 @@ on:
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_levm.yaml"
       - "tooling/ef_tests/state"
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 concurrency:

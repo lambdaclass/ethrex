@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/manual_snapsync_test.yaml"
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "0 */2 * * *"
   workflow_dispatch:

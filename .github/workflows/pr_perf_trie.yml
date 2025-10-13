@@ -6,6 +6,7 @@ on:
     branches: ["**"]
     paths:
       - "crates/common/trie/**"
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   pull-requests: write

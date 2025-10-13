@@ -3,6 +3,7 @@ name: PR Lines of Code Analysis
 on:
   pull_request:
     branches: ["**"]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   pull-requests: write

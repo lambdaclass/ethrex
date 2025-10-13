@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/**.yaml"
       - ".github/*.yml"
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

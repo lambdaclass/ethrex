@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
