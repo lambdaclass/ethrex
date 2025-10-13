@@ -23,7 +23,7 @@ use ethrex_common::{
     types::{AccessListEntry, Fork, Log, Transaction},
 };
 use std::{
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     mem,
     rc::Rc,
@@ -460,6 +460,7 @@ impl<'a> VM<'a> {
             return result;
         }
 
+        let mut error = OnceCell::<VMError>::new();
         loop {
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
@@ -467,12 +468,14 @@ impl<'a> VM<'a> {
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = self.opcode_table[opcode as usize].call(self);
+            let op_result = self.opcode_table[opcode as usize].call(self, &mut error);
 
             let result = match op_result {
-                Ok(OpcodeResult::Continue) => continue,
-                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
-                Err(error) => self.handle_opcode_error(error)?,
+                OpcodeResult::Continue => continue,
+                OpcodeResult::Halt => match error.take() {
+                    None => self.handle_opcode_result()?,
+                    Some(error) => self.handle_opcode_error(error)?,
+                },
             };
 
             // Return the ExecutionReport if the executed callframe was the first one.

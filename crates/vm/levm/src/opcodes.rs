@@ -376,14 +376,8 @@ impl OpCodeFn {
 
     /// Call the opcode handler.
     #[inline(always)]
-    pub fn call(self, vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let mut error = OnceCell::<VMError>::new();
-        let result = (self.0)(vm, &mut error);
-
-        match error.take() {
-            None => Ok(result),
-            Some(err) => Err(err),
-        }
+    pub fn call(self, vm: &mut VM<'_>, error: &mut OnceCell<VMError>) -> OpcodeResult {
+        (self.0)(vm, error)
     }
 
     fn wrap<T>(vm: &mut VM<'_>, error: &mut OnceCell<VMError>) -> OpcodeResult
