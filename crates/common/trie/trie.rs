@@ -389,7 +389,7 @@ impl Trie {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
                             let child_node = child_ref.get_node(db)?.ok_or_else(|| {
-                                TrieError::InconsistentTreeOnIntermediateNode(
+                                TrieError::IntermediateNodeNotFound(
                                     child_ref.compute_hash().finalize(),
                                 )
                             })?;
@@ -405,7 +405,7 @@ impl Trie {
                         && extension_node.child.is_valid()
                     {
                         let child_node = extension_node.child.get_node(db)?.ok_or_else(|| {
-                            TrieError::InconsistentTreeOnIntermediateNode(
+                            TrieError::IntermediateNodeNotFound(
                                 extension_node.child.compute_hash().finalize(),
                             )
                         })?;

@@ -11,7 +11,7 @@ pub enum TrieError {
     #[error("Inconsistent internal tree structure: Node with hash {0:?} not found")]
     InconsistentTree(H256),
     #[error("Inconsistent internal tree structure: Intermediate Node with hash {0:?} not found")]
-    InconsistentTreeOnIntermediateNode(H256),
+    IntermediateNodeNotFound(H256),
     #[error("Root node with hash {0:#x} not found")]
     RootNotFound(H256),
     #[error("Lock Error: Panicked when trying to acquire a lock")]
