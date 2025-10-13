@@ -38,7 +38,7 @@ ark-ec = "0.5.0"
 ark-ff = "0.5.0"
 strum = { version = "0.27.1", features = ["derive"] }
 k256 = "0.13.4"
-substrate-bn = { version = "0.6.0", optional = true }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-5.0.0", optional = true }
 
 
 [dev-dependencies]
@@ -50,8 +50,8 @@ spinoff = "0.8.0"
 default = []
 c-kzg = ["ethrex-common/c-kzg"]
 ethereum_foundation_tests = []
-substrate-bn = ["dep:substrate-bn"]
 debug = []
+sp1 = ["dep:substrate-bn"]
 
 [lints.rust]
 unsafe_code = "warn"

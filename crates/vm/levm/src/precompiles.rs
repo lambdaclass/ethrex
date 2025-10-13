@@ -15,22 +15,17 @@ use ethrex_common::{
 use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use k256::elliptic_curve::Field;
+use lambdaworks_math::cyclic_group::IsGroup;
 use lambdaworks_math::{
     elliptic_curve::{
-        short_weierstrass::{
-            curves::{
-                bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
-                bn_254::{
-                    curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
-                    field_extension::{
-                        BN254_PRIME_FIELD_ORDER, BN254FieldModulus, Degree2ExtensionField,
-                        Degree12ExtensionField,
-                    },
-                    pairing::BN254AtePairing,
-                    twist::BN254TwistCurve,
-                },
+        short_weierstrass::curves::{
+            bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
+            bn_254::{
+                curve::BN254Curve,
+                field_extension::{BN254FieldModulus, Degree2ExtensionField},
+                pairing::BN254AtePairing,
+                twist::BN254TwistCurve,
             },
-            point::ShortWeierstrassProjectivePoint,
         },
         traits::{IsEllipticCurve, IsPairing},
     },
@@ -316,38 +311,6 @@ pub fn execute_precompile(
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64, Fork) -> Result<Bytes, VMError>;
 
-    #[cfg(feature = "substrate-bn")]
-    const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
-        let mut precompiles = [const { None }; 512];
-        precompiles[ECRECOVER.address.0[19] as usize] = Some(ecrecover as PrecompileFn);
-        precompiles[IDENTITY.address.0[19] as usize] = Some(identity as PrecompileFn);
-        precompiles[SHA2_256.address.0[19] as usize] = Some(sha2_256 as PrecompileFn);
-        precompiles[RIPEMD_160.address.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
-        precompiles[MODEXP.address.0[19] as usize] = Some(modexp as PrecompileFn);
-        precompiles[ECADD.address.0[19] as usize] = Some(ecadd as PrecompileFn);
-        precompiles[ECMUL.address.0[19] as usize] = Some(ecmul as PrecompileFn);
-        precompiles[ECPAIRING.address.0[19] as usize] = Some(ecpairing_substrate as PrecompileFn);
-        precompiles[BLAKE2F.address.0[19] as usize] = Some(blake2f as PrecompileFn);
-        precompiles[POINT_EVALUATION.address.0[19] as usize] =
-            Some(point_evaluation as PrecompileFn);
-        precompiles[BLS12_G1ADD.address.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
-        precompiles[BLS12_G1MSM.address.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
-        precompiles[BLS12_G2ADD.address.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
-        precompiles[BLS12_G2MSM.address.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
-        precompiles[BLS12_PAIRING_CHECK.address.0[19] as usize] =
-            Some(bls12_pairing_check as PrecompileFn);
-        precompiles[BLS12_MAP_FP_TO_G1.address.0[19] as usize] =
-            Some(bls12_map_fp_to_g1 as PrecompileFn);
-        precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
-            Some(bls12_map_fp2_tp_g2 as PrecompileFn);
-        precompiles[u16::from_be_bytes([
-            P256_VERIFICATION.address.0[18],
-            P256_VERIFICATION.address.0[19],
-        ]) as usize] = Some(p_256_verify as PrecompileFn);
-        precompiles
-    };
-
-    #[cfg(not(feature = "substrate-bn"))]
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
         precompiles[ECRECOVER.address.0[19] as usize] = Some(ecrecover as PrecompileFn);
@@ -797,388 +760,171 @@ const ALT_BN128_PRIME: U256 = U256([
     0x30644e72e131a029,
 ]);
 
-type FirstPointCoordinates = (
-    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-);
+pub type G1 = (U256, U256);
+pub type G2 = (U256, U256, U256, U256);
 
-/// Parses first point coordinates and makes verification of invalid infinite
 #[inline]
-fn parse_first_point_coordinates(input_data: &[u8; 192]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = UnsignedInteger::from_bytes_be(&input_data[..32])
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    let first_point_y = UnsignedInteger::from_bytes_be(&input_data[32..64])
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (first_point_x == UnsignedInteger::default()) ^ (first_point_y == UnsignedInteger::default())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
+fn parse_bn254_points(buf: &[u8; 192]) -> (G1, G2) {
+    let (g1_x, g1_y) = (
+        u256_from_big_endian(&buf[..32]),
+        u256_from_big_endian(&buf[32..64]),
+    );
+    let (g2_xy, g2_xx, g2_yy, g2_yx) = (
+        u256_from_big_endian(&buf[64..96]),
+        u256_from_big_endian(&buf[96..128]),
+        u256_from_big_endian(&buf[128..160]),
+        u256_from_big_endian(&buf[160..]),
+    );
 
-    if first_point_x > BN254_PRIME_FIELD_ORDER || first_point_y > BN254_PRIME_FIELD_ORDER {
-        return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
-    }
-
-    let first_point_x = BN254FieldElement::from(&first_point_x);
-    let first_point_y = BN254FieldElement::from(&first_point_y);
-
-    Ok((first_point_x, first_point_y))
+    ((g1_x, g1_y), (g2_xx, g2_xy, g2_yx, g2_yy))
 }
 
-#[cfg(feature = "substrate-bn")]
-/// Parses first point coordinates and makes verification of invalid infinite
-#[inline]
-fn parse_first_point_coordinates_substrate(
-    input_data: &[u8; 192],
-) -> Result<(substrate_bn::Fq, substrate_bn::Fq), VMError> {
-    use substrate_bn::{Fq, arith::U256};
+fn validate_bn254_points(g1: &G1, g2: &G2) -> Result<(), VMError> {
+    // check each element is in field
+    if g1.0 >= ALT_BN128_PRIME || g1.1 >= ALT_BN128_PRIME {
+        return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
+    } // TODO: https://eips.ethereum.org/EIPS/eip-197 maybe this check is not necessary
 
-    let BN254_PRIME_FIELD_ORDER_SUBSTRATE: U256 = U256::from_slice(&[
-        0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58,
-        0x5d, 0x97, 0x81, 0x6a, 0x91, 0x68, 0x71, 0xca, 0x8d, 0x3c, 0x20, 0x8c, 0x16, 0xd8, 0x7c,
-        0xfd, 0x47,
-    ])
-    .unwrap();
-
-    let first_point_x = U256::from_slice(&input_data[..32])
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    let first_point_y = U256::from_slice(&input_data[32..64])
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (first_point_x == U256::zero()) ^ (first_point_y == U256::zero()) {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    if first_point_x > BN254_PRIME_FIELD_ORDER_SUBSTRATE
-        || first_point_y > BN254_PRIME_FIELD_ORDER_SUBSTRATE
+    if g2.0 >= ALT_BN128_PRIME
+        || g2.1 >= ALT_BN128_PRIME
+        || g2.2 >= ALT_BN128_PRIME
+        || g2.3 >= ALT_BN128_PRIME
     {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
     }
 
-    let first_point_x = Fq::from_u256(first_point_x).unwrap();
-    let first_point_y = Fq::from_u256(first_point_y).unwrap();
-
-    Ok((first_point_x, first_point_y))
+    Ok(())
 }
 
-#[cfg(feature = "substrate-bn")]
-/// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
-///
-/// Slice must have len of 192. This function is only called from ecpairing which ensures that.
-fn parse_second_point_coordinates_substrate(
-    input_data: &[u8; 192],
-) -> Result<(substrate_bn::Fq2, substrate_bn::Fq2), VMError> {
-    let second_point_x_first_part = &input_data[96..128];
-    let second_point_x_second_part = &input_data[64..96];
-
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    let second_point_y_first_part = &input_data[160..192];
-    let second_point_y_second_part = &input_data[128..160];
-
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-    if u256_from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::PointNotInTheCurve.into());
-    }
-
-    use substrate_bn::{Fq, Fq2};
-
-    let second_point_x = Fq2::new(
-        Fq::from_slice(second_point_x_first_part).unwrap(),
-        Fq::from_slice(second_point_x_second_part).unwrap(),
-    );
-    let second_point_y = Fq2::new(
-        Fq::from_slice(second_point_y_first_part).unwrap(),
-        Fq::from_slice(second_point_y_second_part).unwrap(),
-    );
-
-    Ok((second_point_x, second_point_y))
-}
-
-/// Parses second point coordinates and makes verification of invalid infinite and curve belonging.
-///
-/// Slice must have len of 192. This function is only called from ecpairing which ensures that.
-fn parse_second_point_coordinates(
-    input_data: &[u8; 192],
-) -> Result<
-    (
-        FieldElement<Degree2ExtensionField>,
-        FieldElement<Degree2ExtensionField>,
-    ),
-    VMError,
-> {
-    let second_point_x_first_part = &input_data[96..128];
-    let second_point_x_second_part = &input_data[64..96];
-
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    let second_point_y_first_part = &input_data[160..192];
-    let second_point_y_second_part = &input_data[128..160];
-
-    // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
-    {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-    if u256_from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
-    {
-        return Err(PrecompileError::PointNotInTheCurve.into());
-    }
-
-    let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
-    let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
-
-    let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-    let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
-        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
-
-    Ok((second_point_x, second_point_y))
-}
-
-/// Handles pairing given a certain elements, and depending on if elements represent infinity, then
-/// verifies errors on the other point returning None or returns the pairing
-#[inline(always)] // called only from one place, so inlining always wont increase code size.
-#[expect(clippy::type_complexity)]
-fn validate_pairing(
-    first_point_x: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    first_point_y: FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
-    second_point_x: FieldElement<Degree2ExtensionField>,
-    second_point_y: FieldElement<Degree2ExtensionField>,
-) -> Result<
-    Option<(
-        ShortWeierstrassProjectivePoint<BN254Curve>,
-        ShortWeierstrassProjectivePoint<BN254TwistCurve>,
-    )>,
-    VMError,
-> {
-    let zero_element = BN254FieldElement::zero();
-    let twcurve_zero_element = BN254TwistCurveFieldElement::zero();
-    let first_point_is_infinity =
-        first_point_x.eq(&zero_element) && first_point_y.eq(&zero_element);
-    let second_point_is_infinity =
-        second_point_x.eq(&twcurve_zero_element) && second_point_y.eq(&twcurve_zero_element);
-
-    match (first_point_is_infinity, second_point_is_infinity) {
-        (true, true) => {
-            // If both points are infinity, then continue to the next input
-            Ok(None)
-        }
-        (true, false) => {
-            // If the first point is infinity, then do the checks for the second
-            let p2 = BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-
-            if !p2.is_in_subgroup() {
-                return Err(PrecompileError::PointNotInSubgroup.into());
-            }
-            Ok(None)
-        }
-        (false, true) => {
-            // If the second point is infinity, then do the checks for the first
-            BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-            Ok(None)
-        }
-        (false, false) => {
-            // Define the pairing points
-            let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-
-            let second_point =
-                BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                    .map_err(|_| PrecompileError::InvalidPoint)?;
-            if !second_point.is_in_subgroup() {
-                return Err(PrecompileError::PointNotInSubgroup.into());
-            }
-            Ok(Some((first_point, second_point)))
-        }
-    }
-}
-
-#[cfg(feature = "substrate-bn")]
-/// Handles pairing given a certain elements, and depending on if elements represent infinity, then
-/// verifies errors on the other point returning None or returns the pairing
-#[inline(always)] // called only from one place, so inlining always wont increase code size.
-#[expect(clippy::type_complexity)]
-fn validate_pairing_substrate(
-    first_point_x: substrate_bn::Fq,
-    first_point_y: substrate_bn::Fq,
-    second_point_x: substrate_bn::Fq2,
-    second_point_y: substrate_bn::Fq2,
-) -> Result<Option<(substrate_bn::G1, substrate_bn::G2)>, VMError> {
-    use substrate_bn::{AffineG1, AffineG2, Fq2, Fr, G1, G2};
-
-    let first_point_is_infinity = first_point_x.is_zero() && first_point_y.is_zero();
-    let second_point_is_infinity = second_point_x.is_zero() && second_point_y.is_zero();
-
-    match (first_point_is_infinity, second_point_is_infinity) {
-        (true, true) => {
-            // If both points are infinity, then continue to the next input
-            Ok(None)
-        }
-        (true, false) => {
-            let affine = AffineG2::new(second_point_x, second_point_y)
-                .map_err(|_| PrecompileError::PointNotInSubgroup)?;
-            // If the first point is infinity, then do the checks for the second
-            Ok(None)
-        }
-        (false, true) => {
-            // If the second point is infinity, then do the checks for the first
-            let affine = AffineG1::new(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-            Ok(None)
-        }
-        (false, false) => {
-            // Define the pairing points
-            let affine1 = AffineG1::new(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?;
-            let affine2 = AffineG2::new(second_point_x, second_point_y)
-                .map_err(|_| PrecompileError::PointNotInSubgroup)?;
-
-            let first_point = affine1.into();
-            let second_point = affine2.into();
-
-            Ok(Some((first_point, second_point)))
-        }
-    }
-}
-
-/// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
-pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     let inputs_amount = calldata.len() / 192;
-
-    // Consume gas
     let gas_cost = gas_cost::ecpairing(inputs_amount)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let mut valid_pairs = Vec::new();
-    let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
-
+    let mut batch = Vec::new();
     for input in calldata.chunks_exact(192) {
         #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
         let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
+        let (g1, g2) = parse_bn254_points(&input);
+        validate_bn254_points(&g1, &g2).inspect(|_| batch.push((g1, g2)))?;
+    }
 
-        let (first_point_x, first_point_y) = parse_first_point_coordinates(&input)?;
-
-        let (second_point_x, second_point_y) = parse_second_point_coordinates(&input)?;
-
-        if let Some(pair) =
-            validate_pairing(first_point_x, first_point_y, second_point_x, second_point_y)?
-        {
-            valid_pairs.push(pair);
+    #[allow(unreachable_code)]
+    let pairing_check = 'inner: {
+        if batch.is_empty() {
+            break 'inner true;
         }
-    }
 
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "library will not panic on mul overflow"
-    )]
-    if !valid_pairs.is_empty() {
-        let batch: Vec<_> = valid_pairs.iter().map(|(p1, p2)| (p1, p2)).collect();
-        let pairing_result = BN254AtePairing::compute_batch(&batch)
-            .map_err(|_| PrecompileError::BN254AtePairingError)?;
-        mul *= pairing_result;
-    }
+        #[cfg(feature = "sp1")]
+        break 'inner pairing_substrate(&batch)?;
 
-    // Generate the result from the variable mul
-    let success = mul.eq(&QuadraticExtensionFieldElement::one());
-    let mut result = [0; 32];
-    result[31] = u8::from(success);
-    Ok(Bytes::from(result.to_vec()))
-}
-
-#[cfg(feature = "substrate-bn")]
-/// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
-pub fn ecpairing_substrate(
-    calldata: &Bytes,
-    gas_remaining: &mut u64,
-    _fork: Fork,
-) -> Result<Bytes, VMError> {
-    // The input must always be a multiple of 192 (6 32-byte values)
-    if calldata.len() % 192 != 0 {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
-
-    let inputs_amount = calldata.len() / 192;
-
-    // Consume gas
-    let gas_cost = gas_cost::ecpairing(inputs_amount)?;
-    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
-
-    let mut valid_pairs = Vec::new();
-
-    ////
-
-    for input in calldata.chunks_exact(192) {
-        #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
-        let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
-
-        let (first_point_x, first_point_y) = parse_first_point_coordinates_substrate(&input)?;
-
-        let (second_point_x, second_point_y) = parse_second_point_coordinates_substrate(&input)?;
-
-        if let Some(pair) = validate_pairing_substrate(
-            first_point_x,
-            first_point_y,
-            second_point_x,
-            second_point_y,
-        )? {
-            valid_pairs.push(pair);
-        }
-    }
-
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "library will not panic on mul overflow"
-    )]
-    let pairing_result = if !valid_pairs.is_empty() {
-        let batch: Vec<_> = valid_pairs.into_iter().map(|(p1, p2)| (p1, p2)).collect();
-        substrate_bn::pairing_batch(&batch)
-    } else {
-        substrate_bn::Gt::one()
+        // default
+        break 'inner pairing_lambdaworks(&batch)?;
     };
 
-    // Generate the result from the variable mul
-    let success = pairing_result == substrate_bn::Gt::one();
+    let mut result = vec![0; 31];
+    result.push(u8::from(pairing_check));
+    Ok(Bytes::from(result))
+}
 
-    ////
+#[cfg(feature = "sp1")]
+pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+    use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
 
-    let mut result = [0; 32];
-    result[31] = u8::from(success);
-    Ok(Bytes::from(result.to_vec()))
+    let result = if batch.is_empty() {
+        substrate_bn::Gt::one()
+    } else {
+        let mut valid_batch = Vec::with_capacity(batch.len());
+        for (g1, g2) in batch {
+            let (g1_x, g1_y) = (
+                Fq::from_slice(&g1.0.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+                Fq::from_slice(&g1.1.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+            );
+            let (g2_x, g2_y) = (
+                Fq2::new(
+                    Fq::from_slice(&g2.0.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                    Fq::from_slice(&g2.1.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                ),
+                Fq2::new(
+                    Fq::from_slice(&g2.2.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                    Fq::from_slice(&g2.3.to_big_endian())
+                        .map_err(|_| PrecompileError::ParsingInputError)?,
+                ),
+            );
+            let g1: SubstrateG1 = AffineG1::new(g1_x, g1_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+                .into();
+            let g2: SubstrateG2 = AffineG2::new(g2_x, g2_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?
+                .into();
+
+            if g1.is_zero() || g2.is_zero() {
+                continue;
+            }
+            valid_batch.push((g1, g2));
+        }
+
+        substrate_bn::pairing_batch(&valid_batch)
+    };
+
+    Ok(result == substrate_bn::Gt::one())
+}
+
+pub fn pairing_lambdaworks(batch: &[(G1, G2)]) -> Result<bool, VMError> {
+    type Fq = FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>;
+    type Fq2 = FieldElement<Degree2ExtensionField>;
+    type LambdaworksG1 = BN254Curve;
+    type LambdaworksG2 = BN254TwistCurve;
+
+    let result = if batch.is_empty() {
+        QuadraticExtensionFieldElement::one()
+    } else {
+        let mut valid_batch = Vec::with_capacity(batch.len());
+        for (g1, g2) in batch {
+            let (g1_x, g1_y) = (
+                Fq::from_bytes_be(&g1.0.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+                Fq::from_bytes_be(&g1.1.to_big_endian())
+                    .map_err(|_| PrecompileError::ParsingInputError)?,
+            );
+            let (g2_x, g2_y) = {
+                let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
+                let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
+                let (x, y) = (
+                    Fq2::from_bytes_be(&x_bytes).map_err(|_| PrecompileError::ParsingInputError)?,
+                    Fq2::from_bytes_be(&y_bytes).map_err(|_| PrecompileError::ParsingInputError)?,
+                );
+                (x, y)
+            };
+            let g1 = LambdaworksG1::create_point_from_affine(g1_x, g1_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?;
+            let g2 = LambdaworksG2::create_point_from_affine(g2_x, g2_y)
+                .map_err(|_| PrecompileError::InvalidPoint)?;
+            // if !g2.is_in_subgroup() {
+            //     return Err(PrecompileError::PointNotInSubgroup.into());
+            // }
+
+            if g1.is_neutral_element() || g2.is_neutral_element() {
+                continue;
+            }
+            valid_batch.push((g1, g2));
+        }
+        let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
+        BN254AtePairing::compute_batch(&valid_batch_refs)
+            .map_err(|_| PrecompileError::BN254AtePairingError)?
+    };
+
+    Ok(result == QuadraticExtensionFieldElement::one())
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
