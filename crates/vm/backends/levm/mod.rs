@@ -4,7 +4,7 @@ mod tracing;
 use super::BlockExecutionResult;
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
-    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -379,6 +379,21 @@ pub fn generic_system_contract_levm(
         block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
+    };
+
+    // This check is not necessary in practice, since contract deployment has succesfully happened in all relevant testnets and mainnet
+    // However, it's necessary to pass some of the Hive tests related to system contract deployment, which is why we have it
+    // The error that should be returned for the relevant contracts is indicated in the following:
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md#empty-code-failure
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md#empty-code-failure
+    if PRAGUE_SYSTEM_CONTRACTS
+        .iter()
+        .any(|contract| contract.address == contract_address)
+        && db.get_account_code(contract_address)?.is_empty()
+    {
+        return Err(EvmError::SystemContractCallFailed(format!(
+            "System contract: {contract_address} has no code after deployment"
+        )));
     };
 
     let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {

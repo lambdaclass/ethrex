@@ -69,3 +69,8 @@ pub fn system_contracts_for_fork(fork: Fork) -> impl Iterator<Item = SystemContr
         .into_iter()
         .filter(move |system_contract| system_contract.active_since_fork <= fork)
 }
+
+pub const PRAGUE_SYSTEM_CONTRACTS: [SystemContract; 2] = [
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+];
