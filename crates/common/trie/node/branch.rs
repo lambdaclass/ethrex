@@ -102,6 +102,7 @@ impl BranchNode {
             // Insert into self
             self.update(value);
         } else {
+            // Value in branches don't happen in our use-case.
             todo!("handle override case (error?)")
         }
 
