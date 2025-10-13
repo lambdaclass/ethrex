@@ -316,7 +316,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 impl Blockchain {
     /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
     /// Fails if there is no payload or active payload build task for the given id.
-    pub async fn get_payload(&mut self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
+    pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
         let mut payloads = self.payloads.lock().await;
         // Find the given payload and finish the active build process if needed
         let idx = payloads
@@ -326,8 +326,8 @@ impl Blockchain {
         let finished_payload = (payload_id, payloads.remove(idx).1.to_payload().await?);
         payloads.insert(idx, finished_payload);
         // Return the held payload
-        match &mut payloads[idx].1 {
-            PayloadOrTask::Payload(payload) => Ok(std::mem::take(payload)),
+        match &payloads[idx].1 {
+            PayloadOrTask::Payload(payload) => Ok(*payload.clone()), // todo-clone: might be possible to remove, but it's tricky given mutable access to self isn't normally possible (since Blockchain is usually behind Arc)
             _ => unreachable!("we already converted the payload into a finished version"),
         }
     }
