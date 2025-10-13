@@ -396,6 +396,9 @@ impl Store {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
+            if update.removed_storage {
+                account_state.storage_root = *EMPTY_TRIE_HASH;
+            }
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;

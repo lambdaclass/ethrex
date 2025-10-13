@@ -11,6 +11,8 @@ pub struct AccountUpdate {
     pub info: Option<AccountInfo>,
     pub code: Option<Bytes>,
     pub added_storage: BTreeMap<H256, U256>,
+    /// If account was destroyed and then modified we need this for removing its storage but not the entire account.
+    pub removed_storage: bool,
     // Matches TODO in code
     // removed_storage_keys: Vec<H256>,
 }
