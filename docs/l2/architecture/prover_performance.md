@@ -33,7 +33,7 @@ Benchmark server hardware:
 
 ### Relative to main
 
-formula: `base time / optimization time`
+formula: `optimization time / base time`
 
 | Block (Mainnet) | Gas | ethrex main (70fc63) | ethrex (jumpdest opt.) | ethrex (ecpairing precompile) | ethrex (trie opt1.) | ethrex (trie opt2.) | ethrex (trie opt3.) | ethrex (trie opt1. + trie opt2. + trie opt3.) | ethrex risc0_trie | rsp main (9a7048) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -206,4 +206,4 @@ At the end the problem was a combination of slow RLP encoding and that we did a 
 
 Whenever we `get`, `insert` or `remove` from a trie we are calling `NodeRef::get_node` which clones the `Node` from memory and returns it, which means that for each operation over a trie we are cloning all the relevant nodes for that op.
 
-This is fixed in https://github.com/lambdaclass/ethrex/pull/4763see that PR desc. for details
+This is fixed in https://github.com/lambdaclass/ethrex/pull/4763 see that PR desc. for details
