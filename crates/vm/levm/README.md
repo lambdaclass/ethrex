@@ -6,10 +6,15 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 
 | Fork           | Status |
 | -------------- | ------ |
+| Osaka          | 🏗️     |
 | Prague         | ✅     |
 | Cancun         | ✅     |
 | Shanghai       | ✅     |
 | Paris (Merge)  | ✅     |
+
+## Docs
+
+There is large amount of docs in comments inside the code. For more information check out the [FAQ](../../../docs/vm/levm/faq.rs) and related documents.
 
 ## Testing
 
