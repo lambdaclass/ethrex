@@ -1148,6 +1148,9 @@ impl Syncer {
                 .await?;
         }
 
+        std::fs::remove_dir_all(code_hashes_dir)
+            .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
+
         *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
         debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root).await);

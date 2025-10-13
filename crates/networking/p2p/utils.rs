@@ -49,11 +49,12 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
 }
 
 /// Returns true if the folders used for the partial download of the leaves exists. if they do exist, it
-/// should be deleted
+/// should be deleted. We don't auto delete them on the off chance we want to backup the files
 pub fn validate_folders(datadir: &Path) -> bool {
     let folder_doesnt_exist = !std::fs::exists(get_account_state_snapshots_dir(datadir))
         .is_ok_and(|exists| exists)
-        && !std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists);
+        && !std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists)
+        && !std::fs::exists(get_code_hashes_snapshots_dir(datadir)).is_ok_and(|exists| exists);
     #[cfg(feature = "rocksdb")]
     let folder_doesnt_exist = {
         folder_doesnt_exist
