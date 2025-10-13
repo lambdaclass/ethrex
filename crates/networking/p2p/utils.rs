@@ -49,13 +49,14 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
 }
 
 pub fn validate_folders(datadir: &Path) -> bool {
-    let return_val = std::fs::exists(get_account_state_snapshots_dir(datadir)).is_ok_and(|_| false)
-        && std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|_| false);
+    let return_val = std::fs::exists(get_account_state_snapshots_dir(datadir))
+        .is_ok_and(|exists| exists)
+        && std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists);
     #[cfg(feature = "rocksdb")]
     let return_val = {
         return_val
-            && std::fs::exists(get_rocksdb_temp_accounts_dir(datadir)).is_ok_and(|_| false)
-            && std::fs::exists(get_rocksdb_temp_storage_dir(datadir)).is_ok_and(|_| false)
+            && std::fs::exists(get_rocksdb_temp_accounts_dir(datadir)).is_ok_and(|exists| exists)
+            && std::fs::exists(get_rocksdb_temp_storage_dir(datadir)).is_ok_and(|exists| exists)
     };
     return_val
 }
