@@ -4,7 +4,7 @@ volumes:
 services:
   ethrex_l1:
     container_name: ethrex_l1
-    image: "ethrex:main"
+    image: "ethrex:main_l2"
     build: ../../
     ports:
       - 127.0.0.1:8545:8545
@@ -14,7 +14,7 @@ services:
 
   contract_deployer:
     container_name: contract_deployer
-    image: "ethrex:main"
+    image: "ethrex:main_l2"
     build:
       context: ../../
       args:
@@ -67,7 +67,7 @@ services:
 
   ethrex_l2:
     container_name: ethrex_l2
-    image: "ethrex:main"
+    image: "ethrex:main_l2"
     build:
       context: ../../
       args:
@@ -112,7 +112,7 @@ services:
 
   ethrex_prover:
     container_name: ethrex_prover
-    image: "ethrex:main"
+    image: "ethrex:main_l2"
     build:
       context: ../../
       args:

@@ -85,6 +85,30 @@ jobs:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
 
+  build-docker-l2:
+    name: Build docker image L2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build L2 docker image
+        uses: ./.github/actions/build-docker
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          tags: ethrex:main_l2
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp/ethrex_image.tar
+
+
   integration-test:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
