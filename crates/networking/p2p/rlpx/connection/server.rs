@@ -804,10 +804,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     }
 
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        log_peer_debug(
-                            &state.node,
-                            &format!("Error adding transaction: {e}"),
-                        );
+                        log_peer_debug(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
                 }

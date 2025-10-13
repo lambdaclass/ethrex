@@ -288,7 +288,7 @@ impl PooledTransactions {
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
-                    log_peer_warn(node, &format!("Error adding transaction: {e}"));
+                    log_peer_debug(node, &format!("Error adding transaction: {e}"));
                     continue;
                 }
             } else {
