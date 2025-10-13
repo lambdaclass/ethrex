@@ -189,9 +189,14 @@ impl GeneralizedDatabase {
                     None
                 };
 
+            // Account will have only its storage removed if it was Destroyed and then modified
+            // Edge cases that can make this true:
+            //   1. Account was destroyed and created again afterwards.
+            //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
+            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = BTreeMap::new();
-            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !removed_storage {
