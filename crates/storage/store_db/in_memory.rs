@@ -35,6 +35,8 @@ pub struct StoreInner {
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
     // Stores current Snap Sate
     snap_state: SnapState,
+    // Stores fetched headers during a fullsync
+    fullsync_headers: HashMap<BlockNumber, BlockHeader>,
 }
 
 #[derive(Default, Debug)]
@@ -619,7 +621,10 @@ impl StoreEngine for Store {
     }
 
     async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
-        todo!()
+        self.inner()?
+            .fullsync_headers
+            .extend(headers.into_iter().map(|h| (h.number, h)));
+        Ok(())
     }
 
     async fn read_fullsync_batch(
@@ -627,7 +632,18 @@ impl StoreEngine for Store {
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError> {
-        todo!()
+        let store = self.inner()?;
+        (start..start + limit)
+            .map(|ref n| {
+                store
+                    .fullsync_headers
+                    .get(n)
+                    .cloned()
+                    .ok_or(StoreError::Custom(format!(
+                        "Missing fullsync header for block {n}"
+                    )))
+            })
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 
