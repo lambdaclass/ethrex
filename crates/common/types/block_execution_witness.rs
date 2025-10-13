@@ -12,7 +12,7 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{NodeRLP, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, NodeRLP, Trie};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -246,6 +246,9 @@ impl GuestProgramState {
                         .expect("failed to decode account state"),
                     None => AccountState::default(),
                 };
+                if update.removed_storage {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
