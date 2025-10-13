@@ -4,7 +4,7 @@ volumes:
 services:
   ethrex_l1:
     container_name: ethrex_l1
-    image: "ethrex:main_l2"
+    image: "ethrex:main"
     build: ../../
     ports:
       - 127.0.0.1:8545:8545
