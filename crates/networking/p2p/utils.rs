@@ -48,17 +48,19 @@ pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
     H512::from_slice(&encoded[1..])
 }
 
+/// Returns true if the folders used for the partial download of the leaves exists. if they do exist, it
+/// should be deleted
 pub fn validate_folders(datadir: &Path) -> bool {
-    let return_val = std::fs::exists(get_account_state_snapshots_dir(datadir))
+    let folder_doesnt_exist = !std::fs::exists(get_account_state_snapshots_dir(datadir))
         .is_ok_and(|exists| exists)
-        && std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists);
+        && !std::fs::exists(get_account_storages_snapshots_dir(datadir)).is_ok_and(|exists| exists);
     #[cfg(feature = "rocksdb")]
-    let return_val = {
-        return_val
-            && std::fs::exists(get_rocksdb_temp_accounts_dir(datadir)).is_ok_and(|exists| exists)
-            && std::fs::exists(get_rocksdb_temp_storage_dir(datadir)).is_ok_and(|exists| exists)
+    let folder_doesnt_exist = {
+        folder_doesnt_exist
+            && !std::fs::exists(get_rocksdb_temp_accounts_dir(datadir)).is_ok_and(|exists| exists)
+            && !std::fs::exists(get_rocksdb_temp_storage_dir(datadir)).is_ok_and(|exists| exists)
     };
-    return_val
+    folder_doesnt_exist
 }
 
 pub fn get_account_storages_snapshots_dir(datadir: &Path) -> PathBuf {
