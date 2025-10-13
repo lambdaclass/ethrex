@@ -4,6 +4,10 @@
 
 ### 2025-10-06
 
+- Remove explicit cache-related options from RocksDB configuration and reverted optimistic transactions to reduce RAM usage [#4853](https://github.com/lambdaclass/ethrex/pull/4853)
+
+### 2025-10-06
+
 - Improve block headers vec handling in syncer [#4771](https://github.com/lambdaclass/ethrex/pull/4771)
 - Refactor current_step sync metric from a `Mutex<String>` to a simple atomic. [#4772](https://github.com/lambdaclass/ethrex/pull/4772)
 
