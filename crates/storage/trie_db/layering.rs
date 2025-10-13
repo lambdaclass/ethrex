@@ -42,6 +42,7 @@ impl TrieLayerCache {
         }
         None
     }
+
     pub fn get_commitable(&mut self, mut state_root: H256) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
@@ -53,6 +54,7 @@ impl TrieLayerCache {
         }
         None
     }
+
     pub fn put_batch(
         &mut self,
         parent: H256,
@@ -82,6 +84,7 @@ impl TrieLayerCache {
                     .map(|(path, node)| (path.into_vec(), node)),
             );
     }
+
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut layer = self.layers.remove(&state_root)?;
         // ensure parents are commited
@@ -129,7 +132,9 @@ impl TrieDB for TrieWrapper {
         }
         self.db.get(key)
     }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+        // TODO: this is unused, because we call `TrieLayerCache::put_batch` directly
         let last_pair = key_values.iter().rev().find(|(_path, rlp)| !rlp.is_empty());
         let new_state_root = match last_pair {
             Some((_, noderlp)) => {
