@@ -12,7 +12,7 @@ use ethrex_rlp::{
 };
 use ethrex_storage::error::StoreError;
 
-use crate::rlpx::utils::{log_peer_debug, log_peer_warn};
+use crate::rlpx::utils::log_peer_debug;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
