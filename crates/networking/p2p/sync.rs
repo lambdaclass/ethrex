@@ -392,7 +392,7 @@ impl Syncer {
                 end_block_number = block_headers.first().as_ref().unwrap().number + 1;
                 // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
                 if single_batch {
-                    headers = block_headers;
+                    headers = block_headers.into_iter().rev().collect();
                 } else {
                     store.add_fullsync_batch(block_headers).await?;
                 }
