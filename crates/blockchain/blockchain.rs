@@ -404,12 +404,16 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
+        let p = block.header.state_root;
+        let l = block.header.state_root;
         let update_batch = UpdateBatch {
             account_updates: account_updates_list.state_updates,
             storage_updates: account_updates_list.storage_updates,
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
+            parent_state_root: p,
+            last_state_root: l,
         };
 
         self.storage
@@ -615,12 +619,16 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        let p = blocks.first().expect("").header.parent_hash;
+        let l = blocks.last().expect("").header.parent_hash;
         let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
             code_updates,
+            parent_state_root: p,
+            last_state_root: l,
         };
 
         self.storage

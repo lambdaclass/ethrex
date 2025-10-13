@@ -410,6 +410,7 @@ impl Command {
                 let mut new_trie = store
                     .state_trie(genesis_block_hash)?
                     .expect("Genesis block not found");
+                let mut previous_state_root = genesis_header.state_root;
 
                 let mut last_block_number = 0;
                 let mut new_canonical_blocks = vec![];
@@ -452,6 +453,8 @@ impl Command {
                         blocks: vec![],
                         receipts: vec![],
                         code_updates: vec![],
+                        parent_state_root: previous_state_root,
+                        last_state_root: new_state_root,
                     };
 
                     store
@@ -520,6 +523,8 @@ impl Command {
                         .await
                         .map_err(|e| format!("Error storing batch: {e}"))
                         .unwrap();
+
+                    previous_state_root = new_state_root;
                 }
                 let Some((last_number, last_hash)) = new_canonical_blocks.pop() else {
                     return Err(eyre::eyre!("No blocks found in blobs directory"));
