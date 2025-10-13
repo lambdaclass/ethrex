@@ -58,7 +58,7 @@ ifndef SYNC_BLOCK_NUM
 endif	
 #	samply record --unstable-presymbolicate --save-only -- 
 	mkdir -p logs
-	make start-ethrex-$(NETWORK) >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
+	make start-ethrex >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
 
 
 flamegraph-main: ## Run flamegraph on main branch. SYNC_BLOCK_NUM environment variable required (for block to start from). If NETWORK environment variable is not provided, mainnet will be used as default. EVM can also be set to select the evm to use. Execution logs are output to log file.
