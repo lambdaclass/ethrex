@@ -23,12 +23,22 @@ pub struct TrieLayerCache {
 }
 
 impl TrieLayerCache {
-    pub fn get(&self, mut state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
-        while let Some(layer) = self.layers.get(&state_root) {
+    pub fn get(&self, state_root: H256, key: Nibbles) -> Option<Vec<u8>> {
+        let mut current_state_root = state_root;
+        while let Some(layer) = self.layers.get(&current_state_root) {
             if let Some(value) = layer.nodes.get(key.as_ref()) {
                 return Some(value.clone());
             }
-            state_root = layer.parent;
+            current_state_root = layer.parent;
+            if current_state_root == state_root {
+                // TODO: check if this is possible in practice
+                // This can't happen in L1, due to system contracts irreversibly modifying state
+                // at each block.
+                // On L2, if no transactions are included in a block, the state root remains the same,
+                // but we handle that case in put_batch. It may happen, however, if someone modifies
+                // state with a privileged tx and later reverts it (since it doesn't update nonce).
+                panic!("State cycle found");
+            }
         }
         None
     }
@@ -49,6 +59,12 @@ impl TrieLayerCache {
         state_root: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
     ) {
+        if parent == state_root && key_values.is_empty() {
+            return;
+        } else if parent == state_root {
+            tracing::error!("Inconsistent state: parent == state_root but key_values not empty");
+            return;
+        }
         self.layers
             .entry(state_root)
             .or_insert_with(|| {
