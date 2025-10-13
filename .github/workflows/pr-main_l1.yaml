@@ -31,12 +31,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # We don't run with workspace, as members of the workspace require l2. We run it with workspace
+      # om the l2 lint
       - name: Run cargo check
-        run: cargo check --workspace
+        run: cargo check
 
       - name: Run cargo clippy
         run: |
-          cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
 
       - name: Run cargo fmt

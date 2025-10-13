@@ -1,11 +1,11 @@
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-};
 use ethrex_common::H160;
 use genesis_tool::genesis::write_genesis_as_json;
 use std::fs::File;
 use std::io::BufReader;
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use ethrex_common::{U256, types::GenesisAccount};
 
