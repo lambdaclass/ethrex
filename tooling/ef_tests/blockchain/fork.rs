@@ -94,57 +94,63 @@ lazy_static! {
 
 }
 
+/// Most of the fork variants are just for parsing the tests
+/// It's important for the pre-merge forks to be before Paris because we make a comparison for executing post-merge forks only.
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Network {
-    Frontier = 0,          // For parsing tests
-    Homestead = 1,         // For parsing tests
-    ConstantinopleFix = 2, // For parsing tests
-    Istanbul = 3,          // For parsing tests
-    Byzantium = 4,         // For parsing tests
-    London = 5,            // For parsing tests
-    Berlin = 6,            // For parsing tests
+pub enum Fork {
+    Constantinople,
+    EIP150,
+    EIP158,
+    EIP158ToByzantiumAt5,
+    ArrowGlacierToParisAtDiffC0000,
+    BerlinToLondonAt5,
+    ByzantiumToConstantinopleFixAt5,
+    FrontierToHomesteadAt5,
+    HomesteadToDaoAt5,
+    HomesteadToEIP150At5,
+    Frontier,
+    Homestead,
+    ConstantinopleFix,
+    Istanbul,
+    Byzantium,
+    London,
+    Berlin,
     #[serde(alias = "Paris")]
-    Merge = 7,
+    Merge,
     #[serde(alias = "ParisToShanghaiAtTime15k")]
-    MergeToShanghaiAtTime15k = 8,
-    Shanghai = 9,
-    ShanghaiToCancunAtTime15k = 10,
-    Cancun = 11,
-    CancunToPragueAtTime15k = 12,
-    Prague = 13,
-    PragueToOsakaAtTime15k = 14,
-    Osaka = 15,
-    OsakaToBPO1AtTime15k = 16,
-    BPO1ToBPO2AtTime15k = 17,
-    BPO2ToBPO3AtTime15k = 18,
-    BPO3ToBPO4AtTime15k = 19,
-    BPO4ToBPO5AtTime15k = 20,
+    MergeToShanghaiAtTime15k,
+    Shanghai,
+    ShanghaiToCancunAtTime15k,
+    Cancun,
+    CancunToPragueAtTime15k,
+    Prague,
+    PragueToOsakaAtTime15k,
+    Osaka,
+    OsakaToBPO1AtTime15k,
+    BPO1ToBPO2AtTime15k,
+    BPO2ToBPO3AtTime15k,
+    BPO3ToBPO4AtTime15k,
+    BPO4ToBPO5AtTime15k,
 }
 
-impl Network {
+impl Fork {
     pub fn chain_config(&self) -> &ChainConfig {
         match self {
-            Network::Merge => &MERGE_CONFIG,
-            Network::MergeToShanghaiAtTime15k => &MERGE_TO_SHANGHAI_AT_15K_CONFIG,
-            Network::Shanghai => &SHANGHAI_CONFIG,
-            Network::ShanghaiToCancunAtTime15k => &SHANGHAI_TO_CANCUN_AT_15K_CONFIG,
-            Network::Cancun => &CANCUN_CONFIG,
-            Network::CancunToPragueAtTime15k => &CANCUN_TO_PRAGUE_AT_15K_CONFIG,
-            Network::Prague => &PRAGUE_CONFIG,
-            Network::PragueToOsakaAtTime15k => &PRAGUE_TO_OSAKA_AT_15K_CONFIG,
-            Network::Osaka => &OSAKA_CONFIG,
-            Network::OsakaToBPO1AtTime15k => &OSAKA_TO_BPO1_AT_15K_CONFIG,
-            Network::BPO1ToBPO2AtTime15k => &BPO1_TO_BPO2_AT_15K_CONFIG,
-            Network::BPO2ToBPO3AtTime15k => &BPO2_TO_BPO3_AT_15K_CONFIG,
-            Network::BPO3ToBPO4AtTime15k => &BPO3_TO_BPO4_AT_15K_CONFIG,
-            Network::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
-            Network::Frontier
-            | Network::Homestead
-            | Network::ConstantinopleFix
-            | Network::Istanbul
-            | Network::Byzantium
-            | Network::London
-            | Network::Berlin => {
+            Fork::Merge => &MERGE_CONFIG,
+            Fork::MergeToShanghaiAtTime15k => &MERGE_TO_SHANGHAI_AT_15K_CONFIG,
+            Fork::Shanghai => &SHANGHAI_CONFIG,
+            Fork::ShanghaiToCancunAtTime15k => &SHANGHAI_TO_CANCUN_AT_15K_CONFIG,
+            Fork::Cancun => &CANCUN_CONFIG,
+            Fork::CancunToPragueAtTime15k => &CANCUN_TO_PRAGUE_AT_15K_CONFIG,
+            Fork::Prague => &PRAGUE_CONFIG,
+            Fork::PragueToOsakaAtTime15k => &PRAGUE_TO_OSAKA_AT_15K_CONFIG,
+            Fork::Osaka => &OSAKA_CONFIG,
+            Fork::OsakaToBPO1AtTime15k => &OSAKA_TO_BPO1_AT_15K_CONFIG,
+            Fork::BPO1ToBPO2AtTime15k => &BPO1_TO_BPO2_AT_15K_CONFIG,
+            Fork::BPO2ToBPO3AtTime15k => &BPO2_TO_BPO3_AT_15K_CONFIG,
+            Fork::BPO3ToBPO4AtTime15k => &BPO3_TO_BPO4_AT_15K_CONFIG,
+            Fork::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
+            _ => {
                 panic!("Ethrex doesn't support pre-Merge forks: {self:?}")
             }
         }
