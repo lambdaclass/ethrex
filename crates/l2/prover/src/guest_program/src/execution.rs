@@ -155,7 +155,7 @@ pub fn stateless_validation_l2(
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
-    blob_proof: Proof,
+    blob_proof: Vec<Proof>,
     chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let initial_db = execution_witness.clone();
@@ -183,7 +183,7 @@ pub fn stateless_validation_l2(
         )?;
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
-    let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
+    let validium = (blob_commitment, &blob_proof) == ([0; 48], &vec![[0; 48]]);
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
@@ -435,14 +435,23 @@ fn compute_l1messages_and_privileged_transactions_digests(
 fn verify_blob(
     state_diff: StateDiff,
     commitment: Commitment,
-    proof: Proof,
+    proof: Vec<Proof>,
 ) -> Result<H256, StatelessExecutionError> {
-    use ethrex_crypto::kzg::verify_blob_kzg_proof;
+    use ethrex_crypto::kzg::{verify_blob_kzg_proof, verify_cell_kzg_proof_batch};
 
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
 
-    if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
+    let proof_is_valid = if proof.len() == 1 {
+        // Prior to Osaka type proof
+        verify_blob_kzg_proof(blob_data, commitment, proof[0])?
+    } else {
+        // Osaka type proof
+
+        verify_cell_kzg_proof_batch(&[blob_data], &[commitment], &proof)?
+    };
+
+    if !proof_is_valid {
         return Err(StatelessExecutionError::InvalidBlobProof);
     }
 

@@ -6,8 +6,8 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::{BlobsBundle, Fork};
 use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
@@ -48,8 +48,8 @@ pub struct ProverInputData {
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
-    #[serde_as(as = "[_; 48]")]
-    pub blob_proof: blobs_bundle::Proof,
+    #[serde_as(as = "Vec<[_; 48]>")]
+    pub blob_proof: Vec<blobs_bundle::Proof>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -482,7 +482,7 @@ impl ProofCoordinator {
 
         // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
         let (blob_commitment, blob_proof) = if self.validium {
-            ([0; 48], [0; 48])
+            ([0; 48], vec![[0; 48]])
         } else {
             let blob = self
                 .rollup_store
@@ -495,9 +495,13 @@ impl ProofCoordinator {
                 mut proofs,
                 ..
             } = BlobsBundle::create_from_blobs(&blob, fork)?;
-            match (commitments.pop(), proofs.pop()) {
-                (Some(commitment), Some(proof)) => (commitment, proof),
-                _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
+            if fork < Fork::Osaka {
+                match (commitments.pop(), proofs.pop()) {
+                    (Some(commitment), Some(proof)) => (commitment, vec![proof]),
+                    _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
+                }
+            } else {
+                todo!()
             }
         };
 
