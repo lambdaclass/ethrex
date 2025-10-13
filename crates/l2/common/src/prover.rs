@@ -65,23 +65,33 @@ impl ProverType {
 
     /// Fills the "vm_program_code" field of an AlignedVerificationData struct,
     /// used for sending a proof to Aligned Layer.
-    pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
-        let path = match self {
-            // for risc0, Aligned requires the image id
-            Self::RISC0 => format!(
-                "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
+     pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
+        match self {
+            Self::RISC0 => {
+                let path = format!(
+                    "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
+                    env!("CARGO_MANIFEST_DIR")
+                );
+                let path = std::fs::canonicalize(path)?;
+                let string = std::fs::read_to_string(path)?;
+                let trimmed = string.trim_start_matches("0x").trim();
+                let decoded = hex::decode(trimmed).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
+                })?;
+                Ok(Some(decoded))
+            },
             // for sp1, Aligned requires the ELF file
-            Self::SP1 => format!(
-                "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf",
-                env!("CARGO_MANIFEST_DIR")
-            ),
+            Self::SP1 => {
+                let path = format!(
+                    "{}/../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf",
+                    env!("CARGO_MANIFEST_DIR"));
+                let path = std::fs::canonicalize(path)?;
+                std::fs::read(path).map(Some)
+            }
+            ,
             // other types are not supported by Aligned
             _ => return Ok(None),
-        };
-        let path = std::fs::canonicalize(path)?;
-        std::fs::read(path).map(Some)
+        }
     }
 
     /// Gets the verification key or image id for this prover backend, used for

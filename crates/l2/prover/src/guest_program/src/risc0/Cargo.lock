@@ -1248,6 +1248,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "hex",
  "lambdaworks-crypto",
  "secp256k1",
  "serde",
