@@ -32,16 +32,16 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
-        if let Some(span) = ctx.span(id) {
-            if span.metadata().target().starts_with("ethrex") {
-                let name = span.metadata().name();
+        if let Some(span) = ctx.span(id)
+            && span.metadata().target().starts_with("ethrex")
+        {
+            let name = span.metadata().name();
 
-                let timer = METRICS_BLOCK_PROCESSING_PROFILE
-                    .with_label_values(&[name])
-                    .start_timer();
-                let mut timers = self.function_timers.lock().unwrap();
-                timers.insert(id.clone(), timer); // ok-clone: necessary due to function interface (which is determined by the crate); plus it's effectively a wrapped u64
-            }
+            let timer = METRICS_BLOCK_PROCESSING_PROFILE
+                .with_label_values(&[name])
+                .start_timer();
+            let mut timers = self.function_timers.lock().unwrap();
+            timers.insert(id.clone(), timer); // ok-clone: necessary due to function interface (which is determined by the crate); plus it's effectively a wrapped u64
         }
     }
 
