@@ -404,10 +404,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
         if do_selfdestruct {
             // For `fork >= CANCUN`, if target is the same as caller, ether will be burnt.
             vm.substate.add_selfdestruct(vm.current_call_frame.to);
-            vm.db
-                .get_account_mut(vm.current_call_frame.to)?
-                .info
-                .balance = U256::zero();
+            vm.get_account_mut(vm.current_call_frame.to)?.info.balance = U256::zero();
         }
 
         vm.tracer.enter(
@@ -446,73 +443,6 @@ impl OpcodeHandler for OpRevertHandler {
 }
 
 impl<'a> VM<'a> {
-    // SELFDESTRUCT operation
-    pub fn op_selfdestruct(&mut self) -> Result<OpcodeResult, VMError> {
-        // Sends all ether in the account to the target address
-        // Steps:
-        // 1. Pop the target address from the stack
-        // 2. Get current account and: Store the balance in a variable, set it's balance to 0
-        // 3. Get the target account, checking if it is empty and if it is cold. Update gas cost accordingly.
-        // 4. Add the balance of the current account to the target account
-        // 5. Register account to be destroyed in accrued substate.
-        // Notes:
-        //      If context is Static, return error.
-        //      If executed in the same transaction a contract was created, the current account is registered to be destroyed
-        let (beneficiary, to) = {
-            let current_call_frame = &mut self.current_call_frame;
-            if current_call_frame.is_static {
-                return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
-            }
-            let target_address = word_to_address(current_call_frame.stack.pop1()?);
-            let to = current_call_frame.to;
-            (target_address, to)
-        };
-
-        let target_account_is_cold = self.substate.add_accessed_address(beneficiary);
-        let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
-
-        let current_account = self.db.get_account(to)?;
-        let balance = current_account.info.balance;
-
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::selfdestruct(
-                target_account_is_cold,
-                target_account_is_empty,
-                balance,
-            )?)?;
-
-        // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
-        if self.env.config.fork >= Fork::Cancun {
-            self.transfer(to, beneficiary, balance)?;
-
-            // Selfdestruct is executed in the same transaction as the contract was created
-            if self.substate.is_account_created(&to) {
-                // If target is the same as the contract calling, Ether will be burnt.
-                self.get_account_mut(to)?.info.balance = U256::zero();
-
-                self.substate.add_selfdestruct(to);
-            }
-        } else {
-            self.increase_account_balance(beneficiary, balance)?;
-            self.get_account_mut(to)?.info.balance = U256::zero();
-
-            self.substate.add_selfdestruct(to);
-        }
-
-        self.tracer.enter(
-            CallType::SELFDESTRUCT,
-            to,
-            beneficiary,
-            balance,
-            0,
-            &Bytes::new(),
-        );
-
-        self.tracer.exit_early(0, None)?;
-
-        Ok(OpcodeResult::Halt)
-    }
-
     /// Common behavior for CREATE and CREATE2 opcodes
     pub fn generic_create(
         &mut self,
