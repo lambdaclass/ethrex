@@ -29,7 +29,7 @@ pub struct NewBlock {
 impl RLPxMessage for NewBlock {
     const CODE: u8 = 0x0;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.block.deref().clone())
@@ -99,7 +99,7 @@ pub fn batch_hash(sealed_batch: &Batch) -> H256 {
 impl RLPxMessage for BatchSealed {
     const CODE: u8 = 0x1;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.batch.number)

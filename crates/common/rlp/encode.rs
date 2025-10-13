@@ -14,7 +14,7 @@ pub fn encode<T: RLPEncode>(value: T) -> Vec<u8> {
 }
 
 pub trait RLPEncode {
-    fn encode(&self, buf: &mut dyn BufMut);
+    fn encode(&self, buf: &mut Vec<u8>);
 
     fn length(&self) -> usize {
         let mut buf = Vec::new();
@@ -31,7 +31,7 @@ pub trait RLPEncode {
 
 impl RLPEncode for bool {
     #[inline(always)]
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         if *self {
             buf.put_u8(0x01);
         } else {
@@ -47,7 +47,7 @@ impl RLPEncode for bool {
 
 // integer types impls
 
-fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut dyn BufMut) {
+fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut Vec<u8>) {
     let mut is_multi_byte_case = false;
 
     for n in value_be.iter().take(N - 1) {
@@ -78,50 +78,50 @@ fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut dyn BufMut) {
 }
 
 impl RLPEncode for u8 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         impl_encode(self.to_be_bytes(), buf);
     }
 }
 
 impl RLPEncode for u16 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         impl_encode(self.to_be_bytes(), buf);
     }
 }
 
 impl RLPEncode for u32 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         impl_encode(self.to_be_bytes(), buf);
     }
 }
 
 impl RLPEncode for u64 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         impl_encode(self.to_be_bytes(), buf);
     }
 }
 
 impl RLPEncode for usize {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         impl_encode(self.to_be_bytes(), buf);
     }
 }
 
 impl RLPEncode for u128 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         impl_encode(self.to_be_bytes(), buf);
     }
 }
 
 impl RLPEncode for () {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         buf.put_u8(RLP_NULL);
     }
 }
 
 impl RLPEncode for [u8] {
     #[inline(always)]
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         if self.len() == 1 && self[0] < RLP_NULL {
             buf.put_u8(self[0]);
         } else {
@@ -142,31 +142,31 @@ impl RLPEncode for [u8] {
 }
 
 impl<const N: usize> RLPEncode for [u8; N] {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_ref().encode(buf)
     }
 }
 
 impl RLPEncode for str {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for &str {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for String {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for U256 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let leading_zeros_in_bytes: usize = (self.leading_zeros() / 8) as usize;
         let bytes = self.to_big_endian();
         bytes[leading_zeros_in_bytes..].encode(buf)
@@ -174,7 +174,7 @@ impl RLPEncode for U256 {
 }
 
 impl<T: RLPEncode> RLPEncode for Vec<T> {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         if self.is_empty() {
             buf.put_u8(0xc0);
         } else {
@@ -188,7 +188,7 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
     }
 }
 
-pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
+pub fn encode_length(total_len: usize, buf: &mut Vec<u8>) {
     if total_len < 56 {
         buf.put_u8(0xc0 + total_len as u8);
     } else {
@@ -202,7 +202,7 @@ pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
 }
 
 impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let total_len = self.0.length() + self.1.length();
         encode_length(total_len, buf);
         self.0.encode(buf);
@@ -211,7 +211,7 @@ impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {
 }
 
 impl<S: RLPEncode, T: RLPEncode, U: RLPEncode> RLPEncode for (S, T, U) {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let total_len = self.0.length() + self.1.length() + self.2.length();
         encode_length(total_len, buf);
         self.0.encode(buf);
@@ -221,7 +221,7 @@ impl<S: RLPEncode, T: RLPEncode, U: RLPEncode> RLPEncode for (S, T, U) {
 }
 
 impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode> RLPEncode for (S, T, U, V) {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let total_len = self.0.length() + self.1.length() + self.2.length() + self.3.length();
         encode_length(total_len, buf);
         self.0.encode(buf);
@@ -234,7 +234,7 @@ impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode> RLPEncode for (S, T
 impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode, W: RLPEncode> RLPEncode
     for (S, T, U, V, W)
 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let total_len =
             self.0.length() + self.1.length() + self.2.length() + self.3.length() + self.4.length();
         encode_length(total_len, buf);
@@ -247,19 +247,19 @@ impl<S: RLPEncode, T: RLPEncode, U: RLPEncode, V: RLPEncode, W: RLPEncode> RLPEn
 }
 
 impl RLPEncode for Ipv4Addr {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.octets().encode(buf)
     }
 }
 
 impl RLPEncode for Ipv6Addr {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.octets().encode(buf)
     }
 }
 
 impl RLPEncode for IpAddr {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             IpAddr::V4(ip) => ip.encode(buf),
             IpAddr::V6(ip) => ip.encode(buf),
@@ -268,7 +268,7 @@ impl RLPEncode for IpAddr {
 }
 
 impl RLPEncode for Bytes {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_ref().encode(buf)
     }
 }
@@ -276,61 +276,61 @@ impl RLPEncode for Bytes {
 // encoding for Ethereum types
 
 impl RLPEncode for ethereum_types::H32 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for ethereum_types::H64 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for ethereum_types::H128 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for ethereum_types::Address {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for ethereum_types::H256 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for ethereum_types::H264 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for ethereum_types::H512 {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for ethereum_types::Signature {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.as_bytes().encode(buf)
     }
 }
 
 impl RLPEncode for ethereum_types::Bloom {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.0.encode(buf)
     }
 }
 
 pub trait PayloadRLPEncode {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut);
+    fn encode_payload(&self, buf: &mut Vec<u8>);
     fn encode_payload_to_vec(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         self.encode_payload(&mut buf);

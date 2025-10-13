@@ -86,7 +86,7 @@ pub fn code_hash(code: &Bytes) -> H256 {
 }
 
 impl RLPEncode for AccountInfo {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.code_hash)
             .encode_field(&self.balance)
@@ -111,7 +111,7 @@ impl RLPDecode for AccountInfo {
 }
 
 impl RLPEncode for AccountState {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.balance)

@@ -46,7 +46,7 @@ impl Serialize for EncodedRequests {
 }
 
 impl RLPEncode for EncodedRequests {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.0.encode(buf)
     }
 }
