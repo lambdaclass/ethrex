@@ -797,8 +797,8 @@ fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<(), VMError> {
     Ok(())
 }
 
-#[inline]
-fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+/// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
+pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if !calldata.len().is_multiple_of(192) {
         return Err(PrecompileError::ParsingInputError.into());
@@ -914,9 +914,9 @@ pub fn pairing_lambdaworks(batch: &[(G1, G2)]) -> Result<bool, VMError> {
                 .map_err(|_| PrecompileError::InvalidPoint)?;
             let g2 = LambdaworksG2::create_point_from_affine(g2_x, g2_y)
                 .map_err(|_| PrecompileError::InvalidPoint)?;
-            // if !g2.is_in_subgroup() {
-            //     return Err(PrecompileError::PointNotInSubgroup.into());
-            // }
+            if !g2.is_in_subgroup() {
+                return Err(PrecompileError::PointNotInSubgroup.into());
+            }
 
             if g1.is_neutral_element() || g2.is_neutral_element() {
                 continue;
