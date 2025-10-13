@@ -205,7 +205,10 @@ impl Syncer {
         // they are.
         if !validate_folders(&self.datadir) {
             // Temp std::process::exit until #2767 is done
-            error!("Found an error in validate_folders");
+            error!(
+                "One of the folders used for temporary leaves during snap is still used. Delete them in {}",
+                &self.datadir.to_str().unwrap_or_default()
+            );
             std::process::exit(-1);
             // Cloning a single string, the node should stop after this
             // return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
