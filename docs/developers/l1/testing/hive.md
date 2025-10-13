@@ -17,7 +17,7 @@ asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
 And uncommenting the golang line in the asdf `.tool-versions` file:
 
 ```text
-rust 1.87.0
+rust 1.90.0
 golang 1.23.2
 ```
 
@@ -43,4 +43,3 @@ make run-hive-debug SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
 ```
 
 This example runs **every** test under rpc, with debug output
-

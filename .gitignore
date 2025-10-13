@@ -38,7 +38,7 @@ jwt.hex
 # Used by the make test target
 /tmp
 
-tests*.tar.gz
+*tests*.tar.gz
 
 .env
 
