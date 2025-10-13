@@ -14,7 +14,6 @@ use ethrex_levm::{
     vm::{VM, VMType},
 };
 use ethrex_storage::Store;
-use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::sync::Arc;
