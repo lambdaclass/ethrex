@@ -65,6 +65,7 @@ pub struct Metrics {
     pub downloaded_headers: AtomicU64,
     pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
     pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
+    pub headers_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Account tries
     pub downloaded_account_tries: AtomicU64,
@@ -644,19 +645,17 @@ impl Metrics {
         }
 
         // Headers download duration
-        if let Some(start) = *self.headers_download_start_time.lock().await {
-            // Calculate headers download duration if headers are complete
-            if self.downloaded_headers.load(Ordering::Relaxed) == self.headers_to_download.load(Ordering::Relaxed) 
-                && self.headers_to_download.load(Ordering::Relaxed) > 0 {
-                let end = SystemTime::now(); // Use current time as end since we don't track headers_download_end_time
-                if let Ok(duration) = end.duration_since(start) {
-                    let headers_download_duration_gauge = Gauge::new(
-                        "snap_sync_headers_download_duration_seconds",
-                        "Time taken to download headers in seconds"
-                    )?;
-                    headers_download_duration_gauge.set(duration.as_secs_f64());
-                    registry.register(Box::new(headers_download_duration_gauge))?;
-                }
+        let headers_download_start = *self.headers_download_start_time.lock().await;
+        let headers_download_end = *self.headers_download_end_time.lock().await;
+
+        if let (Some(start), Some(end)) = (headers_download_start, headers_download_end) {
+            if let Ok(duration) = end.duration_since(start) {
+                let headers_download_duration_gauge = Gauge::new(
+                    "snap_sync_headers_download_duration_seconds",
+                    "Time taken to download headers in seconds"
+                )?;
+                headers_download_duration_gauge.set(duration.as_secs_f64());
+                registry.register(Box::new(headers_download_duration_gauge))?;
             }
         }
 
@@ -752,7 +751,7 @@ impl Metrics {
 
         // Total sync duration calculation
         let earliest_start = [
-            *self.headers_download_start_time.lock().await,
+            headers_download_start,
             *self.account_tries_download_start_time.lock().await,
             *self.storage_tries_download_start_time.lock().await,
             *self.heal_start_time.lock().await,
@@ -763,11 +762,7 @@ impl Metrics {
         .min();
 
         let latest_end = [
-            // Include headers end time if headers downloading is complete
-            if self.downloaded_headers.load(Ordering::Relaxed) == self.headers_to_download.load(Ordering::Relaxed) 
-                && self.headers_to_download.load(Ordering::Relaxed) > 0 {
-                self.headers_download_start_time.lock().await.map(|_| SystemTime::now())
-            } else { None },
+            headers_download_end,
             *self.account_tries_insert_end_time.lock().await,
             *self.storage_tries_insert_end_time.lock().await,
             *self.heal_end_time.lock().await,
@@ -956,6 +951,7 @@ impl Default for Metrics {
             downloaded_headers: AtomicU64::new(0),
             time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
             headers_download_start_time: Arc::new(Mutex::new(None)),
+            headers_download_end_time: Arc::new(Mutex::new(None)),
 
             // Account tries
             downloaded_account_tries: AtomicU64::new(0),

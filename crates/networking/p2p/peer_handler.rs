@@ -179,8 +179,6 @@ impl PeerHandler {
             .current_step
             .set(CurrentStepValue::DownloadingHeaders);
 
-        let initial_downloaded_headers = METRICS.downloaded_headers.load(Ordering::Relaxed);
-
         let mut ret = Vec::<BlockHeader>::new();
 
         let mut sync_head_number = 0_u64;
@@ -232,12 +230,19 @@ impl PeerHandler {
         METRICS
             .sync_head_block
             .store(sync_head_number, Ordering::Relaxed);
+        let block_count = sync_head_number + 1 - start;
+
+        // Reset headers metrics before starting a new download session
+        METRICS
+            .downloaded_headers
+            .store(0, Ordering::Relaxed);
         METRICS
             .headers_to_download
-            .store(sync_head_number + 1, Ordering::Relaxed);
+            .store(block_count, Ordering::Relaxed);
+        *METRICS.headers_download_start_time.lock().await = None;
+        *METRICS.headers_download_end_time.lock().await = None;
         *METRICS.sync_head_hash.lock().await = sync_head;
 
-        let block_count = sync_head_number + 1 - start;
         let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
         // 2) partition the amount of headers in `K` tasks
@@ -268,7 +273,9 @@ impl PeerHandler {
 
         info!("Starting to download block headers from peers");
 
-        *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
+        if block_count > 0 {
+            *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
+        }
 
         loop {
             if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
@@ -291,6 +298,11 @@ impl PeerHandler {
                 METRICS
                     .downloaded_headers
                     .fetch_add(headers.len() as u64, Ordering::Relaxed);
+
+                METRICS.headers_to_download.store(
+                    block_count.saturating_sub(downloaded_count),
+                    Ordering::Relaxed,
+                );
 
                 let batch_show = downloaded_count / 10_000;
 
@@ -376,10 +388,13 @@ impl PeerHandler {
             });
         }
 
-        METRICS.downloaded_headers.store(
-            initial_downloaded_headers + downloaded_count,
-            Ordering::Relaxed,
-        );
+        if block_count > 0 {
+            *METRICS.headers_download_end_time.lock().await = Some(SystemTime::now());
+        }
+
+        METRICS
+            .headers_to_download
+            .store(block_count.saturating_sub(downloaded_count), Ordering::Relaxed);
 
         let elapsed = start_time.elapsed().unwrap_or_default();
 
