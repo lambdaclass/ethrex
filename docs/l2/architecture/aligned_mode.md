@@ -139,6 +139,8 @@ You can also decrease the seconds per slot in `aligned_layer/network_params.rs`:
   seconds_per_slot: 4
 ```
 
+Change the `ethereum_genesis_generator_params` to `ethpandaops/ethereum-genesis-generator:5.0.8`
+
 3. Make sure you have the latest version of [kurtosis](https://github.com/kurtosis-tech/kurtosis) installed and start the ethereum-package:
 
 ```
@@ -146,7 +148,7 @@ cd aligned_layer
 make ethereum_package_start
 ```
 
-To stop it run `make ethereum_package_rm`
+If you need to stop it run `make ethereum_package_rm`
 
 4. Start the batcher:
 
@@ -179,10 +181,12 @@ cd ethrex/crates/l2
 COMPILE_CONTRACTS=true \
 ETHREX_L2_ALIGNED=true \
 ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0xFD471836031dc5108809D173A067e8486B9047A3 \
-ETHREX_L2_SP1=true \ # optional
-ETHREX_L2_RISC0=true \ # optional
+ETHREX_L2_SP1=true \ 
+ETHREX_L2_RISC0=true \
 make deploy-l1
 ```
+
+Both `ETHREX_L2_SP1` and `ETHREX_L2_RISC0` are optional
 
 > [!NOTE]
 > This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
@@ -190,7 +194,8 @@ make deploy-l1
 You will see that some deposits fail with the following error:
 
 ```
-2025-06-18T19:19:24.066126Z  WARN ethrex_l2_l1_deployer: Failed to make deposits: Deployer EthClient error: eth_estimateGas request error: execution reverted: CommonBridge: amount to deposit is zero: CommonBridge: amount to deposit is zero
+2025-10-13T19:44:51.600047Z ERROR ethrex::l2::deployer: Failed to deposit address=0x0002869e27c6faee08cca6b765a726e7a076ee0f value_to_deposit=0
+2025-10-13T19:44:51.600114Z  WARN ethrex::l2::deployer: Failed to make deposits: Deployer EthClient error: eth_sendRawTransaction request error: insufficient funds for gas * price + value: have 0 want 249957710190063
 ```
 
 This is because not all the accounts are pre-funded from the genesis.
@@ -213,7 +218,7 @@ ETHREX_ALIGNED_MODE=true \
 ETHREX_ALIGNED_BEACON_URL=http://127.0.0.1:58801 \
 ETHREX_ALIGNED_NETWORK=devnet \
 ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
-make init-l2-no-metrics
+make init-l2
 ```
 
 Suggestion:
@@ -226,7 +231,7 @@ When running the integration test, consider increasing the `--committer.commit-t
 4. Start prover(s) in different terminals:
 ```bash
 cd ethrex/crates/l2
-make init-prover-<sp1/risc0> # optional: GPU=true
+make init-prover-<sp1/risc0> GPU=true # The GPU flag is optional
 ```
 
 ### Aggregate proofs:
