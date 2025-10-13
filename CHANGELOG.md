@@ -2,7 +2,7 @@
 
 ## Perf
 
-### 2025-10-06
+### 2025-10-13
 
 - Remove explicit cache-related options from RocksDB configuration and reverted optimistic transactions to reduce RAM usage [#4853](https://github.com/lambdaclass/ethrex/pull/4853)
 
