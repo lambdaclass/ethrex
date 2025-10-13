@@ -468,6 +468,9 @@ impl Store {
                         self.add_account_code(info.code_hash, code.clone()).await?;
                     }
                 }
+                if update.removed_storage {
+                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
                     let (_witness, storage_trie) = match storage_tries.entry(update.address) {
