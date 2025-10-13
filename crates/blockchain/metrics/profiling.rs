@@ -40,7 +40,7 @@ where
                     .with_label_values(&[name])
                     .start_timer();
                 let mut timers = self.function_timers.lock().unwrap();
-                timers.insert(id.clone(), timer);
+                timers.insert(id.clone(), timer); // ok-clone: necessary due to function interface (which is determined by the crate); plus it's effectively a wrapped u64
             }
         }
     }

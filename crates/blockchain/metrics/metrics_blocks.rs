@@ -69,6 +69,7 @@ impl MetricsBlocks {
 
         let r = Registry::new();
 
+        // ok-clone: prometheus counter structs are effectively an arc, and we want multiple references to them
         r.register(Box::new(self.gas_limit.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.block_number.clone()))

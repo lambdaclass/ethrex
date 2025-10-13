@@ -25,12 +25,12 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: store struct fields are all arcs, so this just increases their reference count
 
         // Add first block. We'll make it canonical.
         let block_1a = new_block(&store, &genesis_header).await;
         let hash_1a = block_1a.hash();
-        blockchain.add_block(block_1a.clone()).await.unwrap();
+        blockchain.add_block(block_1a.clone()).await.unwrap(); // ok-clone: clone used in test
         store
             .forkchoice_update(None, 1, hash_1a, None, None)
             .await
@@ -44,7 +44,7 @@ mod blockchain_integration_test {
         let block_1b = new_block(&store, &genesis_header).await;
         let hash_1b = block_1b.hash();
         blockchain
-            .add_block(block_1b.clone())
+            .add_block(block_1b.clone()) // ok-clone: clone used in test
             .await
             .expect("Could not add block 1b.");
         let retrieved_1b = store.get_block_header_by_hash(hash_1b).unwrap().unwrap();
@@ -56,7 +56,7 @@ mod blockchain_integration_test {
         let block_2 = new_block(&store, &block_1b.header).await;
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2.clone())
+            .add_block(block_2)
             .await
             .expect("Could not add block 2.");
         let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
@@ -65,14 +65,9 @@ mod blockchain_integration_test {
         assert!(store.get_canonical_block_hash(2).await.unwrap().is_none());
 
         // Receive block 2 as new head.
-        apply_fork_choice(
-            &store,
-            block_2.hash(),
-            genesis_header.hash(),
-            genesis_header.hash(),
-        )
-        .await
-        .unwrap();
+        apply_fork_choice(&store, hash_2, genesis_header.hash(), genesis_header.hash())
+            .await
+            .unwrap();
 
         // Check that canonical blocks changed to the new branch.
         assert!(is_canonical(&store, 0, genesis_hash).await.unwrap());
@@ -87,12 +82,12 @@ mod blockchain_integration_test {
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: store struct fields are all arcs, so this just increases their reference count
 
         // Build a single valid block.
         let block_1 = new_block(&store, &genesis_header).await;
         let hash_1 = block_1.hash();
-        blockchain.add_block(block_1.clone()).await.unwrap();
+        blockchain.add_block(block_1.clone()).await.unwrap(); // ok-clone: clone used in test
         apply_fork_choice(&store, hash_1, H256::zero(), H256::zero())
             .await
             .unwrap();
@@ -101,7 +96,7 @@ mod blockchain_integration_test {
         let mut block_2 = new_block(&store, &block_1.header).await;
         block_2.header.parent_hash = H256::random();
         let hash_2 = block_2.hash();
-        let result = blockchain.add_block(block_2.clone()).await;
+        let result = blockchain.add_block(block_2).await;
         assert!(matches!(result, Err(ChainError::ParentNotFound)));
 
         // block 2 should now be pending.
@@ -122,12 +117,12 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: store struct fields are all arcs, so this just increases their reference count
 
         // Add first block. Not canonical.
         let block_1a = new_block(&store, &genesis_header).await;
         let hash_1a = block_1a.hash();
-        blockchain.add_block(block_1a.clone()).await.unwrap();
+        blockchain.add_block(block_1a).await.unwrap();
         let retrieved_1a = store.get_block_header_by_hash(hash_1a).unwrap().unwrap();
 
         assert!(!is_canonical(&store, 1, hash_1a).await.unwrap());
@@ -136,7 +131,7 @@ mod blockchain_integration_test {
         let block_1b = new_block(&store, &genesis_header).await;
         let hash_1b = block_1b.hash();
         blockchain
-            .add_block(block_1b.clone())
+            .add_block(block_1b.clone()) // ok-clone: clone used in test
             .await
             .expect("Could not add block 1b.");
         apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash)
@@ -153,7 +148,7 @@ mod blockchain_integration_test {
         let block_2 = new_block(&store, &block_1b.header).await;
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2.clone())
+            .add_block(block_2)
             .await
             .expect("Could not add block 2.");
         apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
@@ -172,7 +167,7 @@ mod blockchain_integration_test {
         // Receive block 1a as new head.
         apply_fork_choice(
             &store,
-            block_1a.hash(),
+            hash_1a,
             genesis_header.hash(),
             genesis_header.hash(),
         )
@@ -194,13 +189,13 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: store struct fields are all arcs, so this just increases their reference count
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header).await;
         let hash_1 = block_1.hash();
         blockchain
-            .add_block(block_1.clone())
+            .add_block(block_1.clone()) // ok-clone: clone used in test
             .await
             .expect("Could not add block 1b.");
 
@@ -208,7 +203,7 @@ mod blockchain_integration_test {
         let block_2 = new_block(&store, &block_1.header).await;
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2.clone())
+            .add_block(block_2)
             .await
             .expect("Could not add block 2.");
 
@@ -247,12 +242,12 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: store struct fields are all arcs, so this just increases their reference count
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header).await;
         blockchain
-            .add_block(block_1.clone())
+            .add_block(block_1.clone()) // ok-clone: clone used in test
             .await
             .expect("Could not add block 1b.");
 
@@ -260,7 +255,7 @@ mod blockchain_integration_test {
         let block_2 = new_block(&store, &block_1.header).await;
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2.clone())
+            .add_block(block_2)
             .await
             .expect("Could not add block 2.");
 
@@ -280,7 +275,7 @@ mod blockchain_integration_test {
         let block_1b = new_block(&store, &genesis_header).await;
         let hash_b = block_1b.hash();
         blockchain
-            .add_block(block_1b.clone())
+            .add_block(block_1b)
             .await
             .expect("Could not add block b.");
 
@@ -310,7 +305,7 @@ mod blockchain_integration_test {
         };
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone().clone());
+        let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: store struct fields are all arcs, so this just increases their reference count
 
         let block = create_payload(&args, store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block).await.unwrap();

@@ -53,7 +53,7 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default)]
 pub enum BlockchainType {
     #[default]
     L1,
@@ -148,7 +148,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash); // ok-clone: store struct fields are all arcs, so this just increases their reference count
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -217,11 +217,11 @@ impl Blockchain {
         for block in blocks {
             let parent_hash = block.header.parent_hash;
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash)); // ok-clone: store struct fields are all arcs, so this just increases their reference count
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.options.r#type {
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()), // ok-clone: increase arc reference count
+                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()), // ok-clone: increase arc reference count
             };
 
             // Re-execute block with logger
@@ -536,7 +536,7 @@ impl Blockchain {
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
+            self.storage.clone(), // ok-clone: store struct fields are all arcs, so this just increases their reference count
             first_block_header.parent_hash,
             block_hash_cache,
         );

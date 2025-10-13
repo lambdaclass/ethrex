@@ -240,6 +240,7 @@ impl Metrics {
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
+        // ok-clone: prometheus counter structs are effectively an arc, and we want multiple references to them
         r.register(Box::new(self.status_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.l1_gas_price.clone()))

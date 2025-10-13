@@ -233,7 +233,7 @@ impl PayloadBuildContext {
                 .unwrap_or_default(),
         );
 
-        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash); // ok-clone: store struct fields are all arcs, so this just increases their reference count
         let vm = match blockchain_type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
             BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
@@ -249,7 +249,7 @@ impl PayloadBuildContext {
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
             blobs_bundle: BlobsBundle::default(),
-            store: storage.clone(),
+            store: storage.clone(), // ok-clone: store struct fields are all arcs, so this just increases their reference count
             vm,
             account_updates: Vec::new(),
         })
@@ -335,7 +335,7 @@ impl Blockchain {
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
     /// The build process will run for the full block building timeslot or until `get_payload` is called
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
-        let self_clone = self.clone();
+        let self_clone = self.clone(); // ok-clone: increase arc reference count
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
         let payload_build_task = tokio::task::spawn(async move {
@@ -365,7 +365,7 @@ impl Blockchain {
         cancel_token: CancellationToken,
     ) -> Result<PayloadBuildResult, ChainError> {
         let start = Instant::now();
-        let self_clone = self.clone();
+        let self_clone = self.clone(); // ok-clone: increase arc reference count
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         let mut res = self_clone.build_payload(payload.clone()).await?;
@@ -389,8 +389,7 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
+        let mut context = PayloadBuildContext::new(payload, &self.storage, self.options.r#type)?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
