@@ -1736,7 +1736,7 @@ async fn insert_storages(
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
+        .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
     let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
         .collect::<Result<Vec<_>, _>>()
