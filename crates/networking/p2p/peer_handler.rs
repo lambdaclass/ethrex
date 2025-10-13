@@ -1397,7 +1397,14 @@ impl PeerHandler {
                 for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                     for account in accounts {
                         if !accounts_done.contains_key(account) {
-                            accounts_done.insert(*account, vec![]);
+                            let (_, old_intervals) = account_storage_roots
+                                .accounts_with_storage_root
+                                .get_mut(&account)
+                                .ok_or(PeerHandlerError::UnrecoverableError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+
+                            if old_intervals.is_empty() {
+                                accounts_done.insert(*account, vec![]);
+                            }
                         }
                     }
                 }
