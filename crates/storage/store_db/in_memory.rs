@@ -163,6 +163,11 @@ impl StoreEngine for Store {
             }
         }
 
+        // store code updates
+        for (code_hash, code) in update_batch.code_updates {
+            store.account_codes.insert(code_hash, code);
+        }
+
         Ok(())
     }
 
