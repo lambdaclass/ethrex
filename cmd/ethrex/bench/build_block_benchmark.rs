@@ -11,7 +11,7 @@ use criterion::{
     measurement::{Measurement, ValueFormatter},
 };
 use ethrex_blockchain::{
-    Blockchain, BlockchainType,
+    Blockchain, BlockchainOptions, BlockchainType,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
@@ -151,7 +151,7 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
     let id = payload_args.id();
-    let block = create_payload(&payload_args, store).unwrap();
+    let block = create_payload(&payload_args, store, Bytes::new()).unwrap();
     (block, id.unwrap())
 }
 
@@ -198,13 +198,14 @@ pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duratio
         let PayloadBuildResult { payload, .. } = blockchain.get_payload(payload_id).await.unwrap();
         payload
     };
+    let hash = &block.hash();
+
     // 3. engine_newPayload is called, this eventually calls Blockchain::add_block
     // which takes transactions from the mempool and fills the block with them.
     let since = Instant::now();
-    blockchain.add_block(&block).await.unwrap();
+    blockchain.add_block(block).await.unwrap();
     let executed = Instant::now();
     // EXTRA: Sanity check to not benchmark n empty block.
-    let hash = &block.hash();
     assert!(
         !store
             .get_block_body_by_hash(*hash)
@@ -236,8 +237,11 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let block_chain = Blockchain::new(
                         store_with_genesis.clone(),
-                        BlockchainType::L1, // TODO: Should we support L2?
-                        false,
+                        BlockchainOptions {
+                            r#type: BlockchainType::L1, // TODO: Should we support L2?
+                            perf_logs_enabled: false,
+                            ..Default::default()
+                        },
                     );
                     fill_mempool(&block_chain, accounts).await;
 

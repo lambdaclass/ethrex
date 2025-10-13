@@ -1,4 +1,4 @@
-FROM rust:1.87 AS chef
+FROM rust:1.90 AS chef
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -58,8 +58,10 @@ RUN cargo build --release $BUILD_FLAGS
 # --- Final Image ---
 # Copy the ethrex binary into a minimalist image to reduce bloat size.
 # This image must have glibc and libssl
-FROM gcr.io/distroless/cc-debian12
+FROM ubuntu:24.04
 WORKDIR /usr/local/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder /ethrex/target/release/ethrex .

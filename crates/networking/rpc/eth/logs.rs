@@ -191,11 +191,9 @@ pub(crate) async fn fetch_logs_with_filter(
                 }
                 for (i, topic_filter) in filter.topics.iter().enumerate() {
                     match topic_filter {
-                        TopicFilter::Topic(t) => {
-                            if let Some(topic) = t {
-                                if rpc_log.log.topics[i] != *topic {
-                                    return false;
-                                }
+                        TopicFilter::Topic(topic) => {
+                            if topic.is_some_and(|topic| rpc_log.log.topics[i] != topic) {
+                                return false;
                             }
                         }
                         TopicFilter::Topics(sub_topics) => {

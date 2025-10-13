@@ -3,8 +3,6 @@
 # Introduction
 
 - [Getting started](./getting-started/README.md)
-  - [Quickstart Ethereum Node](./getting-started/quickstart-l1.md)
-  - [Quickstart L2](./getting-started/quickstart-l2.md)
   - [Hardware requirements]()
   - [Installation](./getting-started/installation/README.md)
     - [Binary distribution](./getting-started/installation/binary_distribution.md)
@@ -74,7 +72,7 @@
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
-  - [Profiling zkvm execution with ethrex replay](./ethrex_replay/profiling.md)
+  - [FAQ](./ethrex_replay/faq.md)
 - [CLI reference](./CLI.md)
 - [Troubleshooting]()
 
