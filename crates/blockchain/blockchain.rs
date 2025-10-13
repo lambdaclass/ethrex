@@ -217,9 +217,7 @@ impl Blockchain {
         for block in blocks {
             let parent_hash = block.header.parent_hash;
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_hash);
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
-                vm_db,
-            )))));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
                 BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),

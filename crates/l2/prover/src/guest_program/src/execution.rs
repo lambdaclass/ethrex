@@ -18,8 +18,8 @@ use ethrex_common::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper};
-use std::sync::Arc;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
