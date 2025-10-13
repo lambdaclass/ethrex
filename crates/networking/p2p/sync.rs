@@ -204,6 +204,8 @@ impl Syncer {
         // We validate that we have the folders that are being used empty, as we currently assume
         // they are.
         if !validate_folders(&self.datadir) {
+            // Temp std::process::exit until promised #2767
+            std::process::exit(-1);
             // Cloning a single string, the node should stop after this
             return Err(SyncError::NotEmptyDatadirFolders(self.datadir.clone()));
         }
@@ -1816,6 +1818,7 @@ async fn insert_storages(
     std::fs::remove_dir_all(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir))
+        .inspect_err(|err| error!("{}", err.to_string()))
         .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
 
     Ok(())
