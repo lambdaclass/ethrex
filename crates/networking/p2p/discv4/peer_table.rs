@@ -511,6 +511,8 @@ struct PeerTableServer {
 impl PeerTableServer {
     // Internal functions //
 
+    // Weighting function used to select best peer
+    // TODO: Review this formula and weight constants.
     fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
         score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
     }
