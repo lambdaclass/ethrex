@@ -79,7 +79,7 @@ impl GeneralizedDatabase {
             Entry::Vacant(entry) => {
                 let info = self.store.get_account_info(address)?;
                 let account = LevmAccount::from(info);
-                self.initial_accounts_state.insert(address, account.clone());
+                self.initial_accounts_state.insert(address, account.clone()); // ok-clone: we're caching the original state of the account
                 Ok(entry.insert(account))
             }
         }
@@ -176,7 +176,7 @@ impl GeneralizedDatabase {
                 let new_account_update = AccountUpdate {
                     address: *address,
                     removed: false,
-                    info: Some(new_state_account.info.clone()),
+                    info: Some(new_state_account.info),
                     code: Some(
                         self.codes
                             .get(&new_state_account.info.code_hash)
@@ -229,7 +229,7 @@ impl GeneralizedDatabase {
             }
 
             let info = if acc_info_updated {
-                Some(new_state_account.info.clone())
+                Some(new_state_account.info)
             } else {
                 None
             };

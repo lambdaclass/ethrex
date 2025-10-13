@@ -114,7 +114,7 @@ fn main() {
             mnemonics_to_bytecode(strings)
         };
 
-        debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
+        debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone())); // ok-clone: need to return value, used in test runner
 
         bytecode
     } else {
@@ -125,7 +125,7 @@ fn main() {
 
     // Now we want to initialize the VM, so we set up the environment and database.
     // Env
-    let env = Environment {
+    let env = Arc::new(Environment {
         origin: runner_input.transaction.sender,
         gas_limit: runner_input.transaction.gas_limit,
         gas_price: runner_input.transaction.gas_price,
@@ -136,7 +136,7 @@ fn main() {
         ),
         coinbase: COINBASE,
         ..Default::default()
-    };
+    });
 
     // DB
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
@@ -148,7 +148,7 @@ fn main() {
     let mut vm = VM::new(
         env,
         &mut db,
-        &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
+        &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())), // ok-clone: value needed later, used in test runner
         LevmCallTracer::disabled(),
         VMType::L1,
     )
@@ -277,7 +277,7 @@ fn setup_initial_state(
     let input_pre_state: BTreeMap<Address, Account> = runner_input
         .pre
         .iter()
-        .map(|(addr, acc)| (*addr, Account::from(acc.clone())))
+        .map(|(addr, acc)| (*addr, Account::from(acc.clone()))) // ok-clone: value needed later, used in test runner
         .collect();
     initial_state.extend(input_pre_state);
     // Contract bytecode or initcode
