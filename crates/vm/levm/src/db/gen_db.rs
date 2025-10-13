@@ -216,7 +216,7 @@ impl GeneralizedDatabase {
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
 
-            if !removed && !acc_info_updated && !storage_updated {
+            if !removed && !acc_info_updated && !storage_updated && !removed_storage {
                 // Account hasn't been updated
                 continue;
             }
