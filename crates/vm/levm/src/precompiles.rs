@@ -24,7 +24,6 @@ use lambdaworks_math::{
                     curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
                     field_extension::{
                         BN254_PRIME_FIELD_ORDER, BN254FieldModulus, Degree2ExtensionField,
-                        Degree12ExtensionField,
                     },
                     pairing::BN254AtePairing,
                     twist::BN254TwistCurve,
