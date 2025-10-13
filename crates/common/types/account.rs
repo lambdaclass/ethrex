@@ -179,6 +179,15 @@ impl AccountInfo {
     }
 }
 
+impl AccountState {
+    pub fn is_nonexistent(&self) -> bool {
+        self.balance.is_zero()
+            && self.nonce == 0
+            && self.code_hash == *EMPTY_KECCACK_HASH
+            && self.storage_root == *EMPTY_TRIE_HASH
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::str::FromStr;

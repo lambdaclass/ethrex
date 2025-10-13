@@ -60,8 +60,8 @@ impl revm::Database for RevmDynVmDatabase {
             .0
             .get_account_state(CoreAddress::from(address.0.as_ref()))
             .map_err(|e| RevmError(EvmError::from(e)))?;
-        // If account is empty (zero balance, nonce and empty code hash), treat as non-existent
-        if acc_state.balance.is_zero() && acc_state.nonce == 0 && acc_state.code_hash.is_zero() {
+        // If the account
+        if acc_state.is_nonexistent() {
             return Ok(None);
         }
         let acc_info = AccountInfo {
