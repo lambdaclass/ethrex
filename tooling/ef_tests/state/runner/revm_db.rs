@@ -3,9 +3,9 @@ use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_vm::EvmError;
 use revm::context::DBErrorMarker;
-use revm::database::states::{AccountStatus, bundle_state::BundleRetention};
+use revm::database::states::{bundle_state::BundleRetention, AccountStatus};
 use revm::primitives::{
-    Address as RevmAddress, B256 as RevmB256, Bytes as RevmBytes, U256 as RevmU256,
+    Address as RevmAddress, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 use revm::state::{AccountInfo as RevmAccountInfo, Bytecode as RevmBytecode};
 use std::sync::Arc;
@@ -164,7 +164,7 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
 impl RevmState {
     /// Gets the stored chain config
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.inner.database.0.get_chain_config()
+        Ok(self.inner.database.0.get_chain_config()?)
     }
 
     /// Gets the state_transitions == [AccountUpdate] from the [RevmState].
