@@ -4,8 +4,6 @@ use ethrex_common::types::AccountState;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::VmDatabase;
-use crate::db::DynVmDatabase;
 use ethrex_levm::errors::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
@@ -100,39 +98,4 @@ impl LevmDatabase for DatabaseLogger {
     }
 }
 
-impl LevmDatabase for DynVmDatabase {
-    fn get_account_state(&self, address: CoreAddress) -> Result<AccountState, DatabaseError> {
-        let acc_state = <dyn VmDatabase>::get_account_state(self.as_ref(), address)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?
-            .unwrap_or_default();
-
-        Ok(acc_state)
-    }
-
-    fn get_storage_value(
-        &self,
-        address: CoreAddress,
-        key: CoreH256,
-    ) -> Result<ethrex_common::U256, DatabaseError> {
-        Ok(
-            <dyn VmDatabase>::get_storage_slot(self.as_ref(), address, key)
-                .map_err(|e| DatabaseError::Custom(e.to_string()))?
-                .unwrap_or_default(),
-        )
-    }
-
-    fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
-        <dyn VmDatabase>::get_block_hash(self.as_ref(), block_number)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))
-    }
-
-    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
-        <dyn VmDatabase>::get_chain_config(self.as_ref())
-            .map_err(|e| DatabaseError::Custom(e.to_string()))
-    }
-
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
-        <dyn VmDatabase>::get_account_code(self.as_ref(), code_hash)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))
-    }
-}
+// Note: The legacy VmDatabase adapter has been removed. Use LevmDatabase directly.

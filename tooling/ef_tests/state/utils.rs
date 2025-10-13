@@ -11,7 +11,7 @@ use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{H256, U256, types::Genesis};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::DynVmDatabase;
+use std::sync::Arc;
 
 /// Loads initial state, used for REVM as it contains RevmState.
 pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) {
@@ -20,7 +20,7 @@ pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) 
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
+    let vm_db = Arc::new(StoreVmDatabase::new(
         storage.clone(),
         genesis.get_block().hash(),
     ));
@@ -37,9 +37,9 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
 
     let block_hash = genesis.get_block().hash();
 
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, block_hash));
+    let store = Arc::new(StoreVmDatabase::new(storage, block_hash));
 
-    GeneralizedDatabase::new(Arc::new(store))
+    GeneralizedDatabase::new(store)
 }
 
 // If gas price is not provided, calculate it with current base fee and priority fee

@@ -15,7 +15,7 @@ use ethrex_levm::{
     vm::{VM, VMType},
 };
 use ethrex_storage::Store;
-use ethrex_vm::DynVmDatabase;
+use std::sync::Arc;
 use log::{debug, error, info};
 use num_bigint::BigUint;
 use num_traits::Num;
@@ -141,8 +141,8 @@ fn main() {
     // DB
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
-    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
+    let store = Arc::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
+    let mut db = GeneralizedDatabase::new_with_account_state(store, initial_state);
 
     // Initialize VM
     let mut vm = VM::new(

@@ -14,7 +14,7 @@ use ethrex_levm::{
     vm::{VM, VMType},
 };
 use ethrex_storage::Store;
-use ethrex_vm::DynVmDatabase;
+use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
 fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     // The store type for this bench shouldn't matter as all operations use the LEVM cache
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
+    let store = Arc::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
 
     let cache = BTreeMap::from([
         (
@@ -66,7 +66,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
         ),
     ]);
 
-    GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
+    GeneralizedDatabase::new_with_account_state(store, cache)
 }
 
 fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> Result<VM, VMError> {

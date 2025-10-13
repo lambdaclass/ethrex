@@ -1,6 +1,8 @@
 use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig};
 use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
-use ethrex_vm::{DynVmDatabase, EvmError, VmDatabase};
+use ethrex_vm::EvmError;
+use ethrex_levm::db::Database as LevmDatabase;
+use std::sync::Arc;
 use revm::context::DBErrorMarker;
 use revm::database::states::{bundle_state::BundleRetention, AccountStatus};
 use revm::primitives::{
@@ -21,7 +23,7 @@ pub struct RevmState {
 
 /// Wrapper used so we can implement revm-specific traits over `DynVmDatabase`
 #[derive(Clone)]
-pub struct RevmDynVmDatabase(DynVmDatabase);
+pub struct RevmDynVmDatabase(Arc<dyn LevmDatabase>);
 
 // Needed because revm::database::State is not cloneable and we need to
 // restore the previous EVM state after executing a transaction in L2 mode whose resulting state diff doesn't fit in a blob.
@@ -41,7 +43,7 @@ impl Clone for RevmState {
 }
 
 /// Builds RevmState from a Store
-pub fn revm_state(db: DynVmDatabase) -> RevmState {
+pub fn revm_state(db: Arc<dyn LevmDatabase>) -> RevmState {
     let inner = revm::database::State::builder()
         .with_database(RevmDynVmDatabase(db))
         .with_bundle_update()
@@ -54,12 +56,18 @@ impl revm::Database for RevmDynVmDatabase {
     type Error = RevmError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match <dyn VmDatabase>::get_account_state(
-            self.0.as_ref(),
-            CoreAddress::from(address.0.as_ref()),
-        )? {
-            None => return Ok(None),
-            Some(acc_info) => acc_info,
+        let acc_state = self
+            .0
+            .get_account_state(CoreAddress::from(address.0.as_ref()))
+            .map_err(|e| RevmError(EvmError::from(e)))?;
+        // If account is empty (zero balance, nonce and empty code hash), treat as non-existent
+        if acc_state.balance.is_zero() && acc_state.nonce == 0 && acc_state.code_hash.is_zero() {
+            return Ok(None);
+        }
+        let acc_info = AccountInfo {
+            code_hash: acc_state.code_hash,
+            balance: acc_state.balance,
+            nonce: acc_state.nonce,
         };
         let code = self.code_by_hash(acc_info.code_hash.0.into())?;
 
@@ -72,24 +80,30 @@ impl revm::Database for RevmDynVmDatabase {
     }
 
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        let code =
-            <dyn VmDatabase>::get_account_code(self.0.as_ref(), H256::from(code_hash.as_ref()))?;
+        let code = self
+            .0
+            .get_account_code(H256::from(code_hash.as_ref()))
+            .map_err(|e| RevmError(EvmError::from(e)))?;
         Ok(RevmBytecode::new_raw(RevmBytes(code)))
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        Ok(<dyn VmDatabase>::get_storage_slot(
-            self.0.as_ref(),
-            CoreAddress::from(address.0.as_ref()),
-            H256::from(index.to_be_bytes()),
-        )?
-        .map(|value| RevmU256::from_limbs(value.0))
-        .unwrap_or_else(|| RevmU256::ZERO))
+        let value = self
+            .0
+            .get_storage_value(
+                CoreAddress::from(address.0.as_ref()),
+                H256::from(index.to_be_bytes()),
+            )
+            .map_err(|e| RevmError(EvmError::from(e)))?;
+        Ok(RevmU256::from_limbs(value.0))
     }
 
     fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
-        Ok(<dyn VmDatabase>::get_block_hash(self.0.as_ref(), number)
-            .map(|hash| RevmB256::from_slice(&hash.0))?)
+        let hash = self
+            .0
+            .get_block_hash(number)
+            .map_err(|e| RevmError(EvmError::from(e)))?;
+        Ok(RevmB256::from_slice(&hash.0))
     }
 }
 
@@ -97,12 +111,17 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
     type Error = RevmError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match <dyn VmDatabase>::get_account_state(
-            self.0.as_ref(),
-            CoreAddress::from(address.0.as_ref()),
-        )? {
-            None => return Ok(None),
-            Some(acc_info) => acc_info,
+        let acc_state = self
+            .0
+            .get_account_state(CoreAddress::from(address.0.as_ref()))
+            .map_err(|e| RevmError(EvmError::from(e)))?;
+        if acc_state.balance.is_zero() && acc_state.nonce == 0 && acc_state.code_hash.is_zero() {
+            return Ok(None);
+        }
+        let acc_info = AccountInfo {
+            code_hash: acc_state.code_hash,
+            balance: acc_state.balance,
+            nonce: acc_state.nonce,
         };
         let code = self.code_by_hash_ref(acc_info.code_hash.0.into())?;
 
@@ -115,31 +134,40 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
     }
 
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        let code =
-            <dyn VmDatabase>::get_account_code(self.0.as_ref(), H256::from(code_hash.as_ref()))?;
+        let code = self
+            .0
+            .get_account_code(H256::from(code_hash.as_ref()))
+            .map_err(|e| RevmError(EvmError::from(e)))?;
         Ok(RevmBytecode::new_raw(RevmBytes(code)))
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        Ok(<dyn VmDatabase>::get_storage_slot(
-            self.0.as_ref(),
-            CoreAddress::from(address.0.as_ref()),
-            H256::from(index.to_be_bytes()),
-        )?
-        .map(|value| RevmU256::from_limbs(value.0))
-        .unwrap_or_else(|| RevmU256::ZERO))
+        let value = self
+            .0
+            .get_storage_value(
+                CoreAddress::from(address.0.as_ref()),
+                H256::from(index.to_be_bytes()),
+            )
+            .map_err(|e| RevmError(EvmError::from(e)))?;
+        Ok(RevmU256::from_limbs(value.0))
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        Ok(<dyn VmDatabase>::get_block_hash(self.0.as_ref(), number)
-            .map(|hash| RevmB256::from_slice(&hash.0))?)
+        let hash = self
+            .0
+            .get_block_hash(number)
+            .map_err(|e| RevmError(EvmError::from(e)))?;
+        Ok(RevmB256::from_slice(&hash.0))
     }
 }
 
 impl RevmState {
     /// Gets the stored chain config
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.inner.database.0.get_chain_config()
+        self.inner
+            .database
+            .0
+            .get_chain_config()
     }
 
     /// Gets the state_transitions == [AccountUpdate] from the [RevmState].

@@ -6,7 +6,7 @@ use ethrex_common::{
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::DynVmDatabase;
+use std::sync::Arc;
 
 use std::sync::Arc;
 
@@ -45,11 +45,11 @@ pub async fn load_initial_state(
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
     let block_hash = genesis.get_block().hash();
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage.clone(), block_hash));
+    let store = Arc::new(StoreVmDatabase::new(storage.clone(), block_hash));
 
     // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
     (
-        GeneralizedDatabase::new(Arc::new(store)),
+        GeneralizedDatabase::new(store),
         block_hash,
         storage,
         genesis,

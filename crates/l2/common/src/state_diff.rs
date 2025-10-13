@@ -9,7 +9,8 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address};
 use ethrex_trie::{Trie, TrieError};
-use ethrex_vm::{EvmError, VmDatabase};
+use ethrex_vm::EvmError;
+use ethrex_levm::db::Database as LevmDatabase;
 use serde::{Deserialize, Serialize};
 
 use crate::{l1_messages::L1Message, privileged_transactions::PrivilegedTransactionLog};
@@ -536,16 +537,15 @@ impl Decoder {
 /// Calculates nonce_diff between current and previous block.
 pub fn get_nonce_diff(
     account_update: &AccountUpdate,
-    db: &impl VmDatabase,
+    db: &impl LevmDatabase,
 ) -> Result<u16, StateDiffError> {
     // Get previous account_info either from store or cache
-    let account_state = db.get_account_state(account_update.address)?;
+    let account_state = db
+        .get_account_state(account_update.address)
+        .map_err(EvmError::from)?;
 
     // Get previous nonce
-    let prev_nonce = match account_state {
-        Some(state) => state.nonce,
-        None => 0,
-    };
+    let prev_nonce = account_state.nonce;
 
     // Get current nonce
     let new_nonce = if let Some(info) = account_update.info.clone() {
@@ -567,7 +567,7 @@ pub fn get_nonce_diff(
 /// Prepare the state diff for the block.
 pub fn prepare_state_diff(
     last_header: BlockHeader,
-    db: &impl VmDatabase,
+    db: &impl LevmDatabase,
     l1messages: &[L1Message],
     privileged_transactions: &[PrivilegedL2Transaction],
     account_updates: Vec<AccountUpdate>,

@@ -17,7 +17,8 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
-use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper, VmDatabase};
+use ethrex_vm::{Evm, EvmError, GuestProgramStateWrapper};
+use std::sync::Arc;
 use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "l2")]
@@ -320,9 +321,9 @@ fn execute_stateless(
 
         // Execute block
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(wrapped_db.clone())?;
+        let mut vm = Evm::new_from_db_for_l2(Arc::new(wrapped_db.clone()));
         #[cfg(not(feature = "l2"))]
-        let mut vm = Evm::new_for_l1(wrapped_db.clone());
+        let mut vm = Evm::new_from_db_for_l1(Arc::new(wrapped_db.clone()));
         let result = vm
             .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;

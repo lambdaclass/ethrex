@@ -1,9 +1,10 @@
-use crate::{EvmError, VmDatabase};
+use ethrex_levm::db::Database as LevmDatabase;
+use ethrex_levm::errors::DatabaseError;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountState, AccountUpdate, Block, BlockHeader, ChainConfig,
+        AccountUpdate, Block, BlockHeader,
         block_execution_witness::{GuestProgramState, GuestProgramStateError},
     },
 };
@@ -57,41 +58,52 @@ impl GuestProgramStateWrapper {
     ) -> Result<(), GuestProgramStateError> {
         self.lock_mutex()?.initialize_block_header_hashes(blocks)
     }
+
+    pub fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, GuestProgramStateError> {
+        self.lock_mutex()?.get_chain_config()
+    }
 }
 
-impl VmDatabase for GuestProgramStateWrapper {
-    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
-        self.lock_mutex()
-            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_account_code(code_hash)
-            .map_err(|_| EvmError::DB("Failed to get account code".to_string()))
-    }
+// Legacy VmDatabase impl removed; using LevmDatabase directly.
 
-    fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
+impl LevmDatabase for GuestProgramStateWrapper {
+    fn get_account_state(
+        &self,
+        address: Address,
+    ) -> Result<ethrex_common::types::AccountState, DatabaseError> {
         self.lock_mutex()
-            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+            .map_err(|_| DatabaseError::Custom("Failed to lock db".to_string()))?
             .get_account_state(address)
-            .map_err(|_| EvmError::DB("Failed to get account info".to_string()))
+            .map(|opt| opt.unwrap_or_default())
+            .map_err(|_| DatabaseError::Custom("Failed to get account info".to_string()))
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+    fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
         self.lock_mutex()
-            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_block_hash(block_number)
-            .map_err(|_| EvmError::DB("Failed get block hash".to_string()))
-    }
-
-    fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.lock_mutex()
-            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_chain_config()
-            .map_err(|_| EvmError::DB("Failed get chain config".to_string()))
-    }
-
-    fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        self.lock_mutex()
-            .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
+            .map_err(|_| DatabaseError::Custom("Failed to lock db".to_string()))?
             .get_storage_slot(address, key)
-            .map_err(|_| EvmError::DB("Failed get storage slot".to_string()))
+            .map(|opt| opt.unwrap_or_default())
+            .map_err(|_| DatabaseError::Custom("Failed get storage slot".to_string()))
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
+        self.lock_mutex()
+            .map_err(|_| DatabaseError::Custom("Failed to lock db".to_string()))?
+            .get_block_hash(block_number)
+            .map_err(|_| DatabaseError::Custom("Failed get block hash".to_string()))
+    }
+
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
+        self.lock_mutex()
+            .map_err(|_| DatabaseError::Custom("Failed to lock db".to_string()))?
+            .get_chain_config()
+            .map_err(|_| DatabaseError::Custom("Failed get chain config".to_string()))
+    }
+
+    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, DatabaseError> {
+        self.lock_mutex()
+            .map_err(|_| DatabaseError::Custom("Failed to lock db".to_string()))?
+            .get_account_code(code_hash)
+            .map_err(|_| DatabaseError::Custom("Failed to get account code".to_string()))
     }
 }

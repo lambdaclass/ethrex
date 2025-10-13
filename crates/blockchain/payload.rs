@@ -235,8 +235,8 @@ impl PayloadBuildContext {
 
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
         let vm = match blockchain_type {
-            BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
+            BlockchainType::L1 => Evm::new_from_db_for_l1(Arc::new(vm_db)),
+            BlockchainType::L2 => Evm::new_from_db_for_l2(Arc::new(vm_db)),
         };
 
         Ok(PayloadBuildContext {

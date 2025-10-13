@@ -1,7 +1,6 @@
 pub mod levm;
 use levm::LEVM;
 
-use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use ethrex_common::Address;
@@ -30,25 +29,7 @@ impl core::fmt::Debug for Evm {
 }
 
 impl Evm {
-    /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new_for_l1(db: impl VmDatabase + 'static) -> Self {
-        let wrapped_db: DynVmDatabase = Box::new(db);
-        Evm {
-            db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
-            vm_type: VMType::L1,
-        }
-    }
-
-    pub fn new_for_l2(_db: impl VmDatabase + 'static) -> Result<Self, EvmError> {
-        let wrapped_db: DynVmDatabase = Box::new(_db);
-
-        let evm = Evm {
-            db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
-            vm_type: VMType::L2,
-        };
-
-        Ok(evm)
-    }
+    // Legacy constructors using VmDatabase have been removed. Use `new_from_db_for_l1/2`.
 
     pub fn new_from_db_for_l1(store: Arc<impl LevmDatabase + 'static>) -> Self {
         Self::_new_from_db(store, VMType::L1)

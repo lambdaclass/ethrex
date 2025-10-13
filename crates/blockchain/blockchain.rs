@@ -29,7 +29,7 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmError};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use std::collections::{BTreeMap, HashMap};
@@ -216,9 +216,10 @@ impl Blockchain {
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
-            let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_hash);
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
+                vm_db,
+            )))));
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
                 BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
@@ -916,9 +917,11 @@ impl Blockchain {
     }
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+        use std::sync::Arc;
+        let store = Arc::new(vm_db);
         let evm = match self.options.r#type {
-            BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
+            BlockchainType::L1 => Evm::new_from_db_for_l1(store),
+            BlockchainType::L2 => Evm::new_from_db_for_l2(store),
         };
         Ok(evm)
     }
