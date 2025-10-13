@@ -1494,6 +1494,7 @@ impl StoreEngine for Store {
 
     async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
         let mut ctr = 0;
+        let mut value_ctr = 0;
         let mut paths = vec![];
 
         // account nibbles (64B) + 16 (1B) + 17 (1B) + storage nibbles (64B) + 16 (1B)
@@ -1509,9 +1510,18 @@ impl StoreEngine for Store {
         sst.open(&path)?;
         paths.push(path);
 
-        self.open_direct_state_trie(state_root)?
-            .into_iter()
-            .try_for_each(|(path, node)| -> Result<(), StoreError> {
+        let innerdb = Box::leak(Box::new(self.db.clone()));
+
+        let snapshot = Arc::new(innerdb.snapshot());
+
+        let db = Box::new(RocksDBLockedTrieDB::new_from_snapshot(
+            self.db.clone(),
+            CF_TRIE_NODES,
+            None,
+            snapshot.clone(),
+        )?);
+        Trie::open(db, state_root).into_iter().try_for_each(
+            |(path, node)| -> Result<(), StoreError> {
                 let Node::Leaf(node) = node else {
                     return Ok(());
                 };
@@ -1521,7 +1531,8 @@ impl StoreEngine for Store {
                 key_buf[0..65].copy_from_slice(path.as_ref());
 
                 sst.put(&key_buf[0..65], node.value)?;
-                if sst.file_size() > 256 * 1024 * 1024 {
+                value_ctr += 1;
+                if value_ctr > 1024 * 1024 {
                     sst.finish()?;
                     let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
                     sst.open(&path)?;
@@ -1530,7 +1541,13 @@ impl StoreEngine for Store {
                 }
 
                 let address_hash = H256::from_slice(&path.to_bytes());
-                self.open_direct_storage_trie(address_hash, account_state.storage_root)?
+                let db = Box::new(RocksDBLockedTrieDB::new_from_snapshot(
+                    self.db.clone(),
+                    CF_TRIE_NODES,
+                    Some(address_hash),
+                    snapshot.clone(),
+                )?);
+                Trie::open(db, account_state.storage_root)
                     .into_iter()
                     .try_for_each(|(path, node)| -> Result<(), StoreError> {
                         let Node::Leaf(node) = node else {
@@ -1539,7 +1556,8 @@ impl StoreEngine for Store {
                         key_buf[66..131].copy_from_slice(path.as_ref());
 
                         sst.put(&key_buf, node.value)?;
-                        if sst.file_size() > 256 * 1024 * 1024 {
+                        value_ctr += 1;
+                        if value_ctr > 1024 * 1024 {
                             sst.finish()?;
                             let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
                             sst.open(&path)?;
@@ -1549,7 +1567,14 @@ impl StoreEngine for Store {
                         Ok(())
                     })?;
                 Ok(())
-            })?;
+            },
+        )?;
+        unsafe {
+            drop(Box::from_raw(
+                innerdb as *const Arc<OptimisticTransactionDB<MultiThreaded>>
+                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
+            ));
+        }
         sst.finish()?;
         let mut ingest_opts = IngestExternalFileOptions::default();
         ingest_opts.set_move_files(true);

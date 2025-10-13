@@ -12,7 +12,7 @@ pub struct RocksDBLockedTrieDB {
     /// Column family handle
     cf: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
     /// Read-only snapshot for consistent reads
-    snapshot: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
+    snapshot: Arc<SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>>,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
 }
@@ -32,7 +32,29 @@ impl RocksDBLockedTrieDB {
         })?;
 
         // Create snapshot for consistent reads
-        let snapshot = db.snapshot();
+        let snapshot = Arc::new(db.snapshot());
+
+        Ok(Self {
+            db,
+            cf,
+            snapshot,
+            address_prefix,
+        })
+    }
+
+    pub fn new_from_snapshot(
+        db: Arc<OptimisticTransactionDB<MultiThreaded>>,
+        cf_name: &str,
+        address_prefix: Option<H256>,
+        snapshot: Arc<SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>>
+    ) -> Result<Self, TrieError> {
+        // Leak the database reference to get 'static lifetime
+        let db = Box::leak(Box::new(db));
+
+        // Verify column family exists
+        let cf = db.cf_handle(cf_name).ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
+        })?;
 
         Ok(Self {
             db,
