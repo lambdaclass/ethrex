@@ -1493,6 +1493,9 @@ impl StoreEngine for Store {
     }
 
     async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
+        let mut ctr = 0;
+        let mut paths = vec![];
+
         // account nibbles (64B) + 16 (1B) + 17 (1B) + storage nibbles (64B) + 16 (1B)
         let mut key_buf = [0u8; 131];
         key_buf[65] = 17;
@@ -1501,9 +1504,11 @@ impl StoreEngine for Store {
         set_database_opts(&mut sst_options);
         get_cf_opts(&mut sst_options, CF_TRIE_NODES);
 
-        let path = self.db.path().join("snapshot.sst");
+        let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
         let mut sst = SstFileWriter::create(&sst_options);
         sst.open(&path)?;
+        paths.push(path);
+
         self.open_direct_state_trie(state_root)?
             .into_iter()
             .try_for_each(|(path, node)| -> Result<(), StoreError> {
@@ -1516,6 +1521,13 @@ impl StoreEngine for Store {
                 key_buf[0..65].copy_from_slice(path.as_ref());
 
                 sst.put(&key_buf[0..65], node.value)?;
+                if sst.file_size() > 256 * 1024 * 1024 {
+                    sst.finish()?;
+                    let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
+                    sst.open(&path)?;
+                    paths.push(path);
+                    ctr += 1;
+                }
 
                 let address_hash = H256::from_slice(&path.to_bytes());
                 self.open_direct_storage_trie(address_hash, account_state.storage_root)?
@@ -1527,6 +1539,13 @@ impl StoreEngine for Store {
                         key_buf[66..131].copy_from_slice(path.as_ref());
 
                         sst.put(&key_buf, node.value)?;
+                        if sst.file_size() > 256 * 1024 * 1024 {
+                            sst.finish()?;
+                            let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
+                            sst.open(&path)?;
+                            paths.push(path);
+                            ctr += 1;
+                        }
                         Ok(())
                     })?;
                 Ok(())
@@ -1540,7 +1559,7 @@ impl StoreEngine for Store {
             .cf_handle(CF_TRIE_NODES)
             .ok_or(StoreError::Custom("missing cf: CF_TRIE_NODES".to_string()))?;
         self.db
-            .ingest_external_file_cf_opts(&cf_trie, &ingest_opts, vec![path])?;
+            .ingest_external_file_cf_opts(&cf_trie, &ingest_opts, paths)?;
         self.trie_cache
             .write()
             .map_err(|_| StoreError::LockError)?
