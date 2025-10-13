@@ -7,7 +7,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::types::{BlobsBundle, Fork};
+use ethrex_common::types::{BlobsBundle, CELLS_PER_EXT_BLOB, Fork};
 use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
@@ -495,14 +495,22 @@ impl ProofCoordinator {
                 mut proofs,
                 ..
             } = BlobsBundle::create_from_blobs(&blob, fork)?;
-            if fork < Fork::Osaka {
-                match (commitments.pop(), proofs.pop()) {
-                    (Some(commitment), Some(proof)) => (commitment, vec![proof]),
-                    _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
-                }
+            let proof_count = if fork < Fork::Osaka {
+                1
             } else {
-                todo!()
+                CELLS_PER_EXT_BLOB
+            };
+            let commitment = commitments
+                .pop()
+                .ok_or_else(|| ProofCoordinatorError::MissingBlob(batch_number))?;
+
+            if proofs.len() < proof_count {
+                return Err(ProofCoordinatorError::MissingBlob(batch_number));
             }
+
+            let proof = proofs.split_off(proofs.len() - proof_count);
+
+            (commitment, proof)
         };
 
         debug!("Created prover input for batch {batch_number}");
