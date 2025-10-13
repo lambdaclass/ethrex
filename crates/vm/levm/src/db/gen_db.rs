@@ -6,6 +6,7 @@ use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
+use ethrex_common::utils::ZERO_U256;
 use ethrex_common::utils::keccak;
 
 use super::Database;
@@ -196,7 +197,8 @@ impl GeneralizedDatabase {
                 let old_value = if !removed_storage {
                     initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
                 } else {
-                    &U256::zero()
+                    // There's not an "old value" if the contract was destroyed and re-created.
+                    &ZERO_U256
                 };
 
                 if new_value != old_value {
@@ -212,7 +214,7 @@ impl GeneralizedDatabase {
             };
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // If the account was already empty then this is not an update
+            // ethrex is post-Merge client, empty accounts have already been pruned from the trie by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
 
