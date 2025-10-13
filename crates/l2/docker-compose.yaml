@@ -61,7 +61,7 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - touch /env/.env; ./ethrex deploy "$0" "$@"
+      - touch /env/.env; ./ethrex l2 deploy "$0" "$@"
     command: >
       --randomize-contract-deployment
 
