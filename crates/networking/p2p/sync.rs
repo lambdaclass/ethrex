@@ -353,6 +353,8 @@ impl Syncer {
 
         let start_block_number;
         let end_block_number;
+        let mut headers = vec![];
+        let mut single_batch = true;
 
         // Request and store all block headers from the advertised sync head
         loop {
@@ -388,10 +390,16 @@ impl Syncer {
                 block_headers.drain(first_canon_block..block_headers.len());
                 start_block_number = block_headers.last().as_ref().unwrap().number.max(1);
                 end_block_number = block_headers.first().as_ref().unwrap().number + 1;
-                store.add_fullsync_batch(block_headers).await?;
+                // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
+                if single_batch {
+                    headers = block_headers;
+                } else {
+                    store.add_fullsync_batch(block_headers).await?;
+                }
                 break;
             }
             store.add_fullsync_batch(block_headers).await?;
+            single_batch = false;
         }
 
         info!("Downloading Bodies and executing blocks");
@@ -403,7 +411,9 @@ impl Syncer {
                 "Processing batch from block number {start} to {}",
                 start + batch_size as u64
             );
-            let mut headers = store.read_fullsync_batch(start, batch_size as u64).await?;
+            if !single_batch {
+                headers = store.read_fullsync_batch(start, batch_size as u64).await?;
+            }
             let mut blocks = Vec::new();
             // Request block bodies
             // Download block bodies
