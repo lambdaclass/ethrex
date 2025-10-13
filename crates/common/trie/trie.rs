@@ -99,9 +99,7 @@ impl Trie {
                 let rlp = self
                     .db
                     .get(hash)?
-                    .ok_or(TrieError::InconsistentTree(format!(
-                        "Node hash {hash:?} not found in db"
-                    )))?;
+                    .ok_or_else(|| TrieError::RootNotFound(hash.finalize()))?;
                 let node = Node::decode(&rlp).map_err(TrieError::RLPDecode)?;
                 node.get(self.db.as_ref(), Nibbles::from_bytes(path))?
             }
@@ -117,10 +115,7 @@ impl Trie {
             // If the trie is not empty, call the root node's insertion logic.
             self.root
                 .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree(format!(
-                    "Root node with hash {:?} not found in db",
-                    self.root.compute_hash()
-                )))?
+                .ok_or_else(|| TrieError::RootNotFound(self.root.compute_hash().finalize()))?
                 .insert(self.db.as_ref(), path, value)?
                 .into()
         } else {
@@ -142,10 +137,7 @@ impl Trie {
         let (node, value) = self
             .root
             .get_node(self.db.as_ref())?
-            .ok_or(TrieError::InconsistentTree(format!(
-                "Root node with hash {:?} not found in db",
-                self.root.compute_hash()
-            )))?
+            .ok_or_else(|| TrieError::RootNotFound(self.root.compute_hash().finalize()))?
             .remove(self.db.as_ref(), Nibbles::from_bytes(path))?;
         self.root = node.map(Into::into).unwrap_or_default();
 
@@ -245,10 +237,7 @@ impl Trie {
             let encoded_root = self
                 .root
                 .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree(format!(
-                    "Root node with hash {:?} not found in db",
-                    self.root.compute_hash()
-                )))?
+                .ok_or_else(|| TrieError::RootNotFound(self.root.compute_hash().finalize()))?
                 .encode_raw();
 
             let mut node_path = HashSet::new();
@@ -277,9 +266,7 @@ impl Trie {
     ) -> Result<NodeRef, TrieError> {
         let root_rlp = all_nodes
             .get(&root_hash)
-            .ok_or(TrieError::InconsistentTree(format!(
-                "Root node {root_hash:?} not found in db"
-            )))?;
+            .ok_or_else(|| TrieError::RootNotFound(root_hash))?;
 
         fn get_embedded_node(
             all_nodes: &BTreeMap<H256, Vec<u8>>,
@@ -401,12 +388,11 @@ impl Trie {
                     Some(idx) => {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
-                            let child_node = child_ref.get_node(db)?.ok_or(
-                                TrieError::InconsistentTree(format!(
-                                    "Node with hash {:?} not found in db",
-                                    child_ref.compute_hash()
-                                )),
-                            )?;
+                            let child_node = child_ref.get_node(db)?.ok_or_else(|| {
+                                TrieError::InconsistentTreeOnIntermediateNode(
+                                    child_ref.compute_hash().finalize(),
+                                )
+                            })?;
                             get_node_inner(db, child_node, partial_path)
                         } else {
                             Ok(vec![])
@@ -418,12 +404,11 @@ impl Trie {
                     if partial_path.skip_prefix(&extension_node.prefix)
                         && extension_node.child.is_valid()
                     {
-                        let child_node = extension_node.child.get_node(db)?.ok_or(
-                            TrieError::InconsistentTree(format!(
-                                "Extension Node child with hash {:?} with not found in db",
-                                extension_node.child.compute_hash()
-                            )),
-                        )?;
+                        let child_node = extension_node.child.get_node(db)?.ok_or_else(|| {
+                            TrieError::InconsistentTreeOnIntermediateNode(
+                                extension_node.child.compute_hash().finalize(),
+                            )
+                        })?;
                         get_node_inner(db, child_node, partial_path)
                     } else {
                         Ok(vec![])
@@ -439,10 +424,7 @@ impl Trie {
                 self.db.as_ref(),
                 self.root
                     .get_node(self.db.as_ref())?
-                    .ok_or(TrieError::InconsistentTree(format!(
-                        "Root node with hash {:?} not found in db",
-                        self.root.compute_hash()
-                    )))?,
+                    .ok_or_else(|| TrieError::RootNotFound(self.root.compute_hash().finalize()))?,
                 partial_path,
             )
         } else {
@@ -493,10 +475,7 @@ impl ProofTrie {
             self.0
                 .root
                 .get_node(self.0.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree(format!(
-                    "Root node with hash {:?} not found in db",
-                    self.0.root.compute_hash()
-                )))?
+                .ok_or_else(|| TrieError::RootNotFound(self.0.root.compute_hash().finalize()))?
                 .insert(self.0.db.as_ref(), partial_path, external_ref)?
                 .into()
         } else {
