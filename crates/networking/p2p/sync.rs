@@ -406,10 +406,10 @@ impl Syncer {
             // Retrieve batch from DB
             info!(
                 "Processing batch from block number {start} to {}",
-                start + *EXECUTE_BATCH_SIZE as u64
+                start + batch_size as u64
             );
             let mut headers = store
-                .read_fullsync_batch(start, *EXECUTE_BATCH_SIZE as u64)
+                .read_fullsync_batch(start, batch_size as u64)
                 .await?;
             let mut blocks = Vec::new();
             // Request block bodies
