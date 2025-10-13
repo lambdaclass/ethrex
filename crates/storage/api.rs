@@ -354,4 +354,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         start: BlockNumber,
         limit: u64,
     ) -> Result<Vec<BlockHeader>, StoreError>;
+
+    async fn clear_fullsync_headers(&self) -> Result<(), StoreError>;
 }

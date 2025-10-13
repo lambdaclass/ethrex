@@ -1425,6 +1425,28 @@ impl StoreEngine for Store {
         )
         .await
     }
+
+    async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        let db = self.db.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let cf = db
+                .cf_handle(CF_FULLSYNC_HEADERS)
+                .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+
+            let mut iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+            let mut batch = WriteBatchWithTransaction::default();
+
+            while let Some(Ok((key, _))) = iter.next() {
+                batch.delete_cf(&cf, key);
+            }
+
+            db.write(batch)
+                .map_err(|e| StoreError::Custom(format!("RocksDB batch write error: {}", e)))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
 }
 
 /// Open column families

@@ -450,10 +450,11 @@ impl Syncer {
                 pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
                 pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
             );
-            self.add_blocks_in_batch(pending_blocks, true, store)
+            self.add_blocks_in_batch(pending_blocks, true, store.clone())
                 .await?;
         }
 
+        store.clear_fullsync_headers().await?;
         Ok(())
     }
 

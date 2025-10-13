@@ -1279,6 +1279,10 @@ impl Store {
     ) -> Result<Vec<BlockHeader>, StoreError> {
         self.engine.read_fullsync_batch(start, limit).await
     }
+
+    pub async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        self.engine.clear_fullsync_headers().await
+    }
 }
 
 pub struct AncestorIterator {
