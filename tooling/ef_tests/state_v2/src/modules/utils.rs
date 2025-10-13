@@ -8,8 +8,6 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
 use std::sync::Arc;
 
-use std::sync::Arc;
-
 use crate::modules::{
     error::RunnerError,
     types::{Env, Test, TestCase, genesis_from_test_and_fork},
