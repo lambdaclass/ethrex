@@ -6,11 +6,11 @@ use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction, TxKind,
     code_hash,
 };
+use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address};
 use ethrex_trie::{Trie, TrieError};
 use ethrex_vm::EvmError;
-use ethrex_levm::db::Database as LevmDatabase;
 use serde::{Deserialize, Serialize};
 
 use crate::{l1_messages::L1Message, privileged_transactions::PrivilegedTransactionLog};

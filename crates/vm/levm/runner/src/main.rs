@@ -15,7 +15,6 @@ use ethrex_levm::{
     vm::{VM, VMType},
 };
 use ethrex_storage::Store;
-use std::sync::Arc;
 use log::{debug, error, info};
 use num_bigint::BigUint;
 use num_traits::Num;
