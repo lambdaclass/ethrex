@@ -115,7 +115,7 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
             .0
             .get_account_state(CoreAddress::from(address.0.as_ref()))
             .map_err(|e| RevmError(EvmError::from(e)))?;
-        if acc_state.balance.is_zero() && acc_state.nonce == 0 && acc_state.code_hash.is_zero() {
+        if acc_state == AccountState::default() {
             return Ok(None);
         }
         let acc_info = AccountInfo {
