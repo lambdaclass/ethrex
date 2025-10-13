@@ -727,18 +727,18 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
         read_vk(vk_path)
     } else {
         info!(?prover_type, "Using vk from local repo");
-        prover_type
-            .vk(opts.aligned)?
-            .map(Bytes::from)
+        let vk_path = prover_type
+            .vk_path(opts.aligned)?
             .ok_or(DeployerError::InternalError(format!(
                 "missing {prover_type} vk"
-            )))
+            )))?;
+        read_vk(vk_path.to_str().ok_or(DeployerError::FailedToGetStringFromPath)?)
     }
 }
 
 fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
     let string = std::fs::read_to_string(path)?;
-    let trimmed = string.trim_start_matches("0x");
+    let trimmed = string.trim_start_matches("0x").trim();
     let decoded = hex::decode(trimmed)
         .map_err(|_| DeployerError::InternalError("failed to decode vk".to_string()))?;
     Ok(Bytes::from(decoded))

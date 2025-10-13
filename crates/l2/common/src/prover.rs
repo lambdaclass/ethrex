@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Display};
+use std::{fmt::{Debug, Display}, path::PathBuf};
 
 use crate::calldata::Value;
 
@@ -86,7 +86,7 @@ impl ProverType {
 
     /// Gets the verification key or image id for this prover backend, used for
     /// proof verification. Aligned Layer uses a different vk in SP1's case.
-    pub fn vk(&self, aligned: bool) -> std::io::Result<Option<Vec<u8>>> {
+    pub fn vk_path(&self, aligned: bool) -> std::io::Result<Option<PathBuf>> {
         let path = match &self {
             Self::RISC0 => format!(
                 "{}/../prover/src/guest_program/src/risc0/out/riscv32im-risc0-vk",
@@ -106,7 +106,7 @@ impl ProverType {
             _ => return Ok(None),
         };
         let path = std::fs::canonicalize(path)?;
-        std::fs::read(path).map(Some)
+        Ok(Some(path))
     }
 }
 
