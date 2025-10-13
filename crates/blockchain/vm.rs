@@ -42,8 +42,6 @@ impl StoreVmDatabase {
     }
 }
 
-// Legacy VmDatabase impl removed; now using LevmDatabase directly.
-
 impl LevmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {

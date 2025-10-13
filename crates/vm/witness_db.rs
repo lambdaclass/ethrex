@@ -1,5 +1,3 @@
-use ethrex_levm::db::Database as LevmDatabase;
-use ethrex_levm::errors::DatabaseError;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -8,6 +6,8 @@ use ethrex_common::{
         block_execution_witness::{GuestProgramState, GuestProgramStateError},
     },
 };
+use ethrex_levm::db::Database as LevmDatabase;
+use ethrex_levm::errors::DatabaseError;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
@@ -59,12 +59,12 @@ impl GuestProgramStateWrapper {
         self.lock_mutex()?.initialize_block_header_hashes(blocks)
     }
 
-    pub fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, GuestProgramStateError> {
+    pub fn get_chain_config(
+        &self,
+    ) -> Result<ethrex_common::types::ChainConfig, GuestProgramStateError> {
         self.lock_mutex()?.get_chain_config()
     }
 }
-
-// Legacy VmDatabase impl removed; using LevmDatabase directly.
 
 impl LevmDatabase for GuestProgramStateWrapper {
     fn get_account_state(

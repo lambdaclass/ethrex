@@ -97,5 +97,3 @@ impl LevmDatabase for DatabaseLogger {
             .get_account_code(code_hash)
     }
 }
-
-// Note: The legacy VmDatabase adapter has been removed. Use LevmDatabase directly.
