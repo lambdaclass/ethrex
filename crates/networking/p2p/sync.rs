@@ -1817,8 +1817,7 @@ async fn insert_storages(
 
     std::fs::remove_dir_all(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_account_storages_snapshots_dir(datadir))
-        .inspect_err(|err| error!("{}", err.to_string()))
+    std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
         .map_err(|_| SyncError::StorageTempDBDirNotFound)?;
 
     Ok(())
