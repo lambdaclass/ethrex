@@ -88,15 +88,16 @@ impl StoreEngine for Store {
                 .trie_cache
                 .write()
                 .map_err(|_| StoreError::LockError)?;
-            let parent_state_root = self
-                .get_block_header_by_hash(
-                    update_batch
-                        .blocks
-                        .first()
-                        .ok_or(StoreError::UpdateBatchNoBlocks)?
-                        .header
-                        .parent_hash,
-                )?
+            let parent = update_batch
+                .blocks
+                .first()
+                .ok_or(StoreError::UpdateBatchNoBlocks)?
+                .header
+                .parent_hash;
+
+            let pre_state_root = store
+                .headers
+                .get(&parent)
                 .map(|header| header.state_root)
                 .unwrap_or_default();
 
@@ -112,7 +113,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
 
-            if let Some(root) = trie.get_commitable(parent_state_root) {
+            if let Some(root) = trie.get_commitable(pre_state_root) {
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     if value.is_empty() {
@@ -122,20 +123,17 @@ impl StoreEngine for Store {
                     }
                 }
             }
-            trie.put_batch(
-                parent_state_root,
-                last_state_root,
-                update_batch
-                    .storage_updates
-                    .into_iter()
-                    .flat_map(|(account_hash, nodes)| {
-                        nodes
-                            .into_iter()
-                            .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-                    })
-                    .chain(update_batch.account_updates)
-                    .collect(),
-            );
+            let key_values = update_batch
+                .storage_updates
+                .into_iter()
+                .flat_map(|(account_hash, nodes)| {
+                    nodes
+                        .into_iter()
+                        .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+                })
+                .chain(update_batch.account_updates)
+                .collect();
+            trie.put_batch(pre_state_root, last_state_root, key_values);
         }
 
         for block in update_batch.blocks {
