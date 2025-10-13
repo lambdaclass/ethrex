@@ -185,13 +185,12 @@ impl Blockchain {
         &self,
         blocks: &[Block],
     ) -> Result<ExecutionWitness, ChainError> {
-        let first_block_header = blocks
+        let first_block_header = &blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
                 "Empty block batch".to_string(),
             ))?
-            .header
-            .clone();
+            .header;
 
         // Get state at previous block
         let trie = self
@@ -241,13 +240,10 @@ impl Blockchain {
             }
 
             // Get the used block hashes from the logger
-            let logger_block_hashes = logger
-                .block_hashes_accessed
-                .lock()
-                .map_err(|_e| {
+            let logger_block_hashes =
+                std::mem::take(&mut *logger.block_hashes_accessed.lock().map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to get block hashes".to_string())
-                })?
-                .clone();
+                })?);
             block_hashes.extend(logger_block_hashes);
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
@@ -523,7 +519,7 @@ impl Blockchain {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
-        let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
+        let Some(first_block_header) = blocks.first().map(|e| &e.header) else {
             return Err((ChainError::Custom("First block not found".into()), None));
         };
 
@@ -555,7 +551,7 @@ impl Blockchain {
             }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                find_parent_header(&block.header, &self.storage).map_err(|err| {
+                &find_parent_header(&block.header, &self.storage).map_err(|err| {
                     (
                         err,
                         Some(BatchBlockProcessingFailure {
@@ -566,7 +562,7 @@ impl Blockchain {
                 })?
             } else {
                 // for the subsequent ones, the parent is the previous block
-                blocks[i - 1].header.clone()
+                &blocks[i - 1].header
             };
 
             let BlockExecutionResult { receipts, .. } = self
