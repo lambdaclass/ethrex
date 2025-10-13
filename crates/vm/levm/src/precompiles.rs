@@ -764,7 +764,7 @@ pub type G1 = (U256, U256);
 pub type G2 = (U256, U256, U256, U256);
 
 #[inline]
-fn parse_bn254_points(buf: &[u8; 192]) -> (G1, G2) {
+fn parse_bn254_coords(buf: &[u8; 192]) -> (G1, G2) {
     let (g1_x, g1_y) = (
         u256_from_big_endian(&buf[..32]),
         u256_from_big_endian(&buf[32..64]),
@@ -779,11 +779,12 @@ fn parse_bn254_points(buf: &[u8; 192]) -> (G1, G2) {
     ((g1_x, g1_y), (g2_xx, g2_xy, g2_yx, g2_yy))
 }
 
-fn validate_bn254_points(g1: &G1, g2: &G2) -> Result<(), VMError> {
+#[inline]
+fn validate_bn254_coords(g1: &G1, g2: &G2) -> Result<(), VMError> {
     // check each element is in field
     if g1.0 >= ALT_BN128_PRIME || g1.1 >= ALT_BN128_PRIME {
         return Err(PrecompileError::CoordinateExceedsFieldModulus.into());
-    } // TODO: https://eips.ethereum.org/EIPS/eip-197 maybe this check is not necessary
+    }
 
     if g2.0 >= ALT_BN128_PRIME
         || g2.1 >= ALT_BN128_PRIME
@@ -796,6 +797,7 @@ fn validate_bn254_points(g1: &G1, g2: &G2) -> Result<(), VMError> {
     Ok(())
 }
 
+#[inline]
 fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
@@ -810,8 +812,8 @@ fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     for input in calldata.chunks_exact(192) {
         #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
         let input: [u8; 192] = unsafe { input.try_into().unwrap_unchecked() };
-        let (g1, g2) = parse_bn254_points(&input);
-        validate_bn254_points(&g1, &g2).inspect(|_| batch.push((g1, g2)))?;
+        let (g1, g2) = parse_bn254_coords(&input);
+        validate_bn254_coords(&g1, &g2).inspect(|_| batch.push((g1, g2)))?;
     }
 
     #[allow(unreachable_code)]
@@ -833,6 +835,7 @@ fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
 }
 
 #[cfg(feature = "sp1")]
+#[inline]
 pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
 
@@ -880,6 +883,7 @@ pub fn pairing_substrate(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     Ok(result == substrate_bn::Gt::one())
 }
 
+#[inline]
 pub fn pairing_lambdaworks(batch: &[(G1, G2)]) -> Result<bool, VMError> {
     type Fq = FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>;
     type Fq2 = FieldElement<Degree2ExtensionField>;
