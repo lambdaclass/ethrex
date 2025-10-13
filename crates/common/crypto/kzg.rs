@@ -46,7 +46,7 @@ pub fn verify_cell_kzg_proof_batch(
     )));
     #[cfg(feature = "c-kzg")]
     {
-        let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(0);
         let mut cells = Vec::new();
         for blob in blobs {
             cells.extend(c_kzg_settings.compute_cells(&(*blob).into())?.into_iter());
@@ -90,7 +90,7 @@ pub fn verify_blob_kzg_proof(
     #[cfg(feature = "c-kzg")]
     {
         c_kzg::KzgSettings::verify_blob_kzg_proof(
-            c_kzg::ethereum_kzg_settings(8),
+            c_kzg::ethereum_kzg_settings(0),
             &blob.into(),
             &commitment.into(),
             &proof.into(),
@@ -120,7 +120,7 @@ pub fn verify_kzg_proof(
     #[cfg(feature = "c-kzg")]
     {
         c_kzg::KzgSettings::verify_kzg_proof(
-            c_kzg::ethereum_kzg_settings(8),
+            c_kzg::ethereum_kzg_settings(0),
             &commitment_bytes.into(),
             &z.into(),
             &y.into(),
@@ -135,11 +135,11 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
     let blob: c_kzg::Blob = (*blob).into();
 
     let commitment =
-        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(8), &blob)?;
+        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(0), &blob)?;
     let commitment_bytes = commitment.to_bytes();
 
     let proof = c_kzg::KzgSettings::compute_blob_kzg_proof(
-        c_kzg::ethereum_kzg_settings(8),
+        c_kzg::ethereum_kzg_settings(0),
         &blob,
         &commitment_bytes,
     )?;
