@@ -34,8 +34,6 @@ pub struct LevmAccount {
     /// in mainnet (back when they were deployed with nonce 0), but they cannot be created intentionally anymore.
     pub has_storage: bool,
     /// Current status of the account.
-    /// Note that currently we are not using AccountStatus for any important checks but we should probably start using it soon.
-    /// Some examples include: Knowing if an account was destroyed and re-created afterwards, or maybe if we use the Unmodified variant correctly we can skip processing updates of the account.
     pub status: AccountStatus,
 }
 
