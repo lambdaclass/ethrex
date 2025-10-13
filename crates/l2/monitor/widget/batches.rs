@@ -2,7 +2,7 @@ use ethrex_common::{
     Address, H256,
     types::{Fork, batch::Batch},
 };
-use ethrex_l2_sdk::{get_l1_fork, get_last_committed_batch};
+use ethrex_l2_sdk::{get_last_committed_batch, is_osaka_activated_on_l1};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use ratatui::{
@@ -53,17 +53,21 @@ impl BatchesTable {
         &mut self,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
+        osaka_activation_time: Option<u64>,
     ) -> Result<(), MonitorError> {
         let mut new_latest_batches = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.on_chain_proposer_address,
             eth_client,
             rollup_store,
+            osaka_activation_time,
         )
         .await?;
         new_latest_batches.truncate(BATCH_WINDOW_SIZE);
 
-        let fork = get_l1_fork(eth_client).await;
+        let fork = is_osaka_activated_on_l1(eth_client, osaka_activation_time)
+            .await
+            .map_err(MonitorError::EthClientError)?;
 
         let n_new_latest_batches = new_latest_batches.len();
         self.items
@@ -113,6 +117,7 @@ impl BatchesTable {
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
+        osaka_activation_time: Option<u64>,
     ) -> Result<Vec<BatchLine>, MonitorError> {
         let last_l2_batch_number = get_last_committed_batch(eth_client, on_chain_proposer_address)
             .await
@@ -125,7 +130,9 @@ impl BatchesTable {
                     .map_err(|_| MonitorError::BatchWindow)?,
             ),
         );
-        let fork = get_l1_fork(eth_client).await;
+        let fork = is_osaka_activated_on_l1(eth_client, osaka_activation_time)
+            .await
+            .map_err(MonitorError::EthClientError)?;
 
         let new_batches = Self::get_batches(
             last_l2_batch_fetched,

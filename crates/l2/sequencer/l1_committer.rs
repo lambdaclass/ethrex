@@ -28,8 +28,8 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, get_l1_fork, get_last_committed_batch,
-    send_tx_bump_gas_exponential_backoff,
+    build_generic_tx, calldata::encode_calldata, get_last_committed_batch,
+    is_osaka_activated_on_l1, send_tx_bump_gas_exponential_backoff,
 };
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
@@ -103,6 +103,7 @@ pub struct L1Committer {
     last_committed_batch: u64,
     /// Cancellation token for the next inbound InMessage::Commit
     cancellation_token: Option<CancellationToken>,
+    osaka_activation_time: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -163,6 +164,7 @@ impl L1Committer {
             last_committed_batch_timestamp: 0,
             last_committed_batch,
             cancellation_token: None,
+            osaka_activation_time: committer_config.osaka_activation_time,
         })
     }
 
@@ -206,7 +208,9 @@ impl L1Committer {
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
-        let fork = get_l1_fork(&self.eth_client).await;
+        let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+            .await
+            .map_err(CommitterError::EthClientError)?;
         let batch = match self.rollup_store.get_batch(batch_to_commit, fork).await? {
             Some(batch) => batch,
             None => {
@@ -449,7 +453,9 @@ impl L1Committer {
                     &acc_privileged_txs,
                     acc_account_updates.clone().into_values().collect(),
                 )?;
-                let fork = get_l1_fork(&self.eth_client).await;
+                let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+                    .await
+                    .map_err(CommitterError::EthClientError)?;
                 generate_blobs_bundle(&state_diff, fork)
             } else {
                 Ok((BlobsBundle::default(), 0_usize))

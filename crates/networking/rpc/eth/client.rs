@@ -99,11 +99,6 @@ impl RpcHandler for Config {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if context.blockchain.current_fork().await? < Fork::Osaka {
-            return Err(RpcErr::UnsuportedFork(
-                "eth-config is not supported for forks prior to Osaka".to_owned(),
-            ));
-        }
         let chain_config = context.storage.get_chain_config()?;
         let Some(latest_block) = context
             .storage

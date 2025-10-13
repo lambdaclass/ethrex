@@ -13,7 +13,7 @@ use ethrex_common::{
     types::{Block, blobs_bundle},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
-use ethrex_l2_sdk::get_l1_fork;
+use ethrex_l2_sdk::is_osaka_activated_on_l1;
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
@@ -185,6 +185,7 @@ pub struct ProofCoordinator {
     #[cfg(feature = "metrics")]
     request_timestamp: Arc<Mutex<HashMap<u64, SystemTime>>>,
     qpl_tool_path: Option<String>,
+    osaka_activation_time: Option<u64>,
 }
 
 impl ProofCoordinator {
@@ -235,6 +236,7 @@ impl ProofCoordinator {
             #[cfg(feature = "metrics")]
             request_timestamp: Arc::new(Mutex::new(HashMap::new())),
             qpl_tool_path: config.qpl_tool_path.clone(),
+            osaka_activation_time: config.osaka_activation_time,
         })
     }
 
@@ -489,7 +491,9 @@ impl ProofCoordinator {
                 .get_blobs_by_batch(batch_number)
                 .await?
                 .ok_or(ProofCoordinatorError::MissingBlob(batch_number))?;
-            let fork = get_l1_fork(&self.eth_client).await;
+            let fork = is_osaka_activated_on_l1(&self.eth_client, self.osaka_activation_time)
+                .await
+                .map_err(ProofCoordinatorError::EthClientError)?;
             let BlobsBundle {
                 mut commitments,
                 mut proofs,

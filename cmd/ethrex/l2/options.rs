@@ -103,6 +103,13 @@ pub struct SequencerOptions {
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
+    #[clap(
+        long,
+        value_name = "UINT64",
+        env = "ETHREX_OSAKA_ACTIVATION_TIME",
+        help = "Block timestamp at which the Osaka fork activates. If not set, it will assume Osaka is already active."
+    )]
+    pub osaka_activation_time: Option<u64>,
 }
 
 pub fn parse_signer(
@@ -174,6 +181,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 signer: committer_signer,
                 validium: opts.validium,
+                osaka_activation_time: opts.osaka_activation_time,
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
@@ -205,6 +213,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .proof_coordinator_tdx_private_key,
                 qpl_tool_path: opts.proof_coordinator_opts.proof_coordinator_qpl_tool_path,
                 validium: opts.validium,
+                osaka_activation_time: opts.osaka_activation_time,
             },
             based: BasedConfig {
                 enabled: opts.based,
@@ -219,6 +228,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 block_fetcher: BlockFetcherConfig {
                     fetch_interval_ms: opts.based_opts.block_fetcher.fetch_interval_ms,
                     fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step,
+                    osaka_activation_time: opts.osaka_activation_time,
                 },
             },
             aligned: AlignedConfig {
@@ -235,6 +245,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 enabled: !opts.no_monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
                 batch_widget_height: opts.monitor_opts.batch_widget_height,
+                osaka_activation_time: opts.osaka_activation_time,
             },
             admin_server: AdminConfig {
                 listen_ip: opts.admin_opts.admin_listen_ip,

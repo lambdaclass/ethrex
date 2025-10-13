@@ -447,7 +447,6 @@ fn verify_blob(
         verify_blob_kzg_proof(blob_data, commitment, proof[0])?
     } else {
         // Osaka type proof
-
         verify_cell_kzg_proof_batch(&[blob_data], &[commitment], &proof)?
     };
 
