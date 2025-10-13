@@ -135,7 +135,7 @@ impl Mempool {
                 if !inner.broadcast_pool.contains(hash) {
                     None
                 } else {
-                    Some(tx.clone())
+                    Some(tx.clone()) // ok-clone: address and sender fields of MempoolTransaction are cheap to clone, and transaction is an Arc
                 }
             })
             .collect::<Vec<_>>();
@@ -222,7 +222,7 @@ impl Mempool {
             txs_by_sender
                 .entry(tx.sender())
                 .or_insert_with(|| Vec::with_capacity(128))
-                .push(tx.clone())
+                .push(tx.clone()) // ok-clone: address and sender fields of MempoolTransaction are cheap to clone, and transaction is an Arc
         }
 
         txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
@@ -244,7 +244,7 @@ impl Mempool {
                 txs_by_sender
                     .entry(tx.sender())
                     .or_insert_with(|| Vec::with_capacity(128))
-                    .push(tx.clone())
+                    .push(tx.clone()) // ok-clone: address and sender fields of MempoolTransaction are cheap to clone, and transaction is an Arc
             }
         }
 

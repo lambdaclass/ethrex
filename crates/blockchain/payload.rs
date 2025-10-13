@@ -118,7 +118,7 @@ impl BuildPayloadArgs {
 /// Creates a new payload based on the payload arguments
 // Basic payload block building, can and should be improved
 pub fn create_payload(
-    args: &BuildPayloadArgs,
+    args: BuildPayloadArgs,
     storage: &Store,
     extra_data: Bytes,
 ) -> Result<Block, ChainError> {
@@ -174,7 +174,7 @@ pub fn create_payload(
     let body = BlockBody {
         transactions: Vec::new(),
         ommers: Vec::new(),
-        withdrawals: args.withdrawals.clone(),
+        withdrawals: args.withdrawals,
     };
 
     // Delay applying withdrawals until the payload is requested and built

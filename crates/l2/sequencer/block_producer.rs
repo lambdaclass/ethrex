@@ -151,7 +151,7 @@ impl BlockProducer {
             elasticity_multiplier: self.elasticity_multiplier,
             gas_ceil: self.block_gas_limit,
         };
-        let payload = create_payload(&args, &self.store, Bytes::new())?;
+        let payload = create_payload(args, &self.store, Bytes::new())?;
 
         // Blockchain builds the payload from mempool txs and executes them
         let payload_build_result = build_payload(

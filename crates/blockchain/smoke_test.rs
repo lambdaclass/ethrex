@@ -307,7 +307,7 @@ mod blockchain_integration_test {
         // Create blockchain
         let blockchain = Blockchain::default_with_store(store.clone()); // ok-clone: store struct fields are all arcs, so this just increases their reference count
 
-        let block = create_payload(&args, store, Bytes::new()).unwrap();
+        let block = create_payload(args, store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block).await.unwrap();
         result.payload
     }
