@@ -345,8 +345,20 @@ impl Syncer {
         );
 
         info!("Starting header download");
-        let mut start_block_number = 0;
-        let mut end_block_number = 0;
+        let start_block_number;
+        let end_block_number;
+
+        // Check if the sync_head is a pending block
+        let mut pending_blocks = vec![];
+        while let Some(block) = store.get_pending_block(sync_head).await? {
+            sync_head = block.header.parent_hash;
+            pending_blocks.push(block);
+        }
+        if !pending_blocks.is_empty() {
+            let pending_numbers = pending_blocks.iter().map(|b| b.header.number).collect::<Vec<_>>();
+            info!("Fetched pending blocks: {pending_numbers:?}");
+        }
+
         loop {
             let Some(mut block_headers) = self
                 .peers
@@ -358,7 +370,6 @@ impl Syncer {
                 return Ok(());
             };
             debug!("Sync Log 9: Received {} block headers", block_headers.len());
-            end_block_number = end_block_number.max(block_headers.first().as_ref().unwrap().number);
 
             info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
@@ -367,17 +378,6 @@ impl Syncer {
                 block_headers.last().as_ref().unwrap().number,
             );
 
-            // // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
-            // // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
-            // if first_block_hash == last_block_hash
-            //     && first_block_hash == current_head
-            //     && current_head != sync_head
-            // {
-            //     // There is no path to the sync head this goes back until it find a common ancerstor
-            //     warn!("Sync failed to find target block header, going back to the previous parent");
-            //     current_head = first_block_parent_hash;
-            //     continue;
-            // }
             sync_head = block_headers.last().unwrap().parent_hash;
             if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
                 // Incoming chain merged with current chain
@@ -391,6 +391,8 @@ impl Syncer {
                }
                 block_headers.drain(first_canon_block..block_headers.len());
                 start_block_number = block_headers.last().as_ref().unwrap().number.max(1);
+                end_block_number = block_headers.first().as_ref().unwrap().number + 1;
+                info!("Fullsync range: {start_block_number}..{end_block_number}");
                 store.add_fullsync_batch(block_headers).await?;
                 break;
             }
@@ -427,14 +429,29 @@ impl Syncer {
                 blocks.extend(block_batch);
             }
             // Execute blocks
-
             info!(
                 "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
                 blocks.len(),
                 blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
                 blocks.last().ok_or(SyncError::NoBlocks)?.hash()
             );
-            let execution_start = Instant::now();
+            self.add_blocks_in_batch(blocks, final_batch, store.clone()).await?;
+            
+
+        }
+
+        // Execute pending blocks
+        if !pending_blocks.is_empty() {
+            info!("Executing pending blocks {}", pending_blocks.len());
+            self.add_blocks_in_batch(pending_blocks, true, store).await?;
+
+        }
+
+        Ok(())
+    }
+
+async fn add_blocks_in_batch(&self, blocks: Vec<Block>, final_batch: bool, store: Store) -> Result<(), SyncError> {
+    let execution_start = Instant::now();
             // Copy some values for later
             let blocks_len = blocks.len();
             let numbers_and_hashes = blocks
@@ -454,78 +471,75 @@ impl Syncer {
                 .iter()
                 .map(|block| block.hash())
                 .collect::<Vec<_>>();
-
-            // Run the batch
-            if let Err((err, batch_failure)) = Syncer::add_blocks(
-                self.blockchain.clone(),
-                blocks,
-                final_batch,
-                self.cancel_token.clone(),
-            )
-            .await
-            {
-                if let Some(batch_failure) = batch_failure {
-                    warn!("Failed to add block during FullSync: {err}");
-                    // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
-                    if let ChainError::InvalidBlock(_) = err {
-                        let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
-                        if let Some(index) = blocks_hashes
-                            .iter()
-                            .position(|x| x == &batch_failure.failed_block_hash)
-                        {
-                            block_hashes_with_invalid_ancestor =
-                                blocks_hashes[index..].to_vec();
-                        }
-
-                        for hash in block_hashes_with_invalid_ancestor {
-                            store
-                                .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
-                                .await?;
-                        }
-                        // // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
-                        // for header in &self.current_headers {
-                        //     self.store
-                        //         .set_latest_valid_ancestor(
-                        //             header.hash(),
-                        //             batch_failure.last_valid_hash,
-                        //         )
-                        //         .await?;
-                        // }
-                    }
+    // Run the batch
+    if let Err((err, batch_failure)) = Syncer::add_blocks(
+        self.blockchain.clone(),
+        blocks,
+        final_batch,
+        self.cancel_token.clone(),
+    )
+    .await
+    {
+        if let Some(batch_failure) = batch_failure {
+            warn!("Failed to add block during FullSync: {err}");
+            // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
+            if let ChainError::InvalidBlock(_) = err {
+                let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
+                if let Some(index) = blocks_hashes
+                    .iter()
+                    .position(|x| x == &batch_failure.failed_block_hash)
+                {
+                    block_hashes_with_invalid_ancestor =
+                        blocks_hashes[index..].to_vec();
                 }
-                return Err(err.into());
+
+                for hash in block_hashes_with_invalid_ancestor {
+                    store
+                        .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
+                        .await?;
+                }
+                // // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
+                // for header in &self.current_headers {
+                //     self.store
+                //         .set_latest_valid_ancestor(
+                //             header.hash(),
+                //             batch_failure.last_valid_hash,
+                //         )
+                //         .await?;
+                // }
             }
-
-            store
-                .forkchoice_update(
-                    Some(numbers_and_hashes),
-                    last_block_number,
-                    last_block_hash,
-                    None,
-                    None,
-                )
-                .await?;
-
-            let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
-            let blocks_per_second = blocks_len as f64 / execution_time;
-
-            info!(
-                "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
-                Started at block with hash {} (number {}).\n\
-                Finished at block with hash {} (number {}).\n\
-                Blocks per second: {:.3}",
-                blocks_len,
-                execution_time,
-                first_block_hash,
-                first_block_number,
-                last_block_hash,
-                last_block_number,
-                blocks_per_second
-            );
         }
-
-        Ok(())
+        return Err(err.into());
     }
+
+    store
+        .forkchoice_update(
+            Some(numbers_and_hashes),
+            last_block_number,
+            last_block_hash,
+            None,
+            None,
+        )
+        .await?;
+
+    let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
+    let blocks_per_second = blocks_len as f64 / execution_time;
+
+    info!(
+        "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
+        Started at block with hash {} (number {}).\n\
+        Finished at block with hash {} (number {}).\n\
+        Blocks per second: {:.3}",
+        blocks_len,
+        execution_time,
+        first_block_hash,
+        first_block_number,
+        last_block_hash,
+        last_block_number,
+        blocks_per_second
+    );
+    Ok(())
+}
 
     /// Executes the given blocks and stores them
     /// If sync_head_found is true, they will be executed one by one
