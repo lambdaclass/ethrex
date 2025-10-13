@@ -83,24 +83,21 @@ impl BlobsBundle {
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
     #[cfg(feature = "c-kzg")]
     pub fn create_from_blobs(blobs: &Vec<Blob>, fork: Fork) -> Result<Self, BlobsBundleError> {
-        use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
+        use ethrex_crypto::kzg::{
+            blob_to_commitment_and_cell_proofs, blob_to_kzg_commitment_and_proof,
+        };
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
-        let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
 
         // Populate the commitments and proofs
         for blob in blobs {
-            let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
-            commitments.push(commitment);
-
-            if fork <= Fork::Prague {
+            if fork < Fork::Osaka {
+                let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
+                commitments.push(commitment);
                 proofs.push(proof);
             } else {
-                let blob: c_kzg::Blob = (*blob).into();
-                let (_cells, cell_proofs) = c_kzg_settings
-                    .compute_cells_and_kzg_proofs(&blob)
-                    .map_err(|e| BlobsBundleError::Kzg(ethrex_crypto::kzg::KzgError::CKzg(e)))?;
-                let cell_proofs = cell_proofs.map(|p| p.to_bytes().into_inner());
+                let (commitment, cell_proofs) = blob_to_commitment_and_cell_proofs(blob)?;
+                commitments.push(commitment);
                 proofs.extend(cell_proofs);
             }
         }

@@ -148,3 +148,20 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
 
     Ok((commitment_bytes.into_inner(), proof_bytes.into_inner()))
 }
+
+#[cfg(feature = "c-kzg")]
+pub fn blob_to_commitment_and_cell_proofs(
+    blob: &Blob,
+) -> Result<(Commitment, Vec<Proof>), KzgError> {
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
+    let blob: c_kzg::Blob = (*blob).into();
+    let commitment =
+        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(8), &blob)?;
+    let commitment_bytes = commitment.to_bytes();
+
+    let (_cells, cell_proofs) = c_kzg_settings
+        .compute_cells_and_kzg_proofs(&blob)
+        .map_err(KzgError::CKzg)?;
+    let cell_proofs = cell_proofs.map(|p| p.to_bytes().into_inner());
+    Ok((commitment_bytes.into_inner(), cell_proofs.to_vec()))
+}
