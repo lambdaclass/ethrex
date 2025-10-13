@@ -1505,7 +1505,7 @@ impl StoreEngine for Store {
         set_database_opts(&mut sst_options);
         get_cf_opts(&mut sst_options, CF_TRIE_NODES);
 
-        let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
+        let path = self.db.path().join(format!("snapshot.{ctr:08}.sst"));
         let mut sst = SstFileWriter::create(&sst_options);
         sst.open(&path)?;
         paths.push(path);
@@ -1534,11 +1534,11 @@ impl StoreEngine for Store {
                 value_ctr += 1;
                 if value_ctr > 1024 * 1024 {
                     sst.finish()?;
-                    let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
+                    ctr += 1;
+                    let path = self.db.path().join(format!("snapshot.{ctr:08}.sst"));
                     sst = SstFileWriter::create(&sst_options);
                     sst.open(&path)?;
                     paths.push(path);
-                    ctr += 1;
                     value_ctr = 0;
                 }
 
@@ -1559,13 +1559,13 @@ impl StoreEngine for Store {
 
                         sst.put(&key_buf, node.value)?;
                         value_ctr += 1;
-                        if value_ctr > 1024 * 1024 {
+                        if value_ctr > 1024 * 1024000 {
                             sst.finish()?;
-                            let path = self.db.path().join(format!("snapshot.{ctr}.sst"));
+                            ctr += 1;
+                            let path = self.db.path().join(format!("snapshot.{ctr:08}.sst"));
                             sst = SstFileWriter::create(&sst_options);
                             sst.open(&path)?;
-                            paths.push(path);
-                            ctr += 1;
+                            paths.push(path); 
                             value_ctr = 0;
                         }
                         Ok(())
@@ -1579,6 +1579,7 @@ impl StoreEngine for Store {
                     as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
             ));
         }
+        drop(snapshot);
         sst.finish()?;
         let mut ingest_opts = IngestExternalFileOptions::default();
         ingest_opts.set_move_files(true);
