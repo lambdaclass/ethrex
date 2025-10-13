@@ -919,7 +919,6 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let mut valid_pairs = Vec::new();
-    let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
 
     for input in calldata.chunks_exact(192) {
         #[expect(unsafe_code, reason = "chunks_exact ensures the conversion is valid")]
@@ -936,19 +935,16 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
         }
     }
 
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "library will not panic on mul overflow"
-    )]
-    if !valid_pairs.is_empty() {
+    let success = if !valid_pairs.is_empty() {
         let batch: Vec<_> = valid_pairs.iter().map(|(p1, p2)| (p1, p2)).collect();
         let pairing_result = BN254AtePairing::compute_batch(&batch)
             .map_err(|_| PrecompileError::BN254AtePairingError)?;
-        mul *= pairing_result;
-    }
+        pairing_result.eq(&QuadraticExtensionFieldElement::one())
+    } else {
+        true
+    };
 
     // Generate the result from the variable mul
-    let success = mul.eq(&QuadraticExtensionFieldElement::one());
     let mut result = [0; 32];
     result[31] = u8::from(success);
     Ok(Bytes::from(result.to_vec()))
