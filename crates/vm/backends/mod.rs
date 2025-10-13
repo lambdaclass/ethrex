@@ -29,8 +29,6 @@ impl core::fmt::Debug for Evm {
 }
 
 impl Evm {
-    // Legacy constructors using VmDatabase have been removed. Use `new_from_db_for_l1/2`.
-
     pub fn new_from_db_for_l1(store: Arc<impl LevmDatabase + 'static>) -> Self {
         Self::_new_from_db(store, VMType::L1)
     }
