@@ -448,7 +448,7 @@ contract OnChainProposer is
             // Verify public data for the batch
             string memory reason = _verifyPublicData(
                 batchNumber,
-                publicInputsList[i][8:]
+                publicInputsList[i]
             );
             if (bytes(reason).length != 0) {
                 revert(
@@ -489,7 +489,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view returns (string memory) {
-        if (publicData.length != 224) {
+        if (publicData.length != 256) {
             return "invalid public data length";
         }
         bytes32 initialStateRoot = bytes32(publicData[0:32]);

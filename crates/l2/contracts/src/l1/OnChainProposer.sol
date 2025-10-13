@@ -434,7 +434,7 @@ contract OnChainProposer is
             // Verify public data for the batch
             string memory reason = _verifyPublicData(
                 batchNumber,
-                publicInputsList[i][8:]
+                publicInputsList[i]
             );
             if (bytes(reason).length != 0) {
                 revert(
