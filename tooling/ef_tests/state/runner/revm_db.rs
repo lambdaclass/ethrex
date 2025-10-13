@@ -2,9 +2,9 @@ use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig};
 use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
 use ethrex_vm::{DynVmDatabase, EvmError, VmDatabase};
 use revm::context::DBErrorMarker;
-use revm::database::states::{AccountStatus, bundle_state::BundleRetention};
+use revm::database::states::{bundle_state::BundleRetention, AccountStatus};
 use revm::primitives::{
-    Address as RevmAddress, B256 as RevmB256, Bytes as RevmBytes, U256 as RevmU256,
+    Address as RevmAddress, Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 use revm::state::{AccountInfo as RevmAccountInfo, Bytecode as RevmBytecode};
 
@@ -198,6 +198,7 @@ impl RevmState {
                                 )
                             })
                             .collect(),
+                        removed_storage: false,
                     };
                     account_updates.push(new_acc_update);
                 }
