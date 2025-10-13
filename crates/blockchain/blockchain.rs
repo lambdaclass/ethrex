@@ -411,7 +411,7 @@ impl Blockchain {
         };
 
         self.storage
-            .clone()
+            .clone() // ok-clone: store struct fields are all arcs, so this just increases their reference count
             .store_block_updates(update_batch)
             .await
             .map_err(|e| e.into())
