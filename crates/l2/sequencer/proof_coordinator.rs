@@ -6,12 +6,11 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, BlockchainType};
+#[cfg(feature = "l2")]
+use ethrex_common::blobs_bundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::{
-    Address,
-    types::{Block, blobs_bundle},
-};
+use ethrex_common::{Address, types::Block};
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;

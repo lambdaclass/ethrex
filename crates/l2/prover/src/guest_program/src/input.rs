@@ -1,10 +1,10 @@
-use ethrex_common::types::{
-    Block, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
-};
+use ethrex_common::types::{Block, block_execution_witness::ExecutionWitness};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
+#[cfg(feature = "l2")]
+use ethrex_common::types::fee_config::FeeConfig;
 /// Private input variables passed into the zkVM execution program.
 #[cfg(feature = "l2")]
 #[serde_as]
