@@ -64,7 +64,7 @@ fn build_sp1_program() {
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
             docker: true,
-            tag: "v5.0.8".to_string(),
+            tag: "v5.2.1".to_string(),
             workspace_directory: Some(format!("{}/../../../../../", env!("CARGO_MANIFEST_DIR"))),
             ..Default::default()
         },

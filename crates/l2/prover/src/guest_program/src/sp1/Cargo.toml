@@ -6,7 +6,7 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-sp1-zkvm = { version = "=5.0.8" }
+sp1-zkvm = { version = "=5.2.1" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 guest_program = { path = "../../" }

@@ -69,7 +69,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+          ~/.sp1/bin/sp1up --version 5.2.1
 
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
