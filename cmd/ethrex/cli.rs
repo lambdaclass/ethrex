@@ -190,6 +190,13 @@ pub struct Options {
         help_heading = "Block producer options"
     )]
     pub extra_data: String,
+    #[arg(
+        long = "lowmem",
+        default_value = "false",
+        value_name = "LOW_MEM",
+        help = "Trade off speed for memory"
+    )]
+    pub lowmem: bool,
 }
 
 impl Options {
@@ -257,6 +264,7 @@ impl Default for Options {
             mempool_max_size: Default::default(),
             tx_broadcasting_time_interval: Default::default(),
             extra_data: get_minimal_client_version(),
+            lowmem: false,
         }
     }
 }
@@ -411,7 +419,7 @@ pub async fn import_blocks(
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis, false).await;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
@@ -514,7 +522,7 @@ pub async fn export_blocks(
     last_number: Option<u64>,
 ) {
     init_datadir(datadir);
-    let store = load_store(datadir).await;
+    let store = load_store(datadir, true).await;
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {

@@ -208,8 +208,8 @@ pub enum Command {
         #[arg(
             long,
             value_parser = parse_private_key,
-            env = "SEQUENCER_PRIVATE_KEY", 
-            help = "The private key of the sequencer", 
+            env = "SEQUENCER_PRIVATE_KEY",
+            help = "The private key of the sequencer",
             help_heading  = "Sequencer account options",
             group = "sequencer_signing",
         )]
@@ -381,6 +381,7 @@ impl Command {
                 store_path,
                 coinbase,
             } => {
+                // FIXME: should also have lowmem mode?
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
 
@@ -700,7 +701,7 @@ async fn delete_blocks_from_batch(
     let genesis = network.get_genesis()?;
 
     let mut block_to_delete = last_kept_block + 1;
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis, false).await;
 
     while store
         .get_canonical_block_hash(block_to_delete)

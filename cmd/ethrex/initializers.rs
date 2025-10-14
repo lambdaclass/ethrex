@@ -92,8 +92,8 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
-    let store = open_store(datadir.as_ref());
+pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis, lowmem: bool) -> Store {
+    let store = open_store(datadir.as_ref(), lowmem);
     store
         .add_initial_state(genesis)
         .await
@@ -102,8 +102,8 @@ pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Store {
 }
 
 /// Initializes a pre-existing Store
-pub async fn load_store(datadir: &Path) -> Store {
-    let store = open_store(datadir);
+pub async fn load_store(datadir: &Path, lowmem: bool) -> Store {
+    let store = open_store(datadir, lowmem);
     store
         .load_initial_state()
         .await
@@ -112,12 +112,16 @@ pub async fn load_store(datadir: &Path) -> Store {
 }
 
 /// Opens a pre-existing Store or creates a new one
-pub fn open_store(datadir: &Path) -> Store {
+pub fn open_store(datadir: &Path, lowmem: bool) -> Store {
     if datadir.ends_with("memory") {
         Store::new(datadir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         #[cfg(feature = "rocksdb")]
-        let engine_type = EngineType::RocksDB;
+        let engine_type = if lowmem {
+            EngineType::RocksDB
+        } else {
+            EngineType::RocksDBTransactional
+        };
         #[cfg(feature = "metrics")]
         ethrex_metrics::metrics_process::set_datadir_path(datadir.to_path_buf());
         Store::new(datadir, engine_type).expect("Failed to create Store")
@@ -404,7 +408,7 @@ pub async fn init_l1(
 
     raise_fd_limit()?;
 
-    let store = init_store(datadir, genesis).await;
+    let store = init_store(datadir, genesis, opts.lowmem).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;

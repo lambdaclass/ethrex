@@ -152,7 +152,7 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis).await;
+    let store = init_store(&datadir, genesis, opts.node_opts.lowmem).await;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let blockchain_opts = ethrex_blockchain::BlockchainOptions {
