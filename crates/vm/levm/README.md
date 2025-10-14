@@ -6,7 +6,7 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 
 | Fork           | Status |
 | -------------- | ------ |
-| Osaka          | 🏗️     |
+| Osaka          | ✅     |
 | Prague         | ✅     |
 | Cancun         | ✅     |
 | Shanghai       | ✅     |
@@ -19,6 +19,11 @@ There is large amount of docs in comments inside the code. For more information 
 ## Testing
 
 We run `EEST`, `ethereum/tests` and `legacyTests` both in their [state](../../../tooling/ef_tests/state/README.md) and [blockchain](../../../tooling/ef_tests/blockchain/README.md) form. More info on each README.
+
+For running state tests from the current directory use:
+```
+make download-evm-ef-tests run-evm-ef-tests QUIET=true
+```
 
 ## Useful Links
 
