@@ -9,9 +9,9 @@ use std::{
 };
 
 use ethrex_common::H256;
+use ethrex_metrics::metrics_snap_sync::METRICS_SNAP_SYNC;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
-use ethrex_metrics::metrics_snap_sync::METRICS_SNAP_SYNC;
 
 use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
 
@@ -535,6 +535,13 @@ impl Metrics {
     }
 }
 
+fn current_time_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 impl Default for Metrics {
     fn default() -> Self {
         let registry = Registry::new();
@@ -707,6 +714,8 @@ impl Default for Metrics {
             downloaded_bytecodes: AtomicU64::new(0),
             bytecode_download_start_time: Arc::new(Mutex::new(None)),
             bytecode_download_end_time: Arc::new(Mutex::new(None)),
+
+            snap_sync_start_time_ms: AtomicU64::new(0),
 
             start_time: SystemTime::now(),
         }
