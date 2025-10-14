@@ -8,6 +8,12 @@ scrape_configs:
     scrape_interval: 10s
     metrics_path: /metrics
 
+  - job_name: "reth"
+    static_configs:
+      - targets: ["eth-mainnet-rpc:6060"]
+    scrape_interval: 10s
+    metrics_path: /metrics
+
   - job_name: "lighthouse consensus"
     static_configs:
       - targets: ["host.docker.internal:5054"]
