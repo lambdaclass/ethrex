@@ -707,6 +707,8 @@ impl std::ops::Deref for HeadTransaction {
 impl From<HeadTransaction> for Transaction {
     fn from(val: HeadTransaction) -> Self {
         val.tx.transaction().clone()
+        // todo-clone: we could probably remove this clone (although much of the code needs an owned copy anyways)
+        // but it'd require a refactor of how other functions access transactions in the mempool
     }
 }
 
