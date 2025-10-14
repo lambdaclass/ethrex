@@ -24,7 +24,9 @@ pub enum PeerConnectionError {
     #[error("Invalid connection state: {0}")]
     StateError(String),
     #[error("No matching capabilities")]
-    NoMatchingCapabilities(),
+    NoMatchingCapabilities,
+    #[error("Too many peers")]
+    TooManyPeers,
     #[error("Peer disconnected")]
     Disconnected,
     #[error("Disconnect requested: {0}")]
@@ -34,11 +36,11 @@ pub enum PeerConnectionError {
     #[error("Not Found: {0}")]
     NotFound(String),
     #[error("Invalid peer id")]
-    InvalidPeerId(),
+    InvalidPeerId,
     #[error("Invalid recovery id")]
-    InvalidRecoveryId(),
+    InvalidRecoveryId,
     #[error("Invalid message length")]
-    InvalidMessageLength(),
+    InvalidMessageLength,
     #[error("Request id not present: {0}")]
     ExpectedRequestId(String),
     #[error("Cannot handle message: {0}")]

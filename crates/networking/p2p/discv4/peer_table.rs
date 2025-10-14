@@ -517,6 +517,13 @@ impl PeerTableServer {
         score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
     }
 
+    // Returns if the peer has room for more connections given the current score
+    // and amount of inflight requests
+    fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
+        let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
+        (*requests as f64) < MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio
+    }
+
     fn get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
         self.peers
             .iter()
@@ -524,7 +531,7 @@ impl PeerTableServer {
             .filter_map(|(id, peer_data)| {
                 // Skip the peer if it has too many ongoing requests or if it doesn't match
                 // the capabilities
-                if peer_data.requests > MAX_CONCURRENT_REQUESTS_PER_PEER
+                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
                     || !capabilities
                         .iter()
                         .any(|cap| peer_data.supported_capabilities.contains(cap))

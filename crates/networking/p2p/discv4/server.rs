@@ -43,7 +43,7 @@ const INITIAL_LOOKUP_INTERVAL: Duration = Duration::from_secs(5);
 const LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// The target number of RLPx connections to reach.
-const TARGET_PEERS: usize = 100;
+pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: usize = 100_000;
 

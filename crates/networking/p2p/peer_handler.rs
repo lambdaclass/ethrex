@@ -165,6 +165,9 @@ impl PeerHandler {
         peer_table.inc_requests(peer_id).await?;
         let result = connection.outgoing_request(message, timeout).await;
         peer_table.dec_requests(peer_id).await?;
+        if let Err(PeerConnectionError::Timeout) = result {
+            peer_table.record_critical_failure(&peer_id).await?;
+        };
         result
     }
 
