@@ -368,12 +368,11 @@ impl Blockchain {
         let self_clone = self.clone(); // ok-clone: increase arc reference count
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        let mut res = self_clone.build_payload(payload.clone()).await?;
+        let mut res = self_clone.build_payload(payload).await?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
-            let payload = payload.clone();
             // Cancel the current build process and return the previous payload if it is requested earlier
             if let Some(current_res) = cancel_token
-                .run_until_cancelled(self_clone.build_payload(payload))
+                .run_until_cancelled(self_clone.build_payload(std::mem::take(&mut res.payload)))
                 .await
             {
                 res = current_res?;
@@ -395,6 +394,7 @@ impl Blockchain {
             self.apply_system_operations(&mut context)?;
         }
         self.apply_withdrawals(&mut context)?;
+        context.payload.body.transactions.clear();
         self.fill_transactions(&mut context)?;
         self.extract_requests(&mut context)?;
         self.finalize_payload(&mut context).await?;
