@@ -83,6 +83,11 @@ P2P options:
           UDP port for P2P discovery.
 
           [default: 30303]
+    
+        --p2p.tx-broadcasting-interval <INTERVAL_MS>
+            Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
+
+            [default: 1000]
 
 RPC options:
       --http.addr <ADDRESS>

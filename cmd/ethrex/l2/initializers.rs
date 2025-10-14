@@ -12,7 +12,7 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::SequencerConfig;
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTable,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
@@ -32,7 +32,7 @@ use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: PeerTableHandle,
+    peer_table: PeerTable,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
