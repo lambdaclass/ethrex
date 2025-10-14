@@ -7,6 +7,7 @@ members = [
   "crates/common/rlp",
   "crates/common/trie",
   "crates/common/crypto",
+  "crates/concurrency",
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
@@ -30,8 +31,8 @@ members = [
   "tooling/archive_sync",
   "crates/common/config",
   "tooling/reorgs",
-  "crates/concurrency",
   "tooling/migrations",
+  "tooling/snapshooter",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison", "tooling/ef_tests/state"]
 resolver = "2"

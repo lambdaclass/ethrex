@@ -1074,7 +1074,7 @@ impl Syncer {
         info!("Started snapshot generation in the background");
         let store_clone = store.clone();
         let state_root = pivot_header.state_root;
-        store_clone.generate_snapshot(state_root).await;
+        let _ = store_clone.generate_snapshot(state_root).await;
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);

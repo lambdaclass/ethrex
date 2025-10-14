@@ -1,0 +1,12 @@
+[package]
+name = "snapshooter"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+
+[dependencies]
+ethrex.workspace = true
+ethrex-storage = { workspace = true, features = ["rocksdb"] }
+
+tokio.workspace = true

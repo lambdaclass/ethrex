@@ -19,7 +19,7 @@ pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
     last_id: usize,
-    layers: HashMap<H256, TrieLayer>
+    layers: HashMap<H256, TrieLayer>,
 }
 
 impl TrieLayerCache {
@@ -87,7 +87,7 @@ pub struct TrieWrapper {
     pub inner: Arc<RwLock<TrieLayerCache>>,
     pub db: Box<dyn TrieDB>,
     pub prefix: Option<H256>,
-    pub snapshot_completed: bool
+    pub snapshot_completed: bool,
 }
 
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
