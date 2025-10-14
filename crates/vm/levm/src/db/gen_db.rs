@@ -219,7 +219,7 @@ impl GeneralizedDatabase {
             };
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // ethrex is post-Merge client, empty accounts have already been pruned from the trie by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
+            // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
 
