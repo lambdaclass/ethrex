@@ -1,5 +1,5 @@
 {
-  description = "Ethrex dev shells + run wrapper (builds via Cargo, no vendoring)";
+  description = "Ethrex dev shells + run wrapper (builds via Cargo in a temp dir)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
@@ -17,6 +17,9 @@
     ];
     forEachSystem = lib.genAttrs systems;
   in {
+    ########################################
+    ## Dev shells (unchanged behavior)
+    ########################################
     devShells = forEachSystem (system:
       let
         pkgs = import nixpkgs { inherit system; overlays = [ rust-overlay.overlays.default ]; };
@@ -177,7 +180,6 @@
                   export LDFLAGS="-F$FRAMEWORKS_DIR ${LDFLAGS:-}"
                   export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="''${CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS:+$CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS }-C link-arg=-F$FRAMEWORKS_DIR"
                   export MACOSX_DEPLOYMENT_TARGET=11.0
-                  echo "macOS frameworks: $FRAMEWORKS_DIR"
                 fi
               ''
               (lib.optionalString needsSp1 ''
@@ -225,6 +227,9 @@
         default = pkgs.mkShell { };
       });
 
+    ########################################
+    ## nix run wrapper (works from GitHub)
+    ########################################
     packages = forEachSystem (system:
       let
         pkgs = import nixpkgs { inherit system; overlays = [ rust-overlay.overlays.default ]; };
@@ -232,55 +237,57 @@
       in {
         ethrex-run = pkgs.writeShellApplication {
           name = "ethrex-run";
-          runtimeInputs = [
-            rustToolchain
-            pkgs.cargo
-            pkgs.pkg-config
-            pkgs.openssl
-            pkgs.protobuf
-            pkgs.cmake
-            pkgs.clang
-            pkgs.llvmPackages.libclang
-            pkgs.zlib
-            pkgs.curl
-            pkgs.stdenv.cc
-          ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.glibc.dev ]
+          runtimeInputs =
+            [
+              rustToolchain
+              pkgs.cargo
+              pkgs.pkg-config
+              pkgs.openssl
+              pkgs.protobuf
+              pkgs.cmake
+              pkgs.clang
+              pkgs.llvmPackages.libclang
+              pkgs.zlib
+              pkgs.curl
+              pkgs.stdenv.cc
+            ]
+            ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.glibc.dev ]
             ++ lib.optionals pkgs.stdenv.isDarwin (
-              (with pkgs.darwin.apple_sdk.frameworks; [ Security SystemConfiguration ])
-              ++ [ pkgs.libiconv pkgs.libcxx.dev ]
+              (with pkgs.darwin.apple_sdk.frameworks; [ Security CoreFoundation SystemConfiguration ])
+              ++ [ pkgs.libiconv pkgs.libcxx.dev pkgs.darwin.apple_sdk.sdk ]
             );
 
           text = ''
             set -euo pipefail
+
+            # Copy this flake’s source out of the store so Cargo can write to it
             SRC=${self}
             WORK="$(mktemp -d)"
             trap 'rm -rf "$WORK"' EXIT
-
-            # copy source out of the store so Cargo can write artifacts
             cp -R "$SRC"/* "$WORK"
             chmod -R u+w "$WORK"
             cd "$WORK"
 
+            # Common env
             export OPENSSL_NO_VENDOR=1
             export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
             export DYLD_LIBRARY_PATH="${pkgs.llvmPackages.libclang.lib}/lib"''${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}
             export LD_LIBRARY_PATH="${pkgs.llvmPackages.libclang.lib}/lib"''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
+            # --- macOS SDK + frameworks via nixpkgs ---
             ${lib.optionalString pkgs.stdenv.isDarwin ''
-              # make -liconv resolvable and frameworks available
-              export NIX_LDFLAGS="-L${pkgs.libiconv}/lib ''${NIX_LDFLAGS:-}"
+              export SDKROOT=${pkgs.darwin.apple_sdk.sdk}
+              export NIX_LDFLAGS="''${NIX_LDFLAGS:-} -L${pkgs.libiconv}/lib"
               export LIBRARY_PATH="${pkgs.libiconv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
-              SYSROOT="$(xcrun --show-sdk-path 2>/dev/null || true)"
-              if [ -n "$SYSROOT" ]; then
-                SYSROOT_TRIMMED="''${SYSROOT%/}"
-                FRAMEWORKS_DIR="$SYSROOT_TRIMMED/System/Library/Frameworks"
-                [ -d "$FRAMEWORKS_DIR" ] || FRAMEWORKS_DIR="/System/Library/Frameworks"
-                export LDFLAGS="-F$FRAMEWORKS_DIR ${LDFLAGS:-}"
-                export MACOSX_DEPLOYMENT_TARGET=11.0
-              fi
+              export CPATH="${pkgs.libcxx.dev}/include/c++/v1''${CPATH:+:$CPATH}"
+              export MACOSX_DEPLOYMENT_TARGET=11.0
+              # Framework search paths
+              export NIX_LDFLAGS="$NIX_LDFLAGS -F${pkgs.darwin.apple_sdk.frameworks.Security}/Library/Frameworks"
+              export NIX_LDFLAGS="$NIX_LDFLAGS -F${pkgs.darwin.apple_sdk.frameworks.CoreFoundation}/Library/Frameworks"
+              export NIX_LDFLAGS="$NIX_LDFLAGS -F${pkgs.darwin.apple_sdk.frameworks.SystemConfiguration}/Library/Frameworks"
             ''}
 
-            # optional hook
+            # Optional prebuild hook if present
             if [ -x ./scripts/prebuild.sh ]; then ./scripts/prebuild.sh || true; fi
 
             cargo run --release --bin ethrex -- "$@"
