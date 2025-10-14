@@ -443,6 +443,66 @@ impl Trie {
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
     }
+
+    /// Validates a trie T for the following invariants:
+    /// - If T is a leaf node, its finalized hash is the root hash;
+    /// - If T is an extension node, its hash is the root hash, and its child
+    ///   interpreted as a distinct trie also passes validation;
+    /// - If T is a branch node, its hash is the root hash and all of its children
+    ///   interpreted as distinct tries also pass validation.
+    /// - If a child is an inline node, it's skipped, as its hash is checked as
+    ///   part of its parent.
+    ///
+    /// In other words, it exploits the recursive nature of trees to simplify
+    /// and speed up MPT validation.
+    /// Works only via direct DB access and should be called only for debugging
+    /// purposes (debug_asserts included) and for "clean" structures.
+    pub fn validate(&self) -> Result<(), TrieError> {
+        // Cap: each level might insert up to 16 extra nodes, and we have
+        // on average 8 levels, so this should be the only alloc for this
+        // vec in most cases.
+        let mut hashes_stack = Vec::with_capacity(1024);
+        let mut nodes_stack = Vec::with_capacity(1024);
+        let root_hash = self.root.compute_hash();
+        let root_node = self.db.get(root_hash)?;
+        hashes_stack.push(root_hash);
+        nodes_stack.push(root_node);
+        while let (Some(node), Some(hash)) = (nodes_stack.pop(), hashes_stack.pop()) {
+            if hash.as_ref().len() < 32 {
+                // Inline node
+                continue;
+            }
+            let Some(node) = node else {
+                if hash.finalize() != *EMPTY_TRIE_HASH {
+                    return Err(TrieError::InconsistentTree);
+                }
+                return Ok(());
+            };
+            let decoded = Node::decode(&node)?;
+            if hash != decoded.compute_hash() {
+                return Err(TrieError::InconsistentTree);
+            }
+            match decoded {
+                Node::Branch(branch) => {
+                    for c in branch.choices {
+                        let c = c.compute_hash();
+                        if c.as_ref().is_empty() {
+                            continue;
+                        }
+                        hashes_stack.push(c);
+                        nodes_stack.push(self.db.get(c)?);
+                    }
+                }
+                Node::Extension(ext) => {
+                    let c = ext.child.compute_hash();
+                    hashes_stack.push(c);
+                    nodes_stack.push(self.db.get(c)?);
+                }
+                Node::Leaf(_leaf) => (), // Nothing to do, already checked hash
+            }
+        }
+        Ok(())
+    }
 }
 
 impl IntoIterator for Trie {
