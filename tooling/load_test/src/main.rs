@@ -45,7 +45,6 @@ struct Cli {
     #[arg(
         long,
         short = 'n',
-        global = true,
         default_value = "http://localhost:8545",
         help = "URL of the node being tested."
     )]
@@ -54,12 +53,11 @@ struct Cli {
     #[arg(
         long,
         short = 'k',
-        global = true,
         help = "Path to the file containing private keys."
     )]
     pkeys: String,
 
-    #[arg(long, short='t', value_enum, global = true, default_value_t=TestType::Erc20, help="Type of transaction to send.")]
+    #[arg(long, short='t', value_enum, default_value_t=TestType::Erc20, help="Type of transaction to send.")]
     test_type: TestType,
 
     #[command(subcommand)]
