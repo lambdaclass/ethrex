@@ -316,7 +316,7 @@ impl Syncer {
                 break;
             }
             sync_head = block.header.parent_hash;
-            pending_blocks.push(block);
+            pending_blocks.insert(0, block);
         }
 
         // Request all block headers between the sync head and our local chain
