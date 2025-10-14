@@ -70,7 +70,7 @@ pub enum EthClientError {
     #[error("Failed to parse hex string: {0}")]
     FromStrRadixError(#[from] FromStrRadixErr),
     #[error("ethrex_getFeeVaultAddress request error: {0}")]
-    GetFeeVaultAddressError(#[from] GetBaseFeeVaultAddressError),
+    GetBaseFeeVaultAddressError(#[from] GetBaseFeeVaultAddressError),
 }
 
 #[derive(Debug, thiserror::Error)]
