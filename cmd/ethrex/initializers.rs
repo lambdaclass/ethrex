@@ -216,6 +216,7 @@ pub async fn init_network(
         get_client_version(),
         #[cfg(feature = "l2")]
         based_context,
+        opts.tx_broadcasting_time_interval,
     )
     .await
     .expect("P2P context could not be created");

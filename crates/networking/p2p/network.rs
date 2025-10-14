@@ -62,17 +62,22 @@ impl P2PContext {
         blockchain: Arc<Blockchain>,
         client_version: String,
         #[cfg(feature = "l2")] based_context: Option<P2PBasedContext>,
+        tx_broadcasting_time_interval: u64,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
             Arc<Message>,
         )>(MAX_MESSAGES_TO_BROADCAST);
 
-        let tx_broadcaster = TxBroadcaster::spawn(peer_table.clone(), blockchain.clone())
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start Tx Broadcaster: {e}");
-            })?;
+        let tx_broadcaster = TxBroadcaster::spawn(
+            peer_table.clone(),
+            blockchain.clone(),
+            tx_broadcasting_time_interval,
+        )
+        .await
+        .inspect_err(|e| {
+            error!("Failed to start Tx Broadcaster: {e}");
+        })?;
 
         Ok(P2PContext {
             local_node,
