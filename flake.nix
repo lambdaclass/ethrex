@@ -261,7 +261,7 @@
           linux-aarch64 = linuxArm;
         } else if system == "aarch64-darwin" then {
           default = macShell;
-          mac = macShell;
+          aarch64-darwin = macShell;
         } else {
           default = mkShell { shellFlavor = "unknown"; };
         }
