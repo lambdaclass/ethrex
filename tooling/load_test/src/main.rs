@@ -324,6 +324,7 @@ async fn tps_load_test(
         *nonce += 1;
 
         tasks.spawn(async move {
+            println!("Sending from {address}");
             let (value, calldata, dst) = tx_builder.build_tx();
             let tx_result = build_generic_tx(
                 &client,
