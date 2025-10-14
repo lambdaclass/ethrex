@@ -3,6 +3,8 @@ use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "rocksdb")]
 use crate::store_db::rocksdb::Store as RocksDBStore;
+#[cfg(feature = "rocksdb")]
+use crate::store_db::rocksdb_transactional::Store as RocksDBTransactionalStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -45,6 +47,8 @@ pub enum EngineType {
     InMemory,
     #[cfg(feature = "rocksdb")]
     RocksDB,
+    #[cfg(feature = "rocksdb")]
+    RocksDBTransactional,
 }
 
 pub struct UpdateBatch {
@@ -81,6 +85,12 @@ impl Store {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => Self {
                 engine: Arc::new(RocksDBStore::new(path)?),
+                chain_config: Default::default(),
+                latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
+            },
+            #[cfg(feature = "rocksdb")]
+            EngineType::RocksDBTransactional => Self {
+                engine: Arc::new(RocksDBTransactionalStore::new(path)?),
                 chain_config: Default::default(),
                 latest_block_header: Arc::new(RwLock::new(BlockHeader::default())),
             },
