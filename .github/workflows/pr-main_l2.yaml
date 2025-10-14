@@ -78,6 +78,7 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main
+          artifact_path: ethrex_image.tar
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -101,6 +102,7 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           tags: ethrex:main_l2
+          artifact_path: ethrex_image_l2.tar
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

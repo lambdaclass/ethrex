@@ -40,3 +40,4 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance
+          artifact_path: ethrex_image.tar

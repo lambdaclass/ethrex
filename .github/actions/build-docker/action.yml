@@ -31,7 +31,7 @@ runs:
     - id: vars
       shell: bash
       run: |
-        echo "artifact_path=/tmp/ethrex_image.tar" >> $GITHUB_OUTPUT
+        echo "artifact_path=/tmp/${{ inputs.artifact_path }}" >> $GITHUB_OUTPUT
 
     - name: Login to Docker registry
       if: inputs.username != '' && inputs.password != ''
