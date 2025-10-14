@@ -497,7 +497,7 @@ contract CommonBridge is
     function sendMessage(uint256 chainId, SendValues memory message) public override onlyOnChainProposer {
         address bridge = IRouter(sharedBridgeRouter).bridge(chainId);
         address senderAlias = address(uint160(uint256(uint160(address(this))) + ADDRESS_ALIASING));
-        ICommonBridge(bridge).deposit{value: message.value}(senderAlias);
+        ICommonBridge(bridge).deposit{value: message.value}(message.value, senderAlias);
         ICommonBridge(bridge).sendToL2(message);
     }
 
