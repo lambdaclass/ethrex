@@ -61,6 +61,19 @@ impl TrieDB for RocksDBTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB get error: {}", e)))?;
         Ok(res)
     }
+    fn get_children(&self, prefix: Nibbles) -> Result<[Option<Vec<u8>>; 16], TrieError> {
+        let cf = self.cf_handle()?;
+        let keys: [_; 16] =
+            std::array::from_fn(|i| (&cf, self.make_key(prefix.append_new(i as u8))));
+        let mut values = [const { None }; 16];
+        for (i, v) in self.db.multi_get_cf(keys).into_iter().enumerate() {
+            let v = v.map_err(|e| {
+                TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e))
+            })?;
+            values[i] = v;
+        }
+        Ok(values)
+    }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;

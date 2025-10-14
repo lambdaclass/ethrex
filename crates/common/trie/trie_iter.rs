@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+use ethrex_rlp::decode::RLPDecode;
+
 use crate::{
     PathRLP, Trie, TrieDB, TrieError, ValueRLP,
     nibbles::Nibbles,
@@ -146,11 +148,18 @@ impl Iterator for TrieIterator {
         match &next_node {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
+                let children = self.db.get_children(path.clone()).ok()?;
                 for (choice, child) in branch_node.choices.iter().enumerate().rev() {
                     if child.is_valid() {
                         let mut child_path = path.clone();
                         child_path.append(choice as u8);
-                        self.stack.push((child_path, child.clone()))
+                        let child = match child {
+                            NodeRef::Hash(_) => {
+                                NodeRef::from(Node::decode(children[choice].as_ref()?).ok()?)
+                            }
+                            NodeRef::Node(_, _) => child.clone(),
+                        };
+                        self.stack.push((child_path, child))
                     }
                 }
             }

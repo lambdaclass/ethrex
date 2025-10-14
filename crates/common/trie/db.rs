@@ -12,6 +12,14 @@ pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
+    fn get_children(&self, prefix: Nibbles) -> Result<[Option<Vec<u8>>; 16], TrieError> {
+        // WTF? Wouldn't compile without the const block
+        let mut children = [const { None }; 16];
+        for i in 0..16 {
+            children[i] = self.get(prefix.append_new(i as u8))?;
+        }
+        Ok(children)
+    }
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {

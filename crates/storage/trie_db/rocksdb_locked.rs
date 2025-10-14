@@ -46,7 +46,7 @@ impl RocksDBLockedTrieDB {
         db: Arc<OptimisticTransactionDB<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
-        snapshot: Arc<SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>>
+        snapshot: Arc<SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>>,
     ) -> Result<Self, TrieError> {
         // Leak the database reference to get 'static lifetime
         let db = Box::leak(Box::new(db));
@@ -90,6 +90,18 @@ impl TrieDB for RocksDBLockedTrieDB {
         self.snapshot
             .get_cf(&self.cf, db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e)))
+    }
+    fn get_children(&self, prefix: Nibbles) -> Result<[Option<Vec<u8>>; 16], TrieError> {
+        let keys: [_; 16] =
+            std::array::from_fn(|i| (&self.cf, self.make_key(prefix.append_new(i as u8))));
+        let mut values = [const { None }; 16];
+        for (i, v) in self.db.multi_get_cf(keys).into_iter().enumerate() {
+            let v = v.map_err(|e| {
+                TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e))
+            })?;
+            values[i] = v;
+        }
+        Ok(values)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
