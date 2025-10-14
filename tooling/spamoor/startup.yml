@@ -1,0 +1,7 @@
+- scenario: eoatx
+  config:
+    total_count: 50000
+    throughput: 100000
+    max_pending: 5000
+    max_wallets: 1000
+    seed: 0xdeadbeef
