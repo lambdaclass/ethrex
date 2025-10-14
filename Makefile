@@ -86,7 +86,7 @@ setup-hive: ## 🐝 Set up Hive testing framework
 		git pull origin $(HIVE_BRANCH) && \
 		go build .; \
 	else \
-		git clone --branch $(HIVE_BRANCH) https://github.com/lambdaclass/hive && \
+		git clone --branch $(HIVE_BRANCH) https://github.com/ethereum/hive && \
 		cd hive && \
 		git checkout $(HIVE_BRANCH) && \
 		go build .; \
