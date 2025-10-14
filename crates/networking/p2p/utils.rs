@@ -1,19 +1,10 @@
+use crate::peer_handler::DumpError;
+use ethrex_common::{H256, H512, U256, types::AccountState, utils::keccak};
+use ethrex_rlp::encode::RLPEncode;
+use secp256k1::{PublicKey, SecretKey};
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
-use ethrex_common::utils::keccak;
-use ethrex_common::{H256, H512, U256, types::AccountState};
-use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
-use ethrex_trie::Node;
-use secp256k1::{PublicKey, SecretKey};
-use spawned_concurrency::error::GenServerError;
-
-use crate::peer_handler::DumpError;
-use crate::{
-    discv4::peer_table::PeerChannels,
-    rlpx::{Message, connection::server::CastMessage, snap::TrieNodes},
 };
 use tracing::error;
 
@@ -142,7 +133,7 @@ pub fn get_code_hashes_snapshot_file(directory: &Path, chunk_index: u64) -> Path
 
 pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
     std::fs::write(path, &contents)
-        .inspect_err(|err| tracing::error!(%err, ?path, "Failed to dump snapshot to file"))
+        .inspect_err(|err| error!(%err, ?path, "Failed to dump snapshot to file"))
         .map_err(|err| DumpError {
             path: path.to_path_buf(),
             contents,
@@ -215,88 +206,4 @@ pub fn dump_storages_to_file(
             .collect::<Vec<_>>()
             .encode_to_vec(),
     )
-}
-
-/// TODO: make it more generic
-pub async fn send_message_and_wait_for_response(
-    peer_channel: &mut PeerChannels,
-    message: Message,
-    request_id: u64,
-) -> Result<Vec<Node>, SendMessageError> {
-    let receiver = peer_channel
-        .receiver
-        .try_lock()
-        .map_err(|_| SendMessageError::PeerBusy)?;
-    peer_channel
-        .connection
-        .cast(CastMessage::BackendMessage(message))
-        .await
-        .map_err(SendMessageError::GenServerError)?;
-    let nodes = tokio::time::timeout(
-        Duration::from_secs(7),
-        receive_trienodes(receiver, request_id),
-    )
-    .await
-    .map_err(|_| SendMessageError::PeerTimeout)?
-    .ok_or(SendMessageError::PeerDisconnected)?;
-
-    nodes
-        .nodes
-        .iter()
-        .map(|node| Node::decode_raw(node))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(SendMessageError::RLPDecodeError)
-}
-
-/// TODO: make it more generic
-pub async fn send_trie_nodes_messages_and_wait_for_reply(
-    peer_channel: &mut PeerChannels,
-    message: Message,
-    request_id: u64,
-) -> Result<TrieNodes, SendMessageError> {
-    let receiver = peer_channel
-        .receiver
-        .try_lock()
-        .map_err(|_| SendMessageError::PeerBusy)?;
-    peer_channel
-        .connection
-        .cast(CastMessage::BackendMessage(message))
-        .await
-        .map_err(SendMessageError::GenServerError)?;
-    tokio::time::timeout(
-        Duration::from_secs(7),
-        receive_trienodes(receiver, request_id),
-    )
-    .await
-    .map_err(|_| SendMessageError::PeerTimeout)?
-    .ok_or(SendMessageError::PeerDisconnected)
-}
-
-async fn receive_trienodes(
-    mut receiver: tokio::sync::MutexGuard<'_, spawned_rt::tasks::mpsc::Receiver<Message>>,
-    request_id: u64,
-) -> Option<TrieNodes> {
-    loop {
-        let resp = receiver.recv().await?;
-        if let Message::TrieNodes(trie_nodes) = resp
-            && trie_nodes.id == request_id
-        {
-            return Some(trie_nodes);
-        }
-    }
-}
-
-// TODO: find a better name for this type
-#[derive(thiserror::Error, Debug)]
-pub enum SendMessageError {
-    #[error("Peer timed out")]
-    PeerTimeout,
-    #[error("GenServerError")]
-    GenServerError(GenServerError),
-    #[error("Peer disconnected")]
-    PeerDisconnected,
-    #[error("Peer Busy")]
-    PeerBusy,
-    #[error("RLP decode error")]
-    RLPDecodeError(RLPDecodeError),
 }
