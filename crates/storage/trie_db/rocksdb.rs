@@ -206,10 +206,11 @@ mod tests {
         let trie_db = RocksDBTrieDB::new(db, "test_cf", None).unwrap();
 
         // Test data
+        // NOTE: we don't use the same paths to avoid overwriting in the batch
         let batch_data = vec![
             (Nibbles::from_hex(vec![1]), vec![1, 2, 3]),
-            (Nibbles::from_hex(vec![1]), vec![4, 5, 6]),
-            (Nibbles::from_hex(vec![1]), vec![7, 8, 9]),
+            (Nibbles::from_hex(vec![1, 2]), vec![4, 5, 6]),
+            (Nibbles::from_hex(vec![1, 2, 3]), vec![7, 8, 9]),
         ];
 
         // Test batch put

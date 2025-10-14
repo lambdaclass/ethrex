@@ -337,6 +337,7 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
         test_state_root, db_block_header.state_root,
         "Mismatched genesis state root for database, test: {test_key}"
     );
+    assert!(db.has_state_root(test_state_root).unwrap());
 }
 
 /// Checks that all accounts in the post-state are present and have the correct values in the DB
@@ -422,8 +423,10 @@ async fn re_run_stateless(
     if test_should_fail && witness.is_err() {
         // We can't generate witness for a test that should fail.
         return Ok(());
-    } else if !test_should_fail && witness.is_err() {
-        return Err("Failed to create witness for a test that should not fail".into());
+    } else if !test_should_fail && let Err(err) = witness {
+        return Err(format!(
+            "Failed to create witness for a test that should not fail: {err}"
+        ));
     }
     // At this point witness is guaranteed to be Ok
     let execution_witness = witness.unwrap();

@@ -505,18 +505,16 @@ impl Store {
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut nodes = HashMap::new();
-        let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut genesis_state_trie = self.engine.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
             self.add_account_code(code_hash, account.code).await?;
             // Store the account's storage in a clean storage trie and compute its root
-            let mut storage_trie = self.engine.open_storage_trie(
-                H256::from_slice(&hashed_address),
-                *EMPTY_TRIE_HASH,
-                *EMPTY_TRIE_HASH,
-            )?;
+            let mut storage_trie = self
+                .engine
+                .open_direct_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
@@ -1148,6 +1146,10 @@ impl Store {
     }
 
     pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
+        // Empty state trie is always available
+        if state_root == *EMPTY_TRIE_HASH {
+            return Ok(true);
+        }
         let trie = self.engine.open_state_trie(state_root)?;
         // NOTE: here we hash the root because the trie doesn't check the state root is correct
         let Some(root) = trie.db().get(Nibbles::default())? else {

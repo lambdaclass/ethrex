@@ -208,25 +208,21 @@ pub async fn heal_storage_trie(
             if !db_joinset.is_empty() {
                 db_joinset.join_next().await;
             }
-            db_joinset.spawn_blocking(|| {
-                spawned_rt::tasks::block_on(async move {
-                    let mut encoded_to_write = vec![];
-                    for (hashed_account, nodes) in to_write {
-                        let mut account_nodes = vec![];
-                        for (path, node) in nodes {
-                            for i in 0..path.len() {
-                                account_nodes.push((path.slice(0, i), vec![]));
-                            }
-                            account_nodes.push((path, node.encode_to_vec()));
+            db_joinset.spawn_blocking(move || {
+                let mut encoded_to_write = vec![];
+                for (hashed_account, nodes) in to_write {
+                    let mut account_nodes = vec![];
+                    for (path, node) in nodes {
+                        for i in 0..path.len() {
+                            account_nodes.push((path.slice(0, i), vec![]));
                         }
-                        encoded_to_write.push((hashed_account, account_nodes));
+                        account_nodes.push((path, node.encode_to_vec()));
                     }
-
-                    store
-                        .write_storage_trie_nodes_batch(encoded_to_write)
-                        .await
-                        .expect("db write failed");
-                })
+                    encoded_to_write.push((hashed_account, account_nodes));
+                }
+                // PERF: use put_batch_no_alloc? (it needs to remove parent nodes too)
+                spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch(encoded_to_write))
+                    .expect("db write failed");
             });
         }
 
@@ -271,7 +267,7 @@ pub async fn heal_storage_trie(
                     &mut state.requests,
                     peers,
                     &mut state.download_queue,
-                    trie_nodes.clone(), // TODO: remove unnecesary clone, needed now for log 🏗️🏗️
+                    &trie_nodes,
                     &mut state.succesful_downloads,
                     &mut state.failed_downloads,
                 )
@@ -283,7 +279,7 @@ pub async fn heal_storage_trie(
                 process_node_responses(
                     &mut nodes_from_peer,
                     &mut state.download_queue,
-                    state.store.clone(),
+                    &state.store,
                     &mut state.membatch,
                     &mut state.leafs_healed,
                     global_leafs_healed,
@@ -291,8 +287,7 @@ pub async fn heal_storage_trie(
                     &mut state.maximum_length_seen,
                     &mut nodes_to_write,
                 )
-                .await
-                .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
+                .expect("We shouldn't be getting store errors"); // TODO: if we have a store error we should stop
             }
             Err(RequestStorageTrieNodes::RequestError(id, _err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
@@ -408,7 +403,7 @@ async fn zip_requeue_node_responses_score_peer(
     requests: &mut HashMap<u64, InflightRequest>,
     peer_handler: &mut PeerHandler,
     download_queue: &mut VecDeque<NodeRequest>,
-    trie_nodes: TrieNodes,
+    trie_nodes: &TrieNodes,
     succesful_downloads: &mut usize,
     failed_downloads: &mut usize,
 ) -> Result<Option<Vec<NodeResponse>>, SyncError> {
@@ -473,10 +468,10 @@ async fn zip_requeue_node_responses_score_peer(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_node_responses(
+fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
     download_queue: &mut VecDeque<NodeRequest>,
-    store: Store,
+    store: &Store,
     membatch: &mut Membatch,
     leafs_healed: &mut usize,
     global_leafs_healed: &mut u64,
@@ -497,17 +492,15 @@ async fn process_node_responses(
         );
 
         let (missing_children_nibbles, missing_children_count) =
-            determine_missing_children(&node_response, store.clone()).inspect_err(|err| {
+            determine_missing_children(&node_response, store).inspect_err(|err| {
                 error!("{err} in determine missing children while searching {node_response:?}")
             })?;
 
         if missing_children_count == 0 {
             // We flush to the database this node
-            commit_node(&store, &node_response, membatch, roots_healed, to_write)
-                .await
-                .inspect_err(|err| {
-                    error!("{err} in commit node while committing {node_response:?}")
-                })?;
+            commit_node(&node_response, membatch, roots_healed, to_write).inspect_err(|err| {
+                error!("{err} in commit node while committing {node_response:?}")
+            })?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -568,7 +561,7 @@ fn get_initial_downloads(
 /// and the number of direct missing children
 pub fn determine_missing_children(
     node_response: &NodeResponse,
-    store: Store,
+    store: &Store,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
     let mut paths = Vec::new();
     let mut count = 0;
@@ -641,8 +634,7 @@ pub fn determine_missing_children(
     Ok((paths, count))
 }
 
-async fn commit_node(
-    store: &Store,
+fn commit_node(
     node: &NodeResponse,
     membatch: &mut Membatch,
     roots_healed: &mut usize,
@@ -664,7 +656,7 @@ async fn commit_node(
         return Ok(());
     }
 
-    let parent_key: (Nibbles, Nibbles) = (
+    let parent_key = (
         node.node_request.acc_path.clone(),
         node.node_request.parent.clone(),
     );
@@ -676,16 +668,14 @@ async fn commit_node(
     parent_entry.missing_children_count -= 1;
 
     if parent_entry.missing_children_count == 0 {
-        Box::pin(commit_node(
-            store,
+        commit_node(
             &parent_entry.node_response,
             membatch,
             roots_healed,
             to_write,
-        ))
-        .await?;
+        )
     } else {
         membatch.insert(parent_key, parent_entry);
+        Ok(())
     }
-    Ok(())
 }
