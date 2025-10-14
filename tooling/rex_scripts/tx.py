@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import subprocess, time, sys, os
 
-KEYFILE = os.getenv("KEYFILE", "./fixtures/keys/private_keys_l1.txt")
+KEYFILE = os.getenv("KEYFILE", "../../fixtures/keys/private_keys.txt")
 N = int(os.getenv("N", 1))
 DEST = os.getenv("DEST", "0x8943545177806ed17b9f23f0a21ee5948ecaa776")
 
