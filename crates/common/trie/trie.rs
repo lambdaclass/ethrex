@@ -464,11 +464,11 @@ impl Trie {
         if self.root.compute_hash().finalize() == *EMPTY_TRIE_HASH {
             return Ok(());
         }
-        let mut hashnode_stack = Vec::with_capacity(1024);
+        let mut hashnode_stack = Vec::<(NodeHash, Vec<u8>)>::with_capacity(1024);
         let root_hash = self.root.compute_hash();
         let root_node = self.db.get(root_hash)?;
-        hashes_stack.push((root_hash, root_node.ok_or(TrieError::InconsistentTree)?);
-        while let Some((node, hash)) = hashnode_stack.pop() {
+        hashnode_stack.push((root_hash, root_node.ok_or(TrieError::InconsistentTree)?));
+        while let Some((hash, node)) = hashnode_stack.pop() {
             let decoded = Node::decode(&node)?;
             if hash != decoded.compute_hash() {
                 return Err(TrieError::InconsistentTree);
