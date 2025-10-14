@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 0,
+  "id": 20,
   "links": [],
   "panels": [
     {
@@ -85,7 +85,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 10,
+        "h": 14,
         "w": 24,
         "x": 0,
         "y": 0
@@ -122,11 +122,11 @@
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "editorMode": "builder",
-          "expr": "gigagas{job=\"ethrex L1\"}",
+          "editorMode": "code",
+          "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000",
           "hide": false,
           "instant": false,
-          "legendFormat": "ethrex_ggas",
+          "legendFormat": "{{ instance }}",
           "range": true,
           "refId": "B"
         }
@@ -134,38 +134,10 @@
       "title": "Ethrex vs Reth Ggas/s",
       "transformations": [
         {
-          "id": "calculateField",
+          "id": "renameByRegex",
           "options": {
-            "alias": "ethrex",
-            "binary": {
-              "left": {
-                "matcher": {
-                  "id": "byName",
-                  "options": "ethrex_ggas"
-                }
-              },
-              "operator": "*",
-              "right": {
-                "fixed": "1000000000"
-              }
-            },
-            "mode": "binary",
-            "reduce": {
-              "reducer": "sum"
-            },
-            "replaceFields": false
-          }
-        },
-        {
-          "id": "filterFieldsByName",
-          "options": {
-            "include": {
-              "names": [
-                "Time",
-                "reth",
-                "ethrex"
-              ]
-            }
+            "regex": "^([^:]+):\\d+$",
+            "renamePattern": "$1"
           }
         }
       ],
@@ -176,7 +148,34 @@
   "schemaVersion": 42,
   "tags": [],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "allowCustomValue": false,
+        "current": {
+          "text": [
+            "ethrex-snapsync-big-9",
+            "ethrex-snapsync-big-14"
+          ],
+          "value": [
+            "ethrex-snapsync-big-9",
+            "ethrex-snapsync-big-14"
+          ]
+        },
+        "definition": "label_values(gigagas,instance)",
+        "includeAll": true,
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(gigagas,instance)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "/^(?<text>[^:]+)(?::\\d+)?$/",
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-5m",
