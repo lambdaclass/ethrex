@@ -22,10 +22,10 @@ use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block, BlockHash, BlockHeader},
 };
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
+use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
-use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 #[cfg(not(feature = "rocksdb"))]
 use std::collections::hash_map::Entry;
@@ -1198,7 +1198,10 @@ fn compute_storage_roots(
     let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root)?;
 
     for (hashed_key, value) in key_value_pairs {
-        if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
+        if let Err(err) = storage_trie.insert(
+            hashed_key.0.to_vec(),
+            ethrex_rlp::encode::RLPEncode::encode_to_vec(value),
+        ) {
             warn!(
                 "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
             );
@@ -1379,62 +1382,45 @@ impl<T> From<SendError<T>> for SyncError {
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_state_root");
-    let computed_state_root = tokio::task::spawn_blocking(move || {
-        Trie::compute_hash_from_unsorted_iter(
-            store
-                .iter_accounts(state_root)
-                .expect("we couldn't iterate over accounts")
-                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-        )
+    let validated = tokio::task::spawn_blocking(move || {
+        store
+            .open_locked_state_trie(state_root)
+            .expect("couldn't open trie")
+            .validate()
     })
     .await
     .expect("We should be able to create threads");
 
-    let tree_validated = state_root == computed_state_root;
-    if tree_validated {
+    if validated.is_ok() {
         info!("Succesfully validated tree, {state_root} found");
     } else {
-        error!(
-            "We have failed the validation of the state tree {state_root} expected but {computed_state_root} found"
-        );
+        error!("We have failed the validation of the state tree");
     }
-    tree_validated
+    validated.is_ok()
 }
 
 pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
-    let is_valid = store
-        .clone()
-        .iter_accounts(state_root)
-        .expect("We should be able to open the store")
-        .par_bridge()
-        .map(|(hashed_address, account_state)|
-    {
-        let store_clone = store.clone();
-        let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
+    let is_valid = tokio::task::spawn_blocking(move || {
+        store
+            .iter_accounts(state_root)
+            .expect("couldn't iterate accounts")
+            .par_bridge()
+            .try_for_each(|(hashed_address, account_state)| {
+                let store_clone = store.clone();
                 store_clone
-                    .iter_storage(state_root, hashed_address)
-                    .expect("we couldn't iterate over accounts")
-                    .expect("This address should be valid")
-                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-            );
-
-        let tree_validated = account_state.storage_root == computed_storage_root;
-        if !tree_validated {
-            error!(
-                "We have failed the validation of the storage tree {:x} expected but {computed_storage_root:x} found for the account {:x}",
-                account_state.storage_root,
-                hashed_address
-            );
-        }
-        tree_validated
+                    .open_locked_storage_trie(hashed_address, account_state.storage_root)
+                    .expect("couldn't open storage trie")
+                    .validate()
+            })
     })
-    .all(|valid| valid);
+    .await
+    .expect("We should be able to create threads");
     info!("Finished validate_storage_root");
-    if !is_valid {
+    if is_valid.is_err() {
         std::process::exit(-1);
     }
-    is_valid
+    is_valid.is_ok()
 }
 
 pub async fn validate_bytecodes(store: Store, state_root: H256) -> bool {
@@ -1510,7 +1496,10 @@ async fn insert_accounts(
                 let mut trie = store_clone.open_state_trie(computed_state_root)?;
 
                 for (account_hash, account) in account_states_snapshot {
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
+                    trie.insert(
+                        account_hash.0.to_vec(),
+                        ethrex_rlp::encode::RLPEncode::encode_to_vec(&account),
+                    )?;
                 }
                 info!("Comitting to disk");
                 let current_state_root = trie.hash()?;
@@ -1738,7 +1727,7 @@ async fn insert_storages(
                     .expect("Should be able to open trie"),
             )
         })
-        .collect::<Vec<(H256, Trie)>>();
+        .collect::<Vec<(H256, ethrex_trie::Trie)>>();
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
