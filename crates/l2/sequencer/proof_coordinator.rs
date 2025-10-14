@@ -6,7 +6,6 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::{
