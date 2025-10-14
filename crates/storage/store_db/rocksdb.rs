@@ -447,6 +447,7 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         let trie_cache = self.trie_cache.clone();
+
         let parent_state_root = self
             .get_block_header_by_hash(
                 update_batch
@@ -458,6 +459,7 @@ impl StoreEngine for Store {
             )?
             .map(|header| header.state_root)
             .unwrap_or_default();
+
         let last_state_root = update_batch
             .blocks
             .last()
