@@ -106,7 +106,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ethrex_image_l2
-          path: /tmp/ethrex_image.tar
+          path: /tmp/ethrex_image_l2.tar
 
 
   integration-test:
@@ -175,6 +175,16 @@ jobs:
       - name: Load ethrex image
         run: |
           docker load --input /tmp/ethrex_image.tar
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Start L1
         run: |
@@ -264,6 +274,16 @@ jobs:
       - name: Load ethrex image
         run: |
           docker load --input /tmp/ethrex_image.tar
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -370,6 +390,16 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
+
       - name: Set up Nix
         uses: cachix/install-nix-action@v31
 
@@ -452,6 +482,16 @@ jobs:
       - name: Load ethrex image
         run: |
           docker load --input /tmp/ethrex_image.tar
+
+      - name: Download ethrex L2 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image_l2
+          path: /tmp
+
+      - name: Load ethrex L2 image
+        run: |
+          docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Install solc
         uses: lambdaclass/get-solc@master
