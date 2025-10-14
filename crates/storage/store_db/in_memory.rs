@@ -18,6 +18,12 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 
+// NOTE: we use a different commit threshold than rocksdb since tests
+// require older states to be available
+// TODO: solve this in some other way, maybe adding logic for arbitrary
+// state access by applying diffs
+const COMMIT_THRESHOLD: usize = 10000;
+
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
 
@@ -113,7 +119,7 @@ impl StoreEngine for Store {
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
 
-            if let Some(root) = trie.get_commitable(pre_state_root) {
+            if let Some(root) = trie.get_commitable(pre_state_root, COMMIT_THRESHOLD) {
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     if value.is_empty() {

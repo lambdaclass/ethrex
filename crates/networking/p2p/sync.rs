@@ -812,17 +812,6 @@ impl SnapBlockSyncState {
     }
 }
 
-/// Safety function that frees all peer and logs an error if we found freed peers when not expectig to
-/// Logs with where the function was when it found this error
-/// TODO: remove this function once peer table has moved to spawned implementation
-async fn free_peers_and_log_if_not_empty(peer_handler: &mut PeerHandler) -> Result<(), SyncError> {
-    if peer_handler.peer_table.free_peers().await? != 0 {
-        let step = METRICS.current_step.get();
-        error!("Found peers marked as used even though we just finished this step: step = {step}");
-    };
-    Ok(())
-}
-
 impl Syncer {
     async fn snap_sync(
         &mut self,
@@ -885,7 +874,6 @@ impl Syncer {
                     block_sync_state,
                 )
                 .await?;
-            free_peers_and_log_if_not_empty(&mut self.peers).await?;
             info!("Finish downloading account ranges from peers");
 
             *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
@@ -946,7 +934,6 @@ impl Syncer {
                 {
                     continue;
                 };
-                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Started request_storage_ranges with {} accounts with storage root unchanged",
@@ -985,7 +972,6 @@ impl Syncer {
 
                     storage_accounts.accounts_with_storage_root.clear();
                 }
-                free_peers_and_log_if_not_empty(&mut self.peers).await?;
 
                 info!(
                     "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
@@ -1052,7 +1038,6 @@ impl Syncer {
                 &mut code_hash_collector,
             )
             .await?;
-            free_peers_and_log_if_not_empty(&mut self.peers).await?;
             if !healing_done {
                 continue;
             }
@@ -1066,8 +1051,6 @@ impl Syncer {
                 &mut global_storage_leafs_healed,
             )
             .await?;
-
-            free_peers_and_log_if_not_empty(&mut self.peers).await?;
         }
         *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1227,7 +1210,7 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
     loop {
-        let (peer_id, mut peer_channel) = peers
+        let (peer_id, mut connection) = peers
             .peer_table
             .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
             .await?
@@ -1238,7 +1221,7 @@ pub async fn update_pivot(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
         let Some(pivot) = peers
-            .get_block_header(&mut peer_channel, new_pivot_block_number)
+            .get_block_header(peer_id, &mut connection, new_pivot_block_number)
             .await
             .map_err(SyncError::PeerHandler)?
         else {
@@ -1335,7 +1318,7 @@ pub enum SyncError {
     CodeHashesSnapshotsDirNotFound,
     #[error("Got different state roots for account hash: {0:?}, expected: {1:?}, computed: {2:?}")]
     DifferentStateRoots(H256, H256, H256),
-    #[error("We aren't finding get_peer_channel_with_retry")]
+    #[error("Cannot find suitable peer")]
     NoPeers,
     #[error("Failed to get block headers")]
     NoBlockHeaders,
