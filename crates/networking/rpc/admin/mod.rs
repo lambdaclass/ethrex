@@ -64,7 +64,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
 }
 
 pub async fn set_log_level(
-    req: &RpcRequest,
+    req: RpcRequest,
     log_filter_handler: &Option<reload::Handle<EnvFilter, Registry>>,
 ) -> Result<Value, RpcErr> {
     let params = req

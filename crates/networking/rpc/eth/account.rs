@@ -35,7 +35,7 @@ pub struct GetProofRequest {
 }
 
 impl RpcHandler for GetBalanceRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBalanceRequest, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<GetBalanceRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -47,7 +47,7 @@ impl RpcHandler for GetBalanceRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!(
             "Requested balance of account {} at block {}",
             self.address, self.block
@@ -71,7 +71,7 @@ impl RpcHandler for GetBalanceRequest {
 }
 
 impl RpcHandler for GetCodeRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetCodeRequest, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<GetCodeRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -83,7 +83,7 @@ impl RpcHandler for GetCodeRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!(
             "Requested code of account {} at block {}",
             self.address, self.block
@@ -107,7 +107,7 @@ impl RpcHandler for GetCodeRequest {
 }
 
 impl RpcHandler for GetStorageAtRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetStorageAtRequest, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<GetStorageAtRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -121,7 +121,7 @@ impl RpcHandler for GetStorageAtRequest {
             block: BlockIdentifierOrHash::parse(params[2].clone(), 2)?,
         })
     }
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!(
             "Requested storage slot {} of account {} at block {}",
             self.storage_slot, self.address, self.block
@@ -145,7 +145,7 @@ impl RpcHandler for GetStorageAtRequest {
 }
 
 impl RpcHandler for GetTransactionCountRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetTransactionCountRequest, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<GetTransactionCountRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -157,7 +157,7 @@ impl RpcHandler for GetTransactionCountRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!(
             "Requested nonce of account {} at block {}",
             self.address, self.block
@@ -193,7 +193,7 @@ impl RpcHandler for GetTransactionCountRequest {
 }
 
 impl RpcHandler for GetProofRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -209,7 +209,7 @@ impl RpcHandler for GetProofRequest {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         debug!(
             "Requested proof for account {} at block {} with storage keys: {:?}",
@@ -274,7 +274,7 @@ mod tests {
             json!("0x1"),
             json!("latest"),
         ]);
-        let request = GetStorageAtRequest::parse(&params).unwrap();
+        let request = GetStorageAtRequest::parse(params).unwrap();
 
         let expected_address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             .parse()
@@ -292,7 +292,7 @@ mod tests {
             json!("1"),
             json!("latest"),
         ]);
-        let request = GetStorageAtRequest::parse(&params).unwrap();
+        let request = GetStorageAtRequest::parse(params).unwrap();
 
         let expected_address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             .parse()

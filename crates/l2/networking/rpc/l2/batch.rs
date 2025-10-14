@@ -60,7 +60,7 @@ pub struct GetBatchByBatchNumberRequest {
 }
 
 impl RpcHandler for GetBatchByBatchNumberRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBatchByBatchNumberRequest, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<GetBatchByBatchNumberRequest, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -90,7 +90,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested batch with number: {}", self.batch_number);
         let Some(batch) = context.rollup_store.get_batch(self.batch_number).await? else {
             return Ok(Value::Null);
@@ -104,7 +104,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
 pub struct BatchNumberRequest {}
 
 impl RpcHandler for BatchNumberRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         if params.as_ref().is_some_and(|params| !params.is_empty()) {
             return Err(ethrex_rpc::RpcErr::BadParams(
                 "Expected 0 params".to_owned(),
@@ -114,7 +114,7 @@ impl RpcHandler for BatchNumberRequest {
         Ok(BatchNumberRequest {})
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested last batch number");
         let Some(batch_number) = context.rollup_store.get_batch_number().await? else {
             return Ok(Value::Null);

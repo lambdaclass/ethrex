@@ -11,11 +11,11 @@ use serde_json::Value;
 pub struct MaxPriorityFee;
 
 impl RpcHandler for MaxPriorityFee {
-    fn parse(_: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(MaxPriorityFee {})
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let gas_tip = context
             .gas_tip_estimator
             .lock()
@@ -118,7 +118,7 @@ mod tests {
 
         add_eip1559_tx_blocks(&context.storage, 100, 3).await;
 
-        let response = map_http_requests(&request, context).await.unwrap();
+        let response = map_http_requests(request, context).await.unwrap();
         assert_eq!(response, expected_response)
     }
 }

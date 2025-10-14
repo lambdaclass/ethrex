@@ -57,7 +57,7 @@ pub struct PollableFilter {
 }
 
 impl NewFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let filter = LogsFilter::parse(params)?;
         Ok(NewFilterRequest {
             request_data: filter,
@@ -110,11 +110,11 @@ impl NewFilterRequest {
     }
 
     pub async fn stateful_call(
-        req: &RpcRequest,
+        req: RpcRequest,
         storage: Store,
         state: ActiveFilters,
     ) -> Result<Value, RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params)?;
         request.handle(storage, state).await
     }
 }
@@ -124,7 +124,7 @@ pub struct DeleteFilterRequest {
 }
 
 impl DeleteFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
@@ -155,11 +155,11 @@ impl DeleteFilterRequest {
     }
 
     pub fn stateful_call(
-        req: &RpcRequest,
+        req: RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params)?;
         request.handle(storage, filters)
     }
 }
@@ -169,7 +169,7 @@ pub struct FilterChangesRequest {
 }
 
 impl FilterChangesRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
@@ -239,11 +239,11 @@ impl FilterChangesRequest {
         }
     }
     pub async fn stateful_call(
-        req: &RpcRequest,
+        req: RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let request = Self::parse(&req.params)?;
+        let request = Self::parse(req.params)?;
         request.handle(storage, filters).await
     }
 }
@@ -444,7 +444,7 @@ mod tests {
             .add_initial_state(genesis_config)
             .await
             .expect("Fatal: could not add test genesis in test");
-        let response = map_http_requests(&request, context)
+        let response = map_http_requests(request, context)
             .await
             .unwrap()
             .to_string();
@@ -492,7 +492,7 @@ mod tests {
         let mut context = default_context_with_storage(storage).await;
         context.active_filters = active_filters.clone();
 
-        map_http_requests(&uninstall_filter_req, context)
+        map_http_requests(uninstall_filter_req, context)
             .await
             .unwrap();
 
@@ -522,7 +522,7 @@ mod tests {
                 ,"id":1
         }))
         .expect("Json for test is not a valid request");
-        let res = map_http_requests(&uninstall_filter_req, context)
+        let res = map_http_requests(uninstall_filter_req, context)
             .await
             .unwrap();
         assert!(matches!(res, serde_json::Value::Bool(false)));

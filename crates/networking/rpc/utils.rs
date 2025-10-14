@@ -186,7 +186,7 @@ pub enum RpcRequestId {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
-    pub id: RpcRequestId,
+    pub id: Option<RpcRequestId>,
     pub jsonrpc: String,
     pub method: String,
     pub params: Option<Vec<Value>>,
@@ -203,11 +203,15 @@ impl RpcRequest {
 
     pub fn new(method: &str, params: Option<Vec<Value>>) -> Self {
         RpcRequest {
-            id: RpcRequestId::Number(1),
+            id: Some(RpcRequestId::Number(1)),
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
             params,
         }
+    }
+
+    pub fn take_id(&mut self) -> RpcRequestId {
+        self.id.take().unwrap()
     }
 }
 
@@ -228,7 +232,7 @@ pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNam
 impl Default for RpcRequest {
     fn default() -> Self {
         RpcRequest {
-            id: RpcRequestId::Number(1),
+            id: Some(RpcRequestId::Number(1)),
             jsonrpc: "2.0".to_string(),
             method: "".to_string(),
             params: None,

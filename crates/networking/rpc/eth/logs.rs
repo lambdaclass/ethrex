@@ -41,7 +41,7 @@ pub struct LogsFilter {
     pub topics: Vec<TopicFilter>,
 }
 impl RpcHandler for LogsFilter {
-    fn parse(params: &Option<Vec<Value>>) -> Result<LogsFilter, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<LogsFilter, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let param = param
@@ -85,8 +85,8 @@ impl RpcHandler for LogsFilter {
             )),
         }
     }
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let filtered_logs = fetch_logs_with_filter(self, context.storage).await?;
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let filtered_logs = fetch_logs_with_filter(&self, context.storage).await?;
         serde_json::to_value(filtered_logs).map_err(|error| {
             tracing::error!("Log filtering request failed with: {error}");
             RpcErr::Internal("Failed to filter logs".to_string())

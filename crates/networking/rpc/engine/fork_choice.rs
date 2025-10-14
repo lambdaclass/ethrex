@@ -25,7 +25,7 @@ pub struct ForkChoiceUpdatedV1 {
 }
 
 impl RpcHandler for ForkChoiceUpdatedV1 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let (fork_choice_state, payload_attributes) = parse(params, false)?;
         Ok(ForkChoiceUpdatedV1 {
             fork_choice_state,
@@ -33,7 +33,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
@@ -58,7 +58,7 @@ pub struct ForkChoiceUpdatedV2 {
 }
 
 impl RpcHandler for ForkChoiceUpdatedV2 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let (fork_choice_state, payload_attributes) = parse(params, false)?;
         Ok(ForkChoiceUpdatedV2 {
             fork_choice_state,
@@ -66,7 +66,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
@@ -108,7 +108,7 @@ impl From<ForkChoiceUpdatedV3> for RpcRequest {
 }
 
 impl RpcHandler for ForkChoiceUpdatedV3 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let (fork_choice_state, payload_attributes) = parse(params, true)?;
         Ok(ForkChoiceUpdatedV3 {
             fork_choice_state,
@@ -116,7 +116,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 3).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
@@ -129,7 +129,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
 }
 
 fn parse(
-    params: &Option<Vec<Value>>,
+    params: Option<Vec<Value>>,
     is_v3: bool,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV3>), RpcErr> {
     let params = params

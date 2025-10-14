@@ -43,7 +43,7 @@ impl From<ExchangeCapabilitiesRequest> for RpcRequest {
 }
 
 impl RpcHandler for ExchangeCapabilitiesRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?
@@ -55,7 +55,7 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
             })
     }
 
-    async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, _context: RpcApiContext) -> Result<Value, RpcErr> {
         Ok(json!(CAPABILITIES))
     }
 }

@@ -44,7 +44,7 @@ pub struct BlobAndProofV2 {
 }
 
 impl RpcHandler for BlobsV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -56,7 +56,7 @@ impl RpcHandler for BlobsV1Request {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Received new engine request: Requested Blobs");
 
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
@@ -96,7 +96,7 @@ impl RpcHandler for BlobsV1Request {
 }
 
 impl RpcHandler for BlobsV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -108,7 +108,7 @@ impl RpcHandler for BlobsV2Request {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Received new engine request: Requested Blobs V2");
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);

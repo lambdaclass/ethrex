@@ -18,11 +18,11 @@ use crate::{
 
 pub struct ChainId;
 impl RpcHandler for ChainId {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(Self {})
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested chain id");
         let chain_spec = context
             .storage
@@ -48,11 +48,11 @@ struct SyncingStatusRpc {
 
 impl RpcHandler for Syncing {
     /// Ref: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_syncing
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(Self {})
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         if context.blockchain.is_synced() {
             Ok(Value::Bool(!context.blockchain.is_synced()))
         } else {
@@ -94,11 +94,11 @@ struct EthConfigResponse {
 }
 
 impl RpcHandler for Config {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(Self {})
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let chain_config = context.storage.get_chain_config()?;
         let Some(latest_block) = context
             .storage

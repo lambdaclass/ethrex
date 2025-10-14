@@ -36,7 +36,7 @@ impl std::fmt::Display for ExchangeTransitionConfigV1Req {
 }
 
 impl RpcHandler for ExchangeTransitionConfigV1Req {
-    fn parse(params: &Option<Vec<Value>>) -> Result<ExchangeTransitionConfigV1Req, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<ExchangeTransitionConfigV1Req, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -47,7 +47,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         Ok(ExchangeTransitionConfigV1Req { payload })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested new engine request: {self}");
         let payload = &self.payload;
 

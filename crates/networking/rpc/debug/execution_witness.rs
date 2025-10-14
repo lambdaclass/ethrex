@@ -79,7 +79,7 @@ pub struct ExecutionWitnessRequest {
 }
 
 impl RpcHandler for ExecutionWitnessRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -100,7 +100,7 @@ impl RpcHandler for ExecutionWitnessRequest {
         Ok(ExecutionWitnessRequest { from, to })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let from_block_number = self
             .from
             .resolve_block_number(&context.storage)

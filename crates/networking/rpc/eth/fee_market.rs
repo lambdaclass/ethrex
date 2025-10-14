@@ -44,7 +44,7 @@ pub struct FeeHistoryResponse {
 // - https://ethereum.github.io/execution-apis/api-documentation/
 // - https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go
 impl RpcHandler for FeeHistoryRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -84,7 +84,7 @@ impl RpcHandler for FeeHistoryRequest {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let config = storage.get_chain_config()?;
         debug!(

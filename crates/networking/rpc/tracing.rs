@@ -71,7 +71,7 @@ impl<TxTrace: Serialize> From<(H256, TxTrace)> for BlockTraceComponent<TxTrace> 
 }
 
 impl RpcHandler for TraceTransactionRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -91,7 +91,7 @@ impl RpcHandler for TraceTransactionRequest {
     }
 
     async fn handle(
-        &self,
+        self,
         context: crate::rpc::RpcApiContext,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
@@ -100,8 +100,8 @@ impl RpcHandler for TraceTransactionRequest {
         match self.trace_config.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
-                let config = if let Some(value) = &self.trace_config.tracer_config {
-                    serde_json::from_value(value.clone())?
+                let config = if let Some(value) = self.trace_config.tracer_config {
+                    serde_json::from_value(value)?
                 } else {
                     CallTracerConfig::default()
                 };
@@ -123,7 +123,7 @@ impl RpcHandler for TraceTransactionRequest {
 }
 
 impl RpcHandler for TraceBlockByNumberRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -143,7 +143,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
     }
 
     async fn handle(
-        &self,
+        self,
         context: crate::rpc::RpcApiContext,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let block = context
@@ -157,8 +157,8 @@ impl RpcHandler for TraceBlockByNumberRequest {
         match self.trace_config.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
-                let config = if let Some(value) = &self.trace_config.tracer_config {
-                    serde_json::from_value(value.clone())?
+                let config = if let Some(value) = self.trace_config.tracer_config {
+                    serde_json::from_value(value)?
                 } else {
                     CallTracerConfig::default()
                 };

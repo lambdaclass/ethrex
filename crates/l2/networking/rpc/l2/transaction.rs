@@ -34,7 +34,7 @@ pub struct SponsoredTx {
 // You can check the reference implementation here
 // https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
 impl RpcHandler for SponsoredTx {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -61,7 +61,7 @@ impl RpcHandler for SponsoredTx {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // Dont allow create txs
         if self.to.is_zero() {
             return Err(RpcErr::InvalidEthrexL2Message(
@@ -150,8 +150,7 @@ impl RpcHandler for SponsoredTx {
             .estimate_gas_tip(&context.l1_ctx.storage)
             .await?;
         let gas_price_request =
-            ethrex_rpc::RpcHandler::handle(&ethrex_rpc::GasPrice {}, context.l1_ctx.clone())
-                .await?;
+            ethrex_rpc::RpcHandler::handle(ethrex_rpc::GasPrice {}, context.l1_ctx.clone()).await?;
 
         let gas_price_request = gas_price_request
             .as_str()
@@ -204,7 +203,7 @@ impl RpcHandler for SponsoredTx {
         generic.from = sponsor_address;
 
         let estimate_gas_request = ethrex_rpc::RpcHandler::handle(
-            &ethrex_rpc::EstimateGasRequest {
+            ethrex_rpc::EstimateGasRequest {
                 transaction: generic,
                 block: None,
             },
@@ -259,7 +258,7 @@ impl RpcHandler for SponsoredTx {
             }
         }
 
-        ethrex_rpc::RpcHandler::handle(&tx, context.l1_ctx)
+        ethrex_rpc::RpcHandler::handle(tx, context.l1_ctx)
             .await
             .map_err(RpcErr::L1RpcErr)
     }

@@ -27,13 +27,13 @@ pub struct NewPayloadV1Request {
 }
 
 impl RpcHandler for NewPayloadV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(NewPayloadV1Request {
             payload: parse_execution_payload(params)?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
         let block = match get_block_from_payload(&self.payload, None, None) {
             Ok(block) => block,
@@ -53,13 +53,13 @@ pub struct NewPayloadV2Request {
 }
 
 impl RpcHandler for NewPayloadV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         Ok(NewPayloadV2Request {
             payload: parse_execution_payload(params)?,
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let chain_config = &context.storage.get_chain_config()?;
         if chain_config.is_shanghai_activated(self.payload.timestamp) {
             validate_execution_payload_v2(&self.payload)?;
@@ -101,7 +101,7 @@ impl From<NewPayloadV3Request> for RpcRequest {
 }
 
 impl RpcHandler for NewPayloadV3Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -118,7 +118,7 @@ impl RpcHandler for NewPayloadV3Request {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = match get_block_from_payload(
             &self.payload,
             Some(self.parent_beacon_block_root),
@@ -166,7 +166,7 @@ impl From<NewPayloadV4Request> for RpcRequest {
 }
 
 impl RpcHandler for NewPayloadV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -185,7 +185,7 @@ impl RpcHandler for NewPayloadV4Request {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
 
@@ -230,12 +230,12 @@ pub struct GetPayloadV1Request {
 }
 
 impl RpcHandler for GetPayloadV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
         // necessary
@@ -252,12 +252,12 @@ pub struct GetPayloadV2Request {
 }
 
 impl RpcHandler for GetPayloadV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         validate_payload_v1_v2(&payload_bundle.block, &context)?;
 
@@ -288,12 +288,12 @@ impl From<GetPayloadV3Request> for RpcRequest {
 }
 
 impl RpcHandler for GetPayloadV3Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         validate_fork(&payload_bundle.block, Fork::Cancun, &context)?;
 
@@ -324,12 +324,12 @@ impl From<GetPayloadV4Request> for RpcRequest {
 }
 
 impl RpcHandler for GetPayloadV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config()?;
 
@@ -376,12 +376,12 @@ impl From<GetPayloadV5Request> for RpcRequest {
 }
 
 impl RpcHandler for GetPayloadV5Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config()?;
 
@@ -415,7 +415,7 @@ pub struct GetPayloadBodiesByHashV1Request {
 }
 
 impl RpcHandler for GetPayloadBodiesByHashV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -428,7 +428,7 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
         })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         if self.hashes.len() as u64 >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
@@ -446,7 +446,7 @@ pub struct GetPayloadBodiesByRangeV1Request {
 }
 
 impl RpcHandler for GetPayloadBodiesByRangeV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -464,7 +464,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         Ok(GetPayloadBodiesByRangeV1Request { start, count })
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         if self.count >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
@@ -483,7 +483,7 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
     serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
-fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
+fn parse_execution_payload(params: Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -743,7 +743,7 @@ async fn try_execute_payload(
     }
 }
 
-fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr> {
+fn parse_get_payload_request(params: Option<Vec<Value>>) -> Result<u64, RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;

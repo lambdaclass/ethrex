@@ -44,14 +44,14 @@ pub struct RpcApiContext {
 }
 
 pub trait RpcHandler: Sized {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
-    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let request = Self::parse(&req.params)?;
+    async fn call(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let request = Self::parse(req.params)?;
         request.handle(context).await
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
 pub const FILTER_DURATION: Duration = {
@@ -149,16 +149,18 @@ async fn handle_http_request(
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
     let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
-        Ok(RpcRequestWrapper::Single(request)) => {
-            let res = map_http_requests(&request, service_context).await;
-            ethrex_rpc::rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
+        Ok(RpcRequestWrapper::Single(mut request)) => {
+            let request_id = request.take_id();
+            let res = map_http_requests(request, service_context).await;
+            ethrex_rpc::rpc_response(request_id, res).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         Ok(RpcRequestWrapper::Multiple(requests)) => {
             let mut responses = Vec::new();
-            for req in requests {
-                let res = map_http_requests(&req, service_context.clone()).await;
+            for mut req in requests {
+                let req_id = req.take_id();
+                let res = map_http_requests(req, service_context.clone()).await;
                 responses.push(
-                    ethrex_rpc::rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
+                    ethrex_rpc::rpc_response(req_id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
                 );
             }
             serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
@@ -175,7 +177,7 @@ async fn handle_http_request(
 }
 
 /// Handle requests that can come from either clients or other users
-pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_http_requests(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match resolve_namespace(&req.method) {
         Ok(RpcNamespace::L1RpcNamespace(ethrex_rpc::RpcNamespace::Eth)) => {
             map_eth_requests(req, context).await
@@ -187,10 +189,13 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
     }
 }
 
-pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_eth_requests(
+    mut req: RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "eth_sendRawTransaction" => {
-            let tx = SendRawTransactionRequest::parse(&req.params)?;
+            let tx = SendRawTransactionRequest::parse(req.params.take())?;
             if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = tx {
                 debug!(
                     "EIP-4844 transaction are not supported in the L2: {:#x}",
@@ -210,7 +215,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
     }
 }
 
-pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_l2_requests(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
         "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,

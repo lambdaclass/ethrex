@@ -177,14 +177,14 @@ pub struct NodeData {
 
 #[allow(async_fn_in_trait)]
 pub trait RpcHandler: Sized {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
+    fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
-    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let request = Self::parse(&req.params)?;
+    async fn call(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let request = Self::parse(req.params)?;
         request.handle(context).await
     }
 
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
+    async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
 pub const FILTER_DURATION: Duration = {
@@ -217,7 +217,7 @@ pub async fn start_api(
     let service_context = RpcApiContext {
         storage,
         blockchain,
-        active_filters: active_filters.clone(),
+        active_filters: active_filters.clone(), // ok-clone: increase arc reference count
         syncer: Arc::new(syncer),
         peer_handler,
         node_data: NodeData {
@@ -235,11 +235,11 @@ pub async fn start_api(
     // Periodically clean up the active filters for the filters endpoints.
     tokio::task::spawn(async move {
         let mut interval = tokio::time::interval(FILTER_DURATION);
-        let filters = active_filters.clone();
+        let filters = active_filters.clone(); // ok-clone: increase arc reference count
         loop {
             interval.tick().await;
             tracing::debug!("Running filter clean task");
-            filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
+            filter::clean_outdated_filters(filters.clone(), FILTER_DURATION); // ok-clone: increase arc reference count
             tracing::debug!("Filter clean task complete");
         }
     });
@@ -300,15 +300,17 @@ async fn handle_http_request(
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
     let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
-        Ok(RpcRequestWrapper::Single(request)) => {
-            let res = map_http_requests(&request, service_context).await;
-            rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
+        Ok(RpcRequestWrapper::Single(mut request)) => {
+            let request_id = request.take_id();
+            let res = map_http_requests(request, service_context).await;
+            rpc_response(request_id, res).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         Ok(RpcRequestWrapper::Multiple(requests)) => {
             let mut responses = Vec::new();
-            for req in requests {
-                let res = map_http_requests(&req, service_context.clone()).await;
-                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
+            for mut req in requests {
+                let req_id = req.take_id();
+                let res = map_http_requests(req, service_context.clone()).await;
+                responses.push(rpc_response(req_id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
             }
             serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
         }
@@ -326,7 +328,7 @@ pub async fn handle_authrpc_request(
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let req: RpcRequest = match serde_json::from_str(&body) {
+    let mut req: RpcRequest = match serde_json::from_str(&body) {
         Ok(req) => req,
         Err(_) => {
             return Ok(Json(
@@ -340,20 +342,21 @@ pub async fn handle_authrpc_request(
     };
     match authenticate(&service_context.node_data.jwt_secret, auth_header) {
         Err(error) => Ok(Json(
-            rpc_response(req.id, Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
+            rpc_response(req.take_id(), Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
         )),
         Ok(()) => {
+            let req_id = req.take_id();
             // Proceed with the request
-            let res = map_authrpc_requests(&req, service_context).await;
+            let res = map_authrpc_requests(req, service_context).await;
             Ok(Json(
-                rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
+                rpc_response(req_id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
             ))
         }
     }
 }
 
 /// Handle requests that can come from either clients or other users
-pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_http_requests(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
         Ok(RpcNamespace::Admin) => map_admin_requests(req, context).await,
@@ -370,7 +373,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
 
 /// Handle requests from consensus client
 pub async fn map_authrpc_requests(
-    req: &RpcRequest,
+    req: RpcRequest,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     match req.namespace() {
@@ -380,7 +383,7 @@ pub async fn map_authrpc_requests(
     }
 }
 
-pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_eth_requests(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "eth_chainId" => ChainId::call(req, context).await,
         "eth_syncing" => Syncing::call(req, context).await,
@@ -432,7 +435,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
     }
 }
 
-pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_debug_requests(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
@@ -445,10 +448,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
     }
 }
 
-pub async fn map_engine_requests(
-    req: &RpcRequest,
-    context: RpcApiContext,
-) -> Result<Value, RpcErr> {
+pub async fn map_engine_requests(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
@@ -479,7 +479,7 @@ pub async fn map_engine_requests(
 }
 
 pub async fn map_admin_requests(
-    req: &RpcRequest,
+    req: RpcRequest,
     mut context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
@@ -490,14 +490,14 @@ pub async fn map_admin_requests(
     }
 }
 
-pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn map_web3_requests(req: RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "web3_clientVersion" => Ok(Value::String(context.node_data.client_version)),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
 
-pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_net_requests(req: RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
         "net_peerCount" => net::peer_count(req, contex).await,
@@ -505,10 +505,7 @@ pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result
     }
 }
 
-pub async fn map_mempool_requests(
-    req: &RpcRequest,
-    contex: RpcApiContext,
-) -> Result<Value, RpcErr> {
+pub async fn map_mempool_requests(req: RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
         "txpool_content" => mempool::content(contex).await,
@@ -558,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn admin_nodeinfo_request() {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
-        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut request: RpcRequest = serde_json::from_str(body).unwrap();
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
@@ -569,8 +566,9 @@ mod tests {
         let local_p2p_node = context.node_data.local_p2p_node.clone();
 
         let enr_url = context.node_data.local_node_record.enr_url().unwrap();
-        let result = map_http_requests(&request, context).await;
-        let rpc_response = rpc_response(request.id, result).unwrap();
+        let request_id = request.take_id();
+        let result = map_http_requests(request, context).await;
+        let rpc_response = rpc_response(request_id, result).unwrap();
         let blob_schedule = serde_json::json!({
             "cancun": { "baseFeeUpdateFraction": 3338477, "max": 6, "target": 3,  },
             "prague": { "baseFeeUpdateFraction": 5007716, "max": 9, "target": 6,  },
@@ -646,7 +644,7 @@ mod tests {
         // Create Request
         // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-value-transfer.io
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
-        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut request: RpcRequest = serde_json::from_str(body).unwrap();
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
@@ -657,8 +655,9 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         // Process request
         let context = default_context_with_storage(storage).await;
-        let result = map_http_requests(&request, context).await;
-        let response = rpc_response(request.id, result).unwrap();
+        let request_id = request.take_id();
+        let result = map_http_requests(request, context).await;
+        let response = rpc_response(request_id, result).unwrap();
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
         );
@@ -693,7 +692,8 @@ mod tests {
     #[tokio::test]
     async fn net_version_test() {
         let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
-        let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
+        let mut request: RpcRequest =
+            serde_json::from_str(body).expect("serde serialization failed");
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
@@ -707,9 +707,10 @@ mod tests {
             .chain_id
             .to_string();
         let context = default_context_with_storage(storage).await;
+        let request_id = request.take_id();
         // Process request
-        let result = map_http_requests(&request, context).await;
-        let response = rpc_response(request.id, result).unwrap();
+        let result = map_http_requests(request, context).await;
+        let response = rpc_response(request_id, result).unwrap();
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
@@ -719,7 +720,7 @@ mod tests {
     #[tokio::test]
     async fn eth_config_request_cancun_with_prague_scheduled() {
         let body = r#"{"jsonrpc":"2.0", "method":"eth_config", "params":[], "id":1}"#;
-        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut request: RpcRequest = serde_json::from_str(body).unwrap();
         let storage = Store::new_from_genesis(
             Path::new("temp.db"),
             EngineType::InMemory,
@@ -728,8 +729,9 @@ mod tests {
         .await
         .expect("Failed to create test DB");
         let context = default_context_with_storage(storage).await;
-        let result = map_http_requests(&request, context).await;
-        let rpc_response = rpc_response(request.id, result).unwrap();
+        let request_id = request.take_id();
+        let result = map_http_requests(request, context).await;
+        let rpc_response = rpc_response(request_id, result).unwrap();
         let json = serde_json::json!({
             "id": 1,
             "jsonrpc": "2.0",
