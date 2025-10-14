@@ -89,9 +89,10 @@ impl BlockProducer {
             block_gas_limit,
         } = config;
 
-        if fee_vault_address.is_some_and(|fee_vault| fee_vault == *coinbase_address) {
+        if base_fee_vault_address.is_some_and(|base_fee_vault| base_fee_vault == *coinbase_address)
+        {
             warn!(
-                "The coinbase address and fee vault address are the same. Coinbase balance behavior will be affected.",
+                "The coinbase address and base fee vault address are the same. Coinbase balance behavior will be affected.",
             );
         }
         if operator_fee_vault_address
