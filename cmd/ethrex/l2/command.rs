@@ -434,8 +434,6 @@ impl Command {
 
                     let account_updates = state_diff.to_account_updates(&trie)?;
 
-                    dbg!(&account_updates);
-
                     let account_updates_list = store
                         .apply_account_updates_from_trie_batch(trie, account_updates.values())
                         .await
