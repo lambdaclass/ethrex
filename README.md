@@ -70,14 +70,10 @@ The following links, repos, companies and projects have been important in the de
 - [Taiko](https://taiko.xyz/)
 - [RISC Zero](https://risczero.com/)
 - [SP1](https://github.com/succinctlabs/sp1)
-- [Aleo](https://aleo.org/)
-- [Neptune](https://neptune.cash/)
-- [Mina](https://minaprotocol.com/)
 - [Nethermind](https://www.nethermind.io/)
 - [Gattaca](https://github.com/gattaca-com)
 - [Spire](https://www.spire.dev/)
 - [Commonware](https://commonware.xyz/)
-- [Parity Technologies](https://github.com/paritytech)
 
 If we forgot to include anyone, please file an issue so we can add you. We always strive to reference the inspirations and code we use, but as an organization with multiple people, mistakes can happen, and someone might forget to include a reference.
 
