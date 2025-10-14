@@ -35,7 +35,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
 
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 1).await?;
+            handle_forkchoice(&self.fork_choice_state, &context, 1).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
@@ -68,7 +68,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
 
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 2).await?;
+            handle_forkchoice(&self.fork_choice_state, &context, 2).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
@@ -118,7 +118,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
 
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 3).await?;
+            handle_forkchoice(&self.fork_choice_state, &context, 3).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             validate_attributes_v3(attributes, &head_block, &context)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 3).await?;
@@ -167,7 +167,7 @@ fn parse(
 
 async fn handle_forkchoice(
     fork_choice_state: &ForkChoiceState,
-    context: RpcApiContext,
+    context: &RpcApiContext,
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
     debug!(

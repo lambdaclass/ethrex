@@ -93,13 +93,13 @@ impl From<RpcErr> for RpcErrorMetadata {
                 // This code (3) was hand-picked to match hive tests.
                 // Could not find proper documentation about it.
                 code: 3,
-                data: Some(data.clone()),
                 message: format!(
                     "execution reverted: {}",
                     get_message_from_revert_data(&data).unwrap_or_else(|err| format!(
                         "tried to decode error from abi but failed: {err}"
                     ))
                 ),
+                data: Some(data),
             },
             RpcErr::Halt { reason, gas_used } => RpcErrorMetadata {
                 // Just copy the `Revert` error code.
@@ -383,7 +383,7 @@ pub mod test_utils {
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .await
             .expect("Failed to build test genesis");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone())); // ok-clone: store fields are all arcs, so this just increases their reference count
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         let local_node_record = example_local_node_record();
@@ -407,7 +407,7 @@ pub mod test_utils {
     }
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone())); // ok-clone: store fields are all arcs, so this just increases their reference count
         let local_node_record = example_local_node_record();
         RpcApiContext {
             storage,

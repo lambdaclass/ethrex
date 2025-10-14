@@ -379,7 +379,7 @@ pub async fn map_authrpc_requests(
     match req.namespace() {
         Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        _ => Err(RpcErr::MethodNotFound(req.method.clone())),
+        _ => Err(RpcErr::MethodNotFound(req.method)),
     }
 }
 
