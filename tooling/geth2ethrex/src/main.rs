@@ -421,10 +421,12 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             store
                 .open_locked_storage_trie(hashed_address, account_state.storage_root)?
                 .validate()?;
-            let code = store
-                .get_account_code(account_state.code_hash)?
-                .expect("inserted code not found");
-            assert_eq!(account_state.code_hash, keccak(code));
+            if account_state.code_hash != *EMPTY_KECCACK_HASH {
+                let code = store
+                    .get_account_code(account_state.code_hash)?
+                    .expect("inserted code not found");
+                assert_eq!(account_state.code_hash, keccak(code));
+            }
         }
         // assert_eq!(storages.len(), with_storage_count);
         info!("Validating latest block");
