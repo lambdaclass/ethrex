@@ -17,11 +17,13 @@ use ethrex_common::{
 use ethrex_config::networks::Network;
 use ethrex_l2_common::{calldata::Value, l1_messages::get_l1_message_hash, state_diff::StateDiff};
 use ethrex_l2_sdk::call_contract;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::StoreRollup;
+use ethrex_trie::{Nibbles, Node};
 use eyre::OptionExt;
 use itertools::Itertools;
 use reqwest::Url;
@@ -433,6 +435,8 @@ impl Command {
                     let trie = store.open_direct_state_trie(current_state_root)?;
 
                     let account_updates = state_diff.to_account_updates(&trie)?;
+
+                    dbg!(&account_updates);
 
                     let account_updates_list = store
                         .apply_account_updates_from_trie_batch(trie, account_updates.values())

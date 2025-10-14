@@ -445,36 +445,24 @@ impl StoreEngine for Store {
         let db = self.db.clone();
         let trie_cache = self.trie_cache.clone();
 
-        let parent_state_root = if let Some(parent_block) = update_batch.blocks.first() {
-            self.get_block_header_by_hash(parent_block.header.parent_hash)?
-                .map(|header| header.state_root)
-                .unwrap_or_default()
-        } else {
-            update_batch.parent_state_root
-        };
-        // let parent_state_root = self
-        //     .get_block_header_by_hash(
-        //         update_batch
-        //             .blocks
-        //             .first()
-        //             .ok_or(StoreError::UpdateBatchNoBlocks)?
-        //             .header
-        //             .parent_hash,
-        //     )?
-        //     .map(|header| header.state_root)
-        //     .unwrap_or_default();
+        let parent_state_root = self
+            .get_block_header_by_hash(
+                update_batch
+                    .blocks
+                    .first()
+                    .ok_or(StoreError::UpdateBatchNoBlocks)?
+                    .header
+                    .parent_hash,
+            )?
+            .map(|header| header.state_root)
+            .unwrap_or_default();
 
-        let last_state_root = if let Some(last_block) = update_batch.blocks.last() {
-            last_block.header.state_root
-        } else {
-            update_batch.last_state_root
-        };
-        // let last_state_root = update_batch
-        //     .blocks
-        //     .last()
-        //     .ok_or(StoreError::UpdateBatchNoBlocks)?
-        //     .header
-        //     .state_root;
+        let last_state_root = update_batch
+            .blocks
+            .last()
+            .ok_or(StoreError::UpdateBatchNoBlocks)?
+            .header
+            .state_root;
 
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();

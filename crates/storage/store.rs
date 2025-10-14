@@ -58,8 +58,6 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Code updates
     pub code_updates: Vec<(H256, Bytes)>,
-    pub parent_state_root: H256,
-    pub last_state_root: H256,
 }
 
 type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
