@@ -197,8 +197,8 @@ jobs:
         run: echo "TAG_VERSION=$(echo ${{ github.ref_name }} | tr -d v)" >> $GITHUB_ENV
 
       # Pushes to ghcr.io/lambdaclass/ethrex
-      - name: Build and push Docker image
-        id: push
+      - name: Build and push L1 Docker image
+        id: push_l1
         uses: ./.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
@@ -206,6 +206,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
+
+      # Pushes to ghcr.io/lambdaclass/ethrex
+      - name: Build and push L2 Docker image
+        id: push_l2
+        uses: ./.github/actions/build-docker
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-l2,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2
+          build_args: BUILD_FLAGS=--features l2,l2-sql
 
   # Creates a draft release on GitHub with the binaries
   finalize-release:
