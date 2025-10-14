@@ -24,7 +24,7 @@ use std::{
     path::Path,
     sync::{Arc, RwLock},
 };
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     STATE_TRIE_SEGMENTS, UpdateBatch,
@@ -102,7 +102,12 @@ const CF_PENDING_BLOCKS: &str = "pending_blocks";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(latest_valid).bytes().clone()`
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
-#[derive(Debug)]
+/// Misc persistent state
+/// - [`Vec<u8>`] = `string key`
+/// - [`Vec<u8>`] = `key-dependent`
+const CF_MISC_STATE: &str = "misc_state";
+
+#[derive(Clone, Debug)]
 pub struct Store {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     trie_cache: Arc<RwLock<TrieLayerCache>>,
@@ -251,6 +256,7 @@ impl Store {
             CF_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
+            CF_MISC_STATE,
         ];
 
         // Get existing column families to know which ones to drop later
@@ -453,6 +459,11 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    fn snapshot_completed(&self) -> Result<bool, StoreError> {
+        self.read_sync(CF_MISC_STATE, "snapshot_completed")
+            .map(|v| v.is_some())
     }
 }
 
@@ -1128,6 +1139,7 @@ impl StoreEngine for Store {
             inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
+            snapshot_completed: self.snapshot_completed()?,
         });
         Ok(Trie::open(wrap_db, storage_root))
     }
@@ -1139,6 +1151,7 @@ impl StoreEngine for Store {
             inner: self.trie_cache.clone(),
             db,
             prefix: None,
+            snapshot_completed: self.snapshot_completed()?,
         });
         Ok(Trie::open(wrap_db, state_root))
     }
@@ -1172,6 +1185,7 @@ impl StoreEngine for Store {
             inner: self.trie_cache.clone(),
             db,
             prefix: None,
+            snapshot_completed: self.snapshot_completed()?,
         });
         Ok(Trie::open(wrap_db, state_root))
     }
@@ -1192,6 +1206,7 @@ impl StoreEngine for Store {
             inner: self.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
+            snapshot_completed: self.snapshot_completed()?,
         });
         Ok(Trie::open(wrap_db, storage_root))
     }
@@ -1493,107 +1508,123 @@ impl StoreEngine for Store {
     }
 
     async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
-        let mut ctr = 0;
-        let mut value_ctr = 0;
-        let mut paths = vec![];
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let res: Result<(), StoreError> = futures::executor::block_on(async {
+                let mut ctr = 0;
+                let mut value_ctr = 0;
+                let mut paths = vec![];
 
-        // account nibbles (64B) + 16 (1B) + 17 (1B) + storage nibbles (64B) + 16 (1B)
-        let mut key_buf = [0u8; 131];
-        key_buf[65] = 17;
+                // account nibbles (64B) + 16 (1B) + 17 (1B) + storage nibbles (64B) + 16 (1B)
+                let mut key_buf = [0u8; 131];
+                key_buf[65] = 17;
 
-        let mut sst_options = Options::default();
-        set_database_opts(&mut sst_options);
-        get_cf_opts(&mut sst_options, CF_TRIE_NODES);
+                let mut sst_options = Options::default();
+                set_database_opts(&mut sst_options);
+                get_cf_opts(&mut sst_options, CF_TRIE_NODES);
 
-        let path = self.db.path().join(format!("snapshot.{ctr:08}.sst"));
-        let mut sst = SstFileWriter::create(&sst_options);
-        sst.open(&path)?;
-        paths.push(path);
+                let path = store.db.path().join(format!("snapshot.{ctr:08}.sst"));
+                let mut sst = SstFileWriter::create(&sst_options);
+                sst.open(&path)?;
+                paths.push(path);
 
-        let innerdb = Box::leak(Box::new(self.db.clone()));
+                let innerdb = Box::leak(Box::new(store.db.clone()));
 
-        let snapshot = Arc::new(innerdb.snapshot());
+                let snapshot = Arc::new(innerdb.snapshot());
 
-        let db = Box::new(RocksDBLockedTrieDB::new_from_snapshot(
-            self.db.clone(),
-            CF_TRIE_NODES,
-            None,
-            snapshot.clone(),
-        )?);
-        Trie::open(db, state_root).into_iter().try_for_each(
-            |(path, node)| -> Result<(), StoreError> {
-                let Node::Leaf(node) = node else {
-                    return Ok(());
-                };
-
-                let account_state = AccountState::decode(&node.value)?;
-
-                key_buf[0..65].copy_from_slice(path.as_ref());
-
-                sst.put(&key_buf[0..65], node.value)?;
-                value_ctr += 1;
-                if value_ctr > 1024 * 1024 {
-                    sst.finish()?;
-                    ctr += 1;
-                    let path = self.db.path().join(format!("snapshot.{ctr:08}.sst"));
-                    sst = SstFileWriter::create(&sst_options);
-                    sst.open(&path)?;
-                    paths.push(path);
-                    value_ctr = 0;
-                }
-
-                let address_hash = H256::from_slice(&path.to_bytes());
                 let db = Box::new(RocksDBLockedTrieDB::new_from_snapshot(
-                    self.db.clone(),
+                    store.db.clone(),
                     CF_TRIE_NODES,
-                    Some(address_hash),
+                    None,
                     snapshot.clone(),
                 )?);
-                Trie::open(db, account_state.storage_root)
-                    .into_iter()
-                    .try_for_each(|(path, node)| -> Result<(), StoreError> {
+                Trie::open(db, state_root).into_iter().try_for_each(
+                    |(path, node)| -> Result<(), StoreError> {
                         let Node::Leaf(node) = node else {
                             return Ok(());
                         };
-                        key_buf[66..131].copy_from_slice(path.as_ref());
 
-                        sst.put(&key_buf, node.value)?;
+                        let account_state = AccountState::decode(&node.value)?;
+
+                        key_buf[0..65].copy_from_slice(path.as_ref());
+
+                        sst.put(&key_buf[0..65], node.value)?;
                         value_ctr += 1;
-                        if value_ctr > 1024 * 1024000 {
+                        if value_ctr > 1024 * 1024 {
                             sst.finish()?;
                             ctr += 1;
-                            let path = self.db.path().join(format!("snapshot.{ctr:08}.sst"));
+                            let path = store.db.path().join(format!("snapshot.{ctr:08}.sst"));
                             sst = SstFileWriter::create(&sst_options);
                             sst.open(&path)?;
-                            paths.push(path); 
+                            paths.push(path);
                             value_ctr = 0;
                         }
+
+                        let address_hash = H256::from_slice(&path.to_bytes());
+                        let db = Box::new(RocksDBLockedTrieDB::new_from_snapshot(
+                            store.db.clone(),
+                            CF_TRIE_NODES,
+                            Some(address_hash),
+                            snapshot.clone(),
+                        )?);
+                        Trie::open(db, account_state.storage_root)
+                            .into_iter()
+                            .try_for_each(|(path, node)| -> Result<(), StoreError> {
+                                let Node::Leaf(node) = node else {
+                                    return Ok(());
+                                };
+                                key_buf[66..131].copy_from_slice(path.as_ref());
+
+                                sst.put(&key_buf, node.value)?;
+                                value_ctr += 1;
+                                if value_ctr > 1024 * 1024000 {
+                                    sst.finish()?;
+                                    ctr += 1;
+                                    let path =
+                                        store.db.path().join(format!("snapshot.{ctr:08}.sst"));
+                                    sst = SstFileWriter::create(&sst_options);
+                                    sst.open(&path)?;
+                                    paths.push(path);
+                                    value_ctr = 0;
+                                }
+                                Ok(())
+                            })?;
                         Ok(())
-                    })?;
+                    },
+                )?;
+                unsafe {
+                    drop(Box::from_raw(
+                        innerdb as *const Arc<OptimisticTransactionDB<MultiThreaded>>
+                            as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
+                    ));
+                }
+                drop(snapshot);
+                sst.finish()?;
+                let mut ingest_opts = IngestExternalFileOptions::default();
+                ingest_opts.set_move_files(true);
+                ingest_opts.set_ingest_behind(true);
+                let cf_trie = store
+                    .db
+                    .cf_handle(CF_TRIE_NODES)
+                    .ok_or(StoreError::Custom("missing cf: CF_TRIE_NODES".to_string()))?;
+                store
+                    .db
+                    .ingest_external_file_cf_opts(&cf_trie, &ingest_opts, paths)?;
+                store.db.compact_range_cf::<&[u8], &[u8]>(
+                    &store.cf_handle(CF_TRIE_NODES)?,
+                    None,
+                    None,
+                );
+                store
+                    .write_async(&CF_MISC_STATE, "snapshot_completed", vec![1])
+                    .await?;
                 Ok(())
-            },
-        )?;
-        unsafe {
-            drop(Box::from_raw(
-                innerdb as *const Arc<OptimisticTransactionDB<MultiThreaded>>
-                    as *mut Arc<OptimisticTransactionDB<MultiThreaded>>,
-            ));
-        }
-        drop(snapshot);
-        sst.finish()?;
-        let mut ingest_opts = IngestExternalFileOptions::default();
-        ingest_opts.set_move_files(true);
-        ingest_opts.set_ingest_behind(true);
-        let cf_trie = self
-            .db
-            .cf_handle(CF_TRIE_NODES)
-            .ok_or(StoreError::Custom("missing cf: CF_TRIE_NODES".to_string()))?;
-        self.db
-            .ingest_external_file_cf_opts(&cf_trie, &ingest_opts, paths)?;
-        self.trie_cache
-            .write()
-            .map_err(|_| StoreError::LockError)?
-            .snapshot_completed = true;
+            });
+            match res {
+                Ok(()) => info!("Snapshot generation completed."),
+                Err(err) => error!("Snapshot generation failed: {err}"),
+            };
+        });
         Ok(())
     }
 }

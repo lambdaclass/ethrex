@@ -4010,6 +4010,7 @@ dependencies = [
  "ethrex-common 0.1.0",
  "ethrex-rlp 0.1.0",
  "ethrex-trie 0.1.0",
+ "futures",
  "hex",
  "hex-literal",
  "rocksdb",

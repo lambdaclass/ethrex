@@ -43,6 +43,8 @@ pub struct StoreInner {
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
     // Stores current Snap State
     snap_state: SnapState,
+    // Is snapshot complete
+    snapshot_completed: bool
 }
 
 #[derive(Default, Debug)]
@@ -435,6 +437,7 @@ impl StoreEngine for Store {
             inner: store.trie_cache.clone(),
             db,
             prefix: Some(hashed_address),
+            snapshot_completed: store.snapshot_completed
         });
         Ok(Trie::open(wrap_db, state_root))
     }
@@ -448,6 +451,7 @@ impl StoreEngine for Store {
             inner: store.trie_cache.clone(),
             db,
             prefix: None,
+            snapshot_completed: store.snapshot_completed
         });
         Ok(Trie::open(wrap_db, state_root))
     }
@@ -733,11 +737,7 @@ impl StoreEngine for Store {
                 Ok(())
             })?;
         db.put_batch(nodes_to_write)?;
-        self.inner()?
-            .trie_cache
-            .write()
-            .map_err(|_| StoreError::LockError)?
-            .snapshot_completed = true;
+        self.inner()?.snapshot_completed = true;
         Ok(())
     }
 }

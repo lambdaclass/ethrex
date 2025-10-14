@@ -386,7 +386,7 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
-async fn reset_to_head(store: &Store) -> eyre::Result<()> {
+async fn reset_to_head(opts: &Options, store: &Store) -> eyre::Result<()> {
     let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
     let Some(root) = trie.db().get(Default::default())? else {
         return Ok(());
@@ -420,6 +420,9 @@ async fn reset_to_head(store: &Store) -> eyre::Result<()> {
             }
         }
     }
+        if opts.syncmode == SyncMode::Full {
+        store.generate_snapshot(state_root).await?;
+    }
     Ok(())
 }
 
@@ -441,7 +444,7 @@ pub async fn init_l1(
     display_chain_initialization(&genesis);
     let store = init_store(datadir, genesis).await;
 
-    reset_to_head(&store).await?;
+    reset_to_head(&opts, &store).await?;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
