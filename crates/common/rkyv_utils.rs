@@ -63,6 +63,23 @@ impl Hash for ArchivedH160Wrapper {
     }
 }
 
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Option<H160>)]
+pub enum OptionH160Wrapper {
+    Some(#[rkyv(with = H160Wrapper)] H160),
+    None,
+}
+
+impl From<OptionH160Wrapper> for Option<H160> {
+    fn from(value: OptionH160Wrapper) -> Self {
+        if let OptionH160Wrapper::Some(x) = value {
+            Some(x)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(
     Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord,
 )]

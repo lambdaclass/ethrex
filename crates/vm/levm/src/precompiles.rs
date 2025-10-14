@@ -302,7 +302,7 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    (matches!(vm_type, VMType::L2) && *address == P256_VERIFICATION.address)
+    (matches!(vm_type, VMType::L2(_)) && *address == P256_VERIFICATION.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
