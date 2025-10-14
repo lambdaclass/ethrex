@@ -12,6 +12,8 @@ path = "./lib.rs"
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "2.1.1", optional = true }
 kzg-rs.workspace = true
+rust_eth_kzg = { git = "https://github.com/crate-crypto/rust-eth-kzg", tag = "v0.8.0" }
+bls12_381 = { git = "https://github.com/crate-crypto/rust-eth-kzg", package = "ekzg-bls12-381", tag = "v0.8.0" }
 
 thiserror.workspace = true
 

@@ -22,9 +22,6 @@ pub enum KzgError {
     CKzg(#[from] c_kzg::Error),
     #[error("kzg-rs error: {0}")]
     KzgRs(kzg_rs::KzgError),
-    #[cfg(not(feature = "c-kzg"))]
-    #[error("{0} is not supported without c-kzg feature enabled")]
-    NotSupportedWithoutCKZG(String),
 }
 
 impl From<kzg_rs::KzgError> for KzgError {
@@ -41,9 +38,39 @@ pub fn verify_cell_kzg_proof_batch(
     cell_proof: &[Proof],
 ) -> Result<bool, KzgError> {
     #[cfg(not(feature = "c-kzg"))]
-    return Err(KzgError::NotSupportedWithoutCKZG(String::from(
-        "Cell proof verification",
-    )));
+    {
+        use rust_eth_kzg::{DASContext, TrustedSetup};
+        let trusted_setup = TrustedSetup::default();
+
+        // Initialize the data availability sampling context with precomputed fixed-base MSM
+        let ctx = DASContext::new(
+            &trusted_setup,
+            bls12_381::fixed_base_msm::UsePrecomp::Yes { width: 8 },
+        );
+        let mut cells = Vec::new();
+        for blob in blobs {
+            let computed_cells = ctx.compute_cells(blob).expect("TODO: add new error");
+            cells.extend(computed_cells.into_iter().map(|cell| *cell));
+        }
+        let res = ctx.verify_cell_kzg_proof_batch(
+            commitments
+                .iter()
+                .flat_map(|commitment| repeat_n(commitment as &[u8; 48], CELLS_PER_EXT_BLOB))
+                .collect::<Vec<&[u8; 48]>>(),
+            &repeat_n(0..CELLS_PER_EXT_BLOB as u64, blobs.len())
+                .flatten()
+                .collect::<Vec<_>>(),
+            cells
+                .iter()
+                .map(|cell| cell as &[u8; 2048])
+                .collect::<Vec<_>>(),
+            cell_proof
+                .iter()
+                .map(|proof| proof as &[u8; 48])
+                .collect::<Vec<&[u8; 48]>>(),
+        );
+        if res.is_err() { Ok(false) } else { Ok(true) }
+    }
     #[cfg(feature = "c-kzg")]
     {
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(8);
