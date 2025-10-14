@@ -198,7 +198,7 @@ pub fn prepare_vm_for_tx<'a>(
     let blob_schedule = EVMConfig::canonical_values(*fork);
     let config = EVMConfig::new(*fork, blob_schedule);
 
-    let tx = if authorization_list.is_some() {
+    let tx = if let Some(authorization_list) = authorization_list {
         Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_tx.to {
                 TxKind::Call(to) => to,
@@ -207,7 +207,7 @@ pub fn prepare_vm_for_tx<'a>(
             value: test_tx.value,
             data: test_tx.data.clone(),
             access_list: access_list,
-            authorization_list: authorization_list.unwrap(),
+            authorization_list,
             gas_limit: test_tx.gas_limit,
             ..Default::default()
         })
