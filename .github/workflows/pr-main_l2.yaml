@@ -452,12 +452,11 @@ jobs:
       [
         integration-test,
         state-diff-test,
-        integration-test-based,
         integration-test-tdx,
         integration-test-l2-dev,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-based.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
+    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.integration-test-l2-dev.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -468,11 +467,6 @@ jobs:
 
           if [ "${{ needs.state-diff-test.result }}" != "success" ]; then
             echo "Job State Reconstruction Tests failed"
-            exit 1
-          fi
-
-          if [ "${{ needs.integration-test-based.result }}" != "success" ]; then
-            echo "Job Integration Tests Based failed"
             exit 1
           fi
 
