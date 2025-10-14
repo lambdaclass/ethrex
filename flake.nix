@@ -12,6 +12,7 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
+        "x86_64-darwin"
         "aarch64-darwin"
       ];
       forEachSystem = lib.genAttrs systems;
@@ -25,11 +26,11 @@
 
           rustToolchain = pkgs.rust-bin.stable."1.90.0".default;
 
-          # Target triple + env-var-safe variant
           targetTriple =
             if system == "x86_64-linux" then "x86_64-unknown-linux-gnu"
             else if system == "aarch64-linux" then "aarch64-unknown-linux-gnu"
             else if system == "aarch64-darwin" then "aarch64-apple-darwin"
+            else if system == "x86_64-darwin" then "x86_64-apple-darwin"
             else system;
           targetVar = lib.replaceStrings ["-"] ["_"] targetTriple;
 
@@ -38,13 +39,15 @@
             version = "0.8.29";
             src = pkgs.fetchurl {
               url = {
-                "x86_64-linux" = "https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux";
-                "aarch64-linux" = "https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29";
+                "x86_64-linux"   = "https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux";
+                "aarch64-linux"  = "https://github.com/nikitastupin/solc/raw/refs/heads/main/linux/aarch64/solc-v0.8.29";
+                "x86_64-darwin"  = "https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-macos";
                 "aarch64-darwin" = "https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-macos";
               }.${system} or (throw "Unsupported system for solc 0.8.29");
               sha256 = {
-                "x86_64-linux" = "1q1pcsmfhnavbl08vwsi5fabifng6mxqlp0vddjifkf01nj1im0q";
-                "aarch64-linux" = "1wvdygj5p5743qg5ji6dmixwn08sbs74vdfr6bfc3x830wz48k5l";
+                "x86_64-linux"   = "1q1pcsmfhnavbl08vwsi5fabifng6mxqlp0vddjifkf01nj1im0q";
+                "aarch64-linux"  = "1wvdygj5p5743qg5ji6dmixwn08sbs74vdfr6bfc3x830wz48k5l";
+                "x86_64-darwin"  = "1lb4x0yqrwjg9v0ks89d5ixinbnrnhbpvv4p34qr204cgk8vvyk6";
                 "aarch64-darwin" = "1lb4x0yqrwjg9v0ks89d5ixinbnrnhbpvv4p34qr204cgk8vvyk6";
               }.${system} or (throw "Unsupported system for solc 0.8.29");
             };
@@ -61,8 +64,9 @@
           };
 
           featuresMap = {
-            "x86_64-linux" = "sp1,risc0";
-            "aarch64-linux" = "sp1";
+            "x86_64-linux"   = "sp1,risc0";
+            "aarch64-linux"  = "sp1";
+            "x86_64-darwin"  = "";
             "aarch64-darwin" = "";
           };
 
@@ -93,7 +97,7 @@
               darwinDeps =
                 if pkgs.stdenv.isDarwin
                 then (with pkgs.darwin.apple_sdk.frameworks; [ Security SystemConfiguration ])
-                     ++ [ pkgs.libcxx.dev ]  # C++ headers: include/c++/v1
+                     ++ [ pkgs.libcxx.dev ]
                 else [];
 
               cudaDeps = lib.optionals (buildGpu && system == "x86_64-linux") [
@@ -115,7 +119,6 @@
               needsRisc0 = lib.elem "risc0" featuresList;
               needsSp1 = lib.elem "sp1" featuresList;
 
-              # Include args for bindgen
               cIncArg =
                 if pkgs.stdenv.isLinux then "-isystem ${pkgs.stdenv.cc.libc.dev}/include" else "";
               cxxIncArg =
@@ -135,8 +138,6 @@
                 (lib.optionalString buildGpu ''
                   export NVCC_PREPEND_FLAGS=-arch=sm_70
                 '')
-
-                # --- toolchain env & bindgen/libclang wiring (Linux + macOS) ---
                 ''
                   export CC="${pkgs.stdenv.cc}/bin/cc"
                   export CXX="${pkgs.stdenv.cc}/bin/c++"
@@ -191,7 +192,6 @@
                   export CXX_${targetVar}="$CXX"
 
                   if [ "$(uname -s)" = "Darwin" ]; then
-                    # trim any trailing slash safely in nix string: use two-step
                     SYSROOT_TRIMMED="$SYSROOT"; SYSROOT_TRIMMED="''${SYSROOT_TRIMMED%/}"
                     FRAMEWORKS_DIR="''${SYSROOT_TRIMMED}/System/Library/Frameworks"
                     [ -d "$FRAMEWORKS_DIR" ] || FRAMEWORKS_DIR="/System/Library/Frameworks"
@@ -202,7 +202,6 @@
                     echo "macOS frameworks: $FRAMEWORKS_DIR"
                   fi
                 ''
-
                 (lib.optionalString needsSp1 ''
                   SP1UP="$HOME/.sp1/bin/sp1up"
                   if [ ! -x "$SP1UP" ]; then
@@ -216,7 +215,6 @@
                     echo "Warning: failed to install sp1up" >&2
                   fi
                 '')
-
                 (lib.optionalString needsRisc0 ''
                   RZUP="$HOME/.risc0/bin/rzup"
                   if [ ! -x "$RZUP" ]; then
@@ -239,33 +237,88 @@
                   fi
                   export PATH=$HOME/.risc0/bin:$PATH
                 '')
-
                 ''
-                  echo "Building ethrex (release, COMPILE_CONTRACTS=true, features: ${featuresNote})…"
+                  echo "Building ethrex (release, COMPILE_CONTRACTS=true, features: ${featuresNote})"
                   COMPILE_CONTRACTS=true cargo build --bin ethrex --release${featureArg}
                 ''
               ];
             };
 
-          linuxX86 = mkShell { shellFlavor = "linux-x86_64"; };
-          linuxX86Gpu = mkShell { buildGpu = true; shellFlavor = "linux-x86_64-gpu"; };
-          linuxArm = mkShell { shellFlavor = "linux-aarch64"; };
-          macShell = mkShell { shellFlavor = "aarch64-darwin"; };
+          linuxX86     = mkShell { shellFlavor = "linux-x86_64"; };
+          linuxX86Gpu  = mkShell { buildGpu = true; shellFlavor = "linux-x86_64-gpu"; };
+          linuxArm     = mkShell { shellFlavor = "linux-aarch64"; };
+          macShellArm  = mkShell { shellFlavor = "aarch64-darwin"; };
+          macShellX86  = mkShell { shellFlavor = "x86_64-darwin"; };
         in
         if system == "x86_64-linux" then {
-          default = linuxX86;
-          linux-x86_64 = linuxX86;
+          default        = linuxX86;
+          linux-x86_64   = linuxX86;
           linux-x86_64-gpu = linuxX86Gpu;
         } else if system == "aarch64-linux" then {
-          default = linuxArm;
-          linux-aarch64 = linuxArm;
+          default        = linuxArm;
+          linux-aarch64  = linuxArm;
         } else if system == "aarch64-darwin" then {
-          default = macShell;
-          aarch64-darwin = macShell;
+          default        = macShellArm;
+          aarch64-darwin = macShellArm;
+        } else if system == "x86_64-darwin" then {
+          default        = macShellX86;
+          x86_64-darwin  = macShellX86;
         } else {
-          default = mkShell { shellFlavor = "unknown"; };
+          default = pkgs.mkShell { };
         }
       );
+
+      packages = forEachSystem (system:
+        let
+          pkgs = import nixpkgs { inherit system; overlays = [ rust-overlay.overlays.default ]; };
+          rustToolchain = pkgs.rust-bin.stable."1.90.0".default;
+        in {
+          ethrex-run = pkgs.writeShellApplication {
+            name = "ethrex-run";
+            runtimeInputs = [
+              rustToolchain
+              pkgs.cargo
+              pkgs.pkg-config
+              pkgs.openssl
+              pkgs.protobuf
+              pkgs.cmake
+              pkgs.clang
+              pkgs.llvmPackages.libclang
+              pkgs.zlib
+              pkgs.curl
+              pkgs.stdenv.cc
+            ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.glibc.dev ];
+
+            text = ''
+              set -euo pipefail
+              SRC=${self}
+              WORK="$(mktemp -d)"
+              trap 'rm -rf "$WORK"' EXIT
+
+              # build outside the store so cargo can write artifacts
+              cp -R "$SRC"/* "$WORK"
+              chmod -R u+w "$WORK"
+              cd "$WORK"
+
+              export OPENSSL_NO_VENDOR=1
+              export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+              export DYLD_LIBRARY_PATH="${pkgs.llvmPackages.libclang.lib}/lib"''${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}
+              export LD_LIBRARY_PATH="${pkgs.llvmPackages.libclang.lib}/lib"''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+              cargo run --release --bin ethrex -- "$@"
+            '';
+          };
+
+          default = self.packages.${system}.ethrex-run;
+        });
+
+      apps = forEachSystem (system: {
+        ethrex = {
+          type = "app";
+          program = "${self.packages.${system}.ethrex-run}/bin/ethrex-run";
+        };
+        default = self.apps.${system}.ethrex;
+      });
     };
 }
 
