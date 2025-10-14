@@ -70,6 +70,7 @@ static GETH_JOURNAL_PATH: LazyLock<&str> = LazyLock::new(|| {
         .leak()
 });
 static ETHREX_DB_PATH: LazyLock<&str> = LazyLock::new(|| Args::parse().output_dir.leak());
+static VALIDATE_ONLY: LazyLock<bool> = LazyLock::new(|| Args::parse().validate_only);
 
 pub fn main() -> eyre::Result<()> {
     let args = Args::parse();
@@ -97,214 +98,153 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let [header_rlp, body_rlp] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
     let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
 
-    info!("Inserting block header");
-    let block_hash_rlp = block_hash.encode_to_vec();
-    ethrex_db.put_cf(
-        ethrex_db.cf_handle("headers").unwrap(),
-        block_hash_rlp.clone(),
-        header_rlp,
-    )?;
-    info!("Inserting block body");
-    ethrex_db.put_cf(
-        ethrex_db.cf_handle("bodies").unwrap(),
-        block_hash_rlp,
-        &body_rlp,
-    )?;
-    info!("Inserting canonical hashes");
-    let hashes_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
-    let numbers_cf = ethrex_db.cf_handle("block_numbers").unwrap();
-    for (i, hash) in hashes.iter().rev().enumerate() {
-        let hash_rlp = hash.encode_to_vec();
+    if *VALIDATE_ONLY {
+        info!("Inserting block header");
+        let block_hash_rlp = block_hash.encode_to_vec();
         ethrex_db.put_cf(
-            hashes_cf,
-            (block_number - i as u64).to_le_bytes(),
-            hash_rlp.clone(),
+            ethrex_db.cf_handle("headers").unwrap(),
+            block_hash_rlp.clone(),
+            header_rlp,
         )?;
+        info!("Inserting block body");
         ethrex_db.put_cf(
-            numbers_cf,
-            hash_rlp,
-            (block_number - i as u64).to_le_bytes(),
+            ethrex_db.cf_handle("bodies").unwrap(),
+            block_hash_rlp,
+            &body_rlp,
         )?;
-    }
-    info!("Inserting latest block number");
-    ethrex_db.put_cf(
-        ethrex_db.cf_handle("chain_data").unwrap(),
-        4u8.encode_to_vec(),
-        block_number.to_le_bytes(),
-    )?;
-
-    let mut codes = BTreeSet::new();
-    let mut storages = BTreeMap::new();
-    let account_triedb = gethdb.triedb()?;
-    let account_trie = Trie::open(account_triedb, header.state_root);
-    let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
-    let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
-    let pathbased = gethdb.is_path_based()?;
-    if pathbased {
-        info!("Inserting account codes (path-based)");
-        let db_root_hash = keccak(gethdb.state_db.get(b"A").unwrap().unwrap());
-        let db_layer_id = u64::from_be_bytes(
-            gethdb
-                .state_db
-                .get([&b"L"[..], &db_root_hash.0[..]].concat())
-                .unwrap()
-                .unwrap()
-                .try_into()
-                .unwrap(),
-        );
-        debug_assert_ne!(db_layer_id, 0);
-        let mut account_nodes = 0;
-        for item in gethdb
-            .state_db
-            .iterator(IteratorMode::From(b"A", rocksdb::Direction::Forward))
-            .take_while(|item| {
-                item.as_ref()
-                    .map(|(k, _)| k.starts_with(b"A"))
-                    .unwrap_or_default()
-            })
-        {
-            let (k, v) = item?;
-            debug_assert!(k.len() <= 64);
-            debug_assert!(!k.is_empty());
-            debug_assert_eq!(k[0], b'A');
-            let node = Node::decode_raw(&v)?;
-            let node_hash = node.compute_hash();
-            let node_rlp = node.encode_to_vec();
-            ethrex_db.put_cf(account_trie_cf, node_hash.as_ref(), node_rlp)?;
-            if let Node::Leaf(leaf) = node {
-                let state = AccountState::decode(&leaf.value)?;
-                debug_assert_ne!(state.code_hash, H256::zero());
-                debug_assert_ne!(state.storage_root, H256::zero());
-                if state.code_hash != *EMPTY_KECCACK_HASH {
-                    codes.insert(state.code_hash);
-                }
-                if state.storage_root != *EMPTY_TRIE_HASH {
-                    // NOTE: our iterator already appends the partial path for leaves.
-                    let hashed_address = Nibbles::from_hex(k[1..].to_vec())
-                        .concat(leaf.partial)
-                        .to_bytes();
-                    debug_assert_eq!(hashed_address.len(), 32);
-                    storages.insert(hashed_address, state.storage_root);
-                }
-            }
-            account_nodes += 1;
-        }
-
-        info!("Inserting storage tries (path-based)");
-        let mut storage_nodes = 0;
-        for item in gethdb
-            .state_db
-            .iterator(IteratorMode::From(b"O", rocksdb::Direction::Forward))
-            .take_while(|item| {
-                item.as_ref()
-                    .map(|(k, _)| k.starts_with(b"O"))
-                    .unwrap_or_default()
-            })
-        {
-            let (k, v) = item?;
-            let node = Node::decode_raw(&v)?;
-            let node_hash = node.compute_hash();
-            let node_rlp = node.encode_to_vec();
+        info!("Inserting canonical hashes");
+        let hashes_cf = ethrex_db.cf_handle("canonical_block_hashes").unwrap();
+        let numbers_cf = ethrex_db.cf_handle("block_numbers").unwrap();
+        for (i, hash) in hashes.iter().rev().enumerate() {
+            let hash_rlp = hash.encode_to_vec();
             ethrex_db.put_cf(
-                storages_cf,
-                [&k[1..33], node_hash.as_ref()].concat(),
-                node_rlp,
+                hashes_cf,
+                (block_number - i as u64).to_le_bytes(),
+                hash_rlp.clone(),
             )?;
-            storage_nodes += 1;
+            ethrex_db.put_cf(
+                numbers_cf,
+                hash_rlp,
+                (block_number - i as u64).to_le_bytes(),
+            )?;
         }
-        info!("Applying Diff Layers");
-        let mut diffs = BTreeMap::new();
-        // TODO: the difflayers may also be stores in the DB with key "TrieJournal".
-        // We should check there as well, possibly first.
-        // TODO: check why disklayer is also journaled and whether or not we need
-        // to do something about it.
-        // TODO: refactor all of this decoding.
-        let mut journal = Vec::new();
-        File::open(*GETH_JOURNAL_PATH)?.read_to_end(&mut journal)?;
-        let (version, mut rest) = u64::decode_unfinished(&journal)?;
-        assert_eq!(version, 3);
-        let disk_root;
-        (disk_root, rest) = H256::decode_unfinished(rest)?;
-        assert_eq!(disk_root, db_root_hash);
-        // Decode disk layer
-        // Seems redundant, but disk layer stores its root again
-        let disk_layer_root;
-        (disk_layer_root, rest) = H256::decode_unfinished(rest)?;
-        assert_eq!(disk_layer_root, disk_root);
-        let disk_layer_id;
-        (disk_layer_id, rest) = u64::decode_unfinished(rest)?;
-        // FIXME: geth only enforces disk_layer_id <= db_layer_id
-        // Not sure if inequality might be actually valid
-        assert_eq!(disk_layer_id, db_layer_id);
-        let mut is_list;
-        // TODO: check if we need to use the disk layer nodes, shouldn't
-        // it be always empty given it's supposed to match the DB?
-        // Maybe it's mostly for unclean shutdown?
-        let _disk_nodes_pl;
-        (is_list, _disk_nodes_pl, rest) = decode_rlp_item(rest)?;
-        assert!(is_list);
-        // Ignore kv field until we use snapshots
-        // Raw storage key flag
-        (_, rest) = bool::decode_unfinished(rest)?;
-        // Accounts
-        (is_list, _, rest) = decode_rlp_item(rest)?;
-        assert!(is_list);
-        // Storages
-        (is_list, _, rest) = decode_rlp_item(rest)?;
-        assert!(is_list);
-        // Decode diff layers
-        loop {
-            let (difflayer_root, difflayer_block, difflayer_nodes_pl);
-            info!(rest = rest.len(), "Starting loop");
-            (difflayer_root, rest) = H256::decode_unfinished(rest)?;
-            (difflayer_block, rest) = u64::decode_unfinished(rest)?;
-            info!(
-                difflayer_block,
-                difflayer_root = format!(
-                    "{:032x}{:032x}",
-                    u128::from_be_bytes(difflayer_root.0[..16].try_into().unwrap(),),
-                    u128::from_be_bytes(difflayer_root.0[16..].try_into().unwrap())
-                ),
-                "Decoded difflayer header"
-            );
-            // difflayer_nodes encoding:
-            // 1. nodeSet ([]journalNodes)
-            // 2. origin ([]journalNodes)
-            // journalNodes = (owner_hash (H256::zero() means account trie), []journalNode)
-            // journalNode = (path, node)
+        info!("Inserting latest block number");
+        ethrex_db.put_cf(
+            ethrex_db.cf_handle("chain_data").unwrap(),
+            4u8.encode_to_vec(),
+            block_number.to_le_bytes(),
+        )?;
 
-            (is_list, difflayer_nodes_pl, rest) = decode_rlp_item(rest)?;
-            assert!(is_list);
-            // Now we can decode the actual nodes
-            let mut remaining_nodes = difflayer_nodes_pl;
-            let mut journal_node;
-            while !remaining_nodes.is_empty() {
-                (is_list, journal_node, remaining_nodes) = decode_rlp_item(remaining_nodes)?;
-                assert!(is_list);
-                let (owner, nodes) = H256::decode_unfinished(journal_node)?;
-                let (is_list, mut node_list, after) = decode_rlp_item(nodes)?;
-                assert!(is_list);
-                assert!(after.is_empty());
-                while !node_list.is_empty() {
-                    let (is_list, pathnode, path, node);
-                    (is_list, pathnode, node_list) = decode_rlp_item(node_list)?;
-                    assert!(is_list);
-                    (path, node) = decode_bytes(pathnode)?;
-                    let (node, after) = decode_bytes(node)?;
-                    assert!(after.is_empty());
-                    let node = (!node.is_empty()).then(|| Node::decode_raw(node).unwrap());
-                    diffs.insert((owner.0, path.to_vec()), node);
+        let mut codes = BTreeSet::new();
+        let mut storages = BTreeMap::new();
+        let account_triedb = gethdb.triedb()?;
+        let account_trie = Trie::open(account_triedb, header.state_root);
+        let account_trie_cf = ethrex_db.cf_handle("state_trie_nodes").unwrap();
+        let storages_cf = ethrex_db.cf_handle("storage_tries_nodes").unwrap();
+        let pathbased = gethdb.is_path_based()?;
+        if pathbased {
+            info!("Inserting account codes (path-based)");
+            let db_root_hash = keccak(gethdb.state_db.get(b"A").unwrap().unwrap());
+            let db_layer_id = u64::from_be_bytes(
+                gethdb
+                    .state_db
+                    .get([&b"L"[..], &db_root_hash.0[..]].concat())
+                    .unwrap()
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            );
+            debug_assert_ne!(db_layer_id, 0);
+            let mut account_nodes = 0;
+            for item in gethdb
+                .state_db
+                .iterator(IteratorMode::From(b"A", rocksdb::Direction::Forward))
+                .take_while(|item| {
+                    item.as_ref()
+                        .map(|(k, _)| k.starts_with(b"A"))
+                        .unwrap_or_default()
+                })
+            {
+                let (k, v) = item?;
+                debug_assert!(k.len() <= 64);
+                debug_assert!(!k.is_empty());
+                debug_assert_eq!(k[0], b'A');
+                let node = Node::decode_raw(&v)?;
+                let node_hash = node.compute_hash();
+                let node_rlp = node.encode_to_vec();
+                ethrex_db.put_cf(account_trie_cf, node_hash.as_ref(), node_rlp)?;
+                if let Node::Leaf(leaf) = node {
+                    let state = AccountState::decode(&leaf.value)?;
+                    debug_assert_ne!(state.code_hash, H256::zero());
+                    debug_assert_ne!(state.storage_root, H256::zero());
+                    if state.code_hash != *EMPTY_KECCACK_HASH {
+                        codes.insert(state.code_hash);
+                    }
+                    if state.storage_root != *EMPTY_TRIE_HASH {
+                        // NOTE: our iterator already appends the partial path for leaves.
+                        let hashed_address = Nibbles::from_hex(k[1..].to_vec())
+                            .concat(leaf.partial)
+                            .to_bytes();
+                        debug_assert_eq!(hashed_address.len(), 32);
+                        storages.insert(hashed_address, state.storage_root);
+                    }
                 }
+                account_nodes += 1;
             }
-            // Check if it has origin nodes, we ignore them
-            let (has_origin, _, next) = decode_rlp_item(rest)?;
-            if has_origin {
-                rest = next;
+
+            info!("Inserting storage tries (path-based)");
+            let mut storage_nodes = 0;
+            for item in gethdb
+                .state_db
+                .iterator(IteratorMode::From(b"O", rocksdb::Direction::Forward))
+                .take_while(|item| {
+                    item.as_ref()
+                        .map(|(k, _)| k.starts_with(b"O"))
+                        .unwrap_or_default()
+                })
+            {
+                let (k, v) = item?;
+                let node = Node::decode_raw(&v)?;
+                let node_hash = node.compute_hash();
+                let node_rlp = node.encode_to_vec();
+                ethrex_db.put_cf(
+                    storages_cf,
+                    [&k[1..33], node_hash.as_ref()].concat(),
+                    node_rlp,
+                )?;
+                storage_nodes += 1;
             }
-            // assert!(is_list);
-            // difflayer_kvs encoding:
-            // 1. stateSet ([]Storage)
-            // 2. origin ([]Storage)
+            info!("Applying Diff Layers");
+            let mut diffs = BTreeMap::new();
+            // TODO: the difflayers may also be stores in the DB with key "TrieJournal".
+            // We should check there as well, possibly first.
+            // TODO: check why disklayer is also journaled and whether or not we need
+            // to do something about it.
+            // TODO: refactor all of this decoding.
+            let mut journal = Vec::new();
+            File::open(*GETH_JOURNAL_PATH)?.read_to_end(&mut journal)?;
+            let (version, mut rest) = u64::decode_unfinished(&journal)?;
+            assert_eq!(version, 3);
+            let disk_root;
+            (disk_root, rest) = H256::decode_unfinished(rest)?;
+            assert_eq!(disk_root, db_root_hash);
+            // Decode disk layer
+            // Seems redundant, but disk layer stores its root again
+            let disk_layer_root;
+            (disk_layer_root, rest) = H256::decode_unfinished(rest)?;
+            assert_eq!(disk_layer_root, disk_root);
+            let disk_layer_id;
+            (disk_layer_id, rest) = u64::decode_unfinished(rest)?;
+            // FIXME: geth only enforces disk_layer_id <= db_layer_id
+            // Not sure if inequality might be actually valid
+            assert_eq!(disk_layer_id, db_layer_id);
+            let mut is_list;
+            // TODO: check if we need to use the disk layer nodes, shouldn't
+            // it be always empty given it's supposed to match the DB?
+            // Maybe it's mostly for unclean shutdown?
+            let _disk_nodes_pl;
+            (is_list, _disk_nodes_pl, rest) = decode_rlp_item(rest)?;
+            assert!(is_list);
             // Ignore kv field until we use snapshots
             // Raw storage key flag
             (_, rest) = bool::decode_unfinished(rest)?;
@@ -314,110 +254,166 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             // Storages
             (is_list, _, rest) = decode_rlp_item(rest)?;
             assert!(is_list);
-            // Check it has origin kvs, we ignore them
-            let (has_origin, _, next) = decode_rlp_item(rest)?;
-            if has_origin {
+            // Decode diff layers
+            loop {
+                let (difflayer_root, difflayer_block, difflayer_nodes_pl);
+                info!(rest = rest.len(), "Starting loop");
+                (difflayer_root, rest) = H256::decode_unfinished(rest)?;
+                (difflayer_block, rest) = u64::decode_unfinished(rest)?;
+                info!(
+                    difflayer_block,
+                    difflayer_root = format!(
+                        "{:032x}{:032x}",
+                        u128::from_be_bytes(difflayer_root.0[..16].try_into().unwrap(),),
+                        u128::from_be_bytes(difflayer_root.0[16..].try_into().unwrap())
+                    ),
+                    "Decoded difflayer header"
+                );
+                // difflayer_nodes encoding:
+                // 1. nodeSet ([]journalNodes)
+                // 2. origin ([]journalNodes)
+                // journalNodes = (owner_hash (H256::zero() means account trie), []journalNode)
+                // journalNode = (path, node)
+
+                (is_list, difflayer_nodes_pl, rest) = decode_rlp_item(rest)?;
+                assert!(is_list);
+                // Now we can decode the actual nodes
+                let mut remaining_nodes = difflayer_nodes_pl;
+                let mut journal_node;
+                while !remaining_nodes.is_empty() {
+                    (is_list, journal_node, remaining_nodes) = decode_rlp_item(remaining_nodes)?;
+                    assert!(is_list);
+                    let (owner, nodes) = H256::decode_unfinished(journal_node)?;
+                    let (is_list, mut node_list, after) = decode_rlp_item(nodes)?;
+                    assert!(is_list);
+                    assert!(after.is_empty());
+                    while !node_list.is_empty() {
+                        let (is_list, pathnode, path, node);
+                        (is_list, pathnode, node_list) = decode_rlp_item(node_list)?;
+                        assert!(is_list);
+                        (path, node) = decode_bytes(pathnode)?;
+                        let (node, after) = decode_bytes(node)?;
+                        assert!(after.is_empty());
+                        let node = (!node.is_empty()).then(|| Node::decode_raw(node).unwrap());
+                        diffs.insert((owner.0, path.to_vec()), node);
+                    }
+                }
+                // Check if it has origin nodes, we ignore them
+                let (has_origin, _, next) = decode_rlp_item(rest)?;
+                if has_origin {
+                    rest = next;
+                }
+                // assert!(is_list);
+                // difflayer_kvs encoding:
+                // 1. stateSet ([]Storage)
+                // 2. origin ([]Storage)
+                // Ignore kv field until we use snapshots
+                // Raw storage key flag
+                (_, rest) = bool::decode_unfinished(rest)?;
                 // Accounts
-                rest = next;
+                (is_list, _, rest) = decode_rlp_item(rest)?;
+                assert!(is_list);
                 // Storages
                 (is_list, _, rest) = decode_rlp_item(rest)?;
                 assert!(is_list);
-            }
-
-            if difflayer_root == header.state_root {
-                info!("found root");
-                assert!(
-                    difflayer_block <= block_number,
-                    "state root can never go back in time"
-                );
-                break;
-            }
-        }
-        const ZERO: [u8; 32] = [0u8; 32];
-        for ((owner, _path), node) in diffs {
-            match (owner, node) {
-                (ZERO, Some(node)) => ethrex_db.put_cf(
-                    account_trie_cf,
-                    node.compute_hash().as_ref(),
-                    node.encode_to_vec(),
-                )?,
-                (hashed_address, Some(node)) => ethrex_db.put_cf(
-                    storages_cf,
-                    [hashed_address, node.compute_hash().finalize().0].concat(),
-                    node.encode_to_vec(),
-                )?,
-                (_, None) => (), // Don't need to delete until path-based ethrex
-            }
-        }
-        info!(account_nodes, storage_nodes, "All nodes inserted");
-    } else {
-        info!("Inserting account trie (hash-based)");
-        for (path, node) in account_trie.into_iter() {
-            let hash = node.compute_hash();
-            ethrex_db.put_cf(account_trie_cf, hash, node.encode_to_vec())?;
-            if let Node::Leaf(leaf) = node {
-                let state = AccountState::decode(&leaf.value)?;
-                if state.code_hash != *EMPTY_KECCACK_HASH {
-                    codes.insert(state.code_hash);
+                // Check it has origin kvs, we ignore them
+                let (has_origin, _, next) = decode_rlp_item(rest)?;
+                if has_origin {
+                    // Accounts
+                    rest = next;
+                    // Storages
+                    (is_list, _, rest) = decode_rlp_item(rest)?;
+                    assert!(is_list);
                 }
-                if state.storage_root != *EMPTY_TRIE_HASH {
-                    // NOTE: our iterator already appends the partial path for leaves.
-                    let hashed_address = path.to_bytes();
-                    debug_assert_eq!(hashed_address.len(), 32);
-                    storages.insert(hashed_address, state.storage_root);
+
+                if difflayer_root == header.state_root {
+                    info!("found root");
+                    assert!(
+                        difflayer_block <= block_number,
+                        "state root can never go back in time"
+                    );
+                    break;
                 }
             }
-        }
-
-        info!("Iterating storage tries (hash-based)");
-        for (hashed_address, storage_root) in &storages {
-            let storage_triedb = gethdb.triedb()?;
-            let storage_trie = Trie::open(storage_triedb, *storage_root);
-            for (_path, node) in storage_trie.into_iter() {
+            const ZERO: [u8; 32] = [0u8; 32];
+            for ((owner, _path), node) in diffs {
+                match (owner, node) {
+                    (ZERO, Some(node)) => ethrex_db.put_cf(
+                        account_trie_cf,
+                        node.compute_hash().as_ref(),
+                        node.encode_to_vec(),
+                    )?,
+                    (hashed_address, Some(node)) => ethrex_db.put_cf(
+                        storages_cf,
+                        [hashed_address, node.compute_hash().finalize().0].concat(),
+                        node.encode_to_vec(),
+                    )?,
+                    (_, None) => (), // Don't need to delete until path-based ethrex
+                }
+            }
+            info!(account_nodes, storage_nodes, "All nodes inserted");
+        } else {
+            info!("Inserting account trie (hash-based)");
+            for (path, node) in account_trie.into_iter() {
                 let hash = node.compute_hash();
-                let key = [&hashed_address[..], hash.as_ref()].concat();
-                debug_assert_eq!(key.len(), 64);
-                ethrex_db.put_cf(storages_cf, key, node.encode_to_vec())?;
+                ethrex_db.put_cf(account_trie_cf, hash, node.encode_to_vec())?;
+                if let Node::Leaf(leaf) = node {
+                    let state = AccountState::decode(&leaf.value)?;
+                    if state.code_hash != *EMPTY_KECCACK_HASH {
+                        codes.insert(state.code_hash);
+                    }
+                    if state.storage_root != *EMPTY_TRIE_HASH {
+                        // NOTE: our iterator already appends the partial path for leaves.
+                        let hashed_address = path.to_bytes();
+                        debug_assert_eq!(hashed_address.len(), 32);
+                        storages.insert(hashed_address, state.storage_root);
+                    }
+                }
+            }
+
+            info!("Iterating storage tries (hash-based)");
+            for (hashed_address, storage_root) in &storages {
+                let storage_triedb = gethdb.triedb()?;
+                let storage_trie = Trie::open(storage_triedb, *storage_root);
+                for (_path, node) in storage_trie.into_iter() {
+                    let hash = node.compute_hash();
+                    let key = [&hashed_address[..], hash.as_ref()].concat();
+                    debug_assert_eq!(key.len(), 64);
+                    ethrex_db.put_cf(storages_cf, key, node.encode_to_vec())?;
+                }
             }
         }
-    }
-    info!("Inserting account codes");
+        info!("Inserting account codes");
 
-    let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
-    for code_hash in &codes {
-        let code = gethdb
-            .read_code(code_hash.0)?
-            .ok_or_else(|| eyre::eyre!("missing code hash"))?;
-        ethrex_db.put_cf(
-            code_cf,
-            code_hash,
-            <[u8] as RLPEncode>::encode_to_vec(&code),
-        )?;
+        let code_cf = ethrex_db.cf_handle("account_codes").unwrap();
+        for code_hash in &codes {
+            let code = gethdb
+                .read_code(code_hash.0)?
+                .ok_or_else(|| eyre::eyre!("missing code hash"))?;
+            ethrex_db.put_cf(
+                code_cf,
+                code_hash,
+                <[u8] as RLPEncode>::encode_to_vec(&code),
+            )?;
+        }
+        info!("Compacting Ethrex DB");
+        ethrex_db.flush_wal(true)?;
+        ethrex_db.flush()?;
+        ethrex_db.compact_range(Option::<[u8; 0]>::None, Option::<[u8; 0]>::None);
+        let migration_time = migration_start.elapsed().as_secs_f64();
+        info!("Migration complete in {migration_time} seconds");
+        std::mem::drop(ethrex_db);
     }
-    info!("Compacting Ethrex DB");
-    ethrex_db.flush_wal(true)?;
-    ethrex_db.flush()?;
-    ethrex_db.compact_range(Option::<[u8; 0]>::None, Option::<[u8; 0]>::None);
-    let migration_time = migration_start.elapsed().as_secs_f64();
-    info!("Migration complete in {migration_time} seconds");
-    std::mem::drop(ethrex_db);
 
     if cfg!(debug_assertions) {
         // Run validations
         info!("Running validations");
         let store =
             ethrex_storage::Store::new(*ETHREX_DB_PATH, ethrex_storage::EngineType::RocksDB)?;
-        info!("Validating codes");
-        for code_hash in codes {
-            let code = store
-                .get_account_code(code_hash)?
-                .expect("inserted code not found");
-            assert_eq!(code_hash, keccak(code));
-        }
         let state_root = header.state_root;
         info!("Validating state trie");
         store.open_locked_state_trie(state_root)?.validate()?;
-        info!("Validating storage tries");
+        info!("Validating storage tries and codes");
         for (hashed_address, account_state) in store
             .iter_accounts(state_root)
             .expect("Couldn't open state trie")
@@ -425,6 +421,10 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
             store
                 .open_locked_storage_trie(hashed_address, account_state.storage_root)?
                 .validate()?;
+            let code = store
+                .get_account_code(account_state.code_hash)?
+                .expect("inserted code not found");
+            assert_eq!(account_state.code_hash, keccak(code));
         }
         // assert_eq!(storages.len(), with_storage_count);
         info!("Validating latest block");
@@ -757,4 +757,11 @@ struct Args {
         help = "Receives the name of the directory where the State Dump will be written to."
     )]
     pub output_dir: String,
+    #[arg(
+        short = 'v',
+        long = "validate_only",
+        help = "If true, runs only validations on Ethrex DB",
+        default_value = "false"
+    )]
+    pub validate_only: bool,
 }
