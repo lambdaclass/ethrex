@@ -12,10 +12,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
-    types::{
-        AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind,
-        transaction,
-    },
+    types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
 use ethrex_rlp::encode::RLPEncode;
@@ -367,9 +364,7 @@ impl RpcHandler for CreateAccessListRequest {
 
 impl RpcHandler for GetRawTransaction {
     fn parse(params: Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams(format!(
                 "Expected one param and {} were provided",
@@ -377,17 +372,17 @@ impl RpcHandler for GetRawTransaction {
             )));
         };
 
-        let transaction_hash = serde_json::from_value(params.pop().ok_or(RpcErr::BadParams(
-            format!("Expected one param and {} were provided", params.len()),
-        ))?)?;
+        let transaction_hash: H256 =
+            serde_json::from_value(params.pop().ok_or(RpcErr::BadParams(format!(
+                "Expected one param and {} were provided",
+                params.len()
+            )))?)?;
 
-        if !(transaction_hash as String).starts_with("0x") {
+        if !transaction_hash.to_string().starts_with("0x") {
             return Err(RpcErr::BadHexFormat(0));
         }
 
-        Ok(GetRawTransaction {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
-        })
+        Ok(GetRawTransaction { transaction_hash })
     }
 
     async fn handle(self, context: RpcApiContext) -> Result<Value, RpcErr> {
