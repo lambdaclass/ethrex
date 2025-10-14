@@ -1,4 +1,4 @@
-use crate::rlpx::error::RLPxError;
+use crate::rlpx::error::PeerConnectionError;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -19,11 +19,14 @@ pub struct BlockRangeUpdate {
 }
 
 impl BlockRangeUpdate {
-    pub async fn new(storage: &Store) -> Result<Self, RLPxError> {
+    pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
         let latest_block = storage.get_latest_block_number().await?;
-        let block_header = storage
-            .get_block_header(latest_block)?
-            .ok_or(RLPxError::NotFound(format!("Block {latest_block}")))?;
+        let block_header =
+            storage
+                .get_block_header(latest_block)?
+                .ok_or(PeerConnectionError::NotFound(format!(
+                    "Block {latest_block}"
+                )))?;
         let latest_block_hash = block_header.hash();
 
         Ok(Self {
@@ -34,9 +37,9 @@ impl BlockRangeUpdate {
     }
 
     /// Validates an incoming BlockRangeUpdate from a peer
-    pub fn validate(&self) -> Result<(), RLPxError> {
+    pub fn validate(&self) -> Result<(), PeerConnectionError> {
         if self.earliest_block > self.latest_block || self.latest_block_hash.is_zero() {
-            return Err(RLPxError::InvalidBlockRangeUpdate);
+            return Err(PeerConnectionError::InvalidBlockRangeUpdate);
         }
         Ok(())
     }
