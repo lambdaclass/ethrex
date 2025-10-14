@@ -98,7 +98,7 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let [header_rlp, body_rlp] = gethdb.read_block_from_gethdb(block_number, block_hash)?;
     let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
 
-    if *VALIDATE_ONLY {
+    if !*VALIDATE_ONLY {
         info!("Inserting block header");
         let block_hash_rlp = block_hash.encode_to_vec();
         ethrex_db.put_cf(
