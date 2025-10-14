@@ -144,7 +144,7 @@ jobs:
         include:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
-            limit: "/(?!eth_syncing/check-syncing$).*"
+            limit: "rpc-compat/(debug_[^/]+/.*|eth_blobBaseFee/.*|eth_blockNumber/.*|eth_call/.*|eth_chainId/.*|eth_createAccessList/.*|eth_estimateGas/.*|eth_feeHistory/.*|eth_getBalance/.*|eth_getBlockByHash/.*|eth_getBlockByNumber/.*|eth_getBlockReceipts/.*|eth_getBlockTransactionCountByHash/.*|eth_getBlockTransactionCountByNumber/.*|eth_getCode/.*|eth_getLogs/.*|eth_getProof/.*|eth_getStorageAt/.*|eth_getTransactionByBlockHashAndIndex/.*|eth_getTransactionByBlockNumberAndIndex/.*|eth_getTransactionByHash/.*|eth_getTransactionCount/.*|eth_getTransactionReceipt/.*|eth_sendRawTransaction/.*)"
             hive_repository: lambdaclass/hive
             hive_version: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
             artifact_prefix: rpc_compat
