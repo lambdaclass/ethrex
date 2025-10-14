@@ -243,7 +243,9 @@ impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
             "{0}({1}:{2})",
-            self.public_key, self.ip, self.tcp_port
+            self.node_id(),
+            self.ip,
+            self.tcp_port
         ))
     }
 }
