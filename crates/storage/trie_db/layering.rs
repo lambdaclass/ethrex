@@ -5,7 +5,7 @@ use std::{collections::HashMap, sync::Arc, sync::RwLock};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
 // TODO: make this configurable or use finalized hash for this
-const COMMIT_THRESHOLD: usize = 128;
+const COMMIT_THRESHOLD: usize = 5124;
 
 #[derive(Debug)]
 struct TrieLayer {
