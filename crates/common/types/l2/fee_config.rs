@@ -23,5 +23,5 @@ pub struct OperatorFeeConfig {
     #[rkyv(with=H160Wrapper)]
     pub operator_fee_vault: Address,
     #[rkyv(with=U256Wrapper)]
-    pub operator_fee: U256,
+    pub operator_fee_per_gas: u64,
 }

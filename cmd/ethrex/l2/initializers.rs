@@ -11,7 +11,7 @@ use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::U256;
 use ethrex_common::types::fee_config::{FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
-use ethrex_l2::SequencerConfig;
+use ethrex_l2::{SequencerConfig, sequencer};
 use ethrex_l2_sdk::get_operator_fee;
 use ethrex_p2p::{
     discv4::peer_table::PeerTable,
@@ -306,42 +306,19 @@ pub async fn get_operator_fee_config(
         return Ok(None);
     }
 
-    // Fetch operator fee from the on-chain proposer contract
-    let operator_fee = fetch_operator_fee(
-        sequencer_opts.eth_opts.rpc_url.clone(),
-        sequencer_opts.committer_opts.on_chain_proposer_address,
-    )
-    .await?;
+    let operator_fee = sequencer_opts.block_producer_opts.operator_fee_per_gas;
 
-    // Check if operator fee vault address is provided in the config
     let operator_address = sequencer_opts
         .block_producer_opts
         .operator_fee_vault_address;
 
-    let operator_fee_config = if let Some(address) = operator_address {
+    let operator_fee_config = if let (Some(address), Some(fee)) = (operator_address, operator_fee) {
         Some(OperatorFeeConfig {
-            operator_fee,
+            operator_fee_per_gas: fee,
             operator_fee_vault: address,
         })
     } else {
-        if !operator_fee.is_zero() {
-            error!(
-                "The operator fee is set on-chain, but no operator fee vault address is provided in the configuration."
-            );
-            return Err(eyre::eyre!("Missing operator fee vault address"));
-        }
         None
     };
     Ok(operator_fee_config)
-}
-
-pub async fn fetch_operator_fee(
-    rpc_urls: Vec<String>,
-    on_chain_proposer_address: Option<Address>,
-) -> Result<U256, EthClientError> {
-    let contract_address = on_chain_proposer_address.ok_or(EthClientError::Custom(
-        "on_chain_proposer_address not set in config".to_string(),
-    ))?;
-    let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
-    get_operator_fee(&eth_client, contract_address).await
 }

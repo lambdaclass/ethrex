@@ -45,7 +45,7 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
-ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE?=0x3B9ACA00 \
+ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS?=0x3B9ACA00 \
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -95,8 +95,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json \
-	--operator-fee ${ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE}
+	--genesis-l2-path ../../fixtures/genesis/l2.json
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts
@@ -136,6 +135,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
 	--block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
 	--block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+	--block-producer.operator-fee ${ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS} \
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}

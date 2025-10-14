@@ -150,7 +150,7 @@ fn deduct_operator_fee(
     };
     let sender_address = vm.env.origin;
 
-    vm.decrease_account_balance(sender_address, fee_config.operator_fee)
+    vm.decrease_account_balance(sender_address, fee_config.operator_fee_per_gas)
         .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
     Ok(())
 }
@@ -182,6 +182,9 @@ fn pay_operator_fee(
         return Ok(());
     };
 
-    vm.increase_account_balance(fee_config.operator_fee_vault, fee_config.operator_fee)?;
+    vm.increase_account_balance(
+        fee_config.operator_fee_vault,
+        fee_config.operator_fee_per_gas,
+    )?;
     Ok(())
 }

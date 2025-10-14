@@ -333,14 +333,6 @@ pub struct DeployerOptions {
         help = "The L1 address of the L2 native token (e.g., USDC, USDT, DAI, etc. Use address(0) for ETH)"
     )]
     pub native_token_l1_address: Address,
-    #[arg(
-        long,
-        value_name = "UINT256",
-        env = "ETHREX_ON_CHAIN_PROPOSER_OPERATOR_FEE",
-        help_heading = "Deployer options",
-        help = "Fee that the operator will receive for each transaction included in a block."
-    )]
-    pub operator_fee: U256,
 }
 
 impl Default for DeployerOptions {
@@ -424,7 +416,6 @@ impl Default for DeployerOptions {
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
             native_token_l1_address: H160::zero(),
-            operator_fee: U256::zero(),
         }
     }
 }
@@ -504,7 +495,7 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 ));
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256,uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -859,7 +850,6 @@ async fn initialize_contracts(
                 Value::Address(opts.proof_sender_l1_address),
             ]),
             Value::Uint(genesis.config.chain_id.into()),
-            Value::Uint(opts.operator_fee),
         ];
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =

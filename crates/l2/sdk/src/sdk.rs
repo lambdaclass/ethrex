@@ -953,13 +953,6 @@ pub async fn get_last_verified_batch(
     _call_u64_variable(client, b"lastVerifiedBatch()", on_chain_proposer_address).await
 }
 
-pub async fn get_operator_fee(
-    client: &EthClient,
-    on_chain_proposer_address: Address,
-) -> Result<U256, EthClientError> {
-    _call_u256_variable(client, b"OPERATOR_FEE()", on_chain_proposer_address).await
-}
-
 pub async fn get_sp1_vk(
     client: &EthClient,
     on_chain_proposer_address: Address,
@@ -1023,18 +1016,6 @@ async fn _call_u64_variable(
         .map_err(|_| {
             EthClientError::Custom("Failed to convert from_hex_string_to_u256()".to_owned())
         })?;
-
-    Ok(value)
-}
-
-async fn _call_u256_variable(
-    client: &EthClient,
-    selector: &[u8],
-    contract_address: Address,
-) -> Result<U256, EthClientError> {
-    let hex_string = _generic_call(client, selector, contract_address).await?;
-
-    let value = U256::from_str_radix(hex_string.trim_start_matches("0x"), 16)?;
 
     Ok(value)
 }

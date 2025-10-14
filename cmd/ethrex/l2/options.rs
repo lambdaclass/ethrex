@@ -399,10 +399,20 @@ pub struct BlockProducerOptions {
     #[arg(
         long = "block-producer.operator-fee-vault-address",
         value_name = "ADDRESS",
+        requires = "operator_fee_per_gas",
         env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS",
         help_heading = "Block producer options"
     )]
     pub operator_fee_vault_address: Option<Address>,
+    #[arg(
+        long,
+        value_name = "UINT256",
+        env = "ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS",
+        requires = "operator_fee_vault_address",
+        help_heading = "Block producer options",
+        help = "Fee per gas that the operator will receive for each transaction included in a block."
+    )]
+    pub operator_fee_per_gas: Option<U256>,
     #[arg(
         long,
         default_value = "2",
@@ -433,6 +443,7 @@ impl Default for BlockProducerOptions {
             ),
             base_fee_vault_address: None,
             operator_fee_vault_address: None,
+            operator_fee_per_gas: None,
             elasticity_multiplier: 2,
             block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }

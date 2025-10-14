@@ -5,11 +5,11 @@ use crate::{
     utils::RpcErr,
 };
 
-pub struct GetFeeVaultAddress;
+pub struct GetBaseFeeVaultAddress;
 
-impl RpcHandler for GetFeeVaultAddress {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<GetFeeVaultAddress, RpcErr> {
-        Ok(GetFeeVaultAddress)
+impl RpcHandler for GetBaseFeeVaultAddress {
+    fn parse(_params: &Option<Vec<Value>>) -> Result<GetBaseFeeVaultAddress, RpcErr> {
+        Ok(GetBaseFeeVaultAddress)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
