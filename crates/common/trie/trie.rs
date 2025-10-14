@@ -461,23 +461,14 @@ impl Trie {
         // Cap: each level might insert up to 16 extra nodes, and we have
         // on average 8 levels, so this should be the only alloc for this
         // vec in most cases.
-        let mut hashes_stack = Vec::with_capacity(1024);
-        let mut nodes_stack = Vec::with_capacity(1024);
+        if self.root.compute_hash().finalize() == *EMPTY_TRIE_HASH {
+            return Ok(());
+        }
+        let mut hashnode_stack = Vec::with_capacity(1024);
         let root_hash = self.root.compute_hash();
         let root_node = self.db.get(root_hash)?;
-        hashes_stack.push(root_hash);
-        nodes_stack.push(root_node);
-        while let (Some(node), Some(hash)) = (nodes_stack.pop(), hashes_stack.pop()) {
-            if hash.as_ref().len() < 32 {
-                // Inline node
-                continue;
-            }
-            let Some(node) = node else {
-                if hash.finalize() != *EMPTY_TRIE_HASH {
-                    return Err(TrieError::InconsistentTree);
-                }
-                return Ok(());
-            };
+        hashes_stack.push((root_hash, root_node.ok_or(TrieError::InconsistentTree)?);
+        while let Some((node, hash)) = hashnode_stack.pop() {
             let decoded = Node::decode(&node)?;
             if hash != decoded.compute_hash() {
                 return Err(TrieError::InconsistentTree);
@@ -486,17 +477,16 @@ impl Trie {
                 Node::Branch(branch) => {
                     for c in branch.choices {
                         let c = c.compute_hash();
-                        if c.as_ref().is_empty() {
+                        if c.as_ref().len() != 32 {
                             continue;
                         }
-                        hashes_stack.push(c);
-                        nodes_stack.push(self.db.get(c)?);
+                        // TODO: we should extend TrieDB to support fetching many nodes per call.
+                        hashnode_stack.push((c, self.db.get(c)?.unwrap_or_default()));
                     }
                 }
                 Node::Extension(ext) => {
                     let c = ext.child.compute_hash();
-                    hashes_stack.push(c);
-                    nodes_stack.push(self.db.get(c)?);
+                    hashnode_stack.push((c, self.db.get(c)?.unwrap_or_default()));
                 }
                 Node::Leaf(_leaf) => (), // Nothing to do, already checked hash
             }
