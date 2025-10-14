@@ -236,7 +236,7 @@ impl PayloadBuildContext {
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash); // ok-clone: store struct fields are all arcs, so this just increases their reference count
         let vm = match blockchain_type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(vm_db)?,
+            BlockchainType::L2(fee_config) => Evm::new_for_l2(vm_db, fee_config)?,
         };
 
         Ok(PayloadBuildContext {

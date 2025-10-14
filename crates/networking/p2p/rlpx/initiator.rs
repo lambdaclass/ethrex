@@ -1,15 +1,13 @@
-use std::time::Duration;
-
+use crate::{
+    discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext,
+    rlpx::connection::server::PeerConnection,
+};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after},
 };
-
+use std::time::Duration;
 use tracing::{debug, error, info};
-
-use crate::{discv4::peer_table::PeerTableError, metrics::METRICS, network::P2PContext};
-
-use crate::rlpx::connection::server::RLPxConnection;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RLPxInitiatorError {
@@ -63,7 +61,7 @@ impl RLPxInitiator {
             .await?;
 
         for contact in contacts {
-            RLPxConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
+            PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node).await;
             METRICS.record_new_rlpx_conn_attempt().await;
         }
         Ok(())
