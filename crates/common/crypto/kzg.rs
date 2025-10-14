@@ -143,8 +143,10 @@ pub fn verify_kzg_proof(
 pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), KzgError> {
     let blob: c_kzg::Blob = (*blob).into();
 
-    let commitment =
-        c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE), &blob)?;
+    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(
+        c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE),
+        &blob,
+    )?;
     let commitment_bytes = commitment.to_bytes();
 
     let proof = c_kzg::KzgSettings::compute_blob_kzg_proof(

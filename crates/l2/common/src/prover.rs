@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::{fmt::{Debug, Display}, path::PathBuf};
+use std::{
+    fmt::{Debug, Display},
+    path::PathBuf,
+};
 
 use crate::calldata::Value;
 
@@ -65,7 +68,7 @@ impl ProverType {
 
     /// Fills the "vm_program_code" field of an AlignedVerificationData struct,
     /// used for sending a proof to Aligned Layer.
-     pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
+    pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
         match self {
             Self::RISC0 => {
                 let path = format!(

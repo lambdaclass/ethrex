@@ -758,7 +758,11 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
             .ok_or(DeployerError::InternalError(format!(
                 "missing {prover_type} vk"
             )))?;
-        read_vk(vk_path.to_str().ok_or(DeployerError::FailedToGetStringFromPath)?)
+        read_vk(
+            vk_path
+                .to_str()
+                .ok_or(DeployerError::FailedToGetStringFromPath)?,
+        )
     }
 }
 
