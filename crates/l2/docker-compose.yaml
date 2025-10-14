@@ -18,7 +18,7 @@ services:
     build:
       context: ../../
       args:
-        - BUILD_FLAGS=--features l2,gpu
+        - BUILD_FLAGS=--features l2
     volumes:
       # NOTE: DOCKER_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${DOCKER_ETHREX_WORKDIR}/contracts
@@ -71,7 +71,7 @@ services:
     build:
       context: ../../
       args:
-        - BUILD_FLAGS=--features l2,gpu
+        - BUILD_FLAGS=--features l2
     ports:
       # RPC
       - 127.0.0.1:1729:1729
@@ -116,7 +116,7 @@ services:
     build:
       context: ../../
       args:
-        - BUILD_FLAGS=--features l2,gpu
+        - BUILD_FLAGS=--features l2
     command: >
       l2 prover
       --backend exec
