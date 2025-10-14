@@ -268,7 +268,7 @@
 
             ${lib.optionalString pkgs.stdenv.isDarwin ''
               # make -liconv resolvable and frameworks available
-              export NIX_LDFLAGS="-L${pkgs.libiconv}/lib ${NIX_LDFLAGS:-}"
+              export NIX_LDFLAGS="-L${pkgs.libiconv}/lib ''${NIX_LDFLAGS:-}"
               export LIBRARY_PATH="${pkgs.libiconv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
               SYSROOT="$(xcrun --show-sdk-path 2>/dev/null || true)"
               if [ -n "$SYSROOT" ]; then
