@@ -390,7 +390,8 @@ impl Trie {
                         if child_ref.is_valid() {
                             let child_node = child_ref.get_node(db)?.ok_or_else(|| {
                                 TrieError::IntermediateNodeNotFound(
-                                    child_ref.compute_hash().finalize(),
+                                    child_ref.clone(),
+                                    branch_node.compute_hash().finalize(),
                                 )
                             })?;
                             get_node_inner(db, child_node, partial_path)
@@ -406,7 +407,8 @@ impl Trie {
                     {
                         let child_node = extension_node.child.get_node(db)?.ok_or_else(|| {
                             TrieError::IntermediateNodeNotFound(
-                                extension_node.child.compute_hash().finalize(),
+                                extension_node.child.clone(),
+                                extension_node.compute_hash().finalize(),
                             )
                         })?;
                         get_node_inner(db, child_node, partial_path)
