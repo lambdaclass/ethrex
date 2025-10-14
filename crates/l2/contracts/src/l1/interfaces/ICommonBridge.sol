@@ -87,7 +87,6 @@ interface ICommonBridge {
     /// emitted.
     /// @return the merkle root of the withdrawal logs of the given block.
     function getWithdrawalLogsMerkleRoot(
-        address chainProposer,
         uint256 batchNumber
     ) external view returns (bytes32);
 
@@ -122,7 +121,6 @@ interface ICommonBridge {
     /// was emitted.
     function claimWithdrawal(
         uint256 claimedAmount,
-        address withdrawalChainProposer,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
@@ -140,11 +138,12 @@ interface ICommonBridge {
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
-        address withdrawalChainProposer,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) external;
+
+    function sendMessage(uint256 chainId, SendValues memory message) external;
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
     function hasExpiredPrivilegedTransactions() external view returns (bool);

@@ -201,8 +201,8 @@ contract OnChainProposer is
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
-        uint256[] calldata withdrawalsLogsChainIds,
-        bytes32[] calldata withdrawalsLogsMerkleRoots,
+        bytes32 withdrawalsLogsMerkleRoot,
+        L2toL2Message[] calldata l2CrossMessages,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external override onlySequencer whenNotPaused {
@@ -219,10 +219,6 @@ contract OnChainProposer is
             lastBlockHash != bytes32(0),
             "OnChainProposer: lastBlockHash cannot be zero"
         );
-        require(
-            withdrawalsLogsChainIds.length == withdrawalsLogsMerkleRoots.length,
-            "OnChainProposer: withdrawalsLogs chain ids and merkle roots length mismatch"
-        );
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
@@ -236,13 +232,22 @@ contract OnChainProposer is
             );
         }
 
-        // TODO: Check if sharedbridge is being used.
-        for (uint256 i = 0; i < withdrawalsLogsMerkleRoots.length; i++) {
-            address chainBridge = IRouter(sharedBridgeRouter).bridge(withdrawalsLogsChainIds[i]);
-            ICommonBridge(chainBridge).publishWithdrawals(
+        if (withdrawalsLogsMerkleRoot != bytes32(0)) {
+            ICommonBridge(BRIDGE).publishWithdrawals(
                 batchNumber,
-                withdrawalsLogsMerkleRoots[i]
+                withdrawalsLogsMerkleRoot
             );
+        }
+
+        for (uint256 i = 0; i < l2CrossMessages.length; i++) {
+            L2toL2Message calldata message = l2CrossMessages[i];
+            ICommonBridge.SendValues memory sendValues = ICommonBridge.SendValues(
+                message.to,
+                message.gasLimit,
+                message.value,
+                message.data
+            );
+            ICommonBridge(BRIDGE).sendMessage(message.chainId, sendValues);
         }
 
         // Blob is published in the (EIP-4844) transaction that calls this function.
@@ -263,7 +268,7 @@ contract OnChainProposer is
             newStateRoot,
             blobVersionedHash,
             processedPrivilegedTransactionsRollingHash,
-            withdrawalsLogsMerkleRoots[0],
+            withdrawalsLogsMerkleRoot,
             lastBlockHash
         );
         emit BatchCommitted(newStateRoot);

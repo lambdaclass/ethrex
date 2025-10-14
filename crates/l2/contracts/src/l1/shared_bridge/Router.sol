@@ -18,7 +18,7 @@ contract Router is
 {
     mapping(uint256 chainId => ChainInfo) public chains;
 
-    function initilize(address owner) public initializer {
+    function initialize(address owner) public initializer {
         OwnableUpgradeable.__Ownable_init(owner);
     }
 

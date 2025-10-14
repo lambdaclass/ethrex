@@ -324,6 +324,8 @@ pub struct DeployerOptions {
         help = "Genesis data is extracted at compile time, used for development"
     )]
     pub use_compiled_genesis: bool,
+    #[arg(long = "router-address")]
+    pub router: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -406,6 +408,7 @@ impl Default for DeployerOptions {
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
             use_compiled_genesis: true,
+            router: None,
         }
     }
 }
@@ -498,6 +501,8 @@ const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(addre
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address)";
+const ROUTER_INITIALIZER_SIGNATURE: &str = "initialize(address)";
+const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address,address)";
 
 #[derive(Clone, Copy)]
 pub struct ContractAddresses {
@@ -527,9 +532,27 @@ pub async fn deploy_l1_contracts(
         Some(opts.maximum_allowed_max_fee_per_blob_gas),
     )?;
 
+    let genesis: Genesis = if opts.use_compiled_genesis {
+        serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
+    } else {
+        read_genesis_file(
+            opts.genesis_l2_path
+                .to_str()
+                .ok_or(DeployerError::FailedToGetStringFromPath)?,
+        )
+    };
+
     let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
 
-    initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
+    initialize_contracts(contract_addresses, &eth_client, &opts, &genesis, &signer).await?;
+
+    register_chain(
+        &eth_client,
+        contract_addresses,
+        genesis.config.chain_id,
+        &signer,
+    )
+    .await?;
 
     if opts.deposit_rich {
         let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
@@ -564,22 +587,28 @@ async fn deploy_contracts(
             .to_vec()
     };
 
-    info!("Deploying Router");
+    let router_address = if let Some(router) = opts.router {
+        router
+    } else {
+        info!("Deploying Router");
 
-    let bytecode = ROUTER_BYTECODE.to_vec();
-    if bytecode.is_empty() {
-        return Err(DeployerError::BytecodeNotFound);
-    }
+        let bytecode = ROUTER_BYTECODE.to_vec();
+        if bytecode.is_empty() {
+            return Err(DeployerError::BytecodeNotFound);
+        }
 
-    let router_deployment =
-        deploy_with_proxy_from_bytecode(deployer, eth_client, &bytecode, &salt).await?;
-    info!(
-        "Router deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
-        router_deployment.proxy_address,
-        router_deployment.proxy_tx_hash,
-        router_deployment.implementation_address,
-        router_deployment.implementation_tx_hash,
-    );
+        let router_deployment =
+            deploy_with_proxy_from_bytecode(deployer, eth_client, &bytecode, &salt).await?;
+        info!(
+            "Router deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+            router_deployment.proxy_address,
+            router_deployment.proxy_tx_hash,
+            router_deployment.implementation_address,
+            router_deployment.implementation_tx_hash,
+        );
+
+        router_deployment.proxy_address
+    };
 
     info!("Deploying OnChainProposer");
 
@@ -688,7 +717,7 @@ async fn deploy_contracts(
         "Contracts deployed"
     );
     Ok(ContractAddresses {
-        router: router_deployment.proxy_address,
+        router: router_address,
         on_chain_proposer_address: on_chain_proposer_deployment.proxy_address,
         bridge_address: bridge_deployment.proxy_address,
         sp1_verifier_address,
@@ -755,21 +784,12 @@ async fn initialize_contracts(
     contract_addresses: ContractAddresses,
     eth_client: &EthClient,
     opts: &DeployerOptions,
+    genesis: &Genesis,
     initializer: &Signer,
 ) -> Result<(), DeployerError> {
     trace!("Initializing contracts");
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
-
-    let genesis: Genesis = if opts.use_compiled_genesis {
-        serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
-    } else {
-        read_genesis_file(
-            opts.genesis_l2_path
-                .to_str()
-                .ok_or(DeployerError::FailedToGetStringFromPath)?,
-        )
-    };
 
     let sp1_vk = read_vk(&opts.sp1_vk_path);
     let risc0_vk = read_vk(&opts.risc0_vk_path);
@@ -834,6 +854,20 @@ async fn initialize_contracts(
         };
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
     } else {
+        if opts.router.is_none() {
+            let calldata_values = vec![Value::Address(deployer_address)];
+            let router_initialization_calldata =
+                encode_calldata(ROUTER_INITIALIZER_SIGNATURE, &calldata_values)?;
+            let initialize_tx_hash = initialize_contract(
+                contract_addresses.router,
+                router_initialization_calldata,
+                initializer,
+                eth_client,
+            )
+            .await?;
+            info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "Router initialized");
+        }
+
         // Initialize only OnChainProposer without Based config
         let calldata_values = vec![
             Value::Bool(opts.validium),
@@ -952,6 +986,32 @@ async fn initialize_contracts(
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
 
     trace!("Contracts initialized");
+    Ok(())
+}
+
+async fn register_chain(
+    eth_client: &EthClient,
+    contract_addresses: ContractAddresses,
+    chain_id: u64,
+    deployer: &Signer,
+) -> Result<(), DeployerError> {
+    let params = vec![
+        Value::Uint(U256::from(chain_id)),
+        Value::Address(contract_addresses.on_chain_proposer_address),
+        Value::Address(contract_addresses.bridge_address),
+    ];
+
+    ethrex_l2_sdk::call_contract(
+        eth_client,
+        deployer,
+        contract_addresses.router,
+        ROUTER_REGISTER_SIGNATURE,
+        params,
+    )
+    .await?;
+
+    info!(chain_id, "Chain registered");
+
     Ok(())
 }
 
@@ -1122,6 +1182,11 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={:#x}",
         contract_addresses.sequencer_registry_address
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS={:#x}",
+        contract_addresses.router
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())

@@ -14,6 +14,14 @@ interface IOnChainProposer {
     /// @return The latest verified batch number as a uint256.
     function lastVerifiedBatch() external view returns (uint256);
 
+    struct L2toL2Message {
+        uint256 chainId;
+        address to;
+        uint256 value;
+        uint256 gasLimit;
+        bytes data;
+    }
+
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
     /// @param newStateRoot The new state root of the batch that was committed.
@@ -53,7 +61,7 @@ interface IOnChainProposer {
     /// and to publish withdrawals if any.
     /// @param batchNumber the number of the batch to be committed.
     /// @param newStateRoot the new state root of the batch to be committed.
-    /// @param withdrawalsLogsMerkleRoots the merkle root of the withdrawal logs
+    /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
     /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
     /// privileged transactions of the batch to be committed.
@@ -61,8 +69,8 @@ interface IOnChainProposer {
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
-        uint256[] calldata withdrawalsLogsMerkleIds,
-        bytes32[] calldata withdrawalsLogsMerkleRoots,
+        bytes32 withdrawalsLogsMerkleRoot,
+        L2toL2Message[] calldata l2CrossMessages,
         bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external;

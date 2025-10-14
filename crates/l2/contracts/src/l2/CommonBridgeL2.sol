@@ -99,4 +99,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             keccak256(abi.encodePacked(tokenL1, tokenL2, destination, amount))
         );
     }
+
+    function sendToL2(uint256 chainId, address to, bytes calldata data) public payable {
+        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL2{value: msg.value}(chainId, msg.sender, to, data);
+    }
 }

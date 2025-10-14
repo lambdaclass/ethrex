@@ -16,7 +16,23 @@ interface IL2ToL1Messenger {
         uint256 indexed messageId
     );
 
+    event L2ToL2Message(
+        uint256 chainId,
+        address from,
+        address to,
+        uint256 value,
+        bytes data,
+        uint256 messageId
+    );
+
     /// @notice Sends the given data to the L1
     /// @param data data to be sent to L1
     function sendMessageToL1(bytes32 data) external;
+
+    function sendMessageToL2(
+        uint256 chainId,
+        address from,
+        address to,
+        bytes calldata data
+    ) external payable;
 }
