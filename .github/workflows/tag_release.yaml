@@ -206,7 +206,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}
-          artifact_path: ethrex_image.tar
 
   # Creates a draft release on GitHub with the binaries
   finalize-release:
