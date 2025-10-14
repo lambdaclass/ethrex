@@ -31,8 +31,6 @@ pub const SIMPLE_TX_STATE_DIFF_SIZE: u64 = 108;
 pub enum StateDiffError {
     #[error("StateDiff failed to deserialize: {0}")]
     FailedToDeserializeStateDiff(String),
-    #[error("StateDiff failed to serialize: {0}")]
-    FailedToSerializeStateDiff(String),
     #[error("StateDiff invalid account state diff type: {0}")]
     InvalidAccountStateDiffType(u8),
     #[error("StateDiff unsupported version: {0}")]
@@ -210,7 +208,7 @@ impl StateDiff {
         let mut modified_accounts = BTreeMap::new();
         for _ in 0..modified_accounts_len {
             let next_bytes = bytes.get(decoder.consumed()..).ok_or(
-                StateDiffError::FailedToSerializeStateDiff("Not enough bytes".to_string()),
+                StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
             )?;
             let (bytes_read, address, account_diff) = AccountStateDiff::decode(next_bytes)?;
             decoder.advance(bytes_read);
