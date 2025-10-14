@@ -72,20 +72,19 @@ impl<TxTrace: Serialize> From<(H256, TxTrace)> for BlockTraceComponent<TxTrace> 
 
 impl RpcHandler for TraceTransactionRequest {
     fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 && params.len() != 2 {
-            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
-        };
-        let trace_config = if params.len() == 2 {
-            serde_json::from_value(params[1].clone())?
-        } else {
-            TraceConfig::default()
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let tx_hash = serde_json::from_value(
+            params
+                .pop()
+                .ok_or(RpcErr::BadParams("Expected 1 or 2 params".to_owned()))?,
+        )?;
+        let trace_config = match params.pop() {
+            Some(param) => serde_json::from_value(param)?,
+            None => TraceConfig::default(),
         };
 
         Ok(TraceTransactionRequest {
-            tx_hash: serde_json::from_value(params[0].clone())?,
+            tx_hash,
             trace_config,
         })
     }
@@ -124,20 +123,20 @@ impl RpcHandler for TraceTransactionRequest {
 
 impl RpcHandler for TraceBlockByNumberRequest {
     fn parse(params: Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 && params.len() != 2 {
-            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
-        };
-        let trace_config = if params.len() == 2 {
-            serde_json::from_value(params[1].clone())?
-        } else {
-            TraceConfig::default()
+        let mut params = params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+
+        let number = serde_json::from_value(
+            params
+                .pop()
+                .ok_or(RpcErr::BadParams("Expected 1 or 2 params".to_owned()))?,
+        )?;
+        let trace_config = match params.pop() {
+            Some(param) => serde_json::from_value(param)?,
+            None => TraceConfig::default(),
         };
 
         Ok(TraceBlockByNumberRequest {
-            number: serde_json::from_value(params[0].clone())?,
+            number,
             trace_config,
         })
     }
