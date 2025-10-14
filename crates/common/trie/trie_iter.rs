@@ -134,6 +134,7 @@ impl Iterator for TrieIterator {
     type Item = (Nibbles, Node);
 
     fn next(&mut self) -> Option<Self::Item> {
+        println!("Iterating trie");
         if self.stack.is_empty() {
             return None;
         };
@@ -143,6 +144,7 @@ impl Iterator for TrieIterator {
             .get_node(self.db.as_ref(), path.clone())
             .ok()
             .flatten()?;
+
         match &next_node {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)

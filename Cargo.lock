@@ -10232,7 +10232,9 @@ name = "snapshooter"
 version = "0.1.0"
 dependencies = [
  "ethrex",
+ "ethrex-rlp 0.1.0",
  "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
  "tokio",
 ]
 

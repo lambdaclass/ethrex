@@ -3,27 +3,29 @@ use std::time::{Duration, Instant};
 use ethrex::utils::default_datadir;
 use ethrex_storage::{EngineType, Store};
 
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_trie::EMPTY_TRIE_HASH;
+
 #[tokio::main]
 async fn main() {
     // Load already synced store
     let store = Store::new(default_datadir(), EngineType::RocksDB).expect("failed to create store");
 
-    // Retrieve pivot block header (pivot should be the last executed block).
-    let pivot_header = store
-        .get_block_header(1375008)
-        .expect("failed to get pivot header")
-        .expect("pivot header not found in store");
+    let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+    let root = trie.db().get(Default::default()).unwrap().unwrap();
+    let root = ethrex_trie::Node::decode(&root).unwrap();
+    let state_root = root.compute_hash().finalize();
 
     println!("Building snapshot...");
-
     let start = Instant::now();
+
     store
-        .generate_snapshot(pivot_header.state_root)
+        .generate_snapshot(state_root)
         .await
         .expect("failed to build snapshot");
     let elapsed = start.elapsed();
 
-    println!("Snapshot built in: {}", format_duration(elapsed))
+    println!("Snapshot built in: {}", format_duration(elapsed));
 }
 
 fn format_duration(duration: Duration) -> String {

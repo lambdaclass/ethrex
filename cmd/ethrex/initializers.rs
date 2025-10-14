@@ -420,7 +420,7 @@ async fn reset_to_head(opts: &Options, store: &Store) -> eyre::Result<()> {
             }
         }
     }
-        if opts.syncmode == SyncMode::Full {
+    if opts.syncmode == SyncMode::Full {
         store.generate_snapshot(state_root).await?;
     }
     Ok(())

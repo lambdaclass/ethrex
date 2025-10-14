@@ -46,7 +46,7 @@ impl RocksDBLockedTrieDB {
         db: Arc<OptimisticTransactionDB<MultiThreaded>>,
         cf_name: &str,
         address_prefix: Option<H256>,
-        snapshot: Arc<SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>>
+        snapshot: Arc<SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>>,
     ) -> Result<Self, TrieError> {
         // Leak the database reference to get 'static lifetime
         let db = Box::leak(Box::new(db));
