@@ -5,9 +5,14 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::{Address, types::Block};
+use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::{
+    Address,
+    types::{Block, blobs_bundle},
+};
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
@@ -44,7 +49,8 @@ pub struct ProverInputData {
     pub blob_commitment: ethrex_common::types::blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
-    pub blob_proof: ethrex_common::types::blobs_bundle::Proof,
+    pub blob_proof: blobs_bundle::Proof,
+    pub fee_config: FeeConfig,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -501,6 +507,12 @@ impl ProofCoordinator {
 
         debug!("Created prover input for batch {batch_number}");
 
+        let BlockchainType::L2(fee_config) = self.blockchain.options.r#type else {
+            return Err(ProofCoordinatorError::InternalError(
+                "Invalid blockchain type, expected L2".to_string(),
+            ));
+        };
+
         Ok(ProverInputData {
             execution_witness: witness,
             blocks,
@@ -509,6 +521,7 @@ impl ProofCoordinator {
             blob_commitment,
             #[cfg(feature = "l2")]
             blob_proof,
+            fee_config,
         })
     }
 

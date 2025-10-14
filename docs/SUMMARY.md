@@ -3,8 +3,6 @@
 # Introduction
 
 - [Getting started](./getting-started/README.md)
-  - [Quickstart Ethereum Node](./getting-started/quickstart-l1.md)
-  - [Quickstart L2](./getting-started/quickstart-l2.md)
   - [Hardware requirements]()
   - [Installation](./getting-started/installation/README.md)
     - [Binary distribution](./getting-started/installation/binary_distribution.md)
@@ -54,6 +52,7 @@
     - [CommonBridge]()
     - [L1MessageSender]()
   - [Based sequencing](./l2/fundamentals/based.md)
+  - [Transaction fees](./l2/fundamentals/transaction_fees.md)
 
 # Ethrex for developers
 

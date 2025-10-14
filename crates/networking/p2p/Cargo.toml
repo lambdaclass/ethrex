@@ -14,7 +14,7 @@ ethrex-storage = { workspace = true, default-features = false }
 ethrex-storage-rollup = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
-
+ethrex-threadpool.workspace = true
 ethereum-types.workspace = true
 
 async-trait.workspace = true
@@ -32,6 +32,7 @@ spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 sha2.workspace = true
 futures.workspace = true
+rocksdb = { workspace = true, optional = true }
 prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
@@ -47,6 +48,7 @@ ctr = "0.9.2"
 rand = "0.8.5"
 
 rayon = "1.10.0"
+crossbeam.workspace = true
 
 [dev-dependencies]
 hex-literal = "0.4.1"
@@ -58,6 +60,7 @@ path = "./p2p.rs"
 default = ["l1"]
 
 sync-test = []
+rocksdb = ["dep:rocksdb"]
 
 l1 = [
     "ethrex-blockchain/l1",

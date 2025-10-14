@@ -7,9 +7,8 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainOptions, BlockchainType, error::ChainError};
-use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::sync::SyncMode;
-use ethrex_p2p::types::Node;
+use ethrex_common::types::{Block, Genesis, fee_config::FeeConfig};
+use ethrex_p2p::{sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use tracing::{Level, info, warn};
@@ -67,7 +66,7 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
-    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
+    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(
         long = "metrics.addr",
@@ -176,6 +175,14 @@ pub struct Options {
     )]
     pub discovery_port: String,
     #[arg(
+        long = "p2p.tx-broadcasting-interval",
+        default_value_t = BROADCAST_INTERVAL_MS,
+        value_name = "INTERVAL_MS",
+        help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
+        help_heading = "P2P options"
+    )]
+    pub tx_broadcasting_time_interval: u64,
+    #[arg(
         long = "block-producer.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
@@ -248,6 +255,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            tx_broadcasting_time_interval: Default::default(),
             extra_data: get_minimal_client_version(),
         }
     }
@@ -338,7 +346,7 @@ impl Subcommand {
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
-                    BlockchainType::L2
+                    BlockchainType::L2(FeeConfig::default())
                 } else {
                     BlockchainType::L1
                 };
