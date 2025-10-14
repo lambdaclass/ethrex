@@ -1577,7 +1577,7 @@ impl StoreEngine for Store {
 
                                 sst.put(&key_buf, node.value)?;
                                 value_ctr += 1;
-                                if value_ctr > 1024 * 1024000 {
+                                if value_ctr > 1024 * 1024 {
                                     sst.finish()?;
                                     ctr += 1;
                                     let path =
@@ -1610,10 +1610,10 @@ impl StoreEngine for Store {
                 store
                     .db
                     .ingest_external_file_cf_opts(&cf_trie, &ingest_opts, paths)?;
-                store.db.compact_range_cf::<&[u8], &[u8]>(
+                store.db.compact_range_cf(
                     &store.cf_handle(CF_TRIE_NODES)?,
-                    None,
-                    None,
+                    Some(&[0x00; 65]),
+                    Some(&[0xff; 65]),
                 );
                 store
                     .write_async(&CF_MISC_STATE, "snapshot_completed", vec![1])
