@@ -383,6 +383,9 @@ pub fn generic_system_contract_levm(
 
     // This check is not necessary in practice, since contract deployment has succesfully happened in all relevant testnets and mainnet
     // However, it's necessary to pass some of the Hive tests related to system contract deployment, which is why we have it
+    // The error that should be returned for the relevant contracts is indicated in the following:
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md#empty-code-failure
+    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md#empty-code-failure
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)

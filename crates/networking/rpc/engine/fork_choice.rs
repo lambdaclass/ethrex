@@ -153,12 +153,14 @@ fn parse(
                 }
             };
     }
-    if let Some(attr) = &payload_attributes {
-        if !is_v3 && attr.parent_beacon_block_root.is_some() {
-            return Err(RpcErr::InvalidPayloadAttributes(
-                "Attribute parent_beacon_block_root is non-null".to_string(),
-            ));
-        }
+
+    if payload_attributes
+        .as_ref()
+        .is_some_and(|attr| !is_v3 && attr.parent_beacon_block_root.is_some())
+    {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "Attribute parent_beacon_block_root is non-null".to_string(),
+        ));
     }
     Ok((forkchoice_state, payload_attributes))
 }
@@ -194,20 +196,18 @@ async fn handle_forkchoice(
     if let Some(head_block) = context
         .storage
         .get_block_header_by_hash(fork_choice_state.head_block_hash)?
-    {
-        if let Some(latest_valid_hash) = context
+        && let Some(latest_valid_hash) = context
             .storage
             .get_latest_valid_ancestor(head_block.parent_hash)
             .await?
-        {
-            return Ok((
-                None,
-                ForkChoiceResponse::from(PayloadStatus::invalid_with(
-                    latest_valid_hash,
-                    InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string(),
-                )),
-            ));
-        }
+    {
+        return Ok((
+            None,
+            ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                latest_valid_hash,
+                InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string(),
+            )),
+        ));
     }
 
     if context.syncer.sync_mode() == SyncMode::Snap {
