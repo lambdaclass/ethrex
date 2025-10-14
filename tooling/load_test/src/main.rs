@@ -305,8 +305,6 @@ async fn tps_load_test(
     }
     println!("Initial nonces fetched for {} accounts.", nonce_map.len());
 
-    println!("Starting to send {rate} TPS continuously. Press Ctrl+C to stop.");
-
     let mut account_index = 0;
     let mut tasks = JoinSet::new();
 
@@ -324,7 +322,7 @@ async fn tps_load_test(
         *nonce += 1;
 
         tasks.spawn(async move {
-            println!("Sending from {address}");
+            println!("Sending from {address} (rate: {rate} TPS)");
             let (value, calldata, dst) = tx_builder.build_tx();
             let tx_result = build_generic_tx(
                 &client,
