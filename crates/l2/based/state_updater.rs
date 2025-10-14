@@ -280,7 +280,6 @@ fn determine_new_status(
         }
         // If the node is up to date but not the lead sequencer, it follows the lead sequencer.
         (true, false) => {
-            info!("Node is up to date and following the lead sequencer.");
             SequencerStatus::Following
         }
         // If the node is not up to date, it should sync.
