@@ -168,7 +168,7 @@ jobs:
           docker compose up --detach ethrex_l1
 
       - name: Install rex
-        if: matrix.use_native_token
+        if: ${{ matrix.use_native_token || matrix.based }}
         run: |
           cd ..
           git clone https://github.com/lambdaclass/rex.git
