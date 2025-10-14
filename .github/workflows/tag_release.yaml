@@ -57,9 +57,10 @@ jobs:
             features: l2,l2-sql,sp1,gpu
           - stack: l2_gpu
             gpu_flags: NVCC_PREPEND_FLAGS='-arch=sm_70'
-            suffix: "-l2-gpu"
+            l2_suffix: "-l2"
+            gpu_suffix: "-gpu"
           - stack: l2
-            suffix: "-l2"
+            l2_suffix: "-l2"
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Free Disk Space (Ubuntu)
@@ -131,7 +132,7 @@ jobs:
         run: |
           COMPILE_CONTRACTS=true ${{ matrix.cpu_flags }} ${{ matrix.gpu_flags }} cargo build --release --features "${{ matrix.features }}" --bin ethrex
           chmod +x target/release/ethrex
-          mv target/release/ethrex ethrex-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
+          mv target/release/ethrex ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Copy verification keys
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
@@ -143,8 +144,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
-          path: ethrex-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
+          name: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
+          path: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Upload verification keys
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
