@@ -15,9 +15,9 @@ use ethrex_common::{
 };
 use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, DBCompactionStyle,
-    IngestExternalFileOptions, MultiThreaded, OptimisticTransactionDB, Options, SstFileWriter,
-    WriteBatchWithTransaction,
+    BlockBasedOptions, BottommostLevelCompaction, BoundColumnFamily, Cache, ColumnFamilyDescriptor,
+    CompactOptions, DBCompactionStyle, IngestExternalFileOptions, MultiThreaded,
+    OptimisticTransactionDB, Options, SstFileWriter, WriteBatchWithTransaction,
 };
 use std::{
     collections::HashSet,
@@ -1508,8 +1508,11 @@ impl StoreEngine for Store {
     }
 
     async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
+        if self.snapshot_completed()? {
+            return Ok(());
+        }
         let store = self.clone();
-        tokio::task::spawn_blocking(move || {
+        std::thread::spawn(move || {
             let res: Result<(), StoreError> = futures::executor::block_on(async {
                 let mut ctr = 0;
                 let mut value_ctr = 0;
@@ -1610,11 +1613,6 @@ impl StoreEngine for Store {
                 store
                     .db
                     .ingest_external_file_cf_opts(&cf_trie, &ingest_opts, paths)?;
-                store.db.compact_range_cf(
-                    &cf_trie,
-                    Some(&[0x00; 65]),
-                    Some(&[0xff; 65]),
-                );
                 store
                     .write_async(&CF_MISC_STATE, "snapshot_completed", vec![1])
                     .await?;

@@ -694,6 +694,9 @@ impl StoreEngine for Store {
     }
 
     async fn generate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
+        if self.inner()?.snapshot_completed {
+            return Ok(());
+        }
         // Open the account state trie
         let account_state_trie = self
             .open_direct_state_trie(state_root)
