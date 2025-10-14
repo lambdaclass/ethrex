@@ -841,7 +841,7 @@ impl Store {
             return Err(StoreError::StateNotAvailable);
         };
         let state_root = header.state_root;
-        if self.has_state_root(state_root)? {
+        if !self.has_state_root(state_root)? {
             return Err(StoreError::StateNotAvailable);
         }
         Ok(Some(self.engine.open_state_trie(state_root)?))
