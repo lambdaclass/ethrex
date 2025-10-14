@@ -114,10 +114,10 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        match self.get_canonical_block_hash(block_number).await? {
-            Some(block_hash) => self.get_account_info_by_hash(block_hash, address),
-            None => Ok(None),
-        }
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+            return Err(StoreError::StateNotAvailable);
+        };
+        self.get_account_info_by_hash(block_hash, address)
     }
 
     pub fn get_account_info_by_hash(
@@ -126,6 +126,7 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
+            // TODO: can't happen
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -148,6 +149,7 @@ impl Store {
         account_hash: H256,
     ) -> Result<Option<AccountState>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
+            // TODO: can't happen
             return Ok(None);
         };
         let Some(encoded_state) = state_trie.get(&account_hash.to_fixed_bytes().to_vec())? else {
@@ -326,9 +328,10 @@ impl Store {
         address: Address,
     ) -> Result<Option<Bytes>, StoreError> {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
+            return Err(StoreError::StateNotAvailable);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
+            // TODO: can't happen
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -345,9 +348,10 @@ impl Store {
         address: Address,
     ) -> Result<Option<u64>, StoreError> {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
+            return Err(StoreError::StateNotAvailable);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
+            // TODO: can't happen
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -367,6 +371,7 @@ impl Store {
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
+            // TODO: can't happen
             return Ok(None);
         };
 
@@ -574,7 +579,7 @@ impl Store {
     ) -> Result<Option<Receipt>, StoreError> {
         // FIXME (#4353)
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
+            return Err(StoreError::StateNotAvailable);
         };
         self.engine.get_receipt(block_hash, index).await
     }
@@ -692,10 +697,10 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_canonical_block_hash(block_number).await? {
-            Some(block_hash) => self.get_storage_at_hash(block_hash, address, storage_key),
-            None => Ok(None),
-        }
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+            return Err(StoreError::StateNotAvailable);
+        };
+        self.get_storage_at_hash(block_hash, address, storage_key)
     }
 
     pub fn get_storage_at_hash(
@@ -831,10 +836,15 @@ impl Store {
 
     /// Obtain the storage trie for the given block
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
+        // TODO: use None to mean "we don't have this state" ?
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
-            return Ok(None);
+            return Err(StoreError::StateNotAvailable);
         };
-        Ok(Some(self.engine.open_state_trie(header.state_root)?))
+        let state_root = header.state_root;
+        if self.has_state_root(state_root)? {
+            return Err(StoreError::StateNotAvailable);
+        }
+        Ok(Some(self.engine.open_state_trie(state_root)?))
     }
 
     /// Obtain the storage trie for the given account on the given block
@@ -843,11 +853,13 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<Trie>, StoreError> {
+        // TODO: use None to mean "we don't have this state" ?
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
-            return Ok(None);
+            return Err(StoreError::StateNotAvailable);
         };
         // Fetch Account from state_trie
         let Some(state_trie) = self.state_trie(block_hash)? else {
+            // TODO: can't happen
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -870,9 +882,10 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
+            return Err(StoreError::StateNotAvailable);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
+            // TODO: can't happen
             return Ok(None);
         };
         get_account_state_from_trie(&state_trie, address)
