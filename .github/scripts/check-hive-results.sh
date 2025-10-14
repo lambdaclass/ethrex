@@ -17,6 +17,17 @@ if [ ! -d "$results_dir" ]; then
   exit 1
 fi
 
+if ! results_dir="$(cd "${results_dir}" >/dev/null 2>&1 && pwd -P)"; then
+  echo "Failed to resolve absolute path for Hive results directory"
+  exit 1
+fi
+
+results_parent="$(dirname "${results_dir}")"
+workspace_logs_dir=""
+if [ -d "${results_parent}/workspace/logs" ]; then
+  workspace_logs_dir="$(cd "${results_parent}/workspace/logs" >/dev/null 2>&1 && pwd -P)"
+fi
+
 shopt -s nullglob
 json_files=("${results_dir}"/*.json)
 shopt -u nullglob
@@ -105,7 +116,7 @@ for json_file in "${json_files[@]}"; do
           (.testCases[]? | select(.summaryResult.pass != true) | .logFile?)
         ]
         | map(select(. != null and . != ""))
-        | unique[]
+        | unique
         | .[]
       ' "${json_file}" 2>/dev/null || true
     )"
@@ -113,8 +124,49 @@ for json_file in "${json_files[@]}"; do
     if [ -n "${suite_logs_output}" ]; then
       while IFS= read -r log_rel; do
         [ -z "${log_rel}" ] && continue
-        log_path="${results_dir}/${log_rel}"
-        if [ -f "${log_path}" ]; then
+
+        log_path=""
+        if [[ "${log_rel}" == /* ]]; then
+          if [ -f "${log_rel}" ]; then
+            log_path="${log_rel}"
+          fi
+        else
+          candidate_paths=(
+            "${results_dir}/${log_rel}"
+            "${results_dir}/logs/${log_rel}"
+          )
+          if [ -n "${workspace_logs_dir}" ]; then
+            candidate_paths+=("${workspace_logs_dir}/${log_rel}")
+          fi
+
+          for candidate in "${candidate_paths[@]}"; do
+            if [ -f "${candidate}" ]; then
+              log_path="${candidate}"
+              break
+            fi
+          done
+        fi
+
+        if [ -z "${log_path}" ] && [[ "${log_rel}" != /* ]]; then
+          search_roots=("${results_dir}")
+          if [ -d "${results_dir}/logs" ]; then
+            search_roots+=("${results_dir}/logs")
+          fi
+          if [ -n "${workspace_logs_dir}" ]; then
+            search_roots+=("${workspace_logs_dir}")
+          fi
+
+          for search_root in "${search_roots[@]}"; do
+            [ -d "${search_root}" ] || continue
+            found_log="$(find "${search_root}" -type f -name "$(basename "${log_rel}")" -print -quit 2>/dev/null || true)"
+            if [ -n "${found_log}" ]; then
+              log_path="${found_log}"
+              break
+            fi
+          done
+        fi
+
+        if [ -n "${log_path}" ]; then
           target_path="${suite_dir}/${log_rel}"
           mkdir -p "$(dirname "${target_path}")"
           if [ ! -f "${target_path}" ]; then
