@@ -320,8 +320,9 @@ impl Message {
             | Message::Status69(_)
             | Message::Transactions(_)
             | Message::NewPooledTransactionHashes(_)
-            | Message::BlockRangeUpdate(_)
-            | Message::L2(_) => None,
+            | Message::BlockRangeUpdate(_) => None,
+            #[cfg(feature = "l2")]
+            Message::L2(_) => None,
         }
     }
 }

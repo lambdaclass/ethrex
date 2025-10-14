@@ -42,13 +42,13 @@ pub enum L2ConnState {
     Connected(L2ConnectedState),
 }
 
-fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
+fn broadcast_message(state: &Established, msg: Message) -> Result<(), PeerConnectionError> {
     match msg {
         l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
             log_peer_error(&state.node, &error_message);
-            Err(RLPxError::BroadcastError(error_message))
+            Err(PeerConnectionError::BroadcastError(error_message))
         }
     }
 }

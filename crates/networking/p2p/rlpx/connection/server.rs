@@ -22,7 +22,7 @@ use spawned_concurrency::{
         send_interval, spawn_listener,
     },
 };
-use spawned_rt::tasks::{BroadcastStream, mpsc};
+use spawned_rt::tasks::BroadcastStream;
 use tokio::{
     net::TcpStream,
     sync::{Mutex, broadcast, oneshot},
@@ -185,6 +185,7 @@ pub struct Established {
     //// under `handle_peer`.
     /// TODO: Improve this mechanism
     /// See https://github.com/lambdaclass/ethrex/issues/3388
+    pub(crate) connection_broadcast_send: PeerConnBroadcastSender,
     pub(crate) peer_table: PeerTable,
     #[cfg(feature = "l2")]
     pub(crate) l2_state: L2ConnState,
@@ -1120,20 +1121,5 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerCo
         send_block_range_update(state).await
     } else {
         Ok(())
-    }
-}
-
-pub(crate) fn broadcast_message(
-    state: &Established,
-    msg: Message,
-) -> Result<(), PeerConnectionError> {
-    match msg {
-        #[cfg(feature = "l2")]
-        l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
-        msg => {
-            let error_message = format!("Broadcasting for msg: {msg} is not supported");
-            log_peer_error(&state.node, &error_message);
-            Err(PeerConnectionError::BroadcastError(error_message))
-        }
     }
 }
