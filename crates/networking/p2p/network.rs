@@ -1,11 +1,11 @@
 use crate::{
     discv4::{
-        peer_table::{PeerData, PeerTableHandle},
+        peer_table::{PeerData, PeerTable},
         server::{DiscoveryServer, DiscoveryServerError},
     },
     metrics::METRICS,
     rlpx::{
-        connection::server::{RLPxConnBroadcastSender, RLPxConnection},
+        connection::server::{PeerConnBroadcastSender, PeerConnection},
         initiator::RLPxInitiator,
         l2::l2_connection::P2PBasedContext,
         message::Message,
@@ -37,10 +37,10 @@ pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 pub struct P2PContext {
     pub tracker: TaskTracker,
     pub signer: SecretKey,
-    pub table: PeerTableHandle,
+    pub table: PeerTable,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
-    pub(crate) broadcast: RLPxConnBroadcastSender,
+    pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
@@ -55,7 +55,7 @@ impl P2PContext {
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
         signer: SecretKey,
-        peer_table: PeerTableHandle,
+        peer_table: PeerTable,
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
@@ -145,7 +145,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             continue;
         }
 
-        let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
     }
 }
 
@@ -158,17 +158,14 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-pub async fn periodically_show_peer_stats(
-    blockchain: Arc<Blockchain>,
-    mut peer_table: PeerTableHandle,
-) {
+pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, mut peer_table: PeerTable) {
     periodically_show_peer_stats_during_syncing(blockchain, &mut peer_table).await;
     periodically_show_peer_stats_after_sync(&mut peer_table).await;
 }
 
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
-    peer_table: &mut PeerTableHandle,
+    peer_table: &mut PeerTable,
 ) {
     let start = std::time::Instant::now();
     loop {
@@ -367,7 +364,7 @@ bytecodes progress: downloaded: {bytecodes_downloaded}, elapsed: {bytecodes_down
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
-pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTableHandle) {
+pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable) {
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
@@ -375,12 +372,12 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTableH
         let peers: Vec<PeerData> = peer_table.get_peers_data().await.unwrap_or(Vec::new());
         let active_peers = peers
             .iter()
-            .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
+            .filter(|peer| -> bool { peer.connection.as_ref().is_some() })
             .count();
         let snap_active_peers = peers
             .iter()
             .filter(|peer| -> bool {
-                peer.channels.as_ref().is_some()
+                peer.connection.as_ref().is_some()
                     && SUPPORTED_SNAP_CAPABILITIES
                         .iter()
                         .any(|cap| peer.supported_capabilities.contains(cap))
