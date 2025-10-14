@@ -19,6 +19,7 @@ use rocksdb::{
     CompactOptions, DBCompactionStyle, IngestExternalFileOptions, MultiThreaded,
     OptimisticTransactionDB, Options, SstFileWriter, WriteBatchWithTransaction,
 };
+use tokio::task::spawn_blocking;
 use std::{
     collections::HashSet,
     path::Path,
@@ -1512,7 +1513,7 @@ impl StoreEngine for Store {
             return Ok(());
         }
         let store = self.clone();
-        std::thread::spawn(move || {
+        tokio::task::spawn_blocking(move || {
             let res: Result<(), StoreError> = futures::executor::block_on(async {
                 let mut ctr = 0;
                 let mut value_ctr = 0;
