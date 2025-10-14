@@ -536,7 +536,7 @@ fn vm_from_generic<'a>(
                 .collect(),
             ..Default::default()
         })
-    } else if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas {
+    } else if let !tx.blob_versioned_hashes.is_empty() {
         Transaction::EIP4844Transaction(EIP4844Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
@@ -552,7 +552,6 @@ fn vm_from_generic<'a>(
                 .map(|list| (list.address, list.storage_keys.clone()))
                 .collect(),
             blob_versioned_hashes: tx.blob_versioned_hashes.clone(),
-            max_fee_per_blob_gas,
             ..Default::default()
         })
     } else {
