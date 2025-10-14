@@ -4,9 +4,6 @@ use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
-// TODO: make this configurable or use finalized hash for this
-const COMMIT_THRESHOLD: usize = 128;
-
 #[derive(Debug)]
 struct TrieLayer {
     nodes: HashMap<Vec<u8>, Vec<u8>>,
@@ -43,12 +40,17 @@ impl TrieLayerCache {
         None
     }
 
-    pub fn get_commitable(&mut self, mut state_root: H256) -> Option<H256> {
+    // TODO: use finalized hash to know when to commit
+    pub fn get_commitable(
+        &mut self,
+        mut state_root: H256,
+        commit_threshold: usize,
+    ) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
             state_root = layer.parent;
             counter += 1;
-            if counter > COMMIT_THRESHOLD {
+            if counter > commit_threshold {
                 return Some(state_root);
             }
         }
