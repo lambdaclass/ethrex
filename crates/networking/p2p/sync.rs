@@ -369,27 +369,16 @@ impl Syncer {
             };
             debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
+            let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
+            let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
+
             info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
-                block_headers
-                    .first()
-                    .as_ref()
-                    .ok_or(SyncError::NoBlocks)?
-                    .number,
-                block_headers
-                    .last()
-                    .as_ref()
-                    .ok_or(SyncError::NoBlocks)?
-                    .number,
+                first_header.number,
+                last_header.number,
             );
-            end_block_number = end_block_number.max(
-                block_headers
-                    .first()
-                    .as_ref()
-                    .ok_or(SyncError::NoBlocks)?
-                    .number,
-            );
+            end_block_number = end_block_number.max(first_header.number);
 
             sync_head = block_headers.last().ok_or(SyncError::NoBlocks)?.parent_hash;
             if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
@@ -405,7 +394,6 @@ impl Syncer {
                 block_headers.drain(first_canon_block..block_headers.len());
                 start_block_number = block_headers
                     .last()
-                    .as_ref()
                     .ok_or(SyncError::NoBlocks)?
                     .number
                     .max(1);
