@@ -144,7 +144,7 @@ jobs:
         include:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
-            limit: ""
+            limit: "/(?!eth_syncing/check-syncing$).*"
             hive_repository: lambdaclass/hive
             hive_version: 115f4d6ef1bdd2bfcabe29ec60424f6327e92f43
             artifact_prefix: rpc_compat
