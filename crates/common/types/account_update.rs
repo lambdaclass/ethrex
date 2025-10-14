@@ -37,6 +37,7 @@ impl AccountUpdate {
 
     pub fn merge(&mut self, other: AccountUpdate) {
         self.removed = other.removed;
+        self.removed_storage |= other.removed_storage;
         if let Some(info) = other.info {
             self.info = Some(info);
         }
