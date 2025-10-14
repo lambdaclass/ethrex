@@ -402,15 +402,17 @@ impl Syncer {
                     .map(|(header, body)| Block { header, body });
                 blocks.extend(block_batch);
             }
-            // Execute blocks
-            info!(
-                "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
-                blocks.len(),
-                blocks.first().unwrap().hash(),
-                blocks.last().unwrap().hash()
-            );
-            self.add_blocks_in_batch(blocks, final_batch, store.clone())
-                .await?;
+            if !blocks.is_empty() {
+                // Execute blocks
+                info!(
+                    "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
+                    blocks.len(),
+                    blocks.first().unwrap().hash(),
+                    blocks.last().unwrap().hash()
+                );
+                self.add_blocks_in_batch(blocks, final_batch, store.clone())
+                    .await?;
+            }
         }
 
         // Execute pending blocks
