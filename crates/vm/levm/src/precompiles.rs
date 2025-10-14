@@ -934,19 +934,19 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
         }
     }
 
-    let success = if !valid_pairs.is_empty() {
+    let success = if valid_pairs.is_empty() {
+        true
+    } else {
         let batch: Vec<_> = valid_pairs.iter().map(|(p1, p2)| (p1, p2)).collect();
         let pairing_result = BN254AtePairing::compute_batch(&batch)
             .map_err(|_| PrecompileError::BN254AtePairingError)?;
         pairing_result.eq(&QuadraticExtensionFieldElement::one())
-    } else {
-        true
     };
 
     // Generate the result from the variable mul
     let mut result = [0; 32];
     result[31] = u8::from(success);
-    Ok(Bytes::from(result.to_vec()))
+    Ok(Bytes::from_owner(result))
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
