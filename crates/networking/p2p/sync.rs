@@ -318,7 +318,7 @@ impl Syncer {
         // Request all block headers between the sync head and our local chain
         // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
         // This step is not parallelized
-        let start_block_number;
+        let mut start_block_number;
         let mut end_block_number = 0;
         let mut headers = vec![];
         let mut single_batch = true;
@@ -346,6 +346,7 @@ impl Syncer {
                 last_header.number,
             );
             end_block_number = end_block_number.max(first_header.number);
+            start_block_number = last_header.number;
 
             sync_head = block_headers.last().unwrap().parent_hash;
             if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
@@ -359,11 +360,9 @@ impl Syncer {
                     }
                 }
                 block_headers.drain(first_canon_block..block_headers.len());
-                start_block_number = block_headers
-                    .last()
-                    .unwrap()
-                    .number
-                    .max(1);
+                if !block_headers.is_empty() {
+                    start_block_number = block_headers.last().unwrap().number
+                }
                 // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
                 if single_batch {
                     headers = block_headers.into_iter().rev().collect();
@@ -376,6 +375,7 @@ impl Syncer {
             single_batch = false;
         }
         end_block_number += 1;
+        start_block_number = start_block_number.max(1);
 
         // Download block bodies and execute full blocks in batches
         for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
