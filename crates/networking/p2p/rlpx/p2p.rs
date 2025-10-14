@@ -146,7 +146,10 @@ impl RLPxMessage for HelloMessage {
         let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
 
         if protocol_version != SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
-            return Err(RLPDecodeError::IncompatibleProtocol);
+            return Err(RLPDecodeError::IncompatibleProtocol(format!(
+                "Received message is encoded in p2p version {} when negotiated p2p version was {} ",
+                protocol_version, SUPPORTED_P2P_CAPABILITY_VERSION
+            )));
         }
 
         let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;

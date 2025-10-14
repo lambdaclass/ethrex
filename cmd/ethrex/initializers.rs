@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
+use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 
@@ -15,6 +16,7 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
+    sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -27,6 +29,7 @@ use secp256k1::SecretKey;
 use std::env;
 use std::{
     fs,
+    io::IsTerminal,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -52,7 +55,14 @@ pub fn init_tracing(opts: &Options) -> reload::Handle<EnvFilter, Registry> {
 
     let (filter, filter_handle) = reload::Layer::new(log_filter);
 
-    let fmt_layer = fmt::layer().with_filter(filter);
+    let mut layer = fmt::layer();
+
+    if !std::io::stdout().is_terminal() {
+        layer = layer.with_ansi(false);
+    }
+
+    let fmt_layer = layer.with_filter(filter);
+
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.metrics_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
         Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
@@ -134,10 +144,17 @@ pub async fn init_rpc_api(
     extra_data: String,
 ) {
     init_datadir(&opts.datadir);
+
+    let syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
@@ -383,6 +400,9 @@ pub async fn init_l1(
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
+
+    raise_fd_limit()?;
+
     let store = init_store(datadir, genesis).await;
 
     #[cfg(feature = "sync-test")]

@@ -54,7 +54,7 @@ async fn init_rpc_api(
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
-        opts.syncmode.clone(),
+        &opts.syncmode,
         cancel_token,
         blockchain.clone(),
         store.clone(),
