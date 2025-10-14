@@ -1611,7 +1611,7 @@ impl StoreEngine for Store {
                     .db
                     .ingest_external_file_cf_opts(&cf_trie, &ingest_opts, paths)?;
                 store.db.compact_range_cf(
-                    &store.cf_handle(CF_TRIE_NODES)?,
+                    &cf_trie,
                     Some(&[0x00; 65]),
                     Some(&[0xff; 65]),
                 );
