@@ -29,7 +29,11 @@ echo "Starting spamoor..."
 
 time spamoor run ./tooling/spamoor/startup.yml --rpchost="http://localhost:8545" -p 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 -s 0
 
+echo "Killing ethrex"
+
 kill -s INT $ETHREX_PID
+
+wait $ETHREX_PID
 
 rm -rf $DATADIR
 
