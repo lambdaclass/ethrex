@@ -170,8 +170,7 @@ init-prover: ../../target/release/ethrex ## 🚀 Initializes the Prover
 	BACKEND="$$PROVER" \
 	../../target/release/ethrex l2 prover \
 		--backend "$$PROVER" \
-		--proof-coordinators tcp://127.0.0.1:3900 \
-		--log.level debug
+		--proof-coordinators tcp://127.0.0.1:3900
 
 build-prover:
 	rm -f ../../target/release/ethrex
