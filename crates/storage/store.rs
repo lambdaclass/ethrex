@@ -1268,10 +1268,12 @@ impl Store {
         self.engine.write_account_code_batch(account_codes).await
     }
 
+    /// Add a batch of headers downloaded during fullsync
     pub async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
         self.engine.add_fullsync_batch(headers).await
     }
 
+    /// Read a batch of headers downloaded during fullsync
     pub async fn read_fullsync_batch(
         &self,
         start: BlockNumber,
@@ -1280,6 +1282,7 @@ impl Store {
         self.engine.read_fullsync_batch(start, limit).await
     }
 
+    /// Clear all headers downloaded during fullsync
     pub async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
         self.engine.clear_fullsync_headers().await
     }
