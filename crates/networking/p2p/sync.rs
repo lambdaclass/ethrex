@@ -372,11 +372,19 @@ impl Syncer {
             info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
-                block_headers.first().as_ref().unwrap().number,
-                block_headers.last().as_ref().unwrap().number,
+                block_headers
+                    .first()
+                    .as_ref()
+                    .ok_or(SyncError::NoBlocks)?
+                    .number,
+                block_headers
+                    .last()
+                    .as_ref()
+                    .ok_or(SyncError::NoBlocks)?
+                    .number,
             );
 
-            sync_head = block_headers.last().unwrap().parent_hash;
+            sync_head = block_headers.last().ok_or(SyncError::NoBlocks)?.parent_hash;
             if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
                 // Incoming chain merged with current chain
                 // Filter out already canonical blocks from batch
@@ -388,8 +396,18 @@ impl Syncer {
                     }
                 }
                 block_headers.drain(first_canon_block..block_headers.len());
-                start_block_number = block_headers.last().as_ref().unwrap().number.max(1);
-                end_block_number = block_headers.first().as_ref().unwrap().number + 1;
+                start_block_number = block_headers
+                    .last()
+                    .as_ref()
+                    .ok_or(SyncError::NoBlocks)?
+                    .number
+                    .max(1);
+                end_block_number = block_headers
+                    .first()
+                    .as_ref()
+                    .ok_or(SyncError::NoBlocks)?
+                    .number
+                    + 1;
                 // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
                 if single_batch {
                     headers = block_headers.into_iter().rev().collect();

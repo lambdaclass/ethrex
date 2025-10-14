@@ -646,7 +646,7 @@ impl StoreEngine for Store {
             .collect::<Result<Vec<_>, _>>()
     }
 
-    async fn clear_fullsync_headers(&self)  -> Result<(), StoreError> {
+    async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
         self.inner()?.fullsync_headers.clear();
         Ok(())
     }
