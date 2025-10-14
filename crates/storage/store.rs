@@ -1146,6 +1146,10 @@ impl Store {
     }
 
     pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
+        // Empty state trie is always available
+        if state_root == *EMPTY_TRIE_HASH {
+            return Ok(true);
+        }
         let trie = self.engine.open_state_trie(state_root)?;
         // NOTE: here we hash the root because the trie doesn't check the state root is correct
         let Some(root) = trie.db().get(Nibbles::default())? else {
