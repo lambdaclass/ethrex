@@ -17,7 +17,7 @@ lint: ## 🧹 Linter check
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ethrex-l2 -- --skip test_contract_compilation
 
 clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
