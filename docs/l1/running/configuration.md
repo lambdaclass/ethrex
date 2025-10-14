@@ -51,6 +51,12 @@ ethrex --log.level <level>
 
 Levels: `error`, `warn`, `info` (default), `debug`, `trace`
 
+## Low Memory Mode
+
+By default, Ethrex will trade off memory for greater speed. Passing `--lowmem` will invert this priority.
+Calling `ethrex` with the lowmem flag will cause it to use less memory for the database cache and when running with RocksDB it will use the non-transactional database, which should be safe for our access patterns but provides fewer guarantees.
+Snap syncing mainnet in low memory mode can take significantly longer.
+
 ## Dev Mode (Localnet)
 
 For local development and testing, you can use dev mode:
