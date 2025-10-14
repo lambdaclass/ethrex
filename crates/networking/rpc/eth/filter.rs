@@ -288,12 +288,12 @@ mod tests {
             "method":"eth_newFilter",
             "params":
             [
-                filter_req_params.clone()
+                filter_req_params
             ]
                 ,"id":1
         });
         let filters = Arc::new(Mutex::new(HashMap::new()));
-        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await;
+        let id = run_new_filter_request_test(raw_json.clone(), filters.clone()).await; // ok-clone: increase arc reference count
         let filters = filters.lock().unwrap();
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
@@ -433,7 +433,7 @@ mod tests {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
         let mut context = default_context_with_storage(storage).await;
-        context.active_filters = filters_pointer.clone();
+        context.active_filters = filters_pointer.clone(); // ok-clone: increase arc reference count
 
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -490,14 +490,14 @@ mod tests {
             .expect("Fatal: could not create in memory test db");
 
         let mut context = default_context_with_storage(storage).await;
-        context.active_filters = active_filters.clone();
+        context.active_filters = active_filters.clone(); // ok-clone: increase arc reference count
 
         map_http_requests(uninstall_filter_req, context)
             .await
             .unwrap();
 
         assert!(
-            active_filters.clone().lock().unwrap().is_empty(),
+            active_filters.clone().lock().unwrap().is_empty(), // ok-clone: increase arc reference count
             "Expected filter map to be empty after request"
         );
     }

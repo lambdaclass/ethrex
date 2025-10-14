@@ -442,13 +442,13 @@ impl RpcHandler for EstimateGasRequest {
         };
 
         let transaction = match self.transaction.nonce {
-            Some(_nonce) => self.transaction.clone(),
+            Some(_nonce) => self.transaction,
             None => {
                 let transaction_nonce = storage
                     .get_nonce_by_account_address(block_header.number, self.transaction.from)
                     .await?;
 
-                let mut cloned_transaction = self.transaction.clone();
+                let mut cloned_transaction = self.transaction;
                 cloned_transaction.nonce = transaction_nonce;
                 cloned_transaction
             }
@@ -466,8 +466,8 @@ impl RpcHandler for EstimateGasRequest {
                 let result: Result<ExecutionResult, RpcErr> = simulate_tx(
                     &value_transfer_transaction,
                     &block_header,
-                    storage.clone(),
-                    blockchain.clone(),
+                    storage.clone(), // ok-clone: store fields are all arcs, so this just increases their reference count
+                    blockchain.clone(), // ok-clone: increase arc reference count
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
                     return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
@@ -498,8 +498,8 @@ impl RpcHandler for EstimateGasRequest {
         let result = simulate_tx(
             &transaction,
             &block_header,
-            storage.clone(),
-            blockchain.clone(),
+            storage.clone(), // ok-clone: store fields are all arcs, so this just increases their reference count
+            blockchain.clone(), // ok-clone: increase arc reference count
         )?;
 
         let gas_used = result.gas_used();
@@ -526,8 +526,8 @@ impl RpcHandler for EstimateGasRequest {
             let result = simulate_tx(
                 &transaction,
                 &block_header,
-                storage.clone(),
-                blockchain.clone(),
+                storage.clone(), // ok-clone: store fields are all arcs, so this just increases their reference count
+                blockchain.clone(), // ok-clone: increase arc reference count
             );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
@@ -564,7 +564,7 @@ fn simulate_tx(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash());
+    let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash()); // ok-clone: store fields are all arcs, so this just increases their reference count
     let mut vm = blockchain.new_evm(vm_db)?;
 
     match vm.simulate_tx_from_generic(transaction, block_header)? {
@@ -597,10 +597,7 @@ impl RpcHandler for SendRawTransactionRequest {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context
                 .blockchain
-                .add_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
-                    wrapped_blob_tx.blobs_bundle.clone(),
-                )
+                .add_blob_transaction_to_pool(wrapped_blob_tx.tx, wrapped_blob_tx.blobs_bundle)
                 .await
         } else {
             context
@@ -614,9 +611,7 @@ impl RpcHandler for SendRawTransactionRequest {
 }
 
 fn get_transaction_data(rpc_req_params: Option<Vec<Value>>) -> Result<Vec<u8>, RpcErr> {
-    let params = rpc_req_params
-        .as_ref()
-        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    let mut params = rpc_req_params.ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
         return Err(RpcErr::BadParams(format!(
             "Expected one param and {} were provided",
@@ -624,7 +619,9 @@ fn get_transaction_data(rpc_req_params: Option<Vec<Value>>) -> Result<Vec<u8>, R
         )));
     };
 
-    let str_data = serde_json::from_value::<String>(params[0].clone())?;
+    let str_data = serde_json::from_value::<String>(params.pop().ok_or(RpcErr::BadParams(
+        format!("Expected one param and none were provided"),
+    ))?)?;
     let str_data = str_data
         .strip_prefix("0x")
         .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
