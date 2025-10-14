@@ -851,7 +851,7 @@ mod tests {
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
         mempool
-            .add_transaction(blob_tx_hash, blob_tx.clone())
+            .add_transaction(blob_tx_hash, blob_tx.clone()) // ok-clone: clone used in test
             .unwrap();
         mempool.add_transaction(plain_tx_hash, plain_tx).unwrap();
         let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();

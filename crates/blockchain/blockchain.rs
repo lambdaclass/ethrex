@@ -566,7 +566,7 @@ impl Blockchain {
             };
 
             let BlockExecutionResult { receipts, .. } = self
-                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
+                .execute_block_from_state(parent_header, block, &chain_config, &mut vm)
                 .map_err(|err| {
                     (
                         err,
