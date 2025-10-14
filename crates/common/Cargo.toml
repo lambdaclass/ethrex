@@ -40,6 +40,7 @@ hex-literal.workspace = true
 [features]
 default = []
 c-kzg = ["dep:c-kzg", "ethrex-crypto/c-kzg"]
+risc0 = ["ethrex-crypto/risc0"]
  
 [lib]
 path = "./common.rs"
