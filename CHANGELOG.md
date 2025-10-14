@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2025-10-10
+### 2025-10-14
 
 - Improve get_closest_nodes p2p performance [#4838](https://github.com/lambdaclass/ethrex/pull/4838)
+
+### 2025-10-13
+
+- Remove unnecesary mul in ecpairing [#4843](https://github.com/lambdaclass/ethrex/pull/4843)
 
 ### 2025-10-06
 
