@@ -475,7 +475,7 @@ async fn initialize_connection<S>(
 where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
 {
-    if state.peer_table.peer_count().await? > TARGET_PEERS {
+    if state.peer_table.peer_count().await? >= TARGET_PEERS {
         log_peer_warn(&state.node, "Reached target peer connections, discarding.");
         return Err(PeerConnectionError::TooManyPeers);
     }
