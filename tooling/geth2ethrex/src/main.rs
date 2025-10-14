@@ -84,8 +84,6 @@ pub fn main() -> eyre::Result<()> {
 fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let migration_start: Instant = Instant::now();
 
-    info!("Opening Ethrex DB");
-    let ethrex_db = open_ethrexdb()?;
     info!("Opening Geth DB");
     let gethdb = GethDB::open()?;
     info!("Query hash table");
@@ -99,6 +97,8 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
     let header: BlockHeader = RLPDecode::decode(&header_rlp)?;
 
     if !*VALIDATE_ONLY {
+        info!("Opening Ethrex DB");
+        let ethrex_db = open_ethrexdb()?;
         info!("Inserting block header");
         let block_hash_rlp = block_hash.encode_to_vec();
         ethrex_db.put_cf(
