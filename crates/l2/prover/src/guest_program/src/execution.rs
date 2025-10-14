@@ -117,7 +117,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &blocks,
             execution_witness,
             elasticity_multiplier,
-            _fee_config,
+            fee_config,
             blob_commitment,
             blob_proof,
             chain_id,
@@ -334,7 +334,7 @@ fn execute_stateless(
         #[cfg(feature = "l2")]
         let mut vm = Evm::new_for_l2(
             wrapped_db.clone(),
-            fee_config.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
+            _fee_config.ok_or_else(|| StatelessExecutionError::FeeConfigNotFound)?,
         )?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(wrapped_db.clone());

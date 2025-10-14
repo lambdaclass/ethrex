@@ -6,8 +6,6 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, BlockchainType};
-#[cfg(feature = "l2")]
-use ethrex_common::blobs_bundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::{Address, types::Block};
@@ -47,7 +45,7 @@ pub struct ProverInputData {
     pub blob_commitment: ethrex_common::types::blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
-    pub blob_proof: blobs_bundle::Proof,
+    pub blob_proof: ethrex_common::types::blobs_bundle::Proof,
     pub fee_config: FeeConfig,
 }
 
