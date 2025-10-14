@@ -212,11 +212,11 @@ impl Message {
             // snap capability
             match msg_id - eth_version.snap_capability_offset() {
                 GetAccountRange::CODE => {
-                    return Ok(Message::GetAccountRange(GetAccountRange::decode(data)?));
+                    Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
                 }
                 AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
                 GetStorageRanges::CODE => {
-                    return Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?));
+                    Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
                 }
                 StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
                 GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
@@ -280,6 +280,39 @@ impl Message {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
                 L2Message::NewBlock(msg) => msg.encode(buf),
             },
+        }
+    }
+
+    pub fn request_id(&self) -> Option<u64> {
+        match self {
+            Message::GetBlockHeaders(message) => Some(message.id),
+            Message::GetBlockBodies(message) => Some(message.id),
+            Message::GetPooledTransactions(message) => Some(message.id),
+            Message::GetReceipts(message) => Some(message.id),
+            Message::GetAccountRange(message) => Some(message.id),
+            Message::GetStorageRanges(message) => Some(message.id),
+            Message::GetByteCodes(message) => Some(message.id),
+            Message::GetTrieNodes(message) => Some(message.id),
+            Message::BlockHeaders(message) => Some(message.id),
+            Message::BlockBodies(message) => Some(message.id),
+            Message::PooledTransactions(message) => Some(message.id),
+            Message::Receipts68(message) => Some(message.id),
+            Message::Receipts69(message) => Some(message.id),
+            Message::AccountRange(message) => Some(message.id),
+            Message::StorageRanges(message) => Some(message.id),
+            Message::ByteCodes(message) => Some(message.id),
+            Message::TrieNodes(message) => Some(message.id),
+            // The rest of the message types does not have a request id.
+            Message::Hello(_)
+            | Message::Disconnect(_)
+            | Message::Ping(_)
+            | Message::Pong(_)
+            | Message::Status68(_)
+            | Message::Status69(_)
+            | Message::Transactions(_)
+            | Message::NewPooledTransactionHashes(_)
+            | Message::BlockRangeUpdate(_)
+            | Message::L2(_) => None,
         }
     }
 }

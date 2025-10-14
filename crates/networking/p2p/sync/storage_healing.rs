@@ -1,5 +1,5 @@
 use crate::{
-    metrics::METRICS,
+    metrics::{CurrentStepValue, METRICS},
     peer_handler::{MAX_RESPONSE_BYTES, PeerHandler, RequestStorageTrieNodes},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -126,7 +126,7 @@ pub async fn heal_storage_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
-    *METRICS.current_step.lock().await = "Healing Storage".to_string();
+    METRICS.current_step.set(CurrentStepValue::HealingStorage);
     let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
     info!(
         "Started Storage Healing with {} accounts",
@@ -279,7 +279,7 @@ pub async fn heal_storage_trie(
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a stor error we should stop
             }
-            Err(RequestStorageTrieNodes::SendMessageError(id, _err)) => {
+            Err(RequestStorageTrieNodes::RequestError(id, _err)) => {
                 let inflight_request = state.requests.remove(&id).expect("request disappeared");
                 state.failed_downloads += 1;
                 state
@@ -287,7 +287,7 @@ pub async fn heal_storage_trie(
                     .extend(inflight_request.requests.clone());
                 peers
                     .peer_table
-                    .free_with_failure(&inflight_request.peer_id)
+                    .record_failure(&inflight_request.peer_id)
                     .await?;
             }
         }
@@ -306,9 +306,9 @@ async fn ask_peers_for_nodes(
     task_sender: &Sender<Result<TrieNodes, RequestStorageTrieNodes>>,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
-        let Some((peer_id, mut peer_channel)) = peers
+        let Some((peer_id, connection)) = peers
             .peer_table
-            .use_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
             .await
             .inspect_err(
                 |err| error!(err= ?err, "Error requesting a peer to perform storage healing"),
@@ -340,10 +340,13 @@ async fn ask_peers_for_nodes(
 
         let tx = task_sender.clone();
 
+        let peer_table = peers.peer_table.clone();
+
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
             // TODO: check errors to determine whether the current block is stale
-            let response = PeerHandler::request_storage_trienodes(&mut peer_channel, gtn).await;
+            let response =
+                PeerHandler::request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(|err| {
                 error!("Failed to send state trie nodes response. Error: {err}")
@@ -402,7 +405,6 @@ async fn zip_requeue_node_responses_score_peer(
         info!("No matching request found for received response {trie_nodes:?}");
         return Ok(None);
     };
-    peer_handler.peer_table.free_peer(&request.peer_id).await?;
 
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
@@ -543,26 +545,6 @@ fn get_initial_downloads(
                     storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                     parent: Nibbles::default(),
                     hash: account.storage_root,
-                })
-            })
-            .collect::<VecDeque<_>>(),
-    );
-    initial_requests.extend(
-        account_paths
-            .accounts_with_storage_root
-            .par_iter()
-            .filter_map(|(acc_path, storage_root)| {
-                if store
-                    .contains_storage_node(*acc_path, *storage_root)
-                    .expect("We should be able to open the store")
-                {
-                    return None;
-                }
-                Some(NodeRequest {
-                    acc_path: Nibbles::from_bytes(&acc_path.0),
-                    storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
-                    parent: Nibbles::default(),
-                    hash: *storage_root,
                 })
             })
             .collect::<VecDeque<_>>(),

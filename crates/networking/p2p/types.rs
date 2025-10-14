@@ -243,7 +243,9 @@ impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
             "{0}({1}:{2})",
-            self.public_key, self.ip, self.tcp_port
+            self.node_id(),
+            self.ip,
+            self.tcp_port
         ))
     }
 }
@@ -364,23 +366,6 @@ impl NodeRecord {
     pub fn update_seq(&mut self, signer: &SecretKey) -> Result<(), NodeError> {
         self.seq += 1;
         self.sign_record(signer)?;
-        Ok(())
-    }
-
-    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SecretKey) -> Result<(), NodeError> {
-        if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth") {
-            if *fork_id == ForkId::decode(&value[1..]).expect("No fork Id in NodeRecord pairs") {
-                return Ok(());
-            }
-        }
-
-        // remove previous eth version
-        self.pairs.retain(|(k, _)| k != "eth");
-
-        self.pairs
-            .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
-
-        self.update_seq(signer)?;
         Ok(())
     }
 
