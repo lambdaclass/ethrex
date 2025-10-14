@@ -352,7 +352,7 @@ impl Syncer {
         }
 
         let start_block_number;
-        let end_block_number;
+        let mut end_block_number = 0;
         let mut headers = vec![];
         let mut single_batch = true;
 
@@ -383,6 +383,13 @@ impl Syncer {
                     .ok_or(SyncError::NoBlocks)?
                     .number,
             );
+            end_block_number = end_block_number.max(
+                block_headers
+                    .first()
+                    .as_ref()
+                    .ok_or(SyncError::NoBlocks)?
+                    .number,
+            );
 
             sync_head = block_headers.last().ok_or(SyncError::NoBlocks)?.parent_hash;
             if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
@@ -402,12 +409,6 @@ impl Syncer {
                     .ok_or(SyncError::NoBlocks)?
                     .number
                     .max(1);
-                end_block_number = block_headers
-                    .first()
-                    .as_ref()
-                    .ok_or(SyncError::NoBlocks)?
-                    .number
-                    + 1;
                 // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
                 if single_batch {
                     headers = block_headers.into_iter().rev().collect();
@@ -419,6 +420,7 @@ impl Syncer {
             store.add_fullsync_batch(block_headers).await?;
             single_batch = false;
         }
+        end_block_number = end_block_number + 1;
 
         info!("Downloading Bodies and executing blocks");
         for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
@@ -525,15 +527,6 @@ impl Syncer {
                             .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
                             .await?;
                     }
-                    // // We also set with having an invalid ancestor all the hashes remaining which are descendants as well.
-                    // for header in &self.current_headers {
-                    //     self.store
-                    //         .set_latest_valid_ancestor(
-                    //             header.hash(),
-                    //             batch_failure.last_valid_hash,
-                    //         )
-                    //         .await?;
-                    // }
                 }
             }
             return Err(err.into());
