@@ -19,6 +19,10 @@ inputs:
     description: "Whether to push the built image to the registry"
     required: false
     default: "false"
+  artifact_path:
+    description: "The name of the artifact that is going to be pushed"
+    required: false
+    default: "ethrex_image.tar"
 
 outputs:
   artifact_path:
