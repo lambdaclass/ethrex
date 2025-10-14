@@ -14,7 +14,7 @@ use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_process
 #[cfg(feature = "l2")]
 use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
     sync::SyncMode,
@@ -392,7 +392,7 @@ pub async fn init_l1(
 ) -> eyre::Result<(
     PathBuf,
     CancellationToken,
-    PeerTableHandle,
+    PeerTable,
     Arc<Mutex<NodeRecord>>,
 )> {
     let datadir = &opts.datadir;

@@ -291,6 +291,39 @@ impl Message {
             },
         }
     }
+
+    pub fn request_id(&self) -> Option<u64> {
+        match self {
+            Message::GetBlockHeaders(message) => Some(message.id),
+            Message::GetBlockBodies(message) => Some(message.id),
+            Message::GetPooledTransactions(message) => Some(message.id),
+            Message::GetReceipts(message) => Some(message.id),
+            Message::GetAccountRange(message) => Some(message.id),
+            Message::GetStorageRanges(message) => Some(message.id),
+            Message::GetByteCodes(message) => Some(message.id),
+            Message::GetTrieNodes(message) => Some(message.id),
+            Message::BlockHeaders(message) => Some(message.id),
+            Message::BlockBodies(message) => Some(message.id),
+            Message::PooledTransactions(message) => Some(message.id),
+            Message::Receipts68(message) => Some(message.id),
+            Message::Receipts69(message) => Some(message.id),
+            Message::AccountRange(message) => Some(message.id),
+            Message::StorageRanges(message) => Some(message.id),
+            Message::ByteCodes(message) => Some(message.id),
+            Message::TrieNodes(message) => Some(message.id),
+            // The rest of the message types does not have a request id.
+            Message::Hello(_)
+            | Message::Disconnect(_)
+            | Message::Ping(_)
+            | Message::Pong(_)
+            | Message::Status68(_)
+            | Message::Status69(_)
+            | Message::Transactions(_)
+            | Message::NewPooledTransactionHashes(_)
+            | Message::BlockRangeUpdate(_)
+            | Message::L2(_) => None,
+        }
+    }
 }
 
 impl Display for Message {
