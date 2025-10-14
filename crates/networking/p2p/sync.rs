@@ -311,6 +311,10 @@ impl Syncer {
         // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
         let mut pending_blocks = vec![];
         while let Some(block) = store.get_pending_block(sync_head).await? {
+            if store.is_canonical_sync(block.hash())? {
+                // Ignore canonic blocks still in pending
+                break;
+            }
             sync_head = block.header.parent_hash;
             pending_blocks.push(block);
         }
