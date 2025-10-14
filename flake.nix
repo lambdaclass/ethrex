@@ -250,7 +250,7 @@
           linuxX86 = mkShell { shellFlavor = "linux-x86_64"; };
           linuxX86Gpu = mkShell { buildGpu = true; shellFlavor = "linux-x86_64-gpu"; };
           linuxArm = mkShell { shellFlavor = "linux-aarch64"; };
-          macShell = mkShell { shellFlavor = "mac"; };
+          macShell = mkShell { shellFlavor = "aarch64-darwin"; };
         in
         if system == "x86_64-linux" then {
           default = linuxX86;
