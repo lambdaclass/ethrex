@@ -1038,7 +1038,6 @@ impl Syncer {
                 &mut code_hash_collector,
             )
             .await?;
-            free_peers_and_log_if_not_empty(&mut self.peers).await?;
             if !healing_done {
                 continue;
             }
