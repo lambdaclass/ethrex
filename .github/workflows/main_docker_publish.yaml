@@ -45,4 +45,5 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           push: true
+          build_args: BUILD_FLAGS=--features l2,l2-sql
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-l2
