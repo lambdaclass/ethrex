@@ -34,8 +34,8 @@ const PRUNE_WAIT_TIME_SECS: u64 = 600; // 10 minutes
 // Amount of seconds between each prune
 const PRUNE_INTERVAL_SECS: u64 = 360; // 6 minutes
 
-// Amount of seconds between each broadcast
-const BROADCAST_INTERVAL_SECS: u64 = 1; // 1 second
+// Amount of milliseconds between each broadcast
+pub const BROADCAST_INTERVAL_MS: u64 = 1000; // 1 second
 
 #[derive(Debug, Clone, Default)]
 struct PeerMask {
@@ -115,6 +115,7 @@ impl TxBroadcaster {
     pub async fn spawn(
         kademlia: PeerTable,
         blockchain: Arc<Blockchain>,
+        tx_broadcasting_time_interval: u64,
     ) -> Result<GenServerHandle<TxBroadcaster>, TxBroadcasterError> {
         info!("Starting Transaction Broadcaster");
 
@@ -129,7 +130,7 @@ impl TxBroadcaster {
         let server = state.clone().start();
 
         send_interval(
-            Duration::from_secs(BROADCAST_INTERVAL_SECS),
+            Duration::from_millis(tx_broadcasting_time_interval),
             server.clone(),
             InMessage::BroadcastTxs,
         );
