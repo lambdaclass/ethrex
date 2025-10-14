@@ -174,7 +174,7 @@ impl Syncer {
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
     async fn sync_cycle_snap(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
-        let mut sync_mode = SyncMode::Snap;
+        let sync_mode = SyncMode::Snap;
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
@@ -275,9 +275,8 @@ impl Syncer {
                     debug!(
                         "Sync head is less than {MIN_FULL_BLOCKS} blocks away, switching to FullSync"
                     );
-                    sync_mode = SyncMode::Full;
                     self.snap_enabled.store(false, Ordering::Relaxed);
-                    block_sync_state = block_sync_state.into_fullsync().await?;
+                    return self.sync_cycle_full(sync_head, store.clone()).await;
                 }
             }
 
@@ -329,20 +328,7 @@ impl Syncer {
         mut sync_head: H256,
         store: Store,
     ) -> Result<(), SyncError> {
-        // Request all block headers between the current head and the sync head
-        // We will begin from the current head so that we download the earliest state first
-        // This step is not parallelized
-        let block_sync_state = FullBlockSyncState::new(store.clone());
-        // Check if we have some blocks downloaded from a previous sync attempt
-        // This applies only to snap sync—full sync always starts fetching headers
-        // from the canonical block, which updates as new block headers are fetched.
-
-        // Update current fetch head
-        let current_head = block_sync_state.get_current_head().await?;
-        info!(
-            "Syncing from current head {:?} to sync_head {:?}",
-            current_head, sync_head
-        );
+        info!("Syncing to sync_head {:?}", sync_head);
 
         // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
         let mut pending_blocks = vec![];
@@ -351,6 +337,9 @@ impl Syncer {
             pending_blocks.push(block);
         }
 
+        // Request all block headers between the sync head and our local chain
+        // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
+        // This step is not parallelized
         let start_block_number;
         let mut end_block_number = 0;
         let mut headers = vec![];
