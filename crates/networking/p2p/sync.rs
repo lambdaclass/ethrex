@@ -339,7 +339,7 @@ impl Syncer {
             let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
             let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
 
-            info!(
+            debug!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
                 first_header.number,
@@ -377,15 +377,11 @@ impl Syncer {
         }
         end_block_number += 1;
 
-        info!("Downloading Bodies and executing blocks");
+        // Download block bodies and execute full blocks in batches
         for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
             let batch_size = EXECUTE_BATCH_SIZE.min((end_block_number - start) as usize);
             let final_batch = end_block_number == start + batch_size as u64;
             // Retrieve batch from DB
-            info!(
-                "Processing batch from block number {start} to {}",
-                start + batch_size as u64
-            );
             if !single_batch {
                 headers = store.read_fullsync_batch(start, batch_size as u64).await?;
             }
