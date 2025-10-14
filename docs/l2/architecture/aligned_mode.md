@@ -139,8 +139,6 @@ You can also decrease the seconds per slot in `aligned_layer/network_params.rs`:
   seconds_per_slot: 4
 ```
 
-Change the `ethereum_genesis_generator_params` to `ethpandaops/ethereum-genesis-generator:5.0.8`
-
 3. Make sure you have the latest version of [kurtosis](https://github.com/kurtosis-tech/kurtosis) installed and start the ethereum-package:
 
 ```
@@ -180,7 +178,7 @@ let ws_stream_future =
 cd ethrex/crates/l2
 COMPILE_CONTRACTS=true \
 ETHREX_L2_ALIGNED=true \
-ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0xFD471836031dc5108809D173A067e8486B9047A3 \
+ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0xcbEAF3BDe82155F56486Fb5a1072cb8baAf547cc \
 ETHREX_L2_SP1=true \ 
 ETHREX_L2_RISC0=true \
 make deploy-l1

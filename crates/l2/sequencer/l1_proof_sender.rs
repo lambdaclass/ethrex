@@ -252,11 +252,7 @@ impl L1ProofSender {
                 )));
             };
 
-            let pub_input = match prover_type {
-                ProverType::RISC0 => Some(batch_proof.public_values()),
-                ProverType::SP1 => None, // SP1 pub inputs are embedded in the proof
-                _ => continue,
-            };
+            let pub_input = Some(batch_proof.public_values());
 
             let verification_data = VerificationData {
                 proving_system,
