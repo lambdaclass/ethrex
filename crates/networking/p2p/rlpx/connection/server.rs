@@ -904,7 +904,7 @@ async fn handle_incoming_message(
                     }
 
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
+                        log_peer_debug(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
                 }
