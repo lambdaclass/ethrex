@@ -416,35 +416,15 @@ fn geth2ethrex(block_number: BlockNumber) -> eyre::Result<()> {
         }
         let state_root = header.state_root;
         info!("Validating state trie");
-        let computed_state_root = Trie::compute_hash_from_unsorted_iter(
-            store
-                .iter_accounts(state_root)
-                .expect("Couldn't iterate state trie")
-                .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-        );
-        assert_eq!(state_root, computed_state_root);
+        store.open_locked_state_trie(state_root)?.validate()?;
         info!("Validating storage tries");
-        let mut with_storage_count = 0;
         for (hashed_address, account_state) in store
             .iter_accounts(state_root)
             .expect("Couldn't open state trie")
         {
-            let computed_storage_root = Trie::compute_hash_from_unsorted_iter(
-                store
-                    .iter_storage(state_root, hashed_address)
-                    .expect("Couldn't iterate storage trie")
-                    .expect("Missing storage root")
-                    .map(|(hash, state)| (hash.0.to_vec(), state.encode_to_vec())),
-            );
-            // with_storage_count += (account_state.storage_root != *EMPTY_TRIE_HASH) as usize;
-            assert_eq!(account_state.storage_root, computed_storage_root);
-            // assert_eq!(
-            //     storages
-            //         .get(&hashed_address.0[..])
-            //         .copied()
-            //         .unwrap_or(*EMPTY_TRIE_HASH),
-            //     computed_storage_root
-            // );
+            store
+                .open_locked_storage_trie(hashed_address, account_state.storage_root)?
+                .validate()?;
         }
         // assert_eq!(storages.len(), with_storage_count);
         info!("Validating latest block");
