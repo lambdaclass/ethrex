@@ -4,7 +4,7 @@ use crate::profiling::gather_profiling_metrics;
 
 use crate::{
     MetricsApiError, metrics_blocks::METRICS_BLOCKS, metrics_process::METRICS_PROCESS,
-    metrics_transactions::METRICS_TX,
+    metrics_snap_sync::METRICS_SNAP_SYNC, metrics_transactions::METRICS_TX,
 };
 
 pub async fn start_prometheus_metrics_api(
@@ -46,6 +46,15 @@ pub(crate) async fn get_metrics() -> String {
         Ok(string) => ret_string.push_str(&string),
         Err(_) => {
             tracing::error!("Failed to register METRICS_BLOCKS");
+            return String::new();
+        }
+    }
+
+    ret_string.push('\n');
+    match METRICS_SNAP_SYNC.gather_metrics() {
+        Ok(string) => ret_string.push_str(&string),
+        Err(_) => {
+            tracing::error!("Failed to register METRICS_SNAP_SYNC");
             return String::new();
         }
     }

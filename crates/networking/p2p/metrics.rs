@@ -5,12 +5,13 @@ use std::{
         Arc, LazyLock,
         atomic::{AtomicU8, AtomicU64, Ordering},
     },
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use ethrex_common::H256;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
+use ethrex_metrics::metrics_snap_sync::METRICS_SNAP_SYNC;
 
 use crate::rlpx::{error::RLPxError, p2p::DisconnectReason};
 
@@ -99,6 +100,8 @@ pub struct Metrics {
     pub bytecode_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
+    pub snap_sync_start_time_ms: AtomicU64,
+
     start_time: SystemTime,
 }
 
@@ -107,7 +110,15 @@ pub struct CurrentStep(AtomicU8);
 
 impl CurrentStep {
     pub fn set(&self, value: CurrentStepValue) {
-        self.0.store(value.into(), Ordering::Relaxed);
+        let numeric: u8 = value.into();
+        self.0.store(numeric, Ordering::Relaxed);
+        METRICS_SNAP_SYNC.set_current_step(numeric);
+
+        let start_ms = METRICS.snap_sync_start_time_ms.load(Ordering::Relaxed);
+        if start_ms != 0 {
+            let elapsed_ms = current_time_millis().saturating_sub(start_ms);
+            METRICS_SNAP_SYNC.set_duration_seconds(elapsed_ms as f64 / 1000.0);
+        }
     }
 
     pub fn get(&self) -> CurrentStepValue {
@@ -188,10 +199,21 @@ impl fmt::Display for CurrentStepValue {
 impl Metrics {
     pub async fn enable(&self) {
         *self.enabled.lock().await = true;
+        let now_ms = current_time_millis();
+        self.snap_sync_start_time_ms
+            .store(now_ms, Ordering::Relaxed);
+        METRICS_SNAP_SYNC.set_duration_seconds(0.0);
+        METRICS_SNAP_SYNC.set_current_step(0);
     }
 
     pub async fn disable(&self) {
         *self.enabled.lock().await = false;
+        let start_ms = self.snap_sync_start_time_ms.swap(0, Ordering::Relaxed);
+        if start_ms != 0 {
+            let elapsed_ms = current_time_millis().saturating_sub(start_ms);
+            METRICS_SNAP_SYNC.set_duration_seconds(elapsed_ms as f64 / 1000.0);
+        }
+        METRICS_SNAP_SYNC.set_current_step(0);
     }
 
     pub async fn record_new_discovery(&self) {

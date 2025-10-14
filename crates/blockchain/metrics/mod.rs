@@ -5,6 +5,8 @@ pub mod l2;
 #[cfg(any(feature = "api", feature = "metrics"))]
 pub mod metrics_blocks;
 #[cfg(any(feature = "api", feature = "metrics"))]
+pub mod metrics_snap_sync;
+#[cfg(any(feature = "api", feature = "metrics"))]
 pub mod metrics_process;
 #[cfg(any(feature = "api", feature = "transactions"))]
 pub mod metrics_transactions;

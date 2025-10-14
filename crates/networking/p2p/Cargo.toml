@@ -16,6 +16,7 @@ ethrex-trie.workspace = true
 ethrex-storage-rollup.workspace = true
 ethrex-threadpool.workspace = true
 ethereum-types.workspace = true
+ethrex-metrics = { path = "../../blockchain/metrics", default-features = false, features = ["metrics"] }
 
 async-trait.workspace = true
 tracing.workspace = true
