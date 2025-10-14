@@ -107,3 +107,4 @@ impl LevmDatabase for GuestProgramStateWrapper {
             .map_err(|_| DatabaseError::Custom("Failed to get account code".to_string()))
     }
 }
+

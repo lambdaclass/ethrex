@@ -1,9 +1,7 @@
-use ethrex_common::U256 as CoreU256;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::types::AccountState;
-use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
+use ethrex_common::{Address as CoreAddress, H256 as CoreH256, U256 as CoreU256};
 use ethrex_levm::db::Database as LevmDatabase;
-
 use ethrex_levm::errors::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
@@ -97,3 +95,4 @@ impl LevmDatabase for DatabaseLogger {
             .get_account_code(code_hash)
     }
 }
+

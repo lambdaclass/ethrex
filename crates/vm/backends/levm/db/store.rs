@@ -1,13 +1,12 @@
 use bytes::Bytes;
-use ethrex_common::{
-    Address, H256, U256,
-    constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, BlockHash, BlockNumber, ChainConfig},
-};
+use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::types::{AccountState, BlockHash, BlockNumber, ChainConfig};
+use ethrex_common::{Address, H256, U256};
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::errors::DatabaseError;
 use ethrex_storage::Store;
-use std::{cmp::Ordering, collections::HashMap};
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -121,3 +120,4 @@ impl LevmDatabase for StoreVmDatabase {
         }
     }
 }
+

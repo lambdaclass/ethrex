@@ -5,7 +5,6 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 pub mod tracing;
-pub mod vm;
 
 use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
@@ -28,8 +27,9 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
-use ethrex_vm::backends::levm::db::DatabaseLogger;
+use ethrex_vm::backends::levm::db::{DatabaseLogger, StoreVmDatabase};
 use ethrex_vm::{BlockExecutionResult, Evm, EvmError};
+pub use ethrex_vm::backends::levm::db as vm; // re-export VM adapters module for downstream users
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use std::collections::{BTreeMap, HashMap};
@@ -38,8 +38,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
-
-use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;

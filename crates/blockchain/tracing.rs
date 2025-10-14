@@ -5,9 +5,9 @@ use std::{
 
 use ethrex_common::{H256, tracing::CallTrace, types::Block};
 use ethrex_storage::Store;
-use ethrex_vm::{Evm, EvmError};
+use ethrex_vm::{backends::levm::db::StoreVmDatabase, Evm, EvmError};
 
-use crate::{Blockchain, error::ChainError, vm::StoreVmDatabase};
+use crate::{Blockchain, error::ChainError};
 
 impl Blockchain {
     /// Outputs the call trace for the given transaction

@@ -3557,7 +3557,6 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethrex-common 0.1.0",
- "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp 0.1.0",
  "ethrex-storage 0.1.0",
@@ -4133,6 +4132,7 @@ dependencies = [
  "ethrex-common 0.1.0",
  "ethrex-levm",
  "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
  "ethrex-trie 0.1.0",
  "hex",
  "lazy_static",
