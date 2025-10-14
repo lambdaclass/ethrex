@@ -338,12 +338,12 @@ impl Syncer {
                 debug!("Sync Log 8: Sync failed to find target block header, aborting");
                 return Ok(());
             };
-            info!("Sync Log 9: Received {} block headers", block_headers.len());
+            debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
-            let first_header = block_headers.first().unwrap();
-            let last_header = block_headers.last().unwrap();
+            let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
+            let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
 
-            info!(
+            debug!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
                 first_header.number,
@@ -352,7 +352,7 @@ impl Syncer {
             end_block_number = end_block_number.max(first_header.number);
             start_block_number = last_header.number;
 
-            sync_head = block_headers.last().unwrap().parent_hash;
+            sync_head = block_headers.last().ok_or(SyncError::NoBlocks)?.parent_hash;
             if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
                 // Incoming chain merged with current chain
                 // Filter out already canonical blocks from batch
@@ -365,7 +365,7 @@ impl Syncer {
                 }
                 block_headers.drain(first_canon_block..block_headers.len());
                 if !block_headers.is_empty() {
-                    start_block_number = block_headers.last().unwrap().number
+                    start_block_number = block_headers.last().ok_or(SyncError::NoBlocks)?.number
                 }
                 // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
                 if single_batch {
@@ -399,7 +399,7 @@ impl Syncer {
                     .request_and_validate_block_bodies(header_batch)
                     .await?
                     .ok_or(SyncError::BodiesNotFound)?;
-                info!("Obtained: {} block bodies", bodies.len());
+                debug!("Obtained: {} block bodies", bodies.len());
                 let block_batch = headers
                     .drain(..bodies.len())
                     .zip(bodies)
@@ -411,8 +411,8 @@ impl Syncer {
                 info!(
                     "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
                     blocks.len(),
-                    blocks.first().unwrap().hash(),
-                    blocks.last().unwrap().hash()
+                    blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
+                    blocks.last().ok_or(SyncError::NoBlocks)?.hash()
                 );
                 self.add_blocks_in_batch(blocks, final_batch, store.clone())
                     .await?;
@@ -424,8 +424,8 @@ impl Syncer {
             info!(
                 "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
                 pending_blocks.len(),
-                pending_blocks.first().unwrap().hash(),
-                pending_blocks.last().unwrap().hash()
+                pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
+                pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
             );
             self.add_blocks_in_batch(pending_blocks, true, store.clone())
                 .await?;
@@ -618,7 +618,7 @@ impl SnapBlockSyncState {
 
     /// Obtain the current head from where to start or resume block sync
     async fn get_current_head(&self) -> Result<H256, SyncError> {
-        if let Some(head) = dbg!(self.store.get_header_download_checkpoint().await?) {
+        if let Some(head) = self.store.get_header_download_checkpoint().await? {
             Ok(head)
         } else {
             self.store
