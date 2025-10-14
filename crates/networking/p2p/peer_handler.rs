@@ -22,8 +22,7 @@ use crate::{
         connection::server::CastMessage,
         eth::{
             blocks::{
-                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
-                HashOrNumber,
+                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber, BLOCK_HEADER_LIMIT
             },
             receipts::GetReceipts,
         },
@@ -35,10 +34,9 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-    sync::{AccountStorageRoots, BlockSyncState, block_is_stale, update_pivot},
+    sync::{block_is_stale, update_pivot, AccountStorageRoots, SnapBlockSyncState},
     utils::{
-        SendMessageError, dump_to_file, get_account_state_snapshot_file,
-        get_account_storages_snapshot_file,
+        dump_to_file, get_account_state_snapshot_file, get_account_storages_snapshot_file, SendMessageError
     },
 };
 use tracing::{debug, error, info, trace, warn};
@@ -736,7 +734,7 @@ impl PeerHandler {
         limit: H256,
         account_state_snapshots_dir: &Path,
         pivot_header: &mut BlockHeader,
-        block_sync_state: &mut BlockSyncState,
+        block_sync_state: &mut SnapBlockSyncState,
     ) -> Result<(), PeerHandlerError> {
         METRICS
             .current_step

@@ -176,7 +176,7 @@ impl Syncer {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
-        let mut block_sync_state = BlockSyncState::new_snap(store.clone());
+        let mut block_sync_state = SnapBlockSyncState::new(store.clone());
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
@@ -198,10 +198,7 @@ impl Syncer {
             debug!("Sync Log 1: In snap sync");
             debug!(
                 "Sync Log 2: State block hashes len {}",
-                match block_sync_state {
-                    BlockSyncState::Snap(ref snap_block_sync_state) =>
-                        snap_block_sync_state.block_hashes.len(),
-                }
+                block_sync_state.block_hashes.len()
             );
             debug!("Requesting Block Headers from {current_head}");
 
@@ -281,11 +278,9 @@ impl Syncer {
             if block_headers.len() > 1 {
                 let block_headers_iter = block_headers.into_iter().skip(1);
 
-                match block_sync_state {
-                    BlockSyncState::Snap(ref mut state) => {
-                        state.process_incoming_headers(block_headers_iter).await?
-                    }
-                }
+                block_sync_state
+                    .process_incoming_headers(block_headers_iter)
+                    .await?;
             }
 
             if sync_head_found {
@@ -380,7 +375,7 @@ impl Syncer {
             store.add_fullsync_batch(block_headers).await?;
             single_batch = false;
         }
-        end_block_number = end_block_number + 1;
+        end_block_number += 1;
 
         info!("Downloading Bodies and executing blocks");
         for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
@@ -604,30 +599,11 @@ async fn store_receipts(
     Ok(())
 }
 
-/// Persisted State during the Block Sync phase
-#[derive(Clone)]
-pub enum BlockSyncState {
-    Snap(SnapBlockSyncState),
-}
-
 /// Persisted State during the Block Sync phase for SnapSync
 #[derive(Clone)]
 pub struct SnapBlockSyncState {
     block_hashes: Vec<H256>,
     store: Store,
-}
-
-impl BlockSyncState {
-    fn new_snap(store: Store) -> Self {
-        BlockSyncState::Snap(SnapBlockSyncState::new(store))
-    }
-
-    /// Obtain the current head from where to start or resume block sync
-    async fn get_current_head(&self) -> Result<H256, SyncError> {
-        match self {
-            BlockSyncState::Snap(state) => state.get_current_head().await,
-        }
-    }
 }
 
 impl SnapBlockSyncState {
@@ -687,18 +663,16 @@ impl Syncer {
     async fn snap_sync(
         &mut self,
         store: &Store,
-        block_sync_state: &mut BlockSyncState,
+        block_sync_state: &mut SnapBlockSyncState,
     ) -> Result<(), SyncError> {
         // snap-sync: launch tasks to fetch blocks and state in parallel
         // - Fetch each block's body and its receipt via eth p2p requests
         // - Fetch the pivot block's state via snap p2p requests
         // - Execute blocks after the pivot (like in full-sync)
-        let pivot_hash = match block_sync_state {
-            BlockSyncState::Snap(snap_block_sync_state) => snap_block_sync_state
-                .block_hashes
-                .last()
-                .ok_or(SyncError::NoBlockHeaders)?,
-        };
+        let pivot_hash = block_sync_state
+            .block_hashes
+            .last()
+            .ok_or(SyncError::NoBlockHeaders)?;
         let mut pivot_header = store
             .get_block_header_by_hash(*pivot_hash)?
             .ok_or(SyncError::CorruptDB)?;
@@ -1073,15 +1047,13 @@ impl Syncer {
 
         store.add_block(block).await?;
 
-        let numbers_and_hashes = match block_sync_state {
-            BlockSyncState::Snap(snap_block_sync_state) => snap_block_sync_state
-                .block_hashes
-                .iter()
-                .rev()
-                .enumerate()
-                .map(|(i, hash)| (pivot_header.number - i as u64, *hash))
-                .collect::<Vec<_>>(),
-        };
+        let numbers_and_hashes = block_sync_state
+            .block_hashes
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(i, hash)| (pivot_header.number - i as u64, *hash))
+            .collect::<Vec<_>>();
 
         store
             .forkchoice_update(
@@ -1145,7 +1117,7 @@ pub async fn update_pivot(
     block_number: u64,
     block_timestamp: u64,
     peers: &mut PeerHandler,
-    block_sync_state: &mut BlockSyncState,
+    block_sync_state: &mut SnapBlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
@@ -1183,17 +1155,13 @@ pub async fn update_pivot(
         // Reward peer
         peers.peer_table.record_success(&peer_id).await?;
         info!("Succesfully updated pivot");
-        if let BlockSyncState::Snap(sync_state) = block_sync_state {
-            let block_headers = peers
-                .request_block_headers(block_number + 1, pivot.hash())
-                .await?
-                .ok_or(SyncError::NoBlockHeaders)?;
-            sync_state
-                .process_incoming_headers(block_headers.into_iter())
-                .await?;
-        } else {
-            return Err(SyncError::NotInSnapSync);
-        }
+        let block_headers = peers
+            .request_block_headers(block_number + 1, pivot.hash())
+            .await?
+            .ok_or(SyncError::NoBlockHeaders)?;
+        block_sync_state
+            .process_incoming_headers(block_headers.into_iter())
+            .await?;
         *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
     }
