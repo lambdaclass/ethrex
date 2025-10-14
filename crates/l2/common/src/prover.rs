@@ -90,7 +90,7 @@ impl ProverType {
             }
             ,
             // other types are not supported by Aligned
-            _ => return Ok(None),
+            _ => Ok(None),
         }
     }
 
