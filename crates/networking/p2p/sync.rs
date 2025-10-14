@@ -343,7 +343,7 @@ impl Syncer {
             let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
             let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
 
-            debug!(
+            info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
                 first_header.number,
