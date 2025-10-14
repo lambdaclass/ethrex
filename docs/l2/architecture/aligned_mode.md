@@ -115,7 +115,7 @@ make init-prover-<sp1/risc0> # optional: GPU=true
 ```bash
 git clone git@github.com:yetanotherco/aligned_layer.git
 cd aligned_layer
-git checkout tags/v0.17.0
+git checkout tags/v0.19.1
 ```
 
 2. Edit the `aligned_layer/network_params.rs` file to send some funds to the `committer` and `integration_test` addresses:
