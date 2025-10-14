@@ -95,4 +95,3 @@ impl LevmDatabase for DatabaseLogger {
             .get_account_code(code_hash)
     }
 }
-

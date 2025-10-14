@@ -18,7 +18,7 @@ use ethrex_common::{
     },
 };
 
-use ethrex_vm::{backends::levm::db::StoreVmDatabase, Evm, EvmError};
+use ethrex_vm::{Evm, EvmError, backends::levm::db::StoreVmDatabase};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};

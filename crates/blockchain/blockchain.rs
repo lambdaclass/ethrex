@@ -27,9 +27,9 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
+pub use ethrex_vm::backends::levm::db as vm; // re-export VM adapters module for downstream users
 use ethrex_vm::backends::levm::db::{DatabaseLogger, StoreVmDatabase};
 use ethrex_vm::{BlockExecutionResult, Evm, EvmError};
-pub use ethrex_vm::backends::levm::db as vm; // re-export VM adapters module for downstream users
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use std::collections::{BTreeMap, HashMap};
