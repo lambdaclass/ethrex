@@ -306,19 +306,20 @@ pub async fn get_operator_fee_config(
         return Ok(None);
     }
 
-    let operator_fee = sequencer_opts.block_producer_opts.operator_fee_per_gas;
+    let fee = sequencer_opts.block_producer_opts.operator_fee_per_gas;
 
-    let operator_address = sequencer_opts
+    let address = sequencer_opts
         .block_producer_opts
         .operator_fee_vault_address;
 
-    let operator_fee_config = if let (Some(address), Some(fee)) = (operator_address, operator_fee) {
-        Some(OperatorFeeConfig {
-            operator_fee_per_gas: fee,
-            operator_fee_vault: address,
-        })
-    } else {
-        None
-    };
+    let operator_fee_config =
+        if let (Some(operator_fee_per_gas), Some(operator_fee_vault)) = (address, fee) {
+            Some(OperatorFeeConfig {
+                operator_fee_per_gas,
+                operator_fee_vault,
+            })
+        } else {
+            None
+        };
     Ok(operator_fee_config)
 }

@@ -201,7 +201,7 @@ pub fn get_max_blob_gas_price(
 
     Ok(max_blob_gas_cost)
 }
-/// Caltulate the actual blob gas cost.
+/// Calculate the actual blob gas cost.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
     block_excess_blob_gas: Option<U256>,
