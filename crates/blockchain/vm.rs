@@ -43,6 +43,7 @@ impl StoreVmDatabase {
 
 impl VmDatabase for StoreVmDatabase {
     #[instrument(level = "trace", name = "Account read", skip_all)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
         self.store
             .get_account_info_by_hash(self.block_hash, address)
@@ -50,6 +51,7 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     #[instrument(level = "trace", name = "Storage read", skip_all)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
             .get_storage_at_hash(self.block_hash, address, key)
@@ -57,6 +59,7 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     #[instrument(level = "trace", name = "Block hash read", skip_all)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         // Check if we have it cached
         if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
@@ -97,6 +100,7 @@ impl VmDatabase for StoreVmDatabase {
         )))
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
         self.store
             .get_chain_config()
@@ -104,6 +108,7 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     #[instrument(level = "trace", name = "Account code read", skip_all)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());

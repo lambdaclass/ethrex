@@ -43,6 +43,7 @@ impl MempoolInner {
     }
 
     /// Remove a transaction from the pool with the transaction pool lock already taken
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn remove_transaction_with_lock(&mut self, hash: &H256) -> Result<(), StoreError> {
         if let Some(tx) = self.transaction_pool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
@@ -58,6 +59,7 @@ impl MempoolInner {
     }
 
     /// Remove the oldest transaction in the pool
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn remove_oldest_transaction(&mut self) -> Result<(), StoreError> {
         // Remove elements from the order queue until one is present in the pool
         while self.transaction_pool.len() >= self.max_mempool_size {
@@ -100,6 +102,7 @@ impl Mempool {
     }
 
     /// Add transaction to the pool without doing validity checks
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn add_transaction(
         &self,
         hash: H256,
@@ -126,6 +129,7 @@ impl Mempool {
         Ok(())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
         let inner = self.read()?;
         let txs = inner
@@ -142,12 +146,14 @@ impl Mempool {
         Ok(txs)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn clear_broadcasted_txs(&self) -> Result<(), StoreError> {
         self.write()?.broadcast_pool.clear();
         Ok(())
     }
 
     /// Add a blobs bundle to the pool by its blob transaction hash
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn add_blobs_bundle(
         &self,
         tx_hash: H256,
@@ -160,11 +166,13 @@ impl Mempool {
     }
 
     /// Get a blobs bundle to the pool given its blob transaction hash
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn get_blobs_bundle(&self, tx_hash: H256) -> Result<Option<BlobsBundle>, StoreError> {
         Ok(self.read()?.blobs_bundle_pool.get(&tx_hash).cloned())
     }
 
     /// Remove a transaction from the pool
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn remove_transaction(&self, hash: &H256) -> Result<(), StoreError> {
         let mut inner = self.write()?;
         inner.remove_transaction_with_lock(hash)?;
@@ -173,6 +181,7 @@ impl Mempool {
 
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn filter_transactions(
         &self,
         filter: &PendingTxFilter,
@@ -212,6 +221,7 @@ impl Mempool {
     }
 
     /// Gets all the transactions in the mempool
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn get_all_txs_by_sender(
         &self,
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
@@ -232,6 +242,7 @@ impl Mempool {
 
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn filter_transactions_with_filter_fn(
         &self,
         filter: &dyn Fn(&Transaction) -> bool,
@@ -254,6 +265,7 @@ impl Mempool {
     }
 
     /// Gets hashes from possible_hashes that are not already known in the mempool.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn filter_unknown_transactions(
         &self,
         possible_hashes: &[H256],
@@ -267,6 +279,7 @@ impl Mempool {
             .collect())
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
@@ -280,6 +293,7 @@ impl Mempool {
         Ok(tx)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn get_nonce(&self, address: &Address) -> Result<Option<u64>, MempoolError> {
         Ok(self
             .read()?
@@ -289,6 +303,7 @@ impl Mempool {
             .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
             let pool_lock = &self.read()?.transaction_pool;
@@ -303,6 +318,7 @@ impl Mempool {
     }
 
     /// Returns all transactions currently in the pool
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
         let pooled_transactions = &self.read()?.transaction_pool;
         Ok(pooled_transactions
@@ -313,6 +329,7 @@ impl Mempool {
     }
 
     /// Returns all blobs bundles currently in the pool
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
         let blobs_bundle_pool = &self.read()?.blobs_bundle_pool;
         Ok(blobs_bundle_pool.values().cloned().collect())
@@ -320,12 +337,14 @@ impl Mempool {
 
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn status(&self) -> Result<u64, MempoolError> {
         let pool_lock = &self.read()?.transaction_pool;
 
         Ok(pool_lock.len() as u64)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn contains_sender_nonce(
         &self,
         sender: Address,
@@ -349,11 +368,13 @@ impl Mempool {
         Ok(tx)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
         let contains = self.read()?.transaction_pool.contains_key(&tx_hash);
         Ok(contains)
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn find_tx_to_replace(
         &self,
         sender: Address,
@@ -410,6 +431,7 @@ pub struct PendingTxFilter {
     pub only_blob_txs: bool,
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn transaction_intrinsic_gas(
     tx: &Transaction,
     header: &BlockHeader,

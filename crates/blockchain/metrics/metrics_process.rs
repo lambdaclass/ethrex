@@ -26,6 +26,7 @@ impl MetricsProcess {
 
     /// The Process collector gathers standard process metrics (CPU time, RSS, VSZ, FDs, threads, start_time).
     /// But it only works on Linux. This is an initial implementation.
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
