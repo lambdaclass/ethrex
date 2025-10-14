@@ -551,7 +551,7 @@ fn vm_from_generic<'a>(
                 .collect(),
             ..Default::default()
         })
-    } else if let !tx.blob_versioned_hashes.is_empty() {
+    } else if !tx.blob_versioned_hashes.is_empty() {
         Transaction::EIP4844Transaction(EIP4844Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
