@@ -85,6 +85,8 @@ jobs:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
 
+  # We build the docker image for the l2 usage. It needs to add
+  # The build args for l2.
   build-docker-l2:
     name: Build docker image L2
     runs-on: ubuntu-latest
@@ -100,7 +102,7 @@ jobs:
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          tags: ethrex:main_l2
+          tags: ethrex:main-l2
           artifact_path: ethrex_image_l2.tar
           build_args: BUILD_FLAGS=--features l2
 

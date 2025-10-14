@@ -85,7 +85,6 @@ jobs:
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          artifact_path: ethrex_image.tar
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

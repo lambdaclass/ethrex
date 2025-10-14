@@ -14,7 +14,7 @@ services:
 
   contract_deployer:
     container_name: contract_deployer
-    image: "ethrex:main_l2"
+    image: "ethrex:main-l2"
     build:
       context: ../../
       args:
@@ -67,7 +67,7 @@ services:
 
   ethrex_l2:
     container_name: ethrex_l2
-    image: "ethrex:main_l2"
+    image: "ethrex:main-l2"
     build:
       context: ../../
       args:
@@ -112,7 +112,7 @@ services:
 
   ethrex_prover:
     container_name: ethrex_prover
-    image: "ethrex:main_l2"
+    image: "ethrex:main-l2"
     build:
       context: ../../
       args:

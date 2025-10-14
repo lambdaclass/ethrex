@@ -24,7 +24,7 @@ inputs:
     required: false
     default: "ethrex_image.tar"
   build_args:
-    description: "The feature flags to be build"
+    description: "The arguments that are sent to the dockerfile to built. Format ARG=value"
     required: false
     default: ""
 
