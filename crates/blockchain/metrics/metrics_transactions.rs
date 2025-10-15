@@ -68,7 +68,7 @@ impl MetricsTx {
     }
 
     pub fn inc_tx_with_type(&self, tx_type: MetricsTxType) {
-        let txs = self.transactions_tracker.clone();
+        let txs = self.transactions_tracker.clone(); // ok-clone: prometheus counter structs are effectively an arc, and we want multiple references to them
 
         let txs_builder = match txs.get_metric_with_label_values(&[tx_type.to_str()]) {
             Ok(builder) => builder,
@@ -82,7 +82,7 @@ impl MetricsTx {
     }
 
     pub fn inc_tx_errors(&self, tx_error: &str) {
-        let tx_errors = self.transaction_errors_count.clone();
+        let tx_errors = self.transaction_errors_count.clone(); // ok-clone: prometheus counter structs are effectively an arc, and we want multiple references to them
 
         let tx_errors_builder = match tx_errors.get_metric_with_label_values(&[tx_error]) {
             Ok(builder) => builder,
@@ -120,6 +120,7 @@ impl MetricsTx {
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
+        // ok-clone: prometheus counter structs are effectively an arc, and we want multiple references to them
         r.register(Box::new(self.transactions_total.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.transactions_tracker.clone()))

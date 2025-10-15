@@ -67,7 +67,7 @@ impl Blockchain {
         let block = Arc::new(block);
         let mut call_traces = vec![];
         for index in 0..block.body.transactions.len() {
-            // We are cloning the `Arc`s here, not the structs themselves
+            // ok-clone: We are cloning the `Arc`s here, not the structs themselves
             let block = block.clone();
             let vm = vm.clone();
             let tx_hash = block.as_ref().body.transactions[index].hash();
@@ -103,7 +103,7 @@ impl Blockchain {
             .map(|b| (b.header.number, b.hash()))
             .collect();
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
+            self.storage.clone(), // ok-clone: store struct fields are all arcs, so this just increases their reference count
             parent_hash,
             block_hash_cache,
         );

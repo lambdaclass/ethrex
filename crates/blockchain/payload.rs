@@ -120,7 +120,7 @@ impl BuildPayloadArgs {
 /// Creates a new payload based on the payload arguments
 // Basic payload block building, can and should be improved
 pub fn create_payload(
-    args: &BuildPayloadArgs,
+    args: BuildPayloadArgs,
     storage: &Store,
     extra_data: Bytes,
 ) -> Result<Block, ChainError> {
@@ -176,7 +176,7 @@ pub fn create_payload(
     let body = BlockBody {
         transactions: Vec::new(),
         ommers: Vec::new(),
-        withdrawals: args.withdrawals.clone(),
+        withdrawals: args.withdrawals,
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -235,7 +235,7 @@ impl PayloadBuildContext {
                 .unwrap_or_default(),
         );
 
-        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash); // ok-clone: store struct fields are all arcs, so this just increases their reference count
         let vm = match blockchain_type {
             BlockchainType::L1 => Evm::new_for_l1(vm_db),
             BlockchainType::L2(fee_config) => Evm::new_for_l2(vm_db, fee_config)?,
@@ -251,7 +251,7 @@ impl PayloadBuildContext {
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
             blobs_bundle: BlobsBundle::default(),
-            store: storage.clone(),
+            store: storage.clone(), // ok-clone: store struct fields are all arcs, so this just increases their reference count
             vm,
             account_updates: Vec::new(),
         })
@@ -282,7 +282,7 @@ impl PayloadBuildContext {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PayloadBuildResult {
     pub blobs_bundle: BlobsBundle,
     pub block_value: U256,
@@ -329,7 +329,7 @@ impl Blockchain {
         payloads.insert(idx, finished_payload);
         // Return the held payload
         match &payloads[idx].1 {
-            PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
+            PayloadOrTask::Payload(payload) => Ok(*payload.clone()), // todo-clone: might be possible to remove, but it's tricky given mutable access to self isn't normally possible (since Blockchain is usually behind Arc)
             _ => unreachable!("we already converted the payload into a finished version"),
         }
     }
@@ -337,9 +337,9 @@ impl Blockchain {
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
     /// The build process will run for the full block building timeslot or until `get_payload` is called
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
-        let self_clone = self.clone();
+        let self_clone = self.clone(); // ok-clone: increase arc reference count
         let cancel_token = CancellationToken::new();
-        let cancel_token_clone = cancel_token.clone();
+        let cancel_token_clone = cancel_token.clone(); // ok-clone: increase arc reference count
         let payload_build_task = tokio::task::spawn(async move {
             self_clone
                 .build_payload_loop(payload, cancel_token_clone)
@@ -367,9 +367,10 @@ impl Blockchain {
         cancel_token: CancellationToken,
     ) -> Result<PayloadBuildResult, ChainError> {
         let start = Instant::now();
-        let self_clone = self.clone();
+        let self_clone = self.clone(); // ok-clone: increase arc reference count
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
+        // todo-clone: the clones here should be able to be removed if instead of repeatedly building the payload, we kept filling it with transactions until time ran out or payload was requested
         let mut res = self_clone.build_payload(payload.clone()).await?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             let payload = payload.clone();
@@ -391,8 +392,7 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context =
-            PayloadBuildContext::new(payload, &self.storage, self.options.r#type.clone())?;
+        let mut context = PayloadBuildContext::new(payload, &self.storage, self.options.r#type)?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
@@ -708,6 +708,8 @@ impl std::ops::Deref for HeadTransaction {
 impl From<HeadTransaction> for Transaction {
     fn from(val: HeadTransaction) -> Self {
         val.tx.transaction().clone()
+        // todo-clone: we could probably remove this clone (although much of the code needs an owned copy anyways)
+        // but it'd require a refactor of how other functions access transactions in the mempool
     }
 }
 

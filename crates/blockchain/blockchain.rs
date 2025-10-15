@@ -54,7 +54,7 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default)]
 pub enum BlockchainType {
     #[default]
     L1,
@@ -140,7 +140,7 @@ impl Blockchain {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
+            self.storage.add_pending_block(block.clone()).await?; // ok-clone: storage consumes block, so we need a copy
             return Err(ChainError::ParentNotFound);
         };
 
@@ -149,7 +149,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash); // ok-clone: store struct fields are all arcs, so this just increases their reference count
         let mut vm = self.new_evm(vm_db)?;
 
         let execution_result = vm.execute_block(block)?;
@@ -186,13 +186,12 @@ impl Blockchain {
         &self,
         blocks: &[Block],
     ) -> Result<ExecutionWitness, ChainError> {
-        let first_block_header = blocks
+        let first_block_header = &blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
                 "Empty block batch".to_string(),
             ))?
-            .header
-            .clone();
+            .header;
 
         // Get state at previous block
         let trie = self
@@ -218,13 +217,13 @@ impl Blockchain {
         for block in blocks {
             let parent_hash = block.header.parent_hash;
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash)); // ok-clone: store struct fields are all arcs, so this just increases their reference count
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.options.r#type {
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()), // ok-clone: increase arc reference count
                 BlockchainType::L2(fee_config) => {
                     Evm::new_from_db_for_l2(logger.clone(), fee_config)
-                }
+                } // ok-clone: increase arc reference count
             };
 
             // Re-execute block with logger
@@ -244,13 +243,10 @@ impl Blockchain {
             }
 
             // Get the used block hashes from the logger
-            let logger_block_hashes = logger
-                .block_hashes_accessed
-                .lock()
-                .map_err(|_e| {
+            let logger_block_hashes =
+                std::mem::take(&mut *logger.block_hashes_accessed.lock().map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to get block hashes".to_string())
-                })?
-                .clone();
+                })?);
             block_hashes.extend(logger_block_hashes);
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
@@ -416,7 +412,7 @@ impl Blockchain {
         };
 
         self.storage
-            .clone()
+            .clone() // ok-clone: store struct fields are all arcs, so this just increases their reference count
             .store_block_updates(update_batch)
             .await
             .map_err(|e| e.into())
@@ -524,7 +520,7 @@ impl Blockchain {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
-        let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
+        let Some(first_block_header) = blocks.first().map(|e| &e.header) else {
             return Err((ChainError::Custom("First block not found".into()), None));
         };
 
@@ -537,7 +533,7 @@ impl Blockchain {
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
+            self.storage.clone(), // ok-clone: store struct fields are all arcs, so this just increases their reference count
             first_block_header.parent_hash,
             block_hash_cache,
         );
@@ -556,7 +552,7 @@ impl Blockchain {
             }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                find_parent_header(&block.header, &self.storage).map_err(|err| {
+                &find_parent_header(&block.header, &self.storage).map_err(|err| {
                     (
                         err,
                         Some(BatchBlockProcessingFailure {
@@ -567,11 +563,11 @@ impl Blockchain {
                 })?
             } else {
                 // for the subsequent ones, the parent is the previous block
-                blocks[i - 1].header.clone()
+                &blocks[i - 1].header
             };
 
             let BlockExecutionResult { receipts, .. } = self
-                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
+                .execute_block_from_state(parent_header, block, &chain_config, &mut vm)
                 .map_err(|err| {
                     (
                         err,
