@@ -413,7 +413,7 @@ jobs:
       - name: Start ethrex
         run: |
           cd crates/l2
-          make init-l2-dev 2>&1 || tee /tmp/ethrex.log &
+          make init-l2-dev 2>&1 | tee /tmp/ethrex.log &
 
       - name: Wait for ethrex l2
         run: |
@@ -430,7 +430,7 @@ jobs:
 
       - name: Init prover
         run: |
-          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 2>&1 || tee /tmp/prover.log & 
+          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 2>&1 | tee /tmp/prover.log & 
 
       - name: Run test
         run: |
