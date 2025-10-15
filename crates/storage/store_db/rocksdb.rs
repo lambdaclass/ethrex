@@ -13,7 +13,7 @@ use ethrex_common::{
         Receipt, Transaction,
     },
 };
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie};
+use ethrex_trie::{Nibbles, Node, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
     OptimisticTransactionDB, Options, WriteBatchWithTransaction,
@@ -24,7 +24,6 @@ use std::{
     path::Path,
     sync::{Arc, RwLock},
 };
-use tokio::sync;
 use tracing::info;
 
 use crate::{
@@ -109,6 +108,7 @@ const CF_MISC_VALUES: &str = "misc_values";
 
 enum SnapshotControlMessage {
     Stop,
+    WaitUntilStopped,
     Continue,
 }
 
@@ -116,8 +116,8 @@ enum SnapshotControlMessage {
 pub struct Store {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     trie_cache: Arc<RwLock<TrieLayerCache>>,
-    snapshot_pivot_rx: Arc<Mutex<tokio::sync::mpsc::Receiver<SnapshotControlMessage>>>,
-    snapshot_pivot_tx: tokio::sync::mpsc::Sender<SnapshotControlMessage>,
+    snapshot_pivot_rx: Arc<Mutex<std::sync::mpsc::Receiver<SnapshotControlMessage>>>,
+    snapshot_pivot_tx: std::sync::mpsc::SyncSender<SnapshotControlMessage>,
 }
 
 impl Store {
@@ -313,7 +313,7 @@ impl Store {
                 }
             }
         }
-        let (tx, rx) = tokio::sync::mpsc::channel(0);
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
 
         Ok(Self {
             db: Arc::new(db),
@@ -493,6 +493,7 @@ impl StoreEngine for Store {
                 cf_tx_locations,
                 cf_headers,
                 cf_bodies,
+                cf_misc,
             ] = open_cfs(
                 &db,
                 [
@@ -504,6 +505,7 @@ impl StoreEngine for Store {
                     CF_TRANSACTION_LOCATIONS,
                     CF_HEADERS,
                     CF_BODIES,
+                    CF_MISC_VALUES,
                 ],
             )?;
 
@@ -512,11 +514,23 @@ impl StoreEngine for Store {
 
             let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
             if let Some(root) = trie.get_commitable(parent_state_root) {
-                snapshot_pivot_tx.blocking_send(SnapshotControlMessage::Stop);
+                snapshot_pivot_tx
+                    .send(SnapshotControlMessage::Stop)
+                    .unwrap();
+                snapshot_pivot_tx
+                    .send(SnapshotControlMessage::WaitUntilStopped)
+                    .unwrap();
+
+                let last_written = db
+                    .get_cf(&cf_misc, "last_written")?
+                    .ok_or(StoreError::Custom("Missing CF_MISC_VALUES".to_string()))?;
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     let is_leaf = key.len() == 65 || key.len() == 131;
 
+                    if is_leaf && last_written > key {
+                        continue;
+                    }
                     let cf = if is_leaf {
                         &cf_snapshots
                     } else {
@@ -528,7 +542,9 @@ impl StoreEngine for Store {
                         batch.put_cf(cf, key, value);
                     }
                 }
-                snapshot_pivot_tx.blocking_send(SnapshotControlMessage::Continue);
+                snapshot_pivot_tx
+                    .send(SnapshotControlMessage::Continue)
+                    .unwrap();
             }
             trie.put_batch(
                 parent_state_root,
@@ -1506,7 +1522,7 @@ impl StoreEngine for Store {
     }
 
     fn generate_snapshot(&self) -> Result<(), StoreError> {
-        let mut snapshot_pivot_rx = self
+        let snapshot_pivot_rx = self
             .snapshot_pivot_rx
             .lock()
             .map_err(|_| StoreError::LockError)?;
@@ -1559,10 +1575,8 @@ impl StoreEngine for Store {
                             SnapshotControlMessage::Stop => {
                                 return Err(StoreError::PivotChanged);
                             }
-                            SnapshotControlMessage::Continue => {
-                                return Err(StoreError::Custom(
-                                    "Unexpected SnapshotControlMessage::Continue".to_string(),
-                                ));
+                            _ => {
+                                return Err(StoreError::Custom("Unexpected message".to_string()));
                             }
                         }
                     }
@@ -1573,26 +1587,23 @@ impl StoreEngine for Store {
                 if let Ok(value) = snapshot_pivot_rx.try_recv() {
                     match value {
                         SnapshotControlMessage::Stop => return Err(StoreError::PivotChanged),
-                        SnapshotControlMessage::Continue => {
-                            return Err(StoreError::Custom(
-                                "Unexpected SnapshotControlMessage::Continue".to_string(),
-                            ));
+                        _ => {
+                            return Err(StoreError::Custom("Unexpected message".to_string()));
                         }
                     }
                 }
                 Ok(())
             });
             self.db.write(batch)?;
+            snapshot_pivot_rx.recv().unwrap();
             match res {
                 Err(StoreError::PivotChanged) => {
                     if let Ok(value) = snapshot_pivot_rx.try_recv() {
                         match value {
-                            SnapshotControlMessage::Stop => {
-                                return Err(StoreError::Custom(
-                                    "Unexpected SnapshotControlMessage::Stop".to_string(),
-                                ));
-                            }
                             SnapshotControlMessage::Continue => {}
+                            _ => {
+                                return Err(StoreError::Custom("Unexpected messafe".to_string()));
+                            }
                         }
                     }
                 }
