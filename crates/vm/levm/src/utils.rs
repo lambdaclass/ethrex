@@ -581,10 +581,12 @@ impl<'a> VM<'a> {
 }
 
 /// Converts Account to LevmAccount
+/// The problem with this is that we don't have the storage root.
 pub fn account_to_levm_account(account: Account) -> (LevmAccount, Bytes) {
     (
         LevmAccount {
             info: account.info,
+            has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
             storage: account.storage,
             status: AccountStatus::Unmodified,
         },

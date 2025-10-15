@@ -184,7 +184,7 @@ pub async fn init_l2(
         &signer,
     )));
 
-    let peer_handler = PeerHandler::new(PeerTable::spawn());
+    let peer_handler = PeerHandler::new(PeerTable::spawn(opts.node_opts.target_peers));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();

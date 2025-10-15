@@ -1040,12 +1040,13 @@ async fn test_send(
     test: &str,
 ) -> Result<RpcReceipt> {
     let signer: Signer = LocalSigner::new(*private_key).into();
+    let calldata = encode_calldata(signature, data).unwrap().into();
     let mut tx = build_generic_tx(
         client,
         TxType::EIP1559,
         to,
         signer.address(),
-        encode_calldata(signature, data).unwrap().into(),
+        calldata,
         Default::default(),
     )
     .await

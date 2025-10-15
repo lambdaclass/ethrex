@@ -214,7 +214,6 @@ impl BlockProducer {
             .store_block(block, account_updates_list, execution_result)
             .await?;
         info!("Stored new block {:x}", block_hash);
-        // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         self.rollup_store
             .store_account_updates_by_block_number(block_number, account_updates)
