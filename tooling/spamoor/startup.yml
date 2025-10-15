@@ -1,7 +1,23 @@
 - scenario: eoatx
   config:
-    total_count: 50000
+    total_count: 100000
     throughput: 100000
-    max_pending: 5000
-    max_wallets: 1000
+    max_pending: 7000
+    max_wallets: 3000
+    seed: 0xdeadbeef
+
+- scenario: storagespam
+  config:
+    total_count: 10000
+    throughput: 100000
+    max_pending: 2000
+    max_wallets: 3000
+    seed: 0xdeadbeef
+
+- scenario: erctx
+  config:
+    total_count: 10000
+    throughput: 100000
+    max_pending: 2000
+    max_wallets: 3000
     seed: 0xdeadbeef
