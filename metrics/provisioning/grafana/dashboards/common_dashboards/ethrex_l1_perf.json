@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 3,
+  "id": 8,
   "links": [],
   "panels": [
     {
@@ -706,7 +706,7 @@
           "expr": "block_building_base_fee{job=\"$job\"} / 1000000000",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "Gigagas/s",
+          "legendFormat": "Base fee",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -919,7 +919,7 @@
           "expr": "block_building_ms{job=\"$job\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
-          "legendFormat": "Gigagas/s",
+          "legendFormat": "Build time",
           "range": true,
           "refId": "A",
           "useBackend": false
