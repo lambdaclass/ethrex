@@ -74,6 +74,19 @@ impl From<AccountState> for LevmAccount {
 }
 
 impl LevmAccount {
+    pub fn mark_destroyed(&mut self) {
+        self.status = AccountStatus::Destroyed;
+    }
+
+    pub fn mark_modified(&mut self) {
+        if self.status == AccountStatus::Unmodified {
+            self.status = AccountStatus::Modified;
+        }
+        if self.status == AccountStatus::Destroyed {
+            self.status = AccountStatus::DestroyedModified;
+        }
+    }
+
     pub fn has_nonce(&self) -> bool {
         self.info.nonce != 0
     }
@@ -90,11 +103,6 @@ impl LevmAccount {
         self.info.is_empty()
     }
 
-    /// Updates the account status.
-    pub fn update_status(&mut self, status: AccountStatus) {
-        self.status = status;
-    }
-
     /// Checks if the account is unmodified.
     pub fn is_unmodified(&self) -> bool {
         matches!(self.status, AccountStatus::Unmodified)
@@ -104,13 +112,13 @@ impl LevmAccount {
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountStatus {
     #[default]
+    /// Account was only read and not mutated at all.
     Unmodified,
+    /// Account accessed mutably, doesn't necessarily mean that its state has changed though but it could
     Modified,
     /// Contract executed a SELFDESTRUCT
     Destroyed,
-    /// Contract created via external transaction or CREATE/CREATE2
-    Created,
-    /// Contract has been destroyed and then re-created, usually with CREATE2
+    /// Contract has been destroyed and then modified
     /// This is a particular state because we'll still have in the Database the storage (trie) values but they are actually invalid.
-    DestroyedCreated,
+    DestroyedModified,
 }

@@ -539,7 +539,7 @@ pub fn get_nonce_diff(
     account_update: &AccountUpdate,
     db: &impl LevmDatabase,
 ) -> Result<u16, StateDiffError> {
-    // Get previous account_info either from store or cache
+    // Get previous account_state either from store or cache
     let account_state = db
         .get_account_state(account_update.address)
         .map_err(EvmError::from)?;

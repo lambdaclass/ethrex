@@ -12,6 +12,7 @@ use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
@@ -55,7 +56,7 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 pub enum BlockchainType {
     #[default]
     L1,
-    L2,
+    L2(FeeConfig),
 }
 
 #[derive(Debug)]
@@ -218,7 +219,9 @@ impl Blockchain {
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
             let mut vm = match self.options.r#type {
                 BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
-                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
+                BlockchainType::L2(fee_config) => {
+                    Evm::new_from_db_for_l2(logger.clone(), fee_config)
+                }
             };
 
             // Re-execute block with logger
@@ -916,7 +919,7 @@ impl Blockchain {
         let store = Arc::new(vm_db);
         let evm = match self.options.r#type {
             BlockchainType::L1 => Evm::new_from_db_for_l1(store),
-            BlockchainType::L2 => Evm::new_from_db_for_l2(store),
+            BlockchainType::L2(fee_config) => Evm::new_from_db_for_l2(store, fee_config),
         };
         Ok(evm)
     }
