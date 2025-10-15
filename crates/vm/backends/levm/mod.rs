@@ -485,7 +485,7 @@ pub fn claculate_gas_price_for_tx(
 ) -> Result<U256, VMError> {
     let Some(max_priority_fee) = tx.max_priority_fee() else {
         // Legacy transaction
-        return Ok(tx.gas_price().into());
+        return Ok(tx.gas_price());
     };
 
     let max_fee_per_gas = tx.max_fee_per_gas().ok_or(VMError::TxValidation(
