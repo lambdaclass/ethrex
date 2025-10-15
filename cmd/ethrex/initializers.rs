@@ -488,7 +488,6 @@ pub async fn init_l1(
 }
 
 async fn regenerate_head_state(store: &Store, blockchain: &Arc<Blockchain>) -> eyre::Result<()> {
-    info!("Regenerating head state if necessary");
     let head_block_number = store.get_latest_block_number().await?;
     let Some(last_header) = store.get_block_header(head_block_number)? else {
         unreachable!("Database is empty, genesis block should be present");
