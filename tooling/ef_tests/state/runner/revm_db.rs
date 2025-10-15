@@ -60,7 +60,7 @@ impl revm::Database for RevmDynVmDatabase {
             .0
             .get_account_state(CoreAddress::from(address.0.as_ref()))
             .map_err(|e| RevmError(EvmError::from(e)))?;
-        // If the account
+        // If the account is default then it means it doesn't actually exist.
         if acc_state == AccountState::default() {
             return Ok(None);
         }

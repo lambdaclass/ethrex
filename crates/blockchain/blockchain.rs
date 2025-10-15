@@ -913,7 +913,6 @@ impl Blockchain {
     }
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-        use std::sync::Arc;
         let store = Arc::new(vm_db);
         let evm = match self.options.r#type {
             BlockchainType::L1 => Evm::new_from_db_for_l1(store),
