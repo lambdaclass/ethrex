@@ -1,6 +1,6 @@
 # Transactions per second benchmarks
-
 Benchmark server hardware:
+
 - l2-gpu-3:
     - AMD EPYC 7713 64-Core Processor
     - 128 GB RAM
@@ -10,14 +10,16 @@ Benchmark server hardware:
     - 48 GB RAM
     - RTX 4090 24 GB
 
-## ETH Transfers only, Validium
+# Transactions per Second
 
-Setup:
-
-- Validium L2 (no blobs)
+Common setup:
 - Block time 12 seconds
 - Batch time 12*64 = 768 seconds = 12m 48s (64 block batch)
-- Prover: SP1
+- Prover: SP1, running in a RTX 4090
+
+## ETH Transfers only
+
+Validium L2 (no blobs):
 
 | TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
 | --- | --- | --- | --- | --- | --- |
@@ -25,20 +27,9 @@ Setup:
 | 3 | 63 | 755k | 8m 49s | ✅ | ethrex-gpu-4090-1 |
 | 5 | 63 | 1.25M | 13m 12s | ❌ | ethrex-gpu-4090-1 |
 
-**Note:**
+## ERC20 Transfers only
 
-1. Validium doesn’t include blob KZG verification, which adds some overhead.
-2. Validium doesn’t publishes blobs, which can limit batch size.
-3. The L2 state is small. A bigger state means a bigger trie, which implies more trie/hashing operations that increase proving time.
-
-## ERC20 Transfers only, Validium
-
-Setup:
-
-- Validium L2 (no blobs)
-- Block time 12 seconds
-- Batch time 12*64 = 768 seconds = 12m 48s (64 block batch)
-- Prover: SP1
+Validium L2 (no blobs):
 
 | TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
 | --- | --- | --- | --- | --- | --- |
@@ -46,6 +37,13 @@ Setup:
 | 2 | 63 | 1.25M | 10m 6s | ✅ | ethrex-gpu-4090-1 |
 | 3 | 63 | 1.87M | 21m 30s | ❌ | l2-gpu-3 |
 | 4 | 63 | 2.52M | 20m 8s | ❌ | ethrex-gpu-4090-1 |
+
+Rollup L2 (publishes blobs)
+
+| TPS | Avg. batch size (blocks) | Avg. block gas | Proving time (avg. 2 batches) | Prover keeps up with chain? (proving time ≤ batch time) | Server (both have RTX 4090) |
+| --- | --- | --- | --- | --- | --- |
+| 2 | 63 | 1.38M | 10m 52s | ✅ | ethrex-gpu-4090-1 |
+| 3 | 63 | 2.10M | 17m 12s | ❌ | l2-gpu-3 |
 
 **Note:**
 
