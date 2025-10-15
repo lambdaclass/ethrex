@@ -177,11 +177,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn close(&self) -> Result<(), StoreError> {
-        // Doesn't do anything
-        Ok(())
-    }
-
     fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         let store = self.inner()?;
         if let Some(hash) = store.canonical_hashes.get(&block_number) {

@@ -5,7 +5,6 @@ use ethrex::{
     utils::{NodeConfigFile, get_client_version, store_node_config_file},
 };
 use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
-use ethrex_storage::Store;
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -34,7 +33,6 @@ fn log_global_allocator() {
 pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 async fn server_shutdown(
-    store: Store,
     datadir: &Path,
     cancel_token: &CancellationToken,
     peer_table: PeerTable,
@@ -46,7 +44,6 @@ async fn server_shutdown(
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
     store_node_config_file(node_config, node_config_path).await;
-    store.close().await.expect("Failed to close store");
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
 }
@@ -63,7 +60,7 @@ async fn main() -> eyre::Result<()> {
 
     info!("ethrex version: {}", get_client_version());
 
-    let (store, datadir, cancel_token, peer_table, local_node_record) =
+    let (datadir, cancel_token, peer_table, local_node_record) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
@@ -72,10 +69,10 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(store, &datadir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(store, &datadir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
     }
 

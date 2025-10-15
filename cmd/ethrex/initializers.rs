@@ -389,7 +389,6 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(
-    Store,
     PathBuf,
     CancellationToken,
     PeerTable,
@@ -481,7 +480,6 @@ pub async fn init_l1(
     }
 
     Ok((
-        store,
         datadir.clone(),
         cancel_token,
         peer_handler.peer_table,

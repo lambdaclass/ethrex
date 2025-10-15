@@ -109,10 +109,6 @@ impl Store {
         Ok(store)
     }
 
-    pub async fn close(&self) -> Result<(), StoreError> {
-        self.engine.close().await
-    }
-
     pub async fn get_account_info(
         &self,
         block_number: BlockNumber,

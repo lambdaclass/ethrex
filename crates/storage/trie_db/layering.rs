@@ -1,18 +1,17 @@
 use ethrex_common::H256;
 use ethrex_rlp::decode::RLPDecode;
-use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct TrieLayer {
     nodes: HashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow

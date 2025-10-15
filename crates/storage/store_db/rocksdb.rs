@@ -20,7 +20,7 @@ use rocksdb::{
 };
 use std::{
     collections::HashSet,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, RwLock},
 };
 use tracing::info;
@@ -38,8 +38,6 @@ use std::fmt::Debug;
 
 // TODO: use finalized hash to determine when to commit
 const COMMIT_THRESHOLD: usize = 128;
-
-const TRIE_CACHE_FILE: &str = "trie_cache.json";
 
 /// Canonical block hashes column family: [`u8;_`] => [`Vec<u8>`]
 /// - [`u8;_`] = `block_number.to_le_bytes()`
@@ -108,7 +106,6 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 #[derive(Debug)]
 pub struct Store {
-    datadir: PathBuf,
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     trie_cache: Arc<RwLock<TrieLayerCache>>,
 }
@@ -305,21 +302,9 @@ impl Store {
             }
         }
 
-        let trie_cache_file = path.join(TRIE_CACHE_FILE);
-        let trie_cache = if trie_cache_file.exists() {
-            info!("Loading existing trie cache from {trie_cache_file:?}");
-            let file =
-                std::fs::File::open(trie_cache_file).expect("failed to read diff layer file");
-            serde_json::from_reader(file).expect("failed to parse diff layer file")
-        } else {
-            info!("No existing trie cache found, starting fresh");
-            Default::default()
-        };
-
         Ok(Self {
-            datadir: path.to_path_buf(),
             db: Arc::new(db),
-            trie_cache,
+            trie_cache: Default::default(),
         })
     }
 
@@ -581,16 +566,6 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
-    }
-
-    async fn close(&self) -> Result<(), StoreError> {
-        self.db.flush()?;
-        let trie_cache_file = self.datadir.join(TRIE_CACHE_FILE);
-        let writer = std::fs::File::create(&trie_cache_file).expect("failed to create file");
-        let trie_cache = self.trie_cache.read().map_err(|_| StoreError::LockError)?;
-
-        serde_json::to_writer(writer, &*trie_cache).expect("failed to dump trie cache");
-        Ok(())
     }
 
     /// Add a batch of blocks in a single transaction.
