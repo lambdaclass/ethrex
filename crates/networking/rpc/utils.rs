@@ -196,7 +196,7 @@ impl RpcRequest {
     pub fn namespace(&self) -> Result<RpcNamespace, RpcErr> {
         let mut parts = self.method.split('_');
         let Some(namespace) = parts.next() else {
-            return Err(RpcErr::MethodNotFound(self.method.clone()));
+            return Err(RpcErr::MethodNotFound(self.method.clone())); //todo-clone: these clones could be removed refactoring how we process the requests
         };
         resolve_namespace(namespace, self.method.clone())
     }
