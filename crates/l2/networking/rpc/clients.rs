@@ -2,6 +2,7 @@ use crate::l2::batch::RpcBatch;
 use ethrex_common::Address;
 use ethrex_common::H256;
 use ethrex_l2_common::l1_messages::L1MessageProof;
+use ethrex_rpc::types::block_identifier::BlockIdentifier;
 use ethrex_rpc::{
     EthClient,
     clients::{
@@ -51,9 +52,9 @@ pub async fn get_batch_by_number(
 
 pub async fn get_base_fee_vault_address(
     client: &EthClient,
-    block_number: u64,
+    block: BlockIdentifier,
 ) -> Result<Address, EthClientError> {
-    let params = Some(vec![json!(format!("{block_number:#x}"))]);
+    let params = Some(vec![block.into()]);
     let request = RpcRequest::new("ethrex_getBaseFeeVaultAddress", params);
 
     match client.send_request(request).await? {
@@ -68,9 +69,9 @@ pub async fn get_base_fee_vault_address(
 
 pub async fn get_operator_fee_vault_address(
     client: &EthClient,
-    block_number: u64,
+    block: BlockIdentifier,
 ) -> Result<Address, EthClientError> {
-    let params = Some(vec![json!(format!("{block_number:#x}"))]);
+    let params = Some(vec![block.into()]);
     let request = RpcRequest::new("ethrex_getOperatorFeeVaultAddress", params);
 
     match client.send_request(request).await? {
@@ -85,9 +86,9 @@ pub async fn get_operator_fee_vault_address(
 
 pub async fn get_operator_fee(
     client: &EthClient,
-    block_number: u64,
+    block: BlockIdentifier,
 ) -> Result<u64, EthClientError> {
-    let params = Some(vec![json!(format!("{block_number:#x}"))]);
+    let params = Some(vec![block.into()]);
     let request = RpcRequest::new("ethrex_getOperatorFee", params);
 
     match client.send_request(request).await? {

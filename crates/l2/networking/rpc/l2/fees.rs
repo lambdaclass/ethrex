@@ -147,17 +147,15 @@ impl RpcHandler for GetOperatorFee {
             "Requested OperatorFee with block number: {}",
             self.block_number
         );
-        let operator_fee_config = context
+        let operator_fee_per_gas = context
             .rollup_store
             .get_fee_config_by_block(self.block_number)
             .await?
-            .and_then(|fc| fc.operator_fee_config);
+            .and_then(|fc| fc.operator_fee_config)
+            .map(|config| config.operator_fee_per_gas)
+            .unwrap_or(0);
 
-        Ok(serde_json::to_value(
-            operator_fee_config.map(|config| format!("{:#x}", config.operator_fee_vault)),
-        )
-        .map_err(|e| {
-            ethrex_rpc::RpcErr::Internal(format!("Failed to serialize operator fee : {}", e))
-        })?)
+        let operator_fee_hex = format!("0x{operator_fee_per_gas:x}");
+        Ok(serde_json::Value::String(operator_fee_hex))
     }
 }
