@@ -110,7 +110,7 @@ impl<'a> VM<'a> {
         let new_contract_address = self.current_call_frame.to;
         let new_account = self.get_account_mut(new_contract_address)?;
 
-        if new_account.has_code_or_nonce() {
+        if new_account.create_would_collide() {
             return Ok(Some(ContextResult {
                 result: TxResult::Revert(ExceptionalHalt::AddressAlreadyOccupied.into()),
                 gas_used: self.env.gas_limit,
