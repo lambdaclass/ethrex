@@ -14,8 +14,11 @@ ethrex-rpc.workspace = true
 ethrex-sdk.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
+ethrex-config.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-l2-rpc.workspace = true
 eyre.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures = "0.3"
+sha3.workspace = true
+serde_json.workspace = true

@@ -58,6 +58,7 @@ impl From<&str> for Network {
             "holesky" => Network::PublicNetwork(PublicNetwork::Holesky),
             "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
             "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            "local-devnet-l2" => Network::LocalDevnetL2,
             // Note that we don't allow to manually specify the local devnet genesis
             s => Network::GenesisPath(PathBuf::from(s)),
         }
