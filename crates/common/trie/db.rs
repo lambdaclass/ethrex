@@ -25,7 +25,7 @@ pub trait TrieDB: Send + Sync {
     fn put(&self, key: Nibbles, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
-    fn leaves_present(&self) -> bool {
+    fn snapshot_completed(&self, _key: Nibbles) -> bool {
         false
     }
 }

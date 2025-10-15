@@ -14,6 +14,8 @@ pub struct RocksDBTrieDB {
     cf_name: String,
     /// Storage trie address prefix
     address_prefix: Option<H256>,
+
+    last_snapshotted: Nibbles,
 }
 
 impl RocksDBTrieDB {
@@ -29,11 +31,21 @@ impl RocksDBTrieDB {
                 cf_name
             )));
         }
+        let cf_misc = db
+            .cf_handle("misc_values")
+            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))?;
+        let last_snapshotted = db
+            .get_cf(&cf_misc, "last_written")
+            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Error reading last_written: {e}")))?
+            .map(|v| Nibbles::from_hex(v.to_vec()))
+            .unwrap_or_default();
+        drop(cf_misc);
 
         Ok(Self {
             db,
             cf_name: cf_name.to_string(),
             address_prefix,
+            last_snapshotted,
         })
     }
 
@@ -59,6 +71,9 @@ impl RocksDBTrieDB {
 }
 
 impl TrieDB for RocksDBTrieDB {
+    fn snapshot_completed(&self, key: Nibbles) -> bool {
+        self.last_snapshotted >= key
+    }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = if key.is_leaf() {
             self.cf_handle_snapshot()?

@@ -9,20 +9,22 @@ use bytes::Bytes;
 use ethrex_common::{
     H256,
     types::{
-        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-        Transaction,
+        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+        Receipt, Transaction,
     },
 };
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, Trie};
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, MultiThreaded,
     OptimisticTransactionDB, Options, WriteBatchWithTransaction,
 };
+use std::sync::Mutex;
 use std::{
     collections::HashSet,
     path::Path,
     sync::{Arc, RwLock},
 };
+use tokio::sync;
 use tracing::info;
 
 use crate::{
@@ -103,10 +105,19 @@ const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
 const CF_SNAPSHOTS: &str = "snapshots";
 
+const CF_MISC_VALUES: &str = "misc_values";
+
+enum SnapshotControlMessage {
+    Stop,
+    Continue,
+}
+
 #[derive(Debug)]
 pub struct Store {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
     trie_cache: Arc<RwLock<TrieLayerCache>>,
+    snapshot_pivot_rx: Arc<Mutex<tokio::sync::mpsc::Receiver<SnapshotControlMessage>>>,
+    snapshot_pivot_tx: tokio::sync::mpsc::Sender<SnapshotControlMessage>,
 }
 
 impl Store {
@@ -165,7 +176,8 @@ impl Store {
             CF_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
-            CF_SNAPSHOTS
+            CF_SNAPSHOTS,
+            CF_MISC_VALUES,
         ];
 
         // Get existing column families to know which ones to drop later
@@ -301,10 +313,13 @@ impl Store {
                 }
             }
         }
+        let (tx, rx) = tokio::sync::mpsc::channel(0);
 
         Ok(Self {
             db: Arc::new(db),
             trie_cache: Default::default(),
+            snapshot_pivot_tx: tx,
+            snapshot_pivot_rx: Arc::new(std::sync::Mutex::new(rx)),
         })
     }
 
@@ -464,6 +479,7 @@ impl StoreEngine for Store {
             .ok_or(StoreError::UpdateBatchNoBlocks)?
             .header
             .state_root;
+        let snapshot_pivot_tx = self.snapshot_pivot_tx.clone();
 
         tokio::task::spawn_blocking(move || {
             let _span = tracing::trace_span!("Block DB update").entered();
@@ -496,16 +512,23 @@ impl StoreEngine for Store {
 
             let mut trie = trie_cache.write().map_err(|_| StoreError::LockError)?;
             if let Some(root) = trie.get_commitable(parent_state_root) {
+                snapshot_pivot_tx.blocking_send(SnapshotControlMessage::Stop);
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
                     let is_leaf = key.len() == 65 || key.len() == 131;
-                    let cf = if is_leaf { &cf_snapshots } else { &cf_trie_nodes };
+
+                    let cf = if is_leaf {
+                        &cf_snapshots
+                    } else {
+                        &cf_trie_nodes
+                    };
                     if value.is_empty() {
                         batch.delete_cf(cf, key);
                     } else {
                         batch.put_cf(cf, key, value);
                     }
                 }
+                snapshot_pivot_tx.blocking_send(SnapshotControlMessage::Continue);
             }
             trie.put_batch(
                 parent_state_root,
@@ -1480,6 +1503,103 @@ impl StoreEngine for Store {
         }
 
         self.write_batch_async(batch_ops).await
+    }
+
+    fn generate_snapshot(&self) -> Result<(), StoreError> {
+        let mut snapshot_pivot_rx = self
+            .snapshot_pivot_rx
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
+        loop {
+            let root = self
+                .read_sync(CF_TRIE_NODES, &[])?
+                .ok_or(StoreError::MissingLatestBlockNumber)?;
+            let root = ethrex_trie::Node::decode(&root)?;
+            let state_root = root.compute_hash().finalize();
+
+            let cf_misc = self.cf_handle(CF_MISC_VALUES)?;
+            let cf_snapshot = self.cf_handle(CF_SNAPSHOTS)?;
+
+            let last_written = self
+                .db
+                .get_cf(&cf_misc, "last_written")?
+                .ok_or(StoreError::Custom("Missing CF_MISC_VALUES".to_string()))?;
+            let last_written_account = last_written
+                .get(0..64)
+                .map(|v| Nibbles::from_hex(v.to_vec()))
+                .unwrap_or_default();
+            let last_written_storage = last_written
+                .get(65..130)
+                .map(|v| Nibbles::from_hex(v.to_vec()))
+                .unwrap_or_default();
+
+            let mut batch = WriteBatchWithTransaction::default();
+            let mut iter = self.open_direct_state_trie(state_root)?.into_iter();
+            iter.advance(last_written_account.to_bytes())?;
+            let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
+                let Node::Leaf(node) = node else {
+                    return Ok(());
+                };
+                let account_state = AccountState::decode(&node.value)?;
+                let mut iter_inner = self
+                    .open_direct_storage_trie(
+                        H256::from_slice(&path.to_bytes()),
+                        account_state.storage_root,
+                    )?
+                    .into_iter();
+                iter_inner.advance(last_written_storage.to_bytes())?;
+                iter_inner.try_for_each(|(path, node)| -> Result<(), StoreError> {
+                    let Node::Leaf(node) = node else {
+                        return Ok(());
+                    };
+                    batch.put_cf(&cf_misc, "last_written", path.as_ref());
+                    batch.put_cf(&cf_snapshot, path.as_ref(), node.value);
+                    if let Ok(value) = snapshot_pivot_rx.try_recv() {
+                        match value {
+                            SnapshotControlMessage::Stop => {
+                                return Err(StoreError::PivotChanged);
+                            }
+                            SnapshotControlMessage::Continue => {
+                                return Err(StoreError::Custom(
+                                    "Unexpected SnapshotControlMessage::Continue".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    Ok(())
+                })?;
+                batch.put_cf(&cf_misc, "last_written", path.as_ref());
+                batch.put_cf(&cf_snapshot, path.as_ref(), node.value);
+                if let Ok(value) = snapshot_pivot_rx.try_recv() {
+                    match value {
+                        SnapshotControlMessage::Stop => return Err(StoreError::PivotChanged),
+                        SnapshotControlMessage::Continue => {
+                            return Err(StoreError::Custom(
+                                "Unexpected SnapshotControlMessage::Continue".to_string(),
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            });
+            self.db.write(batch)?;
+            match res {
+                Err(StoreError::PivotChanged) => {
+                    if let Ok(value) = snapshot_pivot_rx.try_recv() {
+                        match value {
+                            SnapshotControlMessage::Stop => {
+                                return Err(StoreError::Custom(
+                                    "Unexpected SnapshotControlMessage::Stop".to_string(),
+                                ));
+                            }
+                            SnapshotControlMessage::Continue => {}
+                        }
+                    }
+                }
+                Err(err) => return Err(err),
+                Ok(()) => return Ok(()),
+            };
+        }
     }
 }
 

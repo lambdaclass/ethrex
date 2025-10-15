@@ -69,6 +69,15 @@ impl Drop for RocksDBLockedTrieDB {
 }
 
 impl TrieDB for RocksDBLockedTrieDB {
+    fn snapshot_completed(&self, key: Nibbles) -> bool {
+        let Some(cf) = self.db.cf_handle("misc_values") else {
+            return false;
+        };
+        let Ok(Some(val)) = self.db.get_cf(&cf, "last_written") else {
+            return false;
+        };
+        *val >= *key.as_ref()
+    }
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let cf = if key.is_leaf() {
             &self.cf_snapshots

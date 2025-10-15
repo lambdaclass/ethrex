@@ -686,6 +686,10 @@ impl StoreEngine for Store {
 
         Ok(())
     }
+
+    fn generate_snapshot(&self) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {
