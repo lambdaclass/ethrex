@@ -14,7 +14,7 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 
 ## Docs
 
-There is large amount of docs in comments inside the code. For more information check out the [FAQ](../../../docs/vm/levm/faq.rs) and related documents.
+There is a large amount of docs in comments inside the code. For more information check out the [FAQ](../../../docs/vm/levm/faq.rs) and related documents.
 
 ## Testing
 
