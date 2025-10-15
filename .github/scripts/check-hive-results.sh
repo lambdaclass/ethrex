@@ -101,6 +101,7 @@ for json_file in "${json_files[@]}"; do
       {
         echo "### Hive failures: ${suite_name:-$(basename "${json_file}" .json)}"
         printf '%s\n' "${failure_list}"
+        echo "Note: Hive scenarios may include multiple ethrex clients, so each failing case can have more than one log snippet."
         echo
       } >> "${GITHUB_STEP_SUMMARY}"
     fi
@@ -238,7 +239,9 @@ for json_file in "${json_files[@]}"; do
           client_slug="client"
         fi
 
-        snippet_path="${client_logs_dir}/${client_slug}__${case_slug}.log"
+        case_dir="${client_logs_dir}/${case_slug}"
+        mkdir -p "${case_dir}"
+        snippet_path="${case_dir}/${client_slug}.log"
 
         python3 - "${log_copy_path}" "${snippet_path}" "${raw_case_name}" "${case_start}" "${case_end}" "${client_id}" "${client_log_rel}" <<'PY'
 import sys
