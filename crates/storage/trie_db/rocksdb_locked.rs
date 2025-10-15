@@ -11,6 +11,8 @@ pub struct RocksDBLockedTrieDB {
     db: &'static Arc<OptimisticTransactionDB<MultiThreaded>>,
     /// Column family handle
     cf: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
+    /// Column family handle
+    cf_snapshots: std::sync::Arc<rocksdb::BoundColumnFamily<'static>>,
     /// Read-only snapshot for consistent reads
     snapshot: SnapshotWithThreadMode<'static, OptimisticTransactionDB<MultiThreaded>>,
     /// Storage trie address prefix
@@ -30,6 +32,10 @@ impl RocksDBLockedTrieDB {
         let cf = db.cf_handle(cf_name).ok_or_else(|| {
             TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
         })?;
+        // Verify column family exists
+        let cf_snapshots = db.cf_handle("snapshots").ok_or_else(|| {
+            TrieError::DbError(anyhow::anyhow!("Column family not found: {}", cf_name))
+        })?;
 
         // Create snapshot for consistent reads
         let snapshot = db.snapshot();
@@ -37,6 +43,7 @@ impl RocksDBLockedTrieDB {
         Ok(Self {
             db,
             cf,
+            cf_snapshots,
             snapshot,
             address_prefix,
         })
@@ -63,10 +70,15 @@ impl Drop for RocksDBLockedTrieDB {
 
 impl TrieDB for RocksDBLockedTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+        let cf = if key.is_leaf() {
+            &self.cf_snapshots
+        } else {
+            &self.cf
+        };
         let db_key = self.make_key(key);
 
         self.snapshot
-            .get_cf(&self.cf, db_key)
+            .get_cf(cf, db_key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("RocksDB snapshot get error: {}", e)))
     }
 

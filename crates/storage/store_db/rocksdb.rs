@@ -101,6 +101,8 @@ const CF_PENDING_BLOCKS: &str = "pending_blocks";
 /// - [`Vec<u8>`] = `BlockHashRLP::from(latest_valid).bytes().clone()`
 const CF_INVALID_ANCESTORS: &str = "invalid_ancestors";
 
+const CF_SNAPSHOTS: &str = "snapshots";
+
 #[derive(Debug)]
 pub struct Store {
     db: Arc<OptimisticTransactionDB<MultiThreaded>>,
@@ -163,6 +165,7 @@ impl Store {
             CF_TRIE_NODES,
             CF_PENDING_BLOCKS,
             CF_INVALID_ANCESTORS,
+            CF_SNAPSHOTS
         ];
 
         // Get existing column families to know which ones to drop later
@@ -467,6 +470,7 @@ impl StoreEngine for Store {
 
             let [
                 cf_trie_nodes,
+                cf_snapshots,
                 cf_receipts,
                 cf_codes,
                 cf_block_numbers,
@@ -477,6 +481,7 @@ impl StoreEngine for Store {
                 &db,
                 [
                     CF_TRIE_NODES,
+                    CF_SNAPSHOTS,
                     CF_RECEIPTS,
                     CF_ACCOUNT_CODES,
                     CF_BLOCK_NUMBERS,
@@ -493,10 +498,12 @@ impl StoreEngine for Store {
             if let Some(root) = trie.get_commitable(parent_state_root) {
                 let nodes = trie.commit(root).unwrap_or_default();
                 for (key, value) in nodes {
+                    let is_leaf = key.len() == 65 || key.len() == 131;
+                    let cf = if is_leaf { &cf_snapshots } else { &cf_trie_nodes };
                     if value.is_empty() {
-                        batch.delete_cf(&cf_trie_nodes, key);
+                        batch.delete_cf(cf, key);
                     } else {
-                        batch.put_cf(&cf_trie_nodes, key, value);
+                        batch.put_cf(cf, key, value);
                     }
                 }
             }

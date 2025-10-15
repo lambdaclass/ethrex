@@ -43,6 +43,14 @@ impl RocksDBTrieDB {
             .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
     }
 
+    fn cf_handle_snapshot(
+        &self,
+    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, TrieError> {
+        self.db
+            .cf_handle("snapshots")
+            .ok_or_else(|| TrieError::DbError(anyhow::anyhow!("Column family not found")))
+    }
+
     fn make_key(&self, node_hash: Nibbles) -> Vec<u8> {
         apply_prefix(self.address_prefix, node_hash)
             .as_ref()
@@ -52,7 +60,11 @@ impl RocksDBTrieDB {
 
 impl TrieDB for RocksDBTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let cf = self.cf_handle()?;
+        let cf = if key.is_leaf() {
+            self.cf_handle_snapshot()?
+        } else {
+            self.cf_handle()?
+        };
         let db_key = self.make_key(key);
 
         let res = self
@@ -64,14 +76,16 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
+        let cf_snapshot = self.cf_handle_snapshot()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
 
         for (key, value) in key_values {
+            let cf = if key.is_leaf() { &cf_snapshot } else { &cf };
             let db_key = self.make_key(key);
             if value.is_empty() {
-                batch.delete_cf(&cf, db_key);
+                batch.delete_cf(cf, db_key);
             } else {
-                batch.put_cf(&cf, db_key, value);
+                batch.put_cf(cf, db_key, value);
             }
         }
 
@@ -82,15 +96,17 @@ impl TrieDB for RocksDBTrieDB {
 
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         let cf = self.cf_handle()?;
+        let cf_snapshot = self.cf_handle_snapshot()?;
         let mut batch = rocksdb::WriteBatchWithTransaction::default();
         // 532 is the maximum size of an encoded branch node.
         let mut buffer = Vec::with_capacity(532);
 
         for (hash, node) in key_values {
+            let cf = if hash.is_leaf() { &cf_snapshot } else { &cf };
             let db_key = self.make_key(hash.clone());
             buffer.clear();
             node.encode(&mut buffer);
-            batch.put_cf(&cf, db_key, &buffer);
+            batch.put_cf(cf, db_key, &buffer);
         }
 
         self.db
