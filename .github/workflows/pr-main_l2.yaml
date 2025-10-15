@@ -413,7 +413,7 @@ jobs:
       - name: Start ethrex
         run: |
           cd crates/l2
-          make init-l2-dev || tee ethrex.log &
+          make init-l2-dev 2>&1 || tee /tmp/ethrex.log &
 
       - name: Wait for ethrex l2
         run: |
@@ -430,13 +430,13 @@ jobs:
 
       - name: Init prover
         run: |
-          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 || tee prover.log & 
+          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 2>&1 || tee /tmp/prover.log & 
 
       - name: Run test
         run: |
           cd crates/l2
-          tail -n 100 -f /crates/l2/ethrex.log &
-          tail -n 100 -f prover.log &
+          tail -n 100 -f /tmp/ethrex.log &
+          tail -n 100 -f /tmp/prover.log &
           INTEGRATION_TEST_SKIP_FEE_VAULT_CHECK=true \
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
           cargo test l2 --release -- --nocapture --test-threads=1
