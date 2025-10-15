@@ -27,12 +27,8 @@ use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::trie_sorted::TrieGenerationError;
 use ethrex_trie::{Trie, TrieError};
 use rayon::iter::{ParallelBridge, ParallelIterator};
-#[cfg(not(feature = "rocksdb"))]
-use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-#[cfg(not(feature = "rocksdb"))]
-use std::sync::Mutex;
 use std::time::SystemTime;
 use std::{
     array,
@@ -692,13 +688,14 @@ impl FullBlockSyncState {
         .await
         {
             if let Some(batch_failure) = batch_failure {
-                warn!("Failed to add block during FullSync: {err}");
+                let failed_block_hash = batch_failure.failed_block_hash;
+                warn!(%err, block=%failed_block_hash, "Failed to add block during FullSync");
                 // Since running the batch failed we set the failing block and it's descendants with having an invalid ancestor on the following cases.
                 if let ChainError::InvalidBlock(_) = err {
                     let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
                     if let Some(index) = block_batch_hashes
                         .iter()
-                        .position(|x| x == &batch_failure.failed_block_hash)
+                        .position(|x| x == &failed_block_hash)
                     {
                         block_hashes_with_invalid_ancestor = block_batch_hashes[index..].to_vec();
                     }
@@ -1059,6 +1056,7 @@ impl Syncer {
 
         debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
         debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+
         info!("Finished healing");
 
         // Finish code hash collection
@@ -1160,26 +1158,23 @@ impl Syncer {
 }
 
 #[cfg(not(feature = "rocksdb"))]
-type StorageRoots = (H256, Vec<(ethrex_trie::NodeHash, Vec<u8>)>);
+type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
 
 #[cfg(not(feature = "rocksdb"))]
 fn compute_storage_roots(
-    maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>>,
     store: Store,
     account_hash: H256,
     key_value_pairs: &[(H256, U256)],
     pivot_hash: H256,
 ) -> Result<StorageRoots, SyncError> {
-    let account_storage_root = match maybe_big_account_storage_state_roots
-        .lock()
-        .map_err(|_| SyncError::MaybeBigAccount)?
-        .entry(account_hash)
-    {
-        Entry::Occupied(occupied_entry) => *occupied_entry.get(),
-        Entry::Vacant(_vacant_entry) => *EMPTY_TRIE_HASH,
-    };
+    use ethrex_trie::{Nibbles, Node};
 
-    let mut storage_trie = store.open_storage_trie(account_hash, account_storage_root)?;
+    let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    let trie_hash = match storage_trie.db().get(Nibbles::default())? {
+        Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
+        None => *EMPTY_TRIE_HASH,
+    };
+    let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
 
     for (hashed_key, value) in key_value_pairs {
         if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
@@ -1196,13 +1191,7 @@ fn compute_storage_roots(
         .ok_or(SyncError::AccountState(pivot_hash, account_hash))?;
     if computed_storage_root == account_state.storage_root {
         METRICS.storage_tries_state_roots_computed.inc();
-    } else {
-        maybe_big_account_storage_state_roots
-            .lock()
-            .map_err(|_| SyncError::MaybeBigAccount)?
-            .insert(account_hash, computed_storage_root);
     }
-
     Ok((account_hash, changes))
 }
 
@@ -1491,7 +1480,7 @@ async fn insert_accounts(
         let store_clone = store.clone();
         let current_state_root: Result<H256, SyncError> =
             tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                let mut trie = store_clone.open_state_trie(computed_state_root)?;
+                let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
 
                 for (account_hash, account) in account_states_snapshot {
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
@@ -1517,8 +1506,6 @@ async fn insert_storages(
     pivot_header: &BlockHeader,
 ) -> Result<(), SyncError> {
     use rayon::iter::IntoParallelIterator;
-    let maybe_big_account_storage_state_roots: Arc<Mutex<HashMap<H256, H256>>> =
-        Arc::new(Mutex::new(HashMap::new()));
 
     for entry in std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
@@ -1546,8 +1533,6 @@ async fn insert_storages(
                 })
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
-        let maybe_big_account_storage_state_roots_clone =
-            maybe_big_account_storage_state_roots.clone();
         let store_clone = store.clone();
         let pivot_hash_moved = pivot_header.hash();
         info!("Starting compute of account_storages_snapshot");
@@ -1565,13 +1550,7 @@ async fn insert_storages(
                         .map(move |account| (account, storages.clone()))
                 })
                 .map(|(account, storages)| {
-                    compute_storage_roots(
-                        maybe_big_account_storage_state_roots_clone.clone(),
-                        store.clone(),
-                        account,
-                        &storages,
-                        pivot_hash_moved,
-                    )
+                    compute_storage_roots(store.clone(), account, &storages, pivot_hash_moved)
                 })
                 .collect::<Result<Vec<_>, SyncError>>()
         })
@@ -1596,7 +1575,7 @@ async fn insert_accounts(
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
-    let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
@@ -1658,7 +1637,7 @@ async fn insert_storages(
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_threadpool::ThreadPool;
     use ethrex_trie::{
-        Node, NodeHash,
+        Nibbles, Node,
         trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
     };
     use std::thread::scope;
@@ -1718,7 +1697,7 @@ async fn insert_storages(
             (
                 account_hash,
                 store
-                    .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                    .open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)
                     .expect("Should be able to open trie"),
             )
         })
@@ -1730,7 +1709,7 @@ async fn insert_storages(
         .map(|num| num.into())
         .unwrap_or(8);
 
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<(NodeHash, Node)>>(BUFFER_COUNT as usize);
+    let (buffer_sender, buffer_receiver) = bounded::<Vec<(Nibbles, Node)>>(BUFFER_COUNT as usize);
     for _ in 0..BUFFER_COUNT {
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }

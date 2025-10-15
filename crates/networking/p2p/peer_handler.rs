@@ -2067,7 +2067,7 @@ pub enum PeerHandlerError {
     PeerTableError(#[from] PeerTableError),
 }
 
-#[derive(Debug, Clone, std::hash::Hash)]
+#[derive(Debug, Clone)]
 pub struct RequestMetadata {
     pub hash: H256,
     pub path: Nibbles,

@@ -83,9 +83,9 @@ pub fn dump_accounts_to_rocks_db(
     let writer_options = rocksdb::Options::default();
     let mut writer = rocksdb::SstFileWriter::create(&writer_options);
     writer.open(std::path::Path::new(&path))?;
-    for (key, acccount) in contents {
+    for (key, account) in contents {
         buffer.clear();
-        acccount.encode(&mut buffer);
+        account.encode(&mut buffer);
         writer.put(key.0.as_ref(), buffer.as_slice())?;
     }
     writer.finish()

@@ -416,7 +416,6 @@ impl Blockchain {
         };
 
         self.storage
-            .clone()
             .store_block_updates(update_batch)
             .await
             .map_err(|e| e.into())
