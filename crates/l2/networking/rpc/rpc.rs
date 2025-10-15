@@ -196,11 +196,11 @@ pub async fn map_eth_requests(
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "eth_sendRawTransaction" => {
-            let tx = SendRawTransactionRequest::parse(req.params.take())?;
+            let tx = SendRawTransactionRequest::parse(req.params.clone())?; // ok-clone: we need a separate owned copy of the parameters to parse them
             if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = tx {
                 debug!(
                     "EIP-4844 transaction are not supported in the L2: {:#x}",
-                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).hash()
+                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx).hash()
                 );
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "EIP-4844 transactions are not supported in the L2".to_string(),
