@@ -866,6 +866,7 @@
             }
           },
           "mappings": [],
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -924,7 +925,7 @@
           "useBackend": false
         }
       ],
-      "title": "Blockbuilding time taken in ms",
+      "title": "Block building time taken in ms",
       "type": "timeseries"
     },
     {
