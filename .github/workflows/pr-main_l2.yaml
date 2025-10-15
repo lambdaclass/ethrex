@@ -414,7 +414,7 @@ jobs:
       - name: Start ethrex
         run: |
           cd crates/l2
-          make init-l2-dev 2>&1 | tee /tmp/ethrex.log &
+          ETHREX_NO_MONITOR=true make init-l2-dev 2>&1 | tee /tmp/ethrex.log &
 
       - name: Wait for ethrex l2
         run: |
