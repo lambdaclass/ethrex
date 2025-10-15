@@ -22,9 +22,6 @@ const SKIPPED_BASE: &[&str] = &[
     "static_Call50000_sha256",
     "CALLBlake2f_MaxRounds",
     "loopMul",
-    // It checks that withdrawal requests and consolidation requests accounts have code, which is always the case, except for this test.
-    // The fix is just an if, it's on its way on https://github.com/lambdaclass/ethrex/pull/4731
-    "system_contract_deployment",
     // Skip because it tries to deserialize number > U256::MAX
     "ValueOverflowParis",
     // Skip because it's a "Create" Blob Transaction, which doesn't actually exist. It never reaches the EVM because we can't even parse it as an actual Transaction.
