@@ -12,7 +12,7 @@ use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_p2p::{
-    discv4::peer_table::{PeerTable, PeerTableHandle},
+    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
     rlpx::l2::l2_connection::P2PBasedContext,
@@ -214,6 +214,7 @@ pub async fn init_network(
         blockchain.clone(),
         get_client_version(),
         based_context,
+        opts.tx_broadcasting_time_interval,
     )
     .await
     .expect("P2P context could not be created");
@@ -390,7 +391,7 @@ pub async fn init_l1(
 ) -> eyre::Result<(
     PathBuf,
     CancellationToken,
-    PeerTableHandle,
+    PeerTable,
     Arc<Mutex<NodeRecord>>,
 )> {
     let datadir = &opts.datadir;
