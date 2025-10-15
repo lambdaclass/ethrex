@@ -10,6 +10,9 @@ pub struct MetricsBlocks {
     gas_limit: Gauge,
     block_number: IntGauge,
     gigagas: Gauge,
+    gigagas_block_building: Gauge,
+    block_building_ms: IntGauge,
+    block_building_base_fee: IntGauge,
     gas_used: Gauge,
 }
 
@@ -34,7 +37,22 @@ impl MetricsBlocks {
             .unwrap(),
             gigagas: Gauge::new(
                 "gigagas",
+                "Keeps track of the block execution throughput through gigagas/s",
+            )
+            .unwrap(),
+            gigagas_block_building: Gauge::new(
+                "gigagas_block_building",
                 "Keeps track of the block building throughput through gigagas/s",
+            )
+            .unwrap(),
+            block_building_ms: IntGauge::new(
+                "block_building_ms",
+                "Keeps track of the block building throughput through miliseconds",
+            )
+            .unwrap(),
+            block_building_base_fee: IntGauge::new(
+                "block_building_base_fee",
+                "Keeps track of the block building base fee",
             )
             .unwrap(),
             gas_used: Gauge::new(
@@ -51,6 +69,18 @@ impl MetricsBlocks {
 
     pub fn set_latest_gigagas(&self, gigagas: f64) {
         self.gigagas.set(gigagas);
+    }
+
+    pub fn set_latest_gigagas_block_building(&self, gigagas: f64) {
+        self.gigagas_block_building.set(gigagas);
+    }
+
+    pub fn set_block_building_ms(&self, ms: i64) {
+        self.block_building_ms.set(ms);
+    }
+
+    pub fn set_block_building_base_fee(&self, base_fee: i64) {
+        self.block_building_base_fee.set(base_fee);
     }
 
     pub fn set_block_number(&self, block_number: u64) -> Result<(), MetricsError> {
